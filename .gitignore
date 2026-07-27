@@ -1,0 +1,26 @@
+# Design system source bundle (duplicated by the extracted folder)
+KangaruRide Design System.zip
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Node / Vite (frontend, once scaffolded)
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+
+# PHP / Laravel (backend, once scaffolded)
+vendor/
+.env
+.env.*
+!.env.example
+storage/*.key
+bootstrap/cache/*
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*

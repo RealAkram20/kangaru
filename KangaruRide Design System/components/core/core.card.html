@@ -1,0 +1,36 @@
+<!-- @dsCard group="Components" viewport="700x320" name="Core" subtitle="Buttons, badges, status, identifiers" -->
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/lucide@0.475.0/dist/umd/lucide.js"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>body{padding:20px;background:var(--surface-page)}.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}.lbl{font:var(--type-overline);text-transform:uppercase;letter-spacing:var(--tracking-caps);color:var(--text-secondary);width:100%;margin-bottom:2px}</style>
+</head><body><div id="root"></div>
+<script type="text/babel">
+const { Button, IconButton, Badge, StatusBadge, Identifier, Tooltip, Icon, Card } = window.KangaruRideDesignSystem_69b541;
+function Demo(){return (<div>
+<div className="row"><span className="lbl">Button variants · md</span>
+<Button variant="primary" iconLeft="plus">New booking</Button>
+<Button variant="secondary" iconLeft="download">Export CSV</Button>
+<Button variant="destructive" iconLeft="circle-x">Cancel trip</Button>
+<Button variant="ghost" iconLeft="filter">Filters</Button>
+<Button variant="primary" disabled>Disabled</Button></div>
+<div className="row"><span className="lbl">Sizes · icon buttons</span>
+<Button size="sm">Small</Button><Button size="md">Medium</Button><Button size="lg" iconRight="arrow-right">Large</Button>
+<IconButton icon="pencil" label="Edit" variant="outline" size="sm" />
+<IconButton icon="ellipsis-vertical" label="More" />
+<IconButton icon="navigation" label="Track" variant="primary" />
+<Tooltip label="GPS distance vs odometer"><IconButton icon="info" label="Info" size="sm" /></Tooltip></div>
+<div className="row"><span className="lbl">Status badges — trip lifecycle</span>
+<StatusBadge state="booking_created" /><StatusBadge state="assigned" /><StatusBadge state="driver_en_route" /><StatusBadge state="trip_started" /><StatusBadge state="waiting" /><StatusBadge state="trip_completed" /><StatusBadge state="disputed" /><StatusBadge state="cancelled" /><StatusBadge state="closed" /></div>
+<div className="row"><span className="lbl">Badges · identifiers</span>
+<Badge tone="brand" icon="shield-check">Verified</Badge><Badge tone="info" icon="wifi-off">Queued offline</Badge><Badge tone="warning" icon="triangle-alert" size="sm">Variance 4.2 km</Badge><Badge tone="neutral" outline>Saloon</Badge>
+<Identifier kind="plate">UBK 421J</Identifier><Identifier kind="chip">TRP-2026-04812</Identifier><Identifier tone="muted">128,940 km</Identifier></div>
+<div className="row" style={{marginBottom:0}}><span className="lbl">Card</span>
+<Card title="Trip summary" subtitle="Centenary Bank · Kampala zone" style={{flex:1}} actions={<Button size="sm" variant="secondary">Open</Button>}>
+<span style={{font:"var(--type-body-dense)",color:"var(--text-secondary)"}}>Bordered white surface, 12px radius, --shadow-xs.</span></Card></div>
+</div>);}
+ReactDOM.createRoot(document.getElementById("root")).render(<Demo />);
+</script></body></html>

@@ -1,0 +1,16 @@
+<!-- @dsCard group="Brand" viewport="700x190" name="Interactive states" subtitle="Rest, hover, focus, disabled — and the green focus ring" -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../styles.css">
+<style>body{margin:0;padding:16px;background:var(--surface-page);font:var(--type-body-dense)}.g{display:flex;gap:8px}.sw{flex:1;border-radius:var(--radius-md);padding:10px;display:flex;flex-direction:column;justify-content:flex-end;min-height:88px;border:1px solid rgba(0,16,40,.06)}.sw b{font:var(--type-label);font-weight:600;display:block}.sw code{font-family:var(--font-mono);font-size:11px;opacity:.85;display:block;margin-top:2px}.tok{font-family:var(--font-mono);font-size:11px;color:var(--text-secondary)}</style>
+</head><body><div style="display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+<span style="display:inline-flex;height:40px;align-items:center;padding:0 16px;background:#01903D;color:#FBFBFB;font:var(--type-button);border-radius:8px">Rest</span>
+<span style="display:inline-flex;height:40px;align-items:center;padding:0 16px;background:#016B2E;color:#FBFBFB;font:var(--type-button);border-radius:8px">Hover</span>
+<span style="display:inline-flex;height:40px;align-items:center;padding:0 16px;background:#015E35;color:#FBFBFB;font:var(--type-button);border-radius:8px">Active</span>
+<span style="display:inline-flex;height:40px;align-items:center;padding:0 16px;background:#01903D;color:#FBFBFB;font:var(--type-button);border-radius:8px;box-shadow:0 0 0 2px #FBFBFB,0 0 0 4px #01903D">Focus</span>
+<span style="display:inline-flex;height:40px;align-items:center;padding:0 16px;background:#01903D;color:#FBFBFB;font:var(--type-button);border-radius:8px;opacity:.5">Disabled</span></div>
+<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+<span style="display:inline-flex;height:40px;align-items:center;padding:0 16px;border:1px solid var(--border-default);color:#015E35;font:var(--type-button);border-radius:8px">Secondary rest</span>
+<span style="display:inline-flex;height:40px;align-items:center;padding:0 16px;border:1px solid var(--border-default);background:#E6F4EC;color:#015E35;font:var(--type-button);border-radius:8px">Secondary hover</span>
+<span style="display:inline-flex;height:40px;align-items:center;padding:0 12px;font:var(--type-button);border-radius:8px;color:var(--text-body)">Ghost rest</span>
+<span style="display:inline-flex;height:40px;align-items:center;padding:0 12px;background:#F2F4F7;font:var(--type-button);border-radius:8px;color:var(--text-body)">Ghost hover</span></div>
+<p class="tok">No transform on press — colour shifts only. 120ms, --ease-standard. Focus rings are never removed.</p></div></body></html>

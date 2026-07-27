@@ -1,0 +1,98 @@
+<!-- @dsCard group="Platform" viewport="1440x900" name="Enterprise platform" subtitle="Dashboard, dispatch board, trip record, billing" -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>KangaruRide · Operations platform</title>
+<link rel="icon" href="../../assets/favicon.png">
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/lucide@0.475.0/dist/umd/lucide.js"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>html,body{height:100%}body{background:var(--surface-page)}#root{height:100%}</style>
+</head><body><div id="root"></div>
+<script type="text/babel" src="shared.jsx"></script>
+<script type="text/babel" src="DashboardScreen.jsx"></script>
+<script type="text/babel" src="DispatchScreen.jsx"></script>
+<script type="text/babel" src="TripDetailScreen.jsx"></script>
+<script type="text/babel" src="BillingScreen.jsx"></script>
+<script type="text/babel" src="LoginScreen.jsx"></script>
+<script type="text/babel" data-presets="react">
+
+const NAV = [
+  { items: [{ id: "dashboard", label: "Dashboard", icon: "layout-dashboard" }] },
+  { label: "Operations", items: [
+    { id: "bookings", label: "Bookings", icon: "calendar-clock", badge: 6 },
+    { id: "dispatch", label: "Dispatch", icon: "route" },
+    { id: "trips", label: "Trips", icon: "navigation" },
+    { id: "tracking", label: "Live tracking", icon: "map" },
+  ]},
+  { label: "Fleet", items: [
+    { id: "vehicles", label: "Vehicles", icon: "truck" },
+    { id: "drivers", label: "Drivers", icon: "users" },
+    { id: "depots", label: "Depots & zones", icon: "map-pinned" },
+  ]},
+  { label: "Finance", items: [
+    { id: "invoices", label: "Invoices", icon: "receipt" },
+    { id: "ratecards", label: "Rate cards", icon: "table-2" },
+    { id: "reports", label: "Reports", icon: "file-text" },
+  ]},
+  { label: "Administration", items: [
+    { id: "companies", label: "Companies", icon: "building-2" },
+    { id: "audit", label: "Audit log", icon: "shield-check" },
+    { id: "settings", label: "Settings", icon: "settings" },
+  ]},
+];
+
+const TITLES = {
+  dashboard: "Operations dashboard",
+  dispatch: "Dispatch board",
+  trips: "Trips",
+  invoices: "Invoices",
+};
+
+function App() {
+  const [signedIn, setSignedIn] = React.useState(false);
+  const [screen, setScreen] = React.useState("dashboard");
+  const [collapsed, setCollapsed] = React.useState(false);
+
+  if (!signedIn) return <LoginScreen onSignIn={() => setSignedIn(true)} />;
+
+  const body =
+    screen === "dispatch" ? <DispatchScreen /> :
+    screen === "trip" ? <TripDetailScreen onBack={() => setScreen("dashboard")} /> :
+    screen === "invoices" ? <BillingScreen /> :
+    <DashboardScreen onOpenTrip={() => setScreen("trip")} />;
+
+  const navActive = screen === "trip" ? "trips" : screen;
+
+  return (
+    <div style={{ display: "flex", height: "100%", minHeight: "100vh" }}>
+      <SidebarNav
+        active={navActive}
+        collapsed={collapsed}
+        basePath="../../assets"
+        onNavigate={(id) => setScreen(["dispatch", "invoices", "dashboard"].includes(id) ? id : "dashboard")}
+        sections={NAV}
+        footer={
+          <div style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "space-between", gap: 8 }}>
+            {!collapsed && <span style={{ font: "var(--type-caption)", color: "var(--text-on-chrome-secondary)" }}>Phase 1 · v1.1</span>}
+            <IconButton icon={collapsed ? "panel-left-open" : "panel-left-close"} label="Toggle sidebar" onChrome onClick={() => setCollapsed(!collapsed)} />
+          </div>
+        }
+      />
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+        <Topbar
+          title={screen === "trip" ? "TRP-2026-04812" : TITLES[screen] || "Operations dashboard"}
+          tenant="Centenary Bank"
+          onSearch={() => {}}
+          user={{ name: "Aisha Nabirye", role: "Dispatcher" }}
+          breadcrumbs={screen === "trip" ? <Breadcrumbs onChrome items={[{ label: "Operations" }, { label: "Trips" }, { label: "TRP-2026-04812" }]} /> : null}
+          actions={<Button variant="ghost" size="sm" iconLeft="plus" onChrome>New booking</Button>}
+        />
+        <main style={{ flex: 1, overflowY: "auto", padding: "var(--space-8)", maxWidth: "var(--content-max)", width: "100%" }}>{body}</main>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script></body></html>

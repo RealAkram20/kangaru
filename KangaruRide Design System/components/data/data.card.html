@@ -1,0 +1,43 @@
+<!-- @dsCard group="Components" viewport="900x460" name="Data" subtitle="Tables, KPI tiles, pagination, trip timeline" -->
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/lucide@0.475.0/dist/umd/lucide.js"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>body{padding:20px;background:var(--surface-page)}.row{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:16px}.lbl{font:var(--type-overline);text-transform:uppercase;letter-spacing:var(--tracking-caps);color:var(--text-secondary);width:100%;margin-bottom:2px}</style>
+</head><body><div id="root"></div>
+<script type="text/babel">
+const NS = window.KangaruRideDesignSystem_69b541;
+const { DataTable, KPIStat, Pagination, TripTimeline, Card, StatusBadge, Identifier, Badge, IconButton } = NS;
+const rows=[
+{id:1,trip:"TRP-2026-04812",plate:"UBK 421J",driver:"Moses O.",dist:"38.4",dur:"1h 18m",state:"trip_started"},
+{id:2,trip:"TRP-2026-04811",plate:"UAX 908K",driver:"Sarah A.",dist:"12.1",dur:"0h 34m",state:"waiting"},
+{id:3,trip:"TRP-2026-04809",plate:"UBG 117D",driver:"Peter K.",dist:"142.6",dur:"3h 02m",state:"trip_completed"},
+{id:4,trip:"TRP-2026-04804",plate:"UBK 421J",driver:"Moses O.",dist:"9.8",dur:"0h 22m",state:"cancelled"}];
+const cols=[
+{key:"trip",header:"Trip ID",render:r=><Identifier kind="chip">{r.trip}</Identifier>},
+{key:"plate",header:"Vehicle",render:r=><Identifier kind="plate">{r.plate}</Identifier>},
+{key:"driver",header:"Driver",sortable:true},
+{key:"dist",header:"Distance (km)",numeric:true,sortable:true},
+{key:"dur",header:"Duration",numeric:true},
+{key:"state",header:"Status",render:r=><StatusBadge state={r.state} size="sm" />},
+{key:"a",header:"",width:44,render:()=><IconButton icon="ellipsis-vertical" label="Row actions" size="sm" />}];
+function Demo(){return (<div>
+<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:16}}>
+<KPIStat label="Trips today" value="184" delta="+12%" hint="vs last Tue" icon="route" />
+<KPIStat label="Vehicles active" value="41" unit="/ 68" icon="truck" />
+<KPIStat label="Variance flags" value="3" deltaDirection="down" delta="-2" icon="triangle-alert" />
+<KPIStat tone="accent" label="Billed this month" value="41.2M" unit="UGX" icon="receipt" /></div>
+<Card padding="none" style={{marginBottom:16}}><DataTable dense selectable columns={cols} rows={rows} onRowClick={()=>{}} /><Pagination page={1} pageCount={8} pageSize={25} total={184} /></Card>
+<Card title="Trip timeline" subtitle="Append-only trip_events"><TripTimeline events={[
+{label:"Booking created",time:"07:52:10",detail:"Corporate Admin · Centenary Bank"},
+{label:"Assigned",time:"07:58:44",detail:"Moses O. · UBK 421J"},
+{label:"Trip started",time:"08:14:22",detail:"Opening odometer 128,940 km",meta:<Badge tone="brand" icon="camera">Dashboard photo</Badge>},
+{label:"Waiting",time:"08:51:03",tone:"warning",icon:"pause",detail:"12 min billed per rate card"},
+{label:"Trip completed",time:"09:32:40",detail:"Closing odometer 128,978 km"},
+{label:"Invoice generated",done:false}]} /></Card>
+</div>);}
+ReactDOM.createRoot(document.getElementById("root")).render(<Demo />);
+</script></body></html>

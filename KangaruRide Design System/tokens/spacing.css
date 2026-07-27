@@ -1,0 +1,35 @@
+/* 4px grid — DESIGN.md §6. Dense tables use 8px cell padding; forms/cards 16/24. */
+:root{
+  --space-0:0px;
+  --space-1:4px;
+  --space-2:8px;
+  --space-3:12px;
+  --space-4:16px;
+  --space-5:20px;
+  --space-6:24px;
+  --space-8:32px;
+  --space-10:40px;
+  --space-12:48px;
+  --space-16:64px;
+  --space-20:80px;
+  --space-24:96px;
+
+  --pad-cell-dense:var(--space-2);
+  --pad-cell:var(--space-3);
+  --pad-card:var(--space-6);
+  --pad-card-compact:var(--space-4);
+  --pad-form-row:var(--space-4);
+  --gap-form:var(--space-4);
+  --gap-inline:var(--space-2);
+  --gap-section:var(--space-8);
+
+  --control-h-sm:32px;
+  --control-h-md:40px;
+  --control-h-lg:48px;
+
+  --sidebar-w:248px;
+  --sidebar-w-collapsed:64px;
+  --topbar-h:64px;
+  --content-max:1440px;
+  --page-gutter:var(--space-8);
+}
