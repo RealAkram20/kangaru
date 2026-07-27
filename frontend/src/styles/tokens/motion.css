@@ -1,0 +1,22 @@
+/* Motion — functional, short, no bounce. Enterprise operators watch these screens all day. */
+:root{
+  --dur-instant:80ms; /* @kind other */
+  --dur-fast:120ms; /* @kind other */
+  --dur-base:180ms; /* @kind other */
+  --dur-slow:260ms; /* @kind other */
+  --dur-map:600ms; /* @kind other */
+  --ease-standard:cubic-bezier(.2,0,.38,1); /* @kind other */
+  --ease-out:cubic-bezier(0,0,.35,1); /* @kind other */
+  --ease-in:cubic-bezier(.4,0,1,1); /* @kind other */
+  --transition-control:background-color var(--dur-fast) var(--ease-standard),color var(--dur-fast) var(--ease-standard),border-color var(--dur-fast) var(--ease-standard),box-shadow var(--dur-fast) var(--ease-standard);
+  --transition-surface:box-shadow var(--dur-base) var(--ease-standard),transform var(--dur-base) var(--ease-standard);
+}
+@media (prefers-reduced-motion:reduce){
+  :root{
+    --dur-instant:0ms; /* @kind other */
+    --dur-fast:0ms; /* @kind other */
+    --dur-base:0ms; /* @kind other */
+    --dur-slow:0ms; /* @kind other */
+    --dur-map:0ms; /* @kind other */
+  }
+}

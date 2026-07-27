@@ -1,0 +1,18 @@
+/* KangaruRide webfonts.
+   DESIGN.md §6 requires self-hosted woff2 (font-display: swap, no hotlinking).
+   No font binaries were supplied with this brief, so the three families are
+   loaded from Google Fonts here as a stand-in. Drop the woff2 files into
+   assets/fonts/ and replace this @import with the @font-face block below. */
+@import url("https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap");
+
+/* Self-hosted target (uncomment once assets/fonts/*.woff2 exist):
+
+@font-face{font-family:"Sora";src:url("../assets/fonts/Sora-SemiBold.woff2") format("woff2");font-weight:600;font-style:normal;font-display:swap}
+@font-face{font-family:"Sora";src:url("../assets/fonts/Sora-Bold.woff2") format("woff2");font-weight:700;font-style:normal;font-display:swap}
+@font-face{font-family:"Inter";src:url("../assets/fonts/Inter-Regular.woff2") format("woff2");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"Inter";src:url("../assets/fonts/Inter-Medium.woff2") format("woff2");font-weight:500;font-style:normal;font-display:swap}
+@font-face{font-family:"Inter";src:url("../assets/fonts/Inter-SemiBold.woff2") format("woff2");font-weight:600;font-style:normal;font-display:swap}
+@font-face{font-family:"JetBrains Mono";src:url("../assets/fonts/JetBrainsMono-Regular.woff2") format("woff2");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"JetBrains Mono";src:url("../assets/fonts/JetBrainsMono-Medium.woff2") format("woff2");font-weight:500;font-style:normal;font-display:swap}
+
+*/

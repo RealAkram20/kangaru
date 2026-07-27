@@ -1,0 +1,43 @@
+/* Type system — DESIGN.md §6. Three fonts: display, workhorse, data identifiers. */
+:root{
+  --font-display:"Sora","Inter",system-ui,sans-serif;
+  --font-sans:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,"SF Mono",Consolas,monospace;
+
+  /* Scale: 12 / 14 / 16 / 18 / 20 / 24 / 30 / 36 */
+  --text-xs:12px;
+  --text-sm:14px;
+  --text-base:16px;
+  --text-lg:18px;
+  --text-xl:20px;
+  --text-2xl:24px;
+  --text-3xl:30px;
+  --text-4xl:36px;
+
+  --leading-tight:1.2;
+  --leading-snug:1.35;
+  --leading-normal:1.5;
+  --leading-relaxed:1.6;
+
+  --weight-regular:400;
+  --weight-medium:500;
+  --weight-semibold:600;
+  --weight-bold:700;
+
+  --tracking-tight:-0.02em;
+  --tracking-normal:0;
+  --tracking-wide:0.04em;
+  --tracking-caps:0.06em;
+
+  /* Role aliases — display starts at 20px; below that Inter takes over */
+  --type-page-title:var(--weight-bold) var(--text-3xl)/var(--leading-tight) var(--font-display);
+  --type-section-title:var(--weight-semibold) var(--text-xl)/var(--leading-snug) var(--font-display);
+  --type-kpi:var(--weight-bold) var(--text-4xl)/1.05 var(--font-display);
+  --type-body:var(--weight-regular) var(--text-base)/var(--leading-normal) var(--font-sans);
+  --type-body-dense:var(--weight-regular) var(--text-sm)/var(--leading-normal) var(--font-sans);
+  --type-label:var(--weight-medium) var(--text-sm)/1.4 var(--font-sans);
+  --type-button:var(--weight-semibold) var(--text-sm)/1 var(--font-sans);
+  --type-caption:var(--weight-regular) var(--text-xs)/1.4 var(--font-sans);
+  --type-overline:var(--weight-semibold) var(--text-xs)/1.3 var(--font-sans);
+  --type-identifier:var(--weight-medium) var(--text-sm)/1.4 var(--font-mono);
+}
