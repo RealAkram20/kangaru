@@ -11,13 +11,24 @@ use Illuminate\Http\JsonResponse;
  */
 class ApiResponse
 {
-    public static function success(mixed $data = null, string $message = '', int $status = 200): JsonResponse
+    /**
+     * @param  array<string, mixed>|null  $meta  e.g. {"cursor": {"next": "..."}} for cursor-paginated
+     *                                           endpoints (AGENTS.md API Standards §Pagination). Omitted from the envelope when null so
+     *                                           existing callers' response bodies are unchanged.
+     */
+    public static function success(mixed $data = null, string $message = '', int $status = 200, ?array $meta = null): JsonResponse
     {
-        return response()->json([
+        $envelope = [
             'success' => true,
             'message' => $message,
             'data' => $data,
-        ], $status);
+        ];
+
+        if ($meta !== null) {
+            $envelope['meta'] = $meta;
+        }
+
+        return response()->json($envelope, $status);
     }
 
     /**

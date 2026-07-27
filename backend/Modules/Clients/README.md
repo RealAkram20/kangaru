@@ -12,6 +12,10 @@ module (Fleet, Bookings, Trips, ...) copies.
   contact, credit limit, status). One Company per Tenant in Phase 1.
 - Demonstrates ADR-0001 in practice: `Company` uses `BelongsToTenant`, so
   every query is automatically scoped to the authenticated user's tenant.
+- `Company` also uses `App\Concerns\Auditable` — every create/update/delete
+  (including `credit_limit_minor` changes) is written to the append-only
+  `audit_logs` table, queryable via `Modules/Administration`'s
+  `/audit-logs` endpoint (AGENTS.md Observability requirement).
 - Future: departments, employees, branches, cost centers (PROJECT.md
   Company Management module).
 

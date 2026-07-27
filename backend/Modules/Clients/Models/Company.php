@@ -2,6 +2,7 @@
 
 namespace Modules\Clients\Models;
 
+use App\Concerns\Auditable;
 use App\Concerns\BelongsToTenant;
 use App\Models\Tenant;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -21,7 +22,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  */
 class Company extends Model
 {
-    use BelongsToTenant, HasFactory, SoftDeletes;
+    use Auditable, BelongsToTenant, HasFactory, SoftDeletes;
 
     protected $fillable = [
         'tenant_id',

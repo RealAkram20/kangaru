@@ -1,0 +1,140 @@
+<?php
+
+use App\Enums\UserRole;
+use App\Exceptions\AuditLogImmutableException;
+use App\Models\AuditLog;
+use App\Models\Tenant;
+use App\Models\User;
+use Illuminate\Support\Str;
+use Modules\Clients\Models\Company;
+
+/**
+ * Seeds one tenant with a Company and both a corporate_admin and a
+ * corporate_employee user — enough for the diff-content tests and the
+ * policy-denial test without needing a second tenant. Slug is randomized
+ * since some tests call this twice (two independent tenants).
+ */
+function seedAuditTenant(): array
+{
+    $slug = 'audit-tenant-'.Str::random(8);
+
+    $tenant = Tenant::create(['name' => 'Audit Tenant', 'slug' => $slug, 'status' => 'active']);
+
+    $company = Company::allTenants()->create([
+        'tenant_id' => $tenant->id,
+        'legal_name' => 'Audit Tenant Ltd',
+        'billing_email' => "billing@{$slug}.test",
+        'city' => 'Kampala',
+        'country' => 'Uganda',
+        'credit_limit_minor' => 100_000,
+    ]);
+
+    $admin = User::factory()->create([
+        'tenant_id' => $tenant->id,
+        'role' => UserRole::CORPORATE_ADMIN,
+    ]);
+
+    $employee = User::factory()->create([
+        'tenant_id' => $tenant->id,
+        'role' => UserRole::CORPORATE_EMPLOYEE,
+    ]);
+
+    return compact('tenant', 'company', 'admin', 'employee');
+}
+
+it('logs company creation with a full snapshot and no before value', function () {
+    ['company' => $company, 'tenant' => $tenant] = seedAuditTenant();
+
+    $log = AuditLog::allTenants()
+        ->where('auditable_type', 'company')
+        ->where('auditable_id', $company->id)
+        ->where('action', 'created')
+        ->first();
+
+    expect($log)->not->toBeNull();
+    expect($log->tenant_id)->toBe($tenant->id);
+    expect($log->changes['before'])->toBeNull();
+    expect($log->changes['after']['legal_name'])->toBe('Audit Tenant Ltd');
+});
+
+it('diffs a company update to only the changed field, excluding updated_at', function () {
+    ['company' => $company] = seedAuditTenant();
+
+    $company->update(['credit_limit_minor' => 250_000]);
+
+    $log = AuditLog::allTenants()
+        ->where('auditable_type', 'company')
+        ->where('auditable_id', $company->id)
+        ->where('action', 'updated')
+        ->latest('id')
+        ->first();
+
+    expect($log)->not->toBeNull();
+    expect($log->changes['before'])->toBe(['credit_limit_minor' => 100_000]);
+    expect($log->changes['after'])->toBe(['credit_limit_minor' => 250_000]);
+    expect($log->changes['before'])->not->toHaveKey('updated_at');
+    expect($log->changes['after'])->not->toHaveKey('updated_at');
+});
+
+it('never records a hidden field on a user audit diff, even when it changed', function () {
+    ['admin' => $admin] = seedAuditTenant();
+
+    // Change both `role` (should appear in the diff) and `password` (must
+    // never appear, despite genuinely changing) in the same update.
+    $admin->update(['role' => UserRole::FINANCE, 'password' => 'a-brand-new-password']);
+
+    $log = AuditLog::allTenants()
+        ->where('auditable_type', 'user')
+        ->where('auditable_id', $admin->id)
+        ->where('action', 'updated')
+        ->latest('id')
+        ->first();
+
+    expect($log)->not->toBeNull();
+    expect($log->changes['after']['role'])->toBe('finance');
+    expect($log->changes['before'])->not->toHaveKey('password');
+    expect($log->changes['before'])->not->toHaveKey('remember_token');
+    expect($log->changes['after'])->not->toHaveKey('password');
+    expect($log->changes['after'])->not->toHaveKey('remember_token');
+});
+
+it('prevents updating or deleting an audit log entry', function () {
+    ['company' => $company] = seedAuditTenant();
+
+    $log = AuditLog::allTenants()->where('auditable_id', $company->id)->firstOrFail();
+
+    expect(fn () => $log->update(['action' => 'tampered']))->toThrow(AuditLogImmutableException::class);
+    expect(fn () => $log->delete())->toThrow(AuditLogImmutableException::class);
+});
+
+it('excludes another tenant\'s audit log entries from the index', function () {
+    ['company' => $companyA, 'admin' => $adminA] = seedAuditTenant();
+    ['company' => $companyB] = seedAuditTenant();
+
+    $companyA->update(['credit_limit_minor' => 300_000]);
+    $companyB->update(['credit_limit_minor' => 400_000]);
+
+    $response = $this->actingAs($adminA, 'sanctum')->getJson('/api/v1/audit-logs');
+
+    $response->assertOk();
+
+    $auditableIds = collect($response->json('data'))->pluck('auditable_id');
+    expect($auditableIds)->toContain($companyA->id);
+    expect($auditableIds)->not->toContain($companyB->id);
+});
+
+it('forbids a non-admin role from viewing the audit log', function () {
+    ['employee' => $employee] = seedAuditTenant();
+
+    $response = $this->actingAs($employee, 'sanctum')->getJson('/api/v1/audit-logs');
+
+    $response->assertStatus(403)->assertJsonPath('code', 'FORBIDDEN');
+});
+
+it('rejects an unknown audit log filter with a 422', function () {
+    ['admin' => $admin] = seedAuditTenant();
+
+    $response = $this->actingAs($admin, 'sanctum')->getJson('/api/v1/audit-logs?bogus=1');
+
+    $response->assertStatus(422)->assertJsonPath('code', 'VALIDATION_FAILED');
+});

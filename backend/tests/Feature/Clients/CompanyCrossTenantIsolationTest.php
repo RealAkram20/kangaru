@@ -68,3 +68,32 @@ it('hides another tenant\'s company at the model level under TenantContext', fun
 
     expect(Company::find($companyB->id))->toBeNull();
 });
+
+/**
+ * Regression test: implicit route-model binding (Illuminate\Routing\
+ * Middleware\SubstituteBindings) runs as part of Laravel's default 'api'
+ * middleware group, which — per the framework's default middleware
+ * priority list — executes before any custom, non-prioritized route
+ * middleware, including our `tenant` alias. That meant {company} was
+ * being resolved before IdentifyTenant ever set TenantContext, so
+ * TenantScope's fail-closed default 404'd every single-resource request,
+ * including a tenant fetching or updating its own company. The previous
+ * two tests above only proved cross-tenant access was denied — which
+ * held true, but for the wrong reason (everything was denied). These
+ * prove the *positive* case: a tenant's own resource is genuinely
+ * reachable. Fixed via $middleware->appendToPriorityList(...) in
+ * bootstrap/app.php.
+ */
+it('allows fetching and updating your own tenant\'s company', function () {
+    ['companyA' => $companyA, 'userA' => $userA] = seedTwoTenants();
+
+    $this->actingAs($userA, 'sanctum')
+        ->getJson("/api/v1/companies/{$companyA->id}")
+        ->assertOk()
+        ->assertJsonPath('data.id', $companyA->id);
+
+    $this->actingAs($userA, 'sanctum')
+        ->patchJson("/api/v1/companies/{$companyA->id}", ['credit_limit_minor' => 750_000])
+        ->assertOk()
+        ->assertJsonPath('data.credit_limit_minor', 750_000);
+});
