@@ -53,3 +53,20 @@ npm run dev              # http://localhost:5173
 Do not point XAMPP's Apache at `backend/` directly — it would serve `.env` and
 `vendor/` over HTTP. Use `php artisan serve`, or if Apache is required later,
 point its vhost `DocumentRoot` at `backend/public` specifically.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push/PR to `main`:
+
+- **Backend**: Pint (zero tolerance), Larastan level 8, migration
+  reversibility (`migrate` → `migrate:rollback` → `migrate`), Pest with a
+  70% overall coverage floor. Runs against PHP 8.4 / MySQL 8 — the
+  production target per AGENTS.md — even though local dev currently runs
+  PHP 8.3 / MariaDB via XAMPP.
+- **Frontend**: ESLint, `tsc --noEmit`, production build.
+
+Not yet wired into CI (flagged, not forgotten): the per-module 90% coverage
+gate on `Modules/Billing`/`Modules/Dispatch` (both still empty scaffolding —
+meaningless to gate until they have code), Conventional Commits/commitlint,
+secrets scanning, `composer audit`/`npm audit`, and frontend component tests
+(Vitest + Testing Library — no frontend test files exist yet at all).
