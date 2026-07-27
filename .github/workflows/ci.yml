@@ -48,6 +48,12 @@ jobs:
           php-version: '8.4'
           extensions: mbstring, pdo_mysql, bcmath, ctype, json, tokenizer, xml
           coverage: pcov
+          # Without this, pcov auto-detects its instrumentation scope by
+          # looking for a conventional src/lib/app folder, finds `app`,
+          # and silently never instruments `Modules` at all — every
+          # Modules/* file then reports a false 0.0%, not "untested" but
+          # "never measured". `.` covers the whole working-directory tree.
+          ini-values: pcov.directory=.
           tools: composer:v2
 
       - name: Install dependencies
