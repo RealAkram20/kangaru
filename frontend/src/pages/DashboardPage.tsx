@@ -1,58 +1,141 @@
+import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../auth/useAuth'
-import { SidebarNav } from '../components/navigation/SidebarNav'
-import { Topbar } from '../components/navigation/Topbar'
+import { apiClient } from '../lib/apiClient'
+import { formatRelativeTime, formatTimestamp, formatUgx } from '../lib/format'
+import type { ApiSuccess } from '../types/api'
+import type { AuditAction, AuditLogEntry, CursorMeta } from '../types/auditLog'
+import type { Company } from '../types/company'
+import { Badge } from '../components/core/Badge'
+import { Button } from '../components/core/Button'
+import { Card } from '../components/core/Card'
+import { DataTable, type DataColumn } from '../components/data/DataTable'
+import { KPIStat } from '../components/data/KPIStat'
 
-const SECTIONS = [
+const ACTION_TONE: Record<AuditAction, 'success' | 'info' | 'error'> = {
+  created: 'success',
+  updated: 'info',
+  deleted: 'error',
+}
+
+const AUDIT_COLUMNS: DataColumn<AuditLogEntry>[] = [
+  { key: 'user', header: 'Actor', render: (row) => row.user?.name ?? 'System' },
   {
-    items: [{ id: 'dashboard', label: 'Dashboard', icon: 'layout-dashboard' }],
+    key: 'action',
+    header: 'Action',
+    render: (row) => <Badge tone={ACTION_TONE[row.action]}>{row.action}</Badge>,
   },
   {
-    label: 'Operations',
-    items: [
-      { id: 'dispatch', label: 'Dispatch', icon: 'route' },
-      { id: 'trips', label: 'Trips', icon: 'navigation' },
-      { id: 'companies', label: 'Companies', icon: 'building-2' },
-    ],
+    key: 'auditable_type',
+    header: 'Entity',
+    render: (row) => `${row.auditable_type} #${row.auditable_id}`,
+  },
+  {
+    key: 'created_at',
+    header: 'When',
+    render: (row) => <span style={{ font: 'var(--type-identifier)' }}>{formatTimestamp(row.created_at)}</span>,
   },
 ]
 
-/**
- * Bare Dashboard shell for this scaffolding pass: Topbar + SidebarNav +
- * empty content area. Full widget/KPI content is out of scope.
- */
+/** Mirrors AuditLogPolicy::viewAny() exactly — avoids firing a request
+ * (and a console 403) for a role the backend would deny anyway. */
+function canViewAuditLog(role: string | undefined): boolean {
+  return role === 'super_admin' || role === 'corporate_admin'
+}
+
 export function DashboardPage() {
-  const { user, logout } = useAuth()
+  const { user } = useAuth()
+  const [companies, setCompanies] = useState<Company[] | null>(null)
+  const [auditEntries, setAuditEntries] = useState<AuditLogEntry[] | null>(null)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+
+  const showAuditLog = canViewAuditLog(user?.role)
+
+  useEffect(() => {
+    apiClient
+      .get<ApiSuccess<Company[]>>('/companies')
+      .then((response) => setCompanies(response.data.data))
+      .catch(() => setCompanies([]))
+  }, [])
+
+  useEffect(() => {
+    if (!showAuditLog) return
+    apiClient
+      .get<ApiSuccess<AuditLogEntry[], CursorMeta>>('/audit-logs')
+      .then((response) => {
+        setAuditEntries(response.data.data)
+        setNextCursor(response.data.meta?.cursor.next ?? null)
+      })
+      .catch(() => setAuditEntries([]))
+  }, [showAuditLog])
+
+  function loadMoreAuditEntries() {
+    if (!nextCursor) return
+    setLoadingMore(true)
+    apiClient
+      .get<ApiSuccess<AuditLogEntry[], CursorMeta>>('/audit-logs', { params: { cursor: nextCursor } })
+      .then((response) => {
+        setAuditEntries((existing) => [...(existing ?? []), ...response.data.data])
+        setNextCursor(response.data.meta?.cursor.next ?? null)
+      })
+      .finally(() => setLoadingMore(false))
+  }
+
+  const stats = useMemo(() => {
+    if (!companies) return null
+    const active = companies.filter((c) => c.status === 'active').length
+    return {
+      total: companies.length,
+      active,
+      suspended: companies.length - active,
+      sumCreditLimitMinor: companies.reduce((sum, c) => sum + c.credit_limit_minor, 0),
+    }
+  }, [companies])
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh' }}>
-      <SidebarNav sections={SECTIONS} active="dashboard" />
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        <Topbar
-          title="Dashboard"
-          tenant={user ? `Tenant ${user.tenant_id ?? '—'}` : undefined}
-          user={user ? { name: user.name, role: user.role } : undefined}
-          actions={
-            <button
-              onClick={() => void logout()}
-              style={{
-                font: 'var(--type-label)',
-                color: 'var(--text-on-chrome-secondary)',
-                background: 'transparent',
-                border: 'none',
-                cursor: 'pointer',
-              }}
-            >
-              Sign out
-            </button>
-          }
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-4)' }}>
+        <KPIStat
+          label="Companies"
+          value={stats?.total ?? '—'}
+          icon="building-2"
+          hint={stats ? `${stats.active} active · ${stats.suspended} suspended` : undefined}
         />
-        <main style={{ flex: 1, background: 'var(--surface-page)', padding: 'var(--space-6)' }}>
-          <p style={{ font: 'var(--type-body)', color: 'var(--text-secondary)' }}>
-            Welcome, {user?.name}. This is the Phase 1 scaffold — module content ships in later
-            passes.
-          </p>
-        </main>
+        <KPIStat
+          label="Active companies"
+          value={stats?.active ?? '—'}
+          unit={stats ? `/ ${stats.total}` : undefined}
+          icon="check-circle"
+        />
+        <KPIStat
+          tone="accent"
+          label="Aggregate credit limit"
+          value={stats ? formatUgx(stats.sumCreditLimitMinor) : '—'}
+          icon="receipt"
+          hint={stats ? `Across ${stats.total} companies` : undefined}
+        />
       </div>
+
+      {showAuditLog && (
+        <Card
+          title="Recent activity"
+          subtitle={auditEntries && auditEntries[0] ? `Last activity ${formatRelativeTime(auditEntries[0].created_at)}` : undefined}
+          padding="none"
+        >
+          <DataTable<AuditLogEntry>
+            columns={AUDIT_COLUMNS}
+            rows={auditEntries ?? []}
+            emptyMessage={auditEntries === null ? 'Loading…' : 'No audit activity yet'}
+          />
+          {nextCursor && (
+            <div style={{ padding: 'var(--space-4)', borderTop: '1px solid var(--border-default)' }}>
+              <Button variant="secondary" onClick={loadMoreAuditEntries} disabled={loadingMore}>
+                {loadingMore ? 'Loading…' : 'Load more'}
+              </Button>
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   )
 }

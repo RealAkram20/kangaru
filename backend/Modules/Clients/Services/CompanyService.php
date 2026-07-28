@@ -2,6 +2,7 @@
 
 namespace Modules\Clients\Services;
 
+use App\Models\User;
 use Illuminate\Database\Eloquent\Collection;
 use Modules\Clients\Models\Company;
 use Modules\Clients\Requests\StoreCompanyRequest;
@@ -13,9 +14,17 @@ use Modules\Clients\Requests\UpdateCompanyRequest;
  */
 class CompanyService
 {
-    public function list(): Collection
+    /**
+     * Platform-level users (tenant_id null — Super Admin, Operations
+     * Manager) have no TenantContext of their own, so the normal
+     * TenantScope fails closed and returns nothing. Bypass it for them
+     * specifically; everyone else stays correctly scoped to their tenant.
+     */
+    public function list(User $user): Collection
     {
-        return Company::all();
+        return $user->tenant_id === null
+            ? Company::allTenants()->get()
+            : Company::all();
     }
 
     /**

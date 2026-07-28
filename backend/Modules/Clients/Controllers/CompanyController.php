@@ -3,8 +3,10 @@
 namespace Modules\Clients\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Models\User;
 use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Modules\Clients\Models\Company;
 use Modules\Clients\Requests\StoreCompanyRequest;
 use Modules\Clients\Requests\UpdateCompanyRequest;
@@ -15,11 +17,14 @@ class CompanyController extends Controller
 {
     public function __construct(private readonly CompanyService $companies) {}
 
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
         $this->authorize('viewAny', Company::class);
 
-        return ApiResponse::success(CompanyResource::collection($this->companies->list()));
+        /** @var User $user */
+        $user = $request->user();
+
+        return ApiResponse::success(CompanyResource::collection($this->companies->list($user)));
     }
 
     public function show(Company $company): JsonResponse
