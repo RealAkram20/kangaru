@@ -25,5 +25,6 @@ Route::prefix('v1')->group(function () {
         require base_path('Modules/Trips/Routes/api.php');
         require base_path('Modules/Billing/Routes/api.php');
         require base_path('Modules/Reports/Routes/api.php');
+        require base_path('Modules/Notifications/Routes/api.php');
     });
 });

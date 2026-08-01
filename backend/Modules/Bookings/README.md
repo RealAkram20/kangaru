@@ -82,8 +82,18 @@ decision reason stay an untouched audit record.
    `Company`).
 3. **Credit-limit checks at booking time** — `companies.credit_limit_minor`
    exists but nothing consults it; that belongs with `Modules/Billing`.
-4. **Notifications** on approval/rejection/assignment — `Modules/Notifications`
-   is still empty scaffolding.
+4. **Notifications on assignment.** Approval and rejection now notify the
+   requester: `BookingService` dispatches `BookingApproved` and
+   `BookingRejected` after the transaction commits, and
+   `Modules/Notifications` listens. Assignment does not — that happens in
+   `Modules/Dispatch`, and notifying the *driver* is blocked on drivers
+   having no `user_id` linkage (`Modules/Trips` README, item 9). Notifying
+   the requester that a vehicle was assigned is buildable and simply not
+   built.
+
+   Cancellation deliberately notifies nobody: it is usually the requester's
+   own act, and telling somebody what they just did is the fatigue
+   AGENTS.md warns against.
 5. **Chauffeur service, self-drive, corporate-booking variants** — Phase 2+
    per PROJECT.md.
 6. **Editing a booking after creation** — there is no `PATCH`. A booking

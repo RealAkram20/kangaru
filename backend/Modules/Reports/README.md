@@ -289,11 +289,18 @@ The queue driver is `database`, so a worker must be running
    also renders the trip report, which is the Bank's acceptance artifact,
    and number_format'ing every numeric cell would round the distance column
    to whole kilometres. It needs a decimals-aware rule, not a one-liner.
-6. **Scheduled/emailed reports** — the daily, weekly, monthly and annual
-   *cadences* PROJECT.md asks for exist as a `group_by` on the financial
-   report, but nothing runs a report on a schedule or delivers it;
-   `Modules/Notifications` is empty. The export exists but nobody is told
-   when it is ready except by the page polling.
+6. **Scheduled reports** — the daily, weekly, monthly and annual *cadences*
+   PROJECT.md asks for exist as a `group_by` on the financial report, but
+   nothing runs a report on a schedule.
+
+   Being *told* an export is ready is now built: `GenerateReportExport`
+   dispatches `ReportExportCompleted` once the row is `completed` and the
+   file is on disk, and `Modules/Notifications` files an in-app
+   notification for the requester. Polling is no longer the only way to
+   find out. A **failed** export still notifies nobody, deliberately — it
+   already appears on the export list with its reason, and telling someone
+   a thing they are watching has failed adds noise, not information. That
+   changes when exports can be scheduled, because then nobody is watching.
 7. **Cursor paging in the UI** — the trip report's API is cursor-paginated
    and returns `meta.cursor.next`, but `ReportsPage` renders only the first
    page. The exports cover the full filtered set regardless. The three

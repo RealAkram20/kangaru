@@ -7,6 +7,7 @@ use App\Models\AuditLog;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
 use Illuminate\Database\Eloquent\Relations\Relation;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use Modules\Administration\Policies\AuditLogPolicy;
@@ -17,12 +18,17 @@ use Modules\Billing\Models\RateCardRate;
 use Modules\Billing\Models\RateCardVersion;
 use Modules\Billing\Policies\InvoicePolicy;
 use Modules\Billing\Policies\RateCardPolicy;
+use Modules\Bookings\Events\BookingApproved;
+use Modules\Bookings\Events\BookingRejected;
 use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Policies\BookingPolicy;
 use Modules\Clients\Models\Company;
 use Modules\Clients\Policies\CompanyPolicy;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Policies\DriverPolicy;
+use Modules\Notifications\Listeners\SendBookingDecisionNotification;
+use Modules\Notifications\Listeners\SendReportExportReadyNotification;
+use Modules\Reports\Events\ReportExportCompleted;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Policies\TripPolicy;
 use Modules\Vehicles\Models\Vehicle;
@@ -68,6 +74,17 @@ class AppServiceProvider extends ServiceProvider
             UserRole::DEPOT_MANAGER,
             UserRole::CORPORATE_ADMIN,
         ], true));
+
+        // Explicit listener registration, for the same reason the policies
+        // above are explicit: Laravel's event discovery scans app/Listeners
+        // by convention and would never look under Modules\.
+        //
+        // Registered here rather than in a Notifications service provider
+        // because this application has one provider and adding a second
+        // for two lines would be more indirection than it removes.
+        Event::listen(BookingApproved::class, [SendBookingDecisionNotification::class, 'approved']);
+        Event::listen(BookingRejected::class, [SendBookingDecisionNotification::class, 'rejected']);
+        Event::listen(ReportExportCompleted::class, SendReportExportReadyNotification::class);
 
         // Stable short aliases for audit_logs.auditable_type instead of raw
         // FQCNs. Every Auditable model must appear here — a missing entry
