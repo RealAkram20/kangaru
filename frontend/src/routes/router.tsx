@@ -1,5 +1,6 @@
 import { createBrowserRouter } from 'react-router-dom'
 import { ProtectedRoute } from '../auth/ProtectedRoute'
+import { RequireNavAccess } from './RequireNavAccess'
 import { AppShell } from '../components/layout/AppShell'
 import { BookingsPage } from '../pages/BookingsPage'
 import { CompaniesPage } from '../pages/CompaniesPage'
@@ -29,19 +30,66 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <DashboardPage /> },
       { path: 'bookings', element: <BookingsPage /> },
-      { path: 'dispatch', element: <DispatchPage /> },
+      {
+        path: 'dispatch',
+        element: (
+          <RequireNavAccess id="dispatch">
+            <DispatchPage />
+          </RequireNavAccess>
+        ),
+      },
       { path: 'trips', element: <TripsPage /> },
-      { path: 'invoices', element: <InvoicesPage /> },
-      { path: 'rate-cards', element: <RateCardsPage /> },
-      { path: 'reports', element: <ReportsPage /> },
-      // Reachable at /notifications, and by "See all" in the bell panel.
-      // There is deliberately no SidebarNav entry yet: that file is
-      // uncommitted work in progress, so adding one is the owner's call
-      // once it lands (see Modules/Notifications/README.md).
+      {
+        path: 'invoices',
+        element: (
+          <RequireNavAccess id="invoices">
+            <InvoicesPage />
+          </RequireNavAccess>
+        ),
+      },
+      {
+        path: 'rate-cards',
+        element: (
+          <RequireNavAccess id="rate-cards">
+            <RateCardsPage />
+          </RequireNavAccess>
+        ),
+      },
+      {
+        path: 'reports',
+        element: (
+          <RequireNavAccess id="reports">
+            <ReportsPage />
+          </RequireNavAccess>
+        ),
+      },
+      // Unguarded, like Dashboard, Bookings and Trips: every account has
+      // an inbox, and the server scopes each of these to the caller.
       { path: 'notifications', element: <NotificationsPage /> },
-      { path: 'companies', element: <CompaniesPage /> },
-      { path: 'vehicles', element: <VehiclesPage /> },
-      { path: 'drivers', element: <DriversPage /> },
+      {
+        path: 'companies',
+        element: (
+          <RequireNavAccess id="companies">
+            <CompaniesPage />
+          </RequireNavAccess>
+        ),
+      },
+      {
+        path: 'vehicles',
+        element: (
+          <RequireNavAccess id="vehicles">
+            <VehiclesPage />
+          </RequireNavAccess>
+        ),
+      },
+      {
+        path: 'drivers',
+        element: (
+          <RequireNavAccess id="drivers">
+            <DriversPage />
+          </RequireNavAccess>
+        ),
+      },
     ],
   },
 ])

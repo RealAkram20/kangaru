@@ -37,18 +37,43 @@ class TripPolicy
     ];
 
     /**
-     * Any authenticated user may list trips — TenantScope restricts
-     * results to their own tenant, and TripService/TripController further
-     * restrict a Driver to their own assigned trips.
+     * Any authenticated user may list trips — TenantScope restricts results
+     * to their own tenant, and TripController further narrows a Driver to
+     * the trips they are assigned and a Corporate Employee to the trips
+     * arising from their own bookings.
      */
     public function viewAny(User $user): bool
     {
         return true;
     }
 
+    /**
+     * Two roles see only their own trips, for different reasons.
+     *
+     * A **Driver** may see the trips assigned to them: they are doing the
+     * work, and another driver's run is none of their business.
+     *
+     * A **Corporate Employee** may see the trips their own bookings
+     * produced. They already only see their own bookings
+     * (BookingController), and a trip that a booking they cannot read
+     * produced should be no more visible than the booking was. Until this
+     * existed, an employee could list every trip in the tenant — origin,
+     * destination, driver, vehicle and timings for every colleague. For a
+     * bank whose staff movements are sensitive that is a privacy failure,
+     * not a cosmetic one, and it was found by logging in as one.
+     *
+     * A trip with no booking (raised directly through POST /trips) is
+     * therefore invisible to an employee: `?->` yields null, which never
+     * equals a user id. That is the right default — nothing connects such a
+     * trip to them.
+     */
     public function view(User $user, Trip $trip): bool
     {
-        return $user->role !== UserRole::DRIVER || $trip->driver?->user_id === $user->id;
+        return match ($user->role) {
+            UserRole::DRIVER => $trip->driver?->user_id === $user->id,
+            UserRole::CORPORATE_EMPLOYEE => $trip->booking?->requested_by_user_id === $user->id,
+            default => true,
+        };
     }
 
     /**

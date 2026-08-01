@@ -40,6 +40,18 @@ class TripController extends Controller
             $query->whereHas('driver', fn ($q) => $q->where('user_id', $user->id));
         }
 
+        // The listing counterpart of TripPolicy::view. A Corporate Employee
+        // already sees only their own bookings; without this they saw every
+        // trip in the tenant, including ones produced by bookings they
+        // cannot read.
+        //
+        // whereHas, not a left join on a nullable column: a trip raised
+        // directly through POST /trips has no booking and must not appear
+        // for an employee, and whereHas excludes it by construction.
+        if ($user->role === UserRole::CORPORATE_EMPLOYEE) {
+            $query->whereHas('booking', fn ($q) => $q->where('requested_by_user_id', $user->id));
+        }
+
         $query
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
             ->when($request->filled('vehicle_id'), fn ($q) => $q->where('vehicle_id', $request->integer('vehicle_id')))
