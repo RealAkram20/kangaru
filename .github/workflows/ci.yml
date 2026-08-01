@@ -108,20 +108,25 @@ jobs:
           php artisan migrate:rollback --force
           php artisan migrate --force
 
-      # AGENTS.md's coverage gate is 90% on Modules/Billing and
-      # Modules/Dispatch specifically, 70% overall.
-      - name: Tests (Pest, 70% overall coverage floor)
-        run: vendor/bin/pest --coverage --min=70
-
-      - name: Coverage gate — Modules/Dispatch (90%)
-        run: vendor/bin/pest --coverage --min=90 --path=Modules/Dispatch --testsuite=Feature,Concurrency
-
-      # Billing's gate runs over both suites for the same reason Dispatch's
-      # does: its concurrency test (InvoiceNumberRaceTest) exercises the
+      # One run over every suite, writing a Clover report. Both suites
+      # matter: the concurrency tests exercise the dispatch lock and the
       # document number counter, and measuring Feature alone would report
-      # that path as uncovered.
-      - name: Coverage gate — Modules/Billing (90%)
-        run: vendor/bin/pest --coverage --min=90 --path=Modules/Billing --testsuite=Feature,Concurrency
+      # those paths as uncovered.
+      - name: Tests (Pest, with coverage)
+        run: vendor/bin/pest --coverage --coverage-clover=storage/coverage.xml
+
+      # AGENTS.md's gates are 90% on Modules/Billing and Modules/Dispatch
+      # specifically, 70% overall — asserted from the report above rather
+      # than by re-running the suite once per threshold.
+      #
+      # This replaces three `pest --coverage --min=N --path=...` steps.
+      # `--path` is not a coverage-scoping option: Pest rejects it with
+      # "Option --path does not allow an argument" and exits non-zero, so
+      # those gates failed regardless of the real coverage. Nobody noticed
+      # because CI only runs on `main` and the branch that added them had
+      # not been merged.
+      - name: Coverage gates (70% overall, 90% on Billing and Dispatch)
+        run: php bin/coverage-gate.php storage/coverage.xml
 
   frontend:
     name: Frontend (ESLint, tsc, build)
