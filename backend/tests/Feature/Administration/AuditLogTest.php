@@ -5,27 +5,20 @@ use App\Exceptions\AuditLogImmutableException;
 use App\Models\AuditLog;
 use App\Models\Tenant;
 use App\Models\User;
-use Illuminate\Support\Str;
 use Modules\Clients\Models\Company;
 
 /**
  * Seeds one tenant with a Company and both a corporate_admin and a
  * corporate_employee user — enough for the diff-content tests and the
- * policy-denial test without needing a second tenant. Slug is randomized
- * since some tests call this twice (two independent tenants).
+ * policy-denial test without needing a second tenant. Safe to call twice
+ * in one test: the factories generate independent unique values.
  */
 function seedAuditTenant(): array
 {
-    $slug = 'audit-tenant-'.Str::random(8);
+    $tenant = Tenant::factory()->create(['name' => 'Audit Tenant']);
 
-    $tenant = Tenant::create(['name' => 'Audit Tenant', 'slug' => $slug, 'status' => 'active']);
-
-    $company = Company::allTenants()->create([
-        'tenant_id' => $tenant->id,
+    $company = Company::factory()->forTenant($tenant)->create([
         'legal_name' => 'Audit Tenant Ltd',
-        'billing_email' => "billing@{$slug}.test",
-        'city' => 'Kampala',
-        'country' => 'Uganda',
         'credit_limit_minor' => 100_000,
     ]);
 

@@ -1,0 +1,106 @@
+<?php
+
+use App\Enums\UserRole;
+use App\Models\Tenant;
+use App\Models\User;
+use Modules\Drivers\Models\Driver;
+use Modules\Trips\Enums\TripStatus;
+use Modules\Trips\Models\Trip;
+use Modules\Trips\Models\TripEvent;
+use Modules\Vehicles\Models\Vehicle;
+
+function seedTripPolicyFixture(): array
+{
+    $tenant = Tenant::factory()->create();
+
+    $vehicle = Vehicle::factory()->forTenant($tenant)->van()->create();
+
+    $driverUser = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::DRIVER]);
+    $driver = Driver::factory()->forUser($driverUser)->create(['name' => 'Driver A']);
+
+    $otherDriverUser = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::DRIVER]);
+    $otherDriver = Driver::factory()->forUser($otherDriverUser)->create(['name' => 'Driver B']);
+
+    $dispatcher = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::DISPATCHER]);
+    $finance = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::FINANCE]);
+    $employee = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::CORPORATE_EMPLOYEE]);
+
+    $trip = Trip::factory()->forTenant($tenant)->forVehicle($vehicle)->forDriver($driver)
+        ->create(['origin' => 'Kampala', 'destination' => 'Entebbe']);
+    TripEvent::create([
+        'tenant_id' => $tenant->id, 'trip_id' => $trip->id, 'from_status' => null,
+        'to_status' => TripStatus::ASSIGNED, 'user_id' => null, 'notes' => null,
+    ]);
+
+    $otherTrip = Trip::factory()->forTenant($tenant)->forVehicle($vehicle)->forDriver($otherDriver)
+        ->create(['origin' => 'Kampala', 'destination' => 'Jinja']);
+    TripEvent::create([
+        'tenant_id' => $tenant->id, 'trip_id' => $otherTrip->id, 'from_status' => null,
+        'to_status' => TripStatus::ASSIGNED, 'user_id' => null, 'notes' => null,
+    ]);
+
+    return compact(
+        'tenant', 'vehicle', 'driverUser', 'driver', 'otherDriverUser', 'otherDriver',
+        'dispatcher', 'finance', 'employee', 'trip', 'otherTrip'
+    );
+}
+
+it('lets a driver transition their own assigned trip', function () {
+    ['driverUser' => $driverUser, 'trip' => $trip] = seedTripPolicyFixture();
+
+    $this->actingAs($driverUser, 'sanctum')
+        ->postJson("/api/v1/trips/{$trip->id}/transitions", ['to' => TripStatus::ACCEPTED->value])
+        ->assertOk();
+});
+
+it('forbids a driver from transitioning another driver\'s trip', function () {
+    ['driverUser' => $driverUser, 'otherTrip' => $otherTrip] = seedTripPolicyFixture();
+
+    $this->actingAs($driverUser, 'sanctum')
+        ->postJson("/api/v1/trips/{$otherTrip->id}/transitions", ['to' => TripStatus::ACCEPTED->value])
+        ->assertForbidden();
+});
+
+it('lets a dispatch role transition any trip in the tenant', function () {
+    ['dispatcher' => $dispatcher, 'otherTrip' => $otherTrip] = seedTripPolicyFixture();
+
+    $this->actingAs($dispatcher, 'sanctum')
+        ->postJson("/api/v1/trips/{$otherTrip->id}/transitions", ['to' => TripStatus::ACCEPTED->value])
+        ->assertOk();
+});
+
+it('forbids an unauthorized role from creating a trip', function () {
+    ['employee' => $employee, 'vehicle' => $vehicle, 'driver' => $driver] = seedTripPolicyFixture();
+
+    $this->actingAs($employee, 'sanctum')->postJson('/api/v1/trips', [
+        'vehicle_id' => $vehicle->id,
+        'driver_id' => $driver->id,
+        'origin' => 'Kampala',
+        'destination' => 'Entebbe',
+    ])->assertForbidden();
+});
+
+it('forbids an unauthorized role from transitioning a trip', function () {
+    ['employee' => $employee, 'trip' => $trip] = seedTripPolicyFixture();
+
+    $this->actingAs($employee, 'sanctum')
+        ->postJson("/api/v1/trips/{$trip->id}/transitions", ['to' => TripStatus::ACCEPTED->value])
+        ->assertForbidden();
+});
+
+it('restricts Finance to Disputed, Closed and Invoice Generated targets', function () {
+    ['finance' => $finance, 'trip' => $trip] = seedTripPolicyFixture();
+
+    // Not one of Finance's allowed targets -> 403 from the policy.
+    $this->actingAs($finance, 'sanctum')
+        ->postJson("/api/v1/trips/{$trip->id}/transitions", ['to' => TripStatus::ACCEPTED->value])
+        ->assertForbidden();
+
+    // An allowed target for Finance, but illegal from Assigned -> the
+    // policy passes and the state machine correctly rejects it with 409,
+    // proving the two layers are independent.
+    $this->actingAs($finance, 'sanctum')
+        ->postJson("/api/v1/trips/{$trip->id}/transitions", ['to' => TripStatus::INVOICE_GENERATED->value])
+        ->assertStatus(409)
+        ->assertJsonPath('code', 'INVALID_TRIP_TRANSITION');
+});

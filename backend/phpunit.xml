@@ -8,6 +8,15 @@
         <testsuite name="Feature">
             <directory>tests/Feature</directory>
         </testsuite>
+        <!--
+            Kept out of Feature because these tests need data that other OS
+            processes can see. RefreshDatabase wraps each test in an
+            uncommitted transaction, which is invisible to a second
+            connection and would make a race impossible to stage.
+        -->
+        <testsuite name="Concurrency">
+            <directory>tests/Concurrency</directory>
+        </testsuite>
     </testsuites>
     <source>
         <include>

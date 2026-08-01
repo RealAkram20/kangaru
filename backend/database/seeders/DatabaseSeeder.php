@@ -65,5 +65,9 @@ class DatabaseSeeder extends Seeder
             'email' => 'superadmin@kangaruride.test',
             'role' => UserRole::SUPER_ADMIN,
         ]);
+
+        // Fleet and trips for both tenants, driven through the real state
+        // machine so the seeded timelines are genuine.
+        $this->call(DemoFleetSeeder::class);
     }
 }

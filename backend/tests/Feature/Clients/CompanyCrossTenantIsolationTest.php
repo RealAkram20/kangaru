@@ -13,24 +13,11 @@ use Modules\Clients\Models\Company;
  */
 function seedTwoTenants(): array
 {
-    $tenantA = Tenant::create(['name' => 'Tenant A', 'slug' => 'tenant-a', 'status' => 'active']);
-    $tenantB = Tenant::create(['name' => 'Tenant B', 'slug' => 'tenant-b', 'status' => 'active']);
+    $tenantA = Tenant::factory()->create();
+    $tenantB = Tenant::factory()->create();
 
-    $companyA = Company::allTenants()->create([
-        'tenant_id' => $tenantA->id,
-        'legal_name' => 'Company A Ltd',
-        'billing_email' => 'billing@company-a.test',
-        'city' => 'Kampala',
-        'country' => 'Uganda',
-    ]);
-
-    $companyB = Company::allTenants()->create([
-        'tenant_id' => $tenantB->id,
-        'legal_name' => 'Company B Ltd',
-        'billing_email' => 'billing@company-b.test',
-        'city' => 'Kampala',
-        'country' => 'Uganda',
-    ]);
+    $companyA = Company::factory()->forTenant($tenantA)->create(['legal_name' => 'Company A Ltd']);
+    $companyB = Company::factory()->forTenant($tenantB)->create(['legal_name' => 'Company B Ltd']);
 
     $userA = User::factory()->create([
         'tenant_id' => $tenantA->id,

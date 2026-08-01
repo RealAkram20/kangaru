@@ -5,10 +5,13 @@ namespace Modules\Clients\Models;
 use App\Concerns\Auditable;
 use App\Concerns\BelongsToTenant;
 use App\Models\Tenant;
+use Database\Factories\CompanyFactory;
+use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Modules\Vehicles\Models\Vehicle;
 
 /**
  * The corporate client's business profile — one per Tenant in Phase 1.
@@ -23,6 +26,12 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 class Company extends Model
 {
     use Auditable, BelongsToTenant, HasFactory, SoftDeletes;
+
+    /** @see Vehicle::newFactory() for why this is explicit. */
+    protected static function newFactory(): Factory
+    {
+        return CompanyFactory::new();
+    }
 
     protected $fillable = [
         'tenant_id',

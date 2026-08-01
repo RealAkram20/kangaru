@@ -10,26 +10,40 @@ const SECTIONS: SidebarSection[] = [
   {
     label: 'Operations',
     items: [
+      { id: 'bookings', label: 'Bookings', icon: 'calendar-clock' },
       { id: 'dispatch', label: 'Dispatch', icon: 'route' },
       { id: 'trips', label: 'Trips', icon: 'navigation' },
       { id: 'companies', label: 'Companies', icon: 'building-2' },
     ],
   },
+  {
+    label: 'Fleet',
+    items: [
+      { id: 'vehicles', label: 'Vehicles', icon: 'truck' },
+      { id: 'drivers', label: 'Drivers', icon: 'users' },
+    ],
+  },
 ]
 
-/**
- * Sidebar item ids that have a real route. Dispatch/Trips stay visible in
- * the nav (so the eventual shape of the product is legible) but no-op on
- * click until those modules exist — no route to send them to yet.
- */
+/** Sidebar item ids mapped to their route. Every item now has one. */
 const NAV_PATHS: Partial<Record<string, string>> = {
   dashboard: '/',
+  bookings: '/bookings',
+  dispatch: '/dispatch',
+  trips: '/trips',
   companies: '/companies',
+  vehicles: '/vehicles',
+  drivers: '/drivers',
 }
 
 const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
   '/': { id: 'dashboard', title: 'Dashboard' },
+  '/bookings': { id: 'bookings', title: 'Bookings' },
+  '/dispatch': { id: 'dispatch', title: 'Dispatch board' },
+  '/trips': { id: 'trips', title: 'Trips' },
   '/companies': { id: 'companies', title: 'Companies' },
+  '/vehicles': { id: 'vehicles', title: 'Vehicles' },
+  '/drivers': { id: 'drivers', title: 'Drivers' },
 }
 
 /**

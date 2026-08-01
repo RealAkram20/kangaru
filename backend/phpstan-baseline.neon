@@ -83,3 +83,63 @@ parameters:
 			identifier: missingType.generics
 			count: 1
 			path: app/Models/User.php
+
+		-
+			message: '#^Class Modules\\Vehicles\\Models\\Vehicle uses generic trait Illuminate\\Database\\Eloquent\\Factories\\HasFactory but does not specify its types\: TFactory$#'
+			identifier: missingType.generics
+			count: 1
+			path: Modules/Vehicles/Models/Vehicle.php
+
+		-
+			message: '#^Method Modules\\Vehicles\\Models\\Vehicle\:\:scopeAllTenants\(\) has parameter \$query with generic class Illuminate\\Database\\Eloquent\\Builder but does not specify its types\: TModel$#'
+			identifier: missingType.generics
+			count: 1
+			path: Modules/Vehicles/Models/Vehicle.php
+
+		-
+			message: '#^Method Modules\\Vehicles\\Models\\Vehicle\:\:scopeAllTenants\(\) return type with generic class Illuminate\\Database\\Eloquent\\Builder does not specify its types\: TModel$#'
+			identifier: missingType.generics
+			count: 1
+			path: Modules/Vehicles/Models/Vehicle.php
+
+		-
+			message: '#^Method Modules\\Vehicles\\Models\\Vehicle\:\:tenant\(\) return type with generic class Illuminate\\Database\\Eloquent\\Relations\\BelongsTo does not specify its types\: TRelatedModel, TDeclaringModel$#'
+			identifier: missingType.generics
+			count: 1
+			path: Modules/Vehicles/Models/Vehicle.php
+
+		-
+			message: '#^Method Modules\\Vehicles\\Services\\VehicleService\:\:list\(\) return type with generic class Illuminate\\Database\\Eloquent\\Collection does not specify its types\: TKey, TModel$#'
+			identifier: missingType.generics
+			count: 1
+			path: Modules/Vehicles/Services/VehicleService.php
+
+		-
+			message: '#^Class Modules\\Drivers\\Models\\Driver uses generic trait Illuminate\\Database\\Eloquent\\Factories\\HasFactory but does not specify its types\: TFactory$#'
+			identifier: missingType.generics
+			count: 1
+			path: Modules/Drivers/Models/Driver.php
+
+		-
+			message: '#^Method Modules\\Drivers\\Models\\Driver\:\:scopeAllTenants\(\) has parameter \$query with generic class Illuminate\\Database\\Eloquent\\Builder but does not specify its types\: TModel$#'
+			identifier: missingType.generics
+			count: 1
+			path: Modules/Drivers/Models/Driver.php
+
+		-
+			message: '#^Method Modules\\Drivers\\Models\\Driver\:\:scopeAllTenants\(\) return type with generic class Illuminate\\Database\\Eloquent\\Builder does not specify its types\: TModel$#'
+			identifier: missingType.generics
+			count: 1
+			path: Modules/Drivers/Models/Driver.php
+
+		-
+			message: '#^Method Modules\\Drivers\\Models\\Driver\:\:tenant\(\) return type with generic class Illuminate\\Database\\Eloquent\\Relations\\BelongsTo does not specify its types\: TRelatedModel, TDeclaringModel$#'
+			identifier: missingType.generics
+			count: 1
+			path: Modules/Drivers/Models/Driver.php
+
+		-
+			message: '#^Method Modules\\Drivers\\Services\\DriverService\:\:list\(\) return type with generic class Illuminate\\Database\\Eloquent\\Collection does not specify its types\: TKey, TModel$#'
+			identifier: missingType.generics
+			count: 1
+			path: Modules/Drivers/Services/DriverService.php

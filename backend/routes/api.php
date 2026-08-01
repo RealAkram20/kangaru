@@ -18,5 +18,10 @@ Route::prefix('v1')->group(function () {
 
     Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         require base_path('Modules/Clients/Routes/api.php');
+        require base_path('Modules/Vehicles/Routes/api.php');
+        require base_path('Modules/Drivers/Routes/api.php');
+        require base_path('Modules/Bookings/Routes/api.php');
+        require base_path('Modules/Dispatch/Routes/api.php');
+        require base_path('Modules/Trips/Routes/api.php');
     });
 });

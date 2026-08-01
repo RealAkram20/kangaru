@@ -79,12 +79,14 @@ jobs:
           php artisan migrate --force
 
       # AGENTS.md's coverage gate is 90% on Modules/Billing and
-      # Modules/Dispatch specifically, 70% overall. Both modules are still
-      # empty scaffolding (no classes), so a per-module gate on them would
-      # be meaningless — add it once either module has real code. The
-      # overall 70% floor is enforceable today.
+      # Modules/Dispatch specifically, 70% overall. Modules/Billing is still
+      # empty scaffolding, so its gate lands with the module. Dispatch now
+      # has real code and carries its 90% gate below.
       - name: Tests (Pest, 70% overall coverage floor)
         run: vendor/bin/pest --coverage --min=70
+
+      - name: Coverage gate — Modules/Dispatch (90%)
+        run: vendor/bin/pest --coverage --min=90 --path=Modules/Dispatch --testsuite=Feature,Concurrency
 
   frontend:
     name: Frontend (ESLint, tsc, build)
