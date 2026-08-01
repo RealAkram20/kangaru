@@ -5,6 +5,7 @@ namespace Modules\Vehicles\Requests;
 use App\Support\Tenancy\TenantContext;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Modules\Vehicles\Models\Vehicle;
 
 class StoreVehicleRequest extends FormRequest
 {
@@ -30,7 +31,7 @@ class StoreVehicleRequest extends FormRequest
             'make' => ['required', 'string', 'max:100'],
             'model' => ['required', 'string', 'max:100'],
             'year' => ['required', 'integer', 'min:1980', 'max:'.(date('Y') + 1)],
-            'category' => ['required', 'string', 'in:sedan,suv,van,minibus,bus,pickup,truck'],
+            'category' => ['required', 'string', Rule::in(Vehicle::CATEGORIES)],
             'seating_capacity' => ['required', 'integer', 'min:1', 'max:100'],
             'color' => ['nullable', 'string', 'max:50'],
             'vin' => ['nullable', 'string', 'max:50'],

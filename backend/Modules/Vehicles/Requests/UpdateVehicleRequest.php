@@ -5,6 +5,7 @@ namespace Modules\Vehicles\Requests;
 use App\Support\Tenancy\TenantContext;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Modules\Vehicles\Models\Vehicle;
 
 class UpdateVehicleRequest extends FormRequest
 {
@@ -32,7 +33,7 @@ class UpdateVehicleRequest extends FormRequest
             'make' => ['sometimes', 'string', 'max:100'],
             'model' => ['sometimes', 'string', 'max:100'],
             'year' => ['sometimes', 'integer', 'min:1980', 'max:'.(date('Y') + 1)],
-            'category' => ['sometimes', 'string', 'in:sedan,suv,van,minibus,bus,pickup,truck'],
+            'category' => ['sometimes', 'string', Rule::in(Vehicle::CATEGORIES)],
             'seating_capacity' => ['sometimes', 'integer', 'min:1', 'max:100'],
             'color' => ['sometimes', 'nullable', 'string', 'max:50'],
             'vin' => ['sometimes', 'nullable', 'string', 'max:50'],

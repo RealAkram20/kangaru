@@ -29,6 +29,16 @@ class Vehicle extends Model
     use Auditable, BelongsToTenant, HasFactory, SoftDeletes;
 
     /**
+     * The Phase-1 vehicle categories. Not a reference table yet (see the
+     * class docblock), but no longer a string literal repeated per call
+     * site: Modules/Billing prices per category, so a category that exists
+     * in one list and not another would be a vehicle nobody can invoice.
+     *
+     * @var array<int, string>
+     */
+    public const CATEGORIES = ['sedan', 'suv', 'van', 'minibus', 'bus', 'pickup', 'truck'];
+
+    /**
      * Explicit, because Laravel's default factory resolver only guesses
      * correctly for models under App\Models — from Modules\ it would look
      * for Database\Factories\Modules\Vehicles\Models\VehicleFactory. Same
