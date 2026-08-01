@@ -36,7 +36,18 @@ class TransitionTripRequest extends FormRequest
         ], true);
 
         return [
-            'to' => ['required', Rule::enum(TripStatus::class)],
+            // Invoice Generated is excluded, and is the one state a client
+            // may not ask for directly. It is applied by
+            // Modules\Billing\Services\InvoiceService, inside the same
+            // transaction that issues the invoice, so a trip can never sit
+            // at Invoice Generated with no invoice behind it — a state that
+            // is also unbillable afterwards, because billing only accepts a
+            // trip at Trip Completed.
+            //
+            // Enforced here rather than in TripPolicy because it is not a
+            // question of who may do it: nobody may, so 422 is the honest
+            // answer and 403 would imply somebody could.
+            'to' => ['required', Rule::enum(TripStatus::class)->except(TripStatus::INVOICE_GENERATED)],
             'notes' => [$reasonRequired ? 'required' : 'nullable', 'string', 'max:1000'],
             'odometer_start' => [
                 Rule::requiredIf($to === TripStatus::TRIP_STARTED->value),

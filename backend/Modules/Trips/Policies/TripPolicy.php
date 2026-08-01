@@ -67,8 +67,13 @@ class TripPolicy
             return true;
         }
 
+        // Invoice Generated is deliberately absent: no role reaches it
+        // through this endpoint. Modules\Billing\Services\InvoiceService
+        // applies it inside the transaction that issues the invoice, and
+        // TransitionTripRequest rejects it at the door — see the comment
+        // there. Authorization for that act is InvoicePolicy::create.
         if ($user->role === UserRole::FINANCE) {
-            return in_array($to, [TripStatus::DISPUTED, TripStatus::CLOSED, TripStatus::INVOICE_GENERATED], true);
+            return in_array($to, [TripStatus::DISPUTED, TripStatus::CLOSED], true);
         }
 
         if ($user->role === UserRole::DRIVER) {

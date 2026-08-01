@@ -7,6 +7,7 @@ use Modules\Drivers\Models\Driver;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Models\TripEvent;
+use Modules\Trips\Services\TripStateMachine;
 use Modules\Vehicles\Models\Vehicle;
 
 /**
@@ -42,6 +43,21 @@ function seedTripStateMachineFixture(): array
     ]);
 
     return compact('tenant', 'vehicle', 'otherVehicle', 'driver', 'otherDriver', 'dispatcher', 'trip');
+}
+
+/**
+ * Applies the one transition no HTTP client may ask for.
+ *
+ * `TransitionTripRequest` rejects `to=invoice_generated` with a 422, because
+ * Modules\Billing owns that state: InvoiceService applies it inside the
+ * transaction that issues the invoice, so a trip can never be marked billed
+ * without an invoice behind it. These lifecycle tests still need to get past
+ * it, and calling the state machine directly is exactly what Billing does —
+ * without dragging a rate card fixture into a Trips test.
+ */
+function invoiceGeneratedByBilling(User $actor, Trip $trip): void
+{
+    app(TripStateMachine::class)->transition($trip->fresh(), TripStatus::INVOICE_GENERATED, $actor);
 }
 
 /**
@@ -226,8 +242,6 @@ it('walks the full happy path from Assigned to Closed with a correctly ordered t
     $steps = [
         [TripStatus::TRIP_STARTED, ['odometer_start' => 15000]],
         [TripStatus::TRIP_COMPLETED, ['odometer_end' => 15050]],
-        [TripStatus::INVOICE_GENERATED, []],
-        [TripStatus::CLOSED, []],
     ];
 
     foreach ($steps as [$to, $extra]) {
@@ -235,6 +249,16 @@ it('walks the full happy path from Assigned to Closed with a correctly ordered t
             ->postJson("/api/v1/trips/{$trip->id}/transitions", ['to' => $to->value, ...$extra])
             ->assertOk();
     }
+
+    // Invoice Generated has no HTTP transition — it belongs to
+    // Modules\Billing, which applies it in the same transaction that issues
+    // the invoice. Driven through the state machine directly here so this
+    // test stays about the trip lifecycle and does not need a rate card.
+    invoiceGeneratedByBilling($dispatcher, $trip);
+
+    $this->actingAs($dispatcher, 'sanctum')
+        ->postJson("/api/v1/trips/{$trip->id}/transitions", ['to' => TripStatus::CLOSED->value])
+        ->assertOk();
 
     expect($trip->fresh()->status)->toBe(TripStatus::CLOSED);
 
@@ -284,9 +308,7 @@ it('only allows Disputed from Invoice Generated, and only Closed from Disputed',
     $this->actingAs($dispatcher, 'sanctum')
         ->postJson("/api/v1/trips/{$trip->id}/transitions", ['to' => TripStatus::TRIP_COMPLETED->value, 'odometer_end' => 15010])
         ->assertOk();
-    $this->actingAs($dispatcher, 'sanctum')
-        ->postJson("/api/v1/trips/{$trip->id}/transitions", ['to' => TripStatus::INVOICE_GENERATED->value])
-        ->assertOk();
+    invoiceGeneratedByBilling($dispatcher, $trip);
 
     $this->actingAs($dispatcher, 'sanctum')
         ->postJson("/api/v1/trips/{$trip->id}/transitions", ['to' => TripStatus::DISPUTED->value, 'notes' => 'Amount disputed'])
