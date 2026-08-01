@@ -1,0 +1,43 @@
+title = "KangaruRide secret scanning"
+
+# AGENTS.md Security: "Secrets scanning (gitleaks) on every push. A committed
+# secret is rotated the same day."
+#
+# The default rule set is kept in full. Everything below is an allowlist, and
+# each entry is narrow on purpose: a scanner that is broadly muted is a
+# scanner nobody trusts, and the first real leak is the one it will be
+# muted for.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures and generated artefacts, scoped as tightly as possible."
+
+# `generic-api-key` fires on the idempotency keys in the Billing tests —
+# `'Idempotency-Key', 'idem-race-trip-one01'` and similar. They are fixtures
+# for AGENTS.md's "every mutation carries an idempotency key" rule, not
+# credentials: they authenticate nothing, grant nothing, and are meaningless
+# outside the test database that is dropped after each run.
+#
+# The pattern is deliberately anchored to the `idem-` prefix every fixture
+# uses rather than allowlisting the test directory. A real credential
+# committed to a test file is still a leaked credential, and this leaves that
+# case detected.
+regexes = [
+  '''idem-[a-z0-9-]{4,}''',
+]
+
+# Regexes are matched against the secret, not the surrounding line, so this
+# keeps the rule honest even if a fixture moves file.
+regexTarget = "secret"
+
+paths = [
+  # PHPStan's analysis cache. Gitignored, so CI never sees it, but a
+  # developer running gitleaks locally would otherwise wade through ~400
+  # false positives from serialised type data and conclude the tool is
+  # broken. Nothing here is authored, and nothing here is committed.
+  '''backend/storage/phpstan/''',
+
+  # Composer and npm lock files: hashes, not secrets.
+  '''(.*?)(composer\.lock|package-lock\.json)$''',
+]

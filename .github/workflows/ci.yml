@@ -68,7 +68,7 @@ jobs:
           gitleaks version
 
       - name: Scan repository history
-        run: gitleaks detect --source . --no-banner --redact --exit-code 1
+        run: gitleaks detect --source . --config .gitleaks.toml --no-banner --redact --exit-code 1
 
   backend:
     name: Backend (Pint, Larastan, Pest)
