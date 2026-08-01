@@ -61,6 +61,27 @@ class TripPolicy
         return in_array($user->role, self::DISPATCH_ROLES, true);
     }
 
+    /**
+     * Who may post GPS pings for a trip.
+     *
+     * The driver on the trip, because in Phase 1 their phone is the device
+     * (PROJECT.md: drivers use a mobile-responsive web flow), plus the
+     * dispatch roles so a tracker fitted to the vehicle can report through
+     * an operator account.
+     *
+     * Not Finance and not a Corporate Admin: the route is evidence for the
+     * distance a client is billed, and the party being billed must not be
+     * able to write it.
+     */
+    public function recordLocations(User $user, Trip $trip): bool
+    {
+        if (in_array($user->role, self::DISPATCH_ROLES, true)) {
+            return true;
+        }
+
+        return $user->role === UserRole::DRIVER && $trip->driver?->user_id === $user->id;
+    }
+
     public function transition(User $user, Trip $trip, TripStatus $to): bool
     {
         if (in_array($user->role, self::DISPATCH_ROLES, true)) {

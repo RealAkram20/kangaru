@@ -16,7 +16,10 @@ use Modules\Trips\Models\TripEvent;
  */
 class TripStateMachine
 {
-    public function __construct(private readonly TripAssignmentGuard $guard) {}
+    public function __construct(
+        private readonly TripAssignmentGuard $guard,
+        private readonly RouteDistanceCalculator $routeDistance,
+    ) {}
 
     /**
      * @param  array<string, mixed>  $payload
@@ -76,10 +79,52 @@ class TripStateMachine
         // as a string; assigning the raw int would have the property hold
         // two different types depending on whether the model was reloaded.
         $trip->distance_km = (string) ($trip->odometer_end - $trip->odometer_start);
-        // ADR-0003: the GPS (trip_locations) pipeline isn't wired up yet.
-        // gps_distance_km / distance_variance_flagged stay at their
-        // defaults (null / false) until that pass exists — see
-        // Modules/Trips/README.md.
+
+        $this->reconcileAgainstGps($trip);
+    }
+
+    /**
+     * PROJECT.md: "Odometer distance is automatically reconciled against
+     * GPS-calculated distance; variances beyond a configurable threshold are
+     * flagged for review."
+     *
+     * Runs at Trip Completed, on the odometer reading the driver has just
+     * entered — the moment the two numbers can first be compared, and before
+     * the trip can be invoiced.
+     *
+     * A trip with no GPS trace is left unflagged with `gps_distance_km` null.
+     * That distinction is the whole value of the flag: "the readings
+     * disagree" is a thing to investigate, "there is no GPS evidence" is not
+     * the driver's doing, and flagging both would flag every trip taken
+     * before a device was fitted. PROJECT.md's success metric asks for
+     * flagged trips to be reviewed within two business days, which only
+     * survives if the flag stays rare and means one thing.
+     */
+    private function reconcileAgainstGps(Trip $trip): void
+    {
+        $gpsKilometres = $this->routeDistance->kilometresFor($trip->id);
+
+        if ($gpsKilometres === null) {
+            return;
+        }
+
+        $trip->gps_distance_km = (string) $gpsKilometres;
+
+        $odometerKilometres = (float) $trip->distance_km;
+
+        // An odometer distance of zero cannot be expressed as a percentage
+        // difference. Any GPS movement at all against a zero reading is a
+        // disagreement worth a look.
+        if ($odometerKilometres <= 0.0) {
+            $trip->distance_variance_flagged = $gpsKilometres > 0.0;
+
+            return;
+        }
+
+        $variancePercent = abs($odometerKilometres - $gpsKilometres) / $odometerKilometres * 100;
+
+        $trip->distance_variance_flagged = $variancePercent
+            > (float) config('tracking.variance_threshold_percent', 10);
     }
 
     /**

@@ -83,9 +83,14 @@ Cancelled: reachable from any state before Trip Started, including Rejected
 1. **Photo upload for odometer readings** — `odometer_start_photo_path`/
    `odometer_end_photo_path` columns exist, nullable, always null; no
    upload endpoint or storage wiring yet.
-2. **Real GPS distance reconciliation** — `gps_distance_km` and
-   `distance_variance_flagged` columns exist; population/comparison logic
-   is a no-op until the ADR-0003 Redis/`trip_locations` pipeline exists.
+2. **Redis streams and live tracking** — ADR-0003's ingestion architecture
+   is built (validate → buffer → batch worker → partitioned MySQL) but the
+   buffer is Laravel's queue, which is Redis-backed in production via
+   `QUEUE_CONNECTION=redis`. What is *not* built is the Redis **stream**
+   specifically — `XADD`, consumer groups, replay after a crashed worker —
+   and the live latest-position reads ADR-0003 says must come from Redis
+   rather than MySQL, with the <15 s freshness PROJECT.md asks for. There
+   is no live map. See "GPS route capture" below.
 3. **Rate-card-driven cancellation/no-show charges** — `cancellation_charge_applicable`
    is a manual boolean flag only, no computed amount. No-show has no
    charge flag at all yet. `Modules/Billing` doesn't exist yet.
@@ -108,6 +113,79 @@ Cancelled: reachable from any state before Trip Started, including Rejected
 9. **`Modules/Drivers` `user_id` linkage** — the column exists but has no
    request-layer/UI support in `Modules/Drivers` yet; populated only via
    direct Eloquent, seeders, or tests for now (see `Modules/Drivers/README.md`).
+
+## GPS route capture (ADR-0003)
+
+`POST /api/v1/trips/{trip}/locations` takes a batch of pings, validates
+them, and queues them. It answers **202, not 201**: the pings are accepted
+and buffered, nothing is written yet, and claiming 201 would assert a row
+that does not exist.
+
+`GET /api/v1/trips/{trip}/locations` serves the recorded route for replay,
+cursor-paginated, with the measured distance in `meta.gps_distance_km`.
+
+Only the trip's own driver and the dispatch roles may record locations.
+**Finance cannot** — the route is the evidence for the distance a client is
+billed, and the party doing the billing must not be able to write it.
+
+### The table
+
+`trip_locations` is partitioned by month from day one, as PROJECT.md
+requires: it is the platform's growth risk at roughly 500M rows a year, and
+retiring a month has to be a `DROP PARTITION` rather than a `DELETE` of
+tens of millions of rows contending with live ingestion.
+
+Three things about it are forced by the storage engine, not chosen:
+
+- **No foreign keys.** InnoDB refuses them on a partitioned table — the
+  server answers `ERROR 1506` — so this is the one justified exception to
+  AGENTS.md's "proper foreign keys" rule in this schema. It also means
+  `TenantScope` is the *only* thing separating one client's vehicle
+  movements from another's, which is why
+  `TripLocationCrossTenantIsolationTest` exists separately from the Trips
+  one.
+- **The primary key is `(id, recorded_at)`.** Every unique key on a
+  partitioned table must contain every partitioning column.
+- **`recorded_at` is DATETIME, not TIMESTAMP.** A TIMESTAMP can only be
+  range-partitioned through `UNIX_TIMESTAMP()`.
+
+`recorded_at` is the *device's* clock. A ping captured in an upcountry dead
+zone and synced an hour later belongs to the month it happened in — which
+is the month its trip is billed in, and the partition it must land in.
+
+A `p_future` MAXVALUE partition always exists, so ingestion never fails
+because maintenance did not run. `php artisan trip-locations:maintain`
+carves months out of it ahead of time and drops whatever is past the
+12-month retention.
+
+### Distance, and why it is not just Haversine
+
+`RouteDistanceCalculator` sums great-circle hops between consecutive
+points, but **ignores segments below a noise floor** (default 5 m). A
+parked vehicle still pings, and consumer GPS wanders several metres while
+it does; over a 20-minute wait at ADR-0003's 10-second cadence that jitter
+sums to a few hundred metres the vehicle never travelled — added to a
+billed distance, on the very figure meant to catch a wrong odometer
+reading. A test lays 120 stationary pings and asserts the answer is zero.
+
+It returns **null, not zero**, for a trip with fewer than two points. The
+two are different claims — "there is no GPS evidence" versus "the vehicle
+did not move" — and reconciliation treats them differently.
+
+### Odometer reconciliation
+
+At `Trip Completed`, the odometer span the driver just entered is compared
+against the route. Beyond `tracking.variance_threshold_percent` (default
+10%) the trip is flagged for review.
+
+A trip with **no** GPS trace is left unflagged. Flagging it would flag
+every trip taken before a tracker was fitted and bury the real ones —
+PROJECT.md's success metric asks for flagged trips to be reviewed within
+two business days, which only survives if the flag stays rare and means one
+thing.
+
+The threshold is deliberately loose for a first pass: GPS traces are noisy,
+and a flag nobody trusts is a flag nobody reviews.
 
 ## Frontend
 

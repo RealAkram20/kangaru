@@ -14,6 +14,7 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Validation\ValidationException;
 use Modules\Reports\Console\PruneReportExports;
+use Modules\Trips\Console\MaintainTripLocationPartitions;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
@@ -30,6 +31,7 @@ return Application::configure(basePath: dirname(__DIR__))
     // factory registrations.
     ->withCommands([
         PruneReportExports::class,
+        MaintainTripLocationPartitions::class,
     ])
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->api(prepend: [
