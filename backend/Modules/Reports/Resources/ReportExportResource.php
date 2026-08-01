@@ -19,11 +19,17 @@ class ReportExportResource extends JsonResource
         return [
             'id' => $this->id,
             'report' => $this->report,
+            'report_label' => $this->report->label(),
             'format' => $this->format->value,
             'format_label' => $this->format->label(),
             'status' => $this->status->value,
             'filters' => $this->filters,
             'row_count' => $this->row_count,
+            // What a row counts, so the client can render "12 periods"
+            // without holding its own mapping. It used to say "trips" for
+            // every export, which was already wrong for the driver and
+            // vehicle reports.
+            'row_noun' => $this->report->rowNoun(),
             'file_size' => $this->file_size,
             // The client needs to know whether to offer a download without
             // reimplementing the rule; expiry counts as not downloadable.

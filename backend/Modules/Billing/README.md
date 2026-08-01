@@ -103,8 +103,9 @@ observed, not theorised: `InvoiceNumberRaceTest` reported
   BelongsToTenant}`, `App\Support\Api\ApiResponse`, `App\Enums\ErrorCode`.
 - `brick/money` (and `brick/math`), added by this module.
 
-Nothing depends on Billing yet. `Modules/Reports` will, when a financial
-report lands.
+`Modules/Reports` depends on Billing, read-only: its financial report
+aggregates `invoices` and `credit_notes` by period. Billing does not depend
+on Reports. Nothing else depends on Billing.
 
 ## Public APIs
 
@@ -161,7 +162,10 @@ Everything here is *not built*, not "partly built".
 1. **Payments, statements, outstanding balances and credit limits.** Nothing
    records money coming in. `Company::$credit_limit_minor` exists and is
    read by nothing. An invoice's `balance` is issued-total-less-credits, not
-   less-payments.
+   less-payments. `Modules/Reports`' financial report inherits this exactly:
+   its "Outstanding" is the same figure, and it carries a
+   `payments_recorded: false` flag so every surface that renders it can say
+   so rather than let a bank read it as "unpaid".
 2. **Monthly consolidated invoicing.** One invoice per trip. PROJECT.md wants
    monthly billing; that makes `invoices.trip_id` nullable with a line-level
    trip reference, which is additive per the zero-downtime rule.

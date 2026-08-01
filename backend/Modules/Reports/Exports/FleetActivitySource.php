@@ -25,10 +25,13 @@ class FleetActivitySource implements ReportSource
      * The two columns that identify the thing being reported on. Everything
      * after them is identical between the reports.
      *
-     * A match rather than an array keyed by the enum's value: the trip
-     * report is a ReportType too, and this source cannot produce it. The
-     * match makes that a stated refusal instead of an undefined index that
-     * would surface as a blank column header.
+     * A match rather than an array keyed by the enum's value: the trip and
+     * financial reports are ReportTypes too, and this source cannot produce
+     * either. The match makes that a stated refusal instead of an undefined
+     * index that would surface as a blank column header — and, because it
+     * is exhaustive, PHPStan fails the build when a new report type is
+     * added without a decision being made here. That is how the financial
+     * report was caught.
      *
      * @return array{0: string, 1: string}
      */
@@ -39,6 +42,9 @@ class FleetActivitySource implements ReportSource
             ReportType::VEHICLES => ['Vehicle registration', 'Category'],
             ReportType::TRIPS => throw new \InvalidArgumentException(
                 'The trip report is row-per-trip, not an aggregate — use TripReportSource.'
+            ),
+            ReportType::FINANCIAL => throw new \InvalidArgumentException(
+                'The financial report aggregates invoices, not trips — use FinancialReportSource.'
             ),
         };
     }

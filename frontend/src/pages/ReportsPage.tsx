@@ -6,6 +6,7 @@ import { formatDistance, formatDuration, formatOdometer } from '../lib/tripStatu
 import type { ApiSuccess } from '../types/api'
 import type { Driver } from '../types/driver'
 import type {
+  FinancialPeriod,
   ReportType,
   TripReportFilters,
   TripReportMeta,
@@ -14,6 +15,7 @@ import type {
 } from '../types/report'
 import type { Vehicle } from '../types/vehicle'
 import { ExportPanel } from './reports/ExportPanel'
+import { FinancialReport } from './reports/FinancialReport'
 import { FleetReport } from './reports/FleetReport'
 import { Badge } from '../components/core/Badge'
 import { Button } from '../components/core/Button'
@@ -150,23 +152,42 @@ async function fetchReport(filters: TripReportFilters) {
   return { rows: response.data.data, summary: response.data.meta?.summary ?? null }
 }
 
-const REPORTS: { value: ReportType; label: string }[] = [
-  { value: 'trips', label: 'Trip report' },
-  { value: 'drivers', label: 'Driver report' },
-  { value: 'vehicles', label: 'Vehicle report' },
+/** PROJECT.md's four Phase 1 reports, in the order it lists them. */
+const REPORTS: { value: ReportType; subtitle: string }[] = [
+  { value: 'trips', subtitle: 'Every trip that commenced in the selected period' },
+  { value: 'drivers', subtitle: 'Every driver who commenced a trip in the selected period' },
+  { value: 'vehicles', subtitle: 'Every vehicle that commenced a trip in the selected period' },
+  { value: 'financial', subtitle: 'Invoiced, credited and outstanding per period' },
+]
+
+const REPORT_LABELS: Record<ReportType, string> = {
+  trips: 'Trip report',
+  drivers: 'Driver report',
+  vehicles: 'Vehicle report',
+  financial: 'Financial report',
+}
+
+const GROUP_BY: { value: FinancialPeriod; label: string }[] = [
+  { value: 'day', label: 'Daily' },
+  { value: 'week', label: 'Weekly' },
+  { value: 'month', label: 'Monthly' },
+  { value: 'year', label: 'Annually' },
 ]
 
 export function ReportsPage() {
   const month = currentMonth()
   const [report, setReport] = useState<ReportType>('trips')
-  // Bumped by Run report, so the fleet reports re-fetch on demand rather
-  // than on every keystroke in a date field.
+  // Bumped by Run report, so the aggregate reports re-fetch on demand
+  // rather than on every keystroke in a date field.
   const [fleetToken, setFleetToken] = useState(0)
   const [filters, setFilters] = useState<TripReportFilters>({
     from: month.from,
     to: month.to,
     vehicle_id: '',
     driver_id: '',
+    // PROJECT.md and AGENTS.md both describe billing as a monthly cycle,
+    // so that is the period a finance user arrives wanting.
+    group_by: 'month',
   })
   const [rows, setRows] = useState<TripReportRow[] | null>(null)
   const [summary, setSummary] = useState<TripReportSummary | null>(null)
@@ -223,8 +244,8 @@ export function ReportsPage() {
       )}
 
       <Card
-        title={REPORTS.find((r) => r.value === report)?.label ?? 'Report'}
-        subtitle="Every trip that commenced in the selected period"
+        title={REPORT_LABELS[report]}
+        subtitle={REPORTS.find((r) => r.value === report)?.subtitle ?? ''}
       >
         <div
           style={{
@@ -239,7 +260,7 @@ export function ReportsPage() {
               id="r-report"
               value={report}
               onChange={(e) => setReport(e.target.value as ReportType)}
-              options={REPORTS.map((r) => ({ value: r.value, label: r.label }))}
+              options={REPORTS.map((r) => ({ value: r.value, label: REPORT_LABELS[r.value] }))}
             />
           </FormField>
           <FormField label="From" htmlFor="r-from">
@@ -280,6 +301,21 @@ export function ReportsPage() {
             />
             </FormField>
           )}
+          {/* Only the financial report has periods for a cadence to bucket
+              — the others are a row per thing. The server rejects the
+              filter on them rather than ignoring it, so it is not offered. */}
+          {report === 'financial' && (
+            <FormField label="Group by" htmlFor="r-group-by">
+              <Select
+                id="r-group-by"
+                value={filters.group_by}
+                onChange={(e) =>
+                  setFilters({ ...filters, group_by: e.target.value as FinancialPeriod })
+                }
+                options={GROUP_BY}
+              />
+            </FormField>
+          )}
           <div style={{ display: 'flex', gap: 'var(--gap-inline)' }}>
             <Button
               iconLeft="play"
@@ -294,8 +330,17 @@ export function ReportsPage() {
         </div>
       </Card>
 
-      {report !== 'trips' && (
+      {(report === 'drivers' || report === 'vehicles') && (
         <FleetReport report={report} from={filters.from} to={filters.to} reloadToken={fleetToken} />
+      )}
+
+      {report === 'financial' && (
+        <FinancialReport
+          from={filters.from}
+          to={filters.to}
+          groupBy={filters.group_by}
+          reloadToken={fleetToken}
+        />
       )}
 
       {report === 'trips' && summary && (

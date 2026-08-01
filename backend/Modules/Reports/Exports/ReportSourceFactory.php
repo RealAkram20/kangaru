@@ -19,6 +19,7 @@ class ReportSourceFactory
     public function __construct(
         private readonly TripReportSource $trips,
         private readonly FleetActivityRepository $fleet,
+        private readonly FinancialReportSource $financial,
     ) {}
 
     public function for(ReportType $type): ReportSource
@@ -26,6 +27,10 @@ class ReportSourceFactory
         return match ($type) {
             ReportType::TRIPS => $this->trips,
             ReportType::DRIVERS, ReportType::VEHICLES => new FleetActivitySource($this->fleet, $type),
+            // Injected rather than constructed, unlike the fleet source:
+            // it needs no per-request argument, so the container can build
+            // it and there is nothing here for this class to decide.
+            ReportType::FINANCIAL => $this->financial,
         };
     }
 }
