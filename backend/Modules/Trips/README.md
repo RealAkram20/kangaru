@@ -101,14 +101,27 @@ Cancelled: reachable from any state before Trip Started, including Rejected
 7. **Offline-resilient trip capture** (AGENTS.md "Offline resilience") —
    Phase 1 here is an online-only API; local-capture-and-sync is a later
    frontend pass.
-8. **All Trips UI** — this module is backend-only. The frontend has no
-   `TripsPage`, no `types/trip.ts`, and no route; "Trips" appears in the
-   `AppShell` sidebar but is deliberately unrouted. No list view, create
-   form, transition action buttons, odometer capture UI, or event-timeline
-   view — building those well deserves its own reviewed pass.
+8. **Creating a trip from the UI** — `TripsPage` lists trips, shows the
+   timeline, and drives every transition (including odometer capture), but
+   there is no ad-hoc "new trip" form. Trips are raised from the dispatch
+   board; `POST /api/v1/trips` is currently API-only.
 9. **`Modules/Drivers` `user_id` linkage** — the column exists but has no
    request-layer/UI support in `Modules/Drivers` yet; populated only via
    direct Eloquent, seeders, or tests for now (see `Modules/Drivers/README.md`).
+
+## Frontend
+
+`frontend/src/pages/TripsPage.tsx` — the list, the six bank facts, the
+event timeline, and the transition actions;
+`frontend/src/pages/trips/TransitionDialog.tsx` collects odometer readings
+and reasons.
+
+The action buttons are driven by `allowed_transitions` on `TripResource`,
+which the API derives from `TripStatus::allowedTransitions()`. The client
+therefore holds **no copy of the lifecycle graph** and cannot drift from
+it — AGENTS.md's "allowed transitions are defined in one place" holds
+across the stack, not just inside PHP. That field answers what the *state*
+permits; `TripPolicy` still authorises who may do it.
 
 ## Notes
 

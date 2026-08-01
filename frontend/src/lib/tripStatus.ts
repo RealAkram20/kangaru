@@ -44,6 +44,31 @@ export function tripStatusIcon(status: TripStatus): string {
 export const TRIP_STATUSES = Object.keys(STATUS) as TripStatus[]
 
 /**
+ * Transitions the backend requires extra input for. Mirrors
+ * TransitionTripRequest's rules so the dialog asks for the right thing up
+ * front — the server still validates and is the authority; getting this
+ * wrong costs a 422, not a bad write.
+ */
+export function transitionNeeds(to: TripStatus): {
+  odometer: 'start' | 'end' | null
+  reason: boolean
+} {
+  return {
+    odometer: to === 'trip_started' ? 'start' : to === 'trip_completed' ? 'end' : null,
+    reason: (['cancelled', 'rejected', 'no_show', 'disputed'] as TripStatus[]).includes(to),
+  }
+}
+
+/**
+ * Transitions that end or curtail the journey, styled as destructive so a
+ * dispatcher does not cancel a trip with the same button weight as
+ * advancing one.
+ */
+export function isDestructiveTransition(to: TripStatus): boolean {
+  return (['cancelled', 'rejected', 'no_show', 'disputed'] as TripStatus[]).includes(to)
+}
+
+/**
  * "1h 35m" / "45m". The API sends whole minutes (Bank acceptance criterion
  * #6 asks for hours/minutes), so no rounding happens here.
  */

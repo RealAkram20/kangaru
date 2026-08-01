@@ -160,6 +160,22 @@ it('reports all six of the Bank\'s acceptance criteria on a completed trip', fun
     expect((float) $response->json('data.distance_km'))->toBe(42.0);
 });
 
+it('serves the legal next states so clients need no copy of the graph', function () {
+    ['dispatcher' => $dispatcher, 'trip' => $trip] = seedTripStateMachineFixture();
+
+    $this->actingAs($dispatcher, 'sanctum')
+        ->getJson("/api/v1/trips/{$trip->id}")
+        ->assertOk()
+        // Exactly TripStatus::ASSIGNED->allowedTransitions().
+        ->assertJsonPath('data.allowed_transitions', ['accepted', 'rejected', 'cancelled']);
+
+    $this->actingAs($dispatcher, 'sanctum')
+        ->postJson("/api/v1/trips/{$trip->id}/transitions", ['to' => TripStatus::CANCELLED->value, 'notes' => 'x'])
+        ->assertOk()
+        // A terminal state offers nothing.
+        ->assertJsonPath('data.allowed_transitions', []);
+});
+
 it('reports no duration until the trip has both started and completed', function () {
     ['dispatcher' => $dispatcher, 'trip' => $trip] = seedTripStateMachineFixture();
 

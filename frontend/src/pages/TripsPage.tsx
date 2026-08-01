@@ -5,13 +5,16 @@ import {
   formatDistance,
   formatDuration,
   formatOdometer,
+  isDestructiveTransition,
   tripStatusIcon,
   tripStatusLabel,
   tripStatusTone,
 } from '../lib/tripStatus'
 import type { ApiSuccess } from '../types/api'
 import type { CursorMeta, Trip, TripEvent, TripStatus } from '../types/trip'
+import { TransitionDialog } from './trips/TransitionDialog'
 import { Badge } from '../components/core/Badge'
+import { Button } from '../components/core/Button'
 import { Card } from '../components/core/Card'
 import { Icon } from '../components/core/Icon'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
@@ -83,6 +86,7 @@ export function TripsPage() {
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Trip | null>(null)
+  const [transitionTo, setTransitionTo] = useState<TripStatus | null>(null)
 
   useEffect(() => {
     apiClient
@@ -90,6 +94,14 @@ export function TripsPage() {
       .then((response) => setTrips(response.data.data))
       .catch(() => setError('Could not load trips.'))
   }, [])
+
+  // The response to a transition is the updated trip, so the row and the
+  // open panel are refreshed from it rather than re-fetching the list.
+  const applyTransition = (updated: Trip) => {
+    setTrips((current) => current?.map((t) => (t.id === updated.id ? updated : t)) ?? null)
+    setSelected(updated)
+    setTransitionTo(null)
+  }
 
   const filtered = useMemo(() => {
     if (!trips) return []
@@ -136,18 +148,45 @@ export function TripsPage() {
 
       {/* Keyed by id so switching trips remounts with fresh state rather
           than clearing the previous trip's events inside an effect. */}
-      {selected && <TripTimeline key={selected.id} trip={selected} onClose={() => setSelected(null)} />}
+      {selected && (
+        <TripTimeline
+          key={selected.id}
+          trip={selected}
+          onClose={() => setSelected(null)}
+          onTransition={setTransitionTo}
+        />
+      )}
+
+      {selected && transitionTo && (
+        <TransitionDialog
+          trip={selected}
+          to={transitionTo}
+          onClose={() => setTransitionTo(null)}
+          onDone={applyTransition}
+        />
+      )}
     </div>
   )
 }
 
 /**
- * Reads the append-only `trip_events` timeline. Deliberately read-only:
- * transitions are a separate, policy-gated pass (see
- * Modules/Trips/README.md), and a half-built action button on an audit
- * surface a bank will review is worse than none.
+ * The trip's bank-required facts, the actions its current state permits,
+ * and the append-only `trip_events` timeline.
+ *
+ * The action buttons come from `trip.allowed_transitions`, which the API
+ * derives from TripStatus — this component has no copy of the lifecycle
+ * graph and cannot drift from it. What the *user* may do is still the
+ * server's call; an unauthorised attempt comes back 403.
  */
-function TripTimeline({ trip, onClose }: { trip: Trip; onClose: () => void }) {
+function TripTimeline({
+  trip,
+  onClose,
+  onTransition,
+}: {
+  trip: Trip
+  onClose: () => void
+  onTransition: (to: TripStatus) => void
+}) {
   const [events, setEvents] = useState<TripEvent[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -207,6 +246,31 @@ function TripTimeline({ trip, onClose }: { trip: Trip; onClose: () => void }) {
         <Fact label="Commenced" value={trip.started_at ? formatTimestamp(trip.started_at) : '—'} />
         <Fact label="Completed" value={trip.completed_at ? formatTimestamp(trip.completed_at) : '—'} />
       </div>
+
+      {trip.allowed_transitions.length > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 'var(--gap-inline)',
+            paddingBottom: 'var(--space-6)',
+            borderBottom: '1px solid var(--border-default)',
+            marginBottom: 'var(--space-6)',
+          }}
+        >
+          {trip.allowed_transitions.map((to) => (
+            <Button
+              key={to}
+              size="sm"
+              variant={isDestructiveTransition(to) ? 'secondary' : 'primary'}
+              iconLeft={tripStatusIcon(to)}
+              onClick={() => onTransition(to)}
+            >
+              {tripStatusLabel(to)}
+            </Button>
+          ))}
+        </div>
+      )}
 
       {error && <p style={{ color: 'var(--kr-error)' }}>{error}</p>}
       {!error && events === null && <p style={{ color: 'var(--text-secondary)' }}>Loading timeline…</p>}

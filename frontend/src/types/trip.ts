@@ -33,6 +33,13 @@ export interface Trip {
   origin: string
   destination: string
   status: TripStatus
+  /**
+   * Legal next states for this trip, served by the API so no client copy
+   * of the lifecycle graph exists. This is what the *state* permits, not
+   * what the current user may do — the server still authorises each
+   * attempt and can answer 403.
+   */
+  allowed_transitions: TripStatus[]
   odometer_start: number | null
   odometer_start_photo_path: string | null
   odometer_end: number | null
