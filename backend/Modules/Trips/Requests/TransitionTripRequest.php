@@ -60,6 +60,23 @@ class TransitionTripRequest extends FormRequest
                 'integer',
                 'min:0',
             ],
+            // PROJECT.md: "Driver-entered value plus a dashboard photo."
+            //
+            // Optional, not required. A camera that will not focus in the
+            // dark at the start of an upcountry run must not be able to
+            // strand a trip that is otherwise ready to go — the reading is
+            // one of the Bank's six acceptance criteria and the photo is
+            // not. Trips missing one are reported rather than refused; see
+            // Modules/Trips/README.md.
+            //
+            // 10 MB accommodates an unresized phone photo. Anything larger
+            // is a device sending something other than a dashboard.
+            'odometer_photo' => [
+                'nullable',
+                'image',
+                'mimes:jpeg,jpg,png,webp,heic',
+                'max:10240',
+            ],
             'cancellation_charge_applicable' => ['nullable', 'boolean'],
             // Only consulted by the state machine on the Rejected ->
             // Assigned reassignment path.

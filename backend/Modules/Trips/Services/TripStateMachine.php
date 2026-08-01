@@ -19,6 +19,7 @@ class TripStateMachine
     public function __construct(
         private readonly TripAssignmentGuard $guard,
         private readonly RouteDistanceCalculator $routeDistance,
+        private readonly OdometerPhotoStore $photos,
     ) {}
 
     /**
@@ -32,26 +33,43 @@ class TripStateMachine
             throw new InvalidTripTransitionException($from, $to);
         }
 
-        return DB::transaction(function () use ($trip, $from, $to, $actor, $payload) {
-            $this->applySideEffects($trip, $from, $to, $payload);
+        // Stored before the transaction opens, deliberately. A file write is
+        // not transactional, and holding a row lock for the length of a
+        // mobile upload to object storage would be far worse than the
+        // orphaned file it avoids — so the upload happens first and is
+        // cleaned up explicitly if the database work then fails.
+        $photoPath = $this->photos->storeForTransition(
+            $trip,
+            $to,
+            $payload['odometer_photo'] ?? null,
+        );
 
-            $trip->status = $to;
-            $trip->save();
+        try {
+            return DB::transaction(function () use ($trip, $from, $to, $actor, $payload, $photoPath) {
+                $this->applySideEffects($trip, $from, $to, $payload, $photoPath);
 
-            TripEvent::record($trip, $from, $to, $actor, $payload['notes'] ?? null);
+                $trip->status = $to;
+                $trip->save();
 
-            return $trip->refresh();
-        });
+                TripEvent::record($trip, $from, $to, $actor, $payload['notes'] ?? null);
+
+                return $trip->refresh();
+            });
+        } catch (\Throwable $e) {
+            $this->photos->discard($photoPath);
+
+            throw $e;
+        }
     }
 
     /**
      * @param  array<string, mixed>  $payload
      */
-    private function applySideEffects(Trip $trip, TripStatus $from, TripStatus $to, array $payload): void
+    private function applySideEffects(Trip $trip, TripStatus $from, TripStatus $to, array $payload, ?string $photoPath = null): void
     {
         match ($to) {
-            TripStatus::TRIP_STARTED => $this->captureOpeningOdometer($trip, $payload),
-            TripStatus::TRIP_COMPLETED => $this->captureClosingOdometer($trip, $payload),
+            TripStatus::TRIP_STARTED => $this->captureOpeningOdometer($trip, $payload, $photoPath),
+            TripStatus::TRIP_COMPLETED => $this->captureClosingOdometer($trip, $payload, $photoPath),
             TripStatus::CANCELLED => $trip->cancellation_charge_applicable
                 = $payload['cancellation_charge_applicable'] ?? null,
             TripStatus::ASSIGNED => $this->applyReassignment($trip, $from, $payload),
@@ -62,19 +80,27 @@ class TripStateMachine
     /**
      * @param  array<string, mixed>  $payload
      */
-    private function captureOpeningOdometer(Trip $trip, array $payload): void
+    private function captureOpeningOdometer(Trip $trip, array $payload, ?string $photoPath = null): void
     {
         $trip->odometer_start = $payload['odometer_start'];
         $trip->started_at = now();
+
+        if ($photoPath !== null) {
+            $trip->odometer_start_photo_path = $photoPath;
+        }
     }
 
     /**
      * @param  array<string, mixed>  $payload
      */
-    private function captureClosingOdometer(Trip $trip, array $payload): void
+    private function captureClosingOdometer(Trip $trip, array $payload, ?string $photoPath = null): void
     {
         $trip->odometer_end = $payload['odometer_end'];
         $trip->completed_at = now();
+
+        if ($photoPath !== null) {
+            $trip->odometer_end_photo_path = $photoPath;
+        }
         // Cast because `distance_km` is a decimal:2 attribute and reads back
         // as a string; assigning the raw int would have the property hold
         // two different types depending on whether the model was reloaded.

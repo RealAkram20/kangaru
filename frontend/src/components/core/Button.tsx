@@ -71,8 +71,10 @@ export function Button({
   ...rest
 }: ButtonProps) {
   const [hover, setHover] = useState(false)
+  const [pressed, setPressed] = useState(false)
   const s = SIZES[size] ?? SIZES.md
   const skin = paint(variant, hover && !disabled, onChrome)
+  const interactive = !disabled && !loading
   return (
     <button
       type={type}
@@ -80,6 +82,13 @@ export function Button({
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      // Pointer events rather than mouse: a dispatcher is on a desktop but
+      // a driver capturing an odometer reading is on a phone, and both
+      // should feel the press.
+      onPointerDown={() => interactive && setPressed(true)}
+      onPointerUp={() => setPressed(false)}
+      onPointerLeave={() => setPressed(false)}
+      onPointerCancel={() => setPressed(false)}
       style={{
         display: fullWidth ? 'flex' : 'inline-flex',
         width: fullWidth ? '100%' : undefined,
@@ -95,7 +104,16 @@ export function Button({
         borderRadius: 'var(--radius-control)',
         cursor: disabled || loading ? 'not-allowed' : 'pointer',
         opacity: disabled ? 0.5 : 1,
-        transition: 'var(--transition-control)',
+        // Press feedback: the interface confirming it heard you, before
+        // the network has anything to say. Subtle on purpose — this fires
+        // on every button in the product, and an operator watching these
+        // screens all day should feel it rather than notice it.
+        //
+        // transform is listed explicitly rather than folded into
+        // --transition-control, which every control shares: adding motion
+        // to that token would animate things that should not move.
+        transform: pressed ? 'scale(0.97)' : 'scale(1)',
+        transition: 'var(--transition-control), transform var(--dur-fast) var(--ease-out)',
         whiteSpace: 'nowrap',
         ...skin,
         ...style,

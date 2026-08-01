@@ -47,6 +47,19 @@ class TripResource extends JsonResource
             'odometer_start_photo_path' => $this->odometer_start_photo_path,
             'odometer_end' => $this->odometer_end,
             'odometer_end_photo_path' => $this->odometer_end_photo_path,
+            // Where to fetch the dashboard photos, rather than leaving a
+            // client to build the path itself. Null when none was captured,
+            // so "is there a photo" is one field rather than a string test.
+            //
+            // The `_path` fields above are kept alongside these: AGENTS.md
+            // allows additive changes within a version but not removals, and
+            // dropping them would break any client already reading them.
+            'odometer_start_photo_url' => $this->odometer_start_photo_path === null
+                ? null
+                : route('trips.odometer-photo.show', ['trip' => $this->id, 'moment' => 'start']),
+            'odometer_end_photo_url' => $this->odometer_end_photo_path === null
+                ? null
+                : route('trips.odometer-photo.show', ['trip' => $this->id, 'moment' => 'end']),
             'distance_km' => $this->distance_km,
             'gps_distance_km' => $this->gps_distance_km,
             'distance_variance_flagged' => $this->distance_variance_flagged,

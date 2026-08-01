@@ -9,6 +9,24 @@ import { Alert } from '../../components/feedback/Alert'
 import { Dialog } from '../../components/feedback/Dialog'
 import { FormField } from '../../components/forms/FormField'
 import { Input } from '../../components/forms/Input'
+import { OdometerPhotoField } from './OdometerPhotoField'
+
+/**
+ * Laravel reads a multipart body through its own parser, so scalars have to
+ * be strings — a number appended to FormData arrives as one anyway, and
+ * being explicit keeps that from looking like an accident.
+ */
+function buildFormData(fields: Record<string, string | number>, photo: File): FormData {
+  const form = new FormData()
+
+  for (const [key, value] of Object.entries(fields)) {
+    form.append(key, String(value))
+  }
+
+  form.append('odometer_photo', photo)
+
+  return form
+}
 
 /**
  * Collects whatever a given transition needs and posts it.
@@ -31,6 +49,7 @@ export function TransitionDialog({
 }) {
   const needs = transitionNeeds(to)
   const [odometer, setOdometer] = useState('')
+  const [photo, setPhoto] = useState<File | null>(null)
   const [notes, setNotes] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [failure, setFailure] = useState<string | null>(null)
@@ -56,12 +75,23 @@ export function TransitionDialog({
     setFailure(null)
 
     try {
-      const response = await apiClient.post<ApiSuccess<Trip>>(`/trips/${trip.id}/transitions`, {
+      const fields: Record<string, string | number> = {
         to,
         ...(needs.odometer === 'start' ? { odometer_start: reading } : {}),
         ...(needs.odometer === 'end' ? { odometer_end: reading } : {}),
         ...(notes.trim() === '' ? {} : { notes: notes.trim() }),
-      })
+      }
+
+      // JSON unless there is a photo. Sending multipart unconditionally
+      // would turn every transition into a form-encoded request for the
+      // sake of the two that can carry a file, and `notes` would arrive as
+      // the string "undefined" rather than being absent.
+      const response = photo
+        ? await apiClient.post<ApiSuccess<Trip>>(
+            `/trips/${trip.id}/transitions`,
+            buildFormData(fields, photo),
+          )
+        : await apiClient.post<ApiSuccess<Trip>>(`/trips/${trip.id}/transitions`, fields)
 
       onDone(response.data.data)
     } catch (error) {
@@ -129,6 +159,16 @@ export function TransitionDialog({
           </FormField>
         )}
 
+        {needs.odometer && (
+          <FormField
+            label="Dashboard photo"
+            hint="Optional, but the Bank's records expect one alongside the reading."
+            error={errors.odometer_photo}
+          >
+            <OdometerPhotoField file={photo} onChange={setPhoto} disabled={submitting} />
+          </FormField>
+        )}
+
         {belowOpening && (
           <Alert tone="warning" title="Closing reading is below the opening one">
             The trip started at {trip.odometer_start?.toLocaleString('en-US')} km, so the closing
@@ -149,13 +189,6 @@ export function TransitionDialog({
         >
           <Input id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
         </FormField>
-
-        {needs.odometer === 'start' && (
-          <Alert tone="info" title="Dashboard photo not captured">
-            The Bank's acceptance criteria expect a dashboard photo alongside the reading. Photo
-            upload is not built yet, so the reading is recorded on its own.
-          </Alert>
-        )}
       </div>
     </Dialog>
   )

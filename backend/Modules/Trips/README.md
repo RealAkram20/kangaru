@@ -80,9 +80,12 @@ Cancelled: reachable from any state before Trip Started, including Rejected
 
 ## What's explicitly deferred
 
-1. **Photo upload for odometer readings** — `odometer_start_photo_path`/
-   `odometer_end_photo_path` columns exist, nullable, always null; no
-   upload endpoint or storage wiring yet.
+1. **Enforcing that a photo is captured** — the photo is optional. A camera
+   that will not focus in the dark at the start of an upcountry run must
+   not be able to strand a trip: the reading is one of the Bank's six
+   acceptance criteria and the photo supports it. Trips missing one are
+   not currently reported anywhere either — the trip report's completeness
+   figure counts the six criteria, not photos.
 2. **Redis streams and live tracking** — ADR-0003's ingestion architecture
    is built (validate → buffer → batch worker → partitioned MySQL) but the
    buffer is Laravel's queue, which is Redis-backed in production via
@@ -113,6 +116,34 @@ Cancelled: reachable from any state before Trip Started, including Rejected
 9. **`Modules/Drivers` `user_id` linkage** — the column exists but has no
    request-layer/UI support in `Modules/Drivers` yet; populated only via
    direct Eloquent, seeders, or tests for now (see `Modules/Drivers/README.md`).
+
+## Odometer photos
+
+PROJECT.md's anchor-client requirement is "driver-entered value plus a
+dashboard photo". The reading alone is a number somebody typed; the photo
+is what makes it checkable.
+
+A photo rides on the same transition as the reading it belongs to —
+`POST /trips/{trip}/transitions` accepts `odometer_photo` as multipart on
+`trip_started` and `trip_completed`. Keeping them in one request is the
+point: a reading that can be submitted now and evidenced later has a window
+in which it is unverifiable.
+
+It is stored **before** the database transaction opens and deleted again if
+that transaction rolls back. A file write is not transactional, and holding
+a row lock for the length of a mobile upload to object storage would be
+worse than the orphan it avoids. `OdometerPhotoTest` covers the rollback
+case.
+
+Paths are tenant-prefixed per ADR-0001
+(`tenants/{tenant}/trips/{trip}/odometer/{start|end}-{uuid}.jpg`), and the
+uuid means a retake never silently overwrites what is already on the
+record.
+
+`GET /trips/{trip}/odometer-photo/{start|end}` streams it back through the
+API rather than exposing a storage URL. The photo shows a client's vehicle
+at a known place and time; a public object-storage link would be
+addressable by anyone who ever saw it, forever.
 
 ## GPS route capture (ADR-0003)
 
