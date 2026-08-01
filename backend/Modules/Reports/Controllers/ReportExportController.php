@@ -40,7 +40,7 @@ class ReportExportController extends Controller
         $user = $request->user();
 
         try {
-            $export = $this->exports->requestTripReport($request->filters(), $request->exportFormat(), $user);
+            $export = $this->exports->request($request->reportType(), $request->filters(), $request->exportFormat(), $user);
         } catch (ReportTooLargeException $e) {
             return ApiResponse::error(ErrorCode::REPORT_TOO_LARGE, $e->getMessage(), [], 422);
         }

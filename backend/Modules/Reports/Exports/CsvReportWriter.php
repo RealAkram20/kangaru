@@ -2,20 +2,13 @@
 
 namespace Modules\Reports\Exports;
 
-use Modules\Reports\Repositories\TripReportRepository;
-
-class CsvTripReportWriter implements TripReportWriter
+class CsvReportWriter implements ReportWriter
 {
-    public function __construct(
-        private readonly TripReportRepository $repository,
-        private readonly TripReportRowMapper $mapper,
-    ) {}
-
     /**
      * @param  array<string, mixed>  $filters
      * @param  array<string, mixed>  $summary
      */
-    public function write(string $localPath, array $filters, array $summary): int
+    public function write(ReportSource $source, string $localPath, array $filters, array $summary): int
     {
         $handle = fopen($localPath, 'wb');
 
@@ -34,13 +27,14 @@ class CsvTripReportWriter implements TripReportWriter
             // where this file is opened most often.
             fwrite($handle, "\xEF\xBB\xBF");
 
-            fputcsv($handle, $this->mapper->headers());
+            fputcsv($handle, $source->headers());
 
-            foreach ($this->repository->chunked($filters) as $chunk) {
-                foreach ($chunk as $trip) {
-                    fputcsv($handle, $this->mapper->row($trip));
-                    $rows++;
-                }
+            // No summary block: CSV is the format people load into another
+            // system, and preamble rows above the header are what make an
+            // import fail.
+            foreach ($source->rows($filters) as $row) {
+                fputcsv($handle, $row);
+                $rows++;
             }
         } finally {
             fclose($handle);

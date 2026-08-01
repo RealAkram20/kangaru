@@ -9,12 +9,11 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Modules\Reports\Enums\ExportFormat;
 use Modules\Reports\Enums\ExportStatus;
-use Modules\Reports\Exports\CsvTripReportWriter;
-use Modules\Reports\Exports\PdfTripReportWriter;
-use Modules\Reports\Exports\TripReportWriter;
-use Modules\Reports\Exports\XlsxTripReportWriter;
+use Modules\Reports\Exports\CsvReportWriter;
+use Modules\Reports\Exports\PdfReportWriter;
+use Modules\Reports\Exports\ReportSourceFactory;
+use Modules\Reports\Exports\XlsxReportWriter;
 use Modules\Reports\Models\ReportExport;
-use Modules\Reports\Repositories\TripReportRepository;
 use Throwable;
 
 /**
@@ -25,7 +24,7 @@ use Throwable;
  * current row: a queued job can sit for minutes, and a serialised model
  * would restore whatever the row looked like when it was dispatched.
  */
-class GenerateTripReportExport implements ShouldQueue
+class GenerateReportExport implements ShouldQueue
 {
     use Queueable;
 
@@ -41,11 +40,11 @@ class GenerateTripReportExport implements ShouldQueue
     public function __construct(public readonly int $exportId) {}
 
     public function handle(
-        TripReportRepository $repository,
+        ReportSourceFactory $sources,
         TenantContext $tenant,
-        CsvTripReportWriter $csv,
-        XlsxTripReportWriter $xlsx,
-        PdfTripReportWriter $pdf,
+        CsvReportWriter $csv,
+        XlsxReportWriter $xlsx,
+        PdfReportWriter $pdf,
     ): void {
         // Queue workers never pass through IdentifyTenant, and TenantScope
         // fails closed, so the export is looked up across tenants by id and
@@ -71,7 +70,10 @@ class GenerateTripReportExport implements ShouldQueue
                 ExportFormat::PDF => $pdf,
             };
 
-            $rows = $this->produce($writer, $localPath, $export, $repository);
+            // Resolved after the tenant is bound: the source runs
+            // tenant-scoped queries the moment it is asked for rows.
+            $source = $sources->for($export->report);
+            $rows = $writer->write($source, $localPath, $export->filters, $source->summary($export->filters));
 
             $storedPath = $export->buildPath($this->filename($export));
 
@@ -130,21 +132,13 @@ class GenerateTripReportExport implements ShouldQueue
         }
     }
 
-    private function produce(
-        TripReportWriter $writer,
-        string $localPath,
-        ReportExport $export,
-        TripReportRepository $repository,
-    ): int {
-        return $writer->write($localPath, $export->filters, $repository->summary($export->filters));
-    }
-
     private function filename(ReportExport $export): string
     {
         $filters = $export->filters;
 
         return sprintf(
-            'kangaruride-trip-report-%s-to-%s.%s',
+            'kangaruride-%s-report-%s-to-%s.%s',
+            $export->report->slug(),
             self::filenameDate($filters['from'] ?? null),
             self::filenameDate($filters['to'] ?? null),
             $export->format->extension(),

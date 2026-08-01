@@ -6,6 +6,7 @@ use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Modules\Reports\Enums\ExportFormat;
+use Modules\Reports\Enums\ReportType;
 use Modules\Trips\Enums\TripStatus;
 
 /**
@@ -28,6 +29,11 @@ class RequestExportRequest extends FormRequest
     {
         return [
             'format' => ['required', Rule::enum(ExportFormat::class)],
+            // Optional and defaulting to trips: this endpoint existed
+            // before there was more than one report, and AGENTS.md's API
+            // rule allows adding an optional field but not making an
+            // existing call fail.
+            'report' => ['nullable', Rule::enum(ReportType::class)],
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date'],
             'vehicle_id' => ['nullable', 'integer'],
@@ -53,6 +59,11 @@ class RequestExportRequest extends FormRequest
     public function exportFormat(): ExportFormat
     {
         return ExportFormat::from($this->validated('format'));
+    }
+
+    public function reportType(): ReportType
+    {
+        return ReportType::tryFrom((string) $this->validated('report')) ?? ReportType::TRIPS;
     }
 
     /**

@@ -43,6 +43,32 @@ export interface TripReportFilters {
   driver_id: string
 }
 
+/** Mirrors Modules/Reports/Enums/ReportType. */
+export type ReportType = 'trips' | 'drivers' | 'vehicles'
+
+/**
+ * A driver or vehicle report. Rows are positional and the headers arrive
+ * beside them, so the client keeps no copy of the column list — a report
+ * that gains a figure gains it here without a frontend change.
+ */
+export interface FleetReportMeta {
+  report: ReportType
+  title: string
+  headers: string[]
+  period: string
+  summary: {
+    entities_active: number
+    trips: number
+    trips_completed: number
+    distance_km: number
+    duration_minutes: number
+    variance_flagged: number
+    average_distance_km: number
+  }
+}
+
+export type FleetReportRow = (string | number | null)[]
+
 export type ExportFormat = 'csv' | 'xlsx' | 'pdf'
 
 export type ExportStatus = 'queued' | 'processing' | 'completed' | 'failed'

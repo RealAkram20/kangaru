@@ -7,12 +7,12 @@ use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Modules\Reports\Enums\ExportFormat;
 use Modules\Reports\Enums\ExportStatus;
-use Modules\Reports\Exports\CsvTripReportWriter;
-use Modules\Reports\Exports\PdfTripReportWriter;
-use Modules\Reports\Exports\XlsxTripReportWriter;
-use Modules\Reports\Jobs\GenerateTripReportExport;
+use Modules\Reports\Exports\CsvReportWriter;
+use Modules\Reports\Exports\PdfReportWriter;
+use Modules\Reports\Exports\ReportSourceFactory;
+use Modules\Reports\Exports\XlsxReportWriter;
+use Modules\Reports\Jobs\GenerateReportExport;
 use Modules\Reports\Models\ReportExport;
-use Modules\Reports\Repositories\TripReportRepository;
 
 /**
  * The queued exporter. QUEUE_CONNECTION is `sync` under phpunit.xml, so a
@@ -37,7 +37,7 @@ it('accepts an export request with 202 and queues the work', function () {
         ->assertJsonPath('data.format', 'csv')
         ->assertJsonPath('data.is_downloadable', false);
 
-    Queue::assertPushed(GenerateTripReportExport::class);
+    Queue::assertPushed(GenerateReportExport::class);
 });
 
 it('produces a CSV carrying the six data points', function () {
@@ -213,7 +213,7 @@ it('records a failed export with a readable message rather than leaving it spinn
 
     // Simulates a worker killed mid-write: handle() never reached its
     // catch, so failed() is the only thing that can clear the row.
-    (new GenerateTripReportExport($export->id))->failed(new RuntimeException('Worker died.'));
+    (new GenerateReportExport($export->id))->failed(new RuntimeException('Worker died.'));
 
     expect($export->fresh()->status)->toBe(ExportStatus::FAILED);
     expect($export->fresh()->error)->toBe('Worker died.');
@@ -271,13 +271,13 @@ it('binds the tenant inside the queue worker, which never sees IdentifyTenant', 
     // file would come out empty.
     app(TenantContext::class)->set(null);
 
-    app(GenerateTripReportExport::class, ['exportId' => $export->id])
+    app(GenerateReportExport::class, ['exportId' => $export->id])
         ->handle(
-            app(TripReportRepository::class),
+            app(ReportSourceFactory::class),
             app(TenantContext::class),
-            app(CsvTripReportWriter::class),
-            app(XlsxTripReportWriter::class),
-            app(PdfTripReportWriter::class),
+            app(CsvReportWriter::class),
+            app(XlsxReportWriter::class),
+            app(PdfReportWriter::class),
         );
 
     expect($export->fresh()->row_count)->toBe(1);
@@ -336,13 +336,13 @@ it('does not regenerate an export that is already finished', function () {
         'row_count' => 7,
     ]);
 
-    app(GenerateTripReportExport::class, ['exportId' => $export->id])
+    app(GenerateReportExport::class, ['exportId' => $export->id])
         ->handle(
-            app(TripReportRepository::class),
+            app(ReportSourceFactory::class),
             app(TenantContext::class),
-            app(CsvTripReportWriter::class),
-            app(XlsxTripReportWriter::class),
-            app(PdfTripReportWriter::class),
+            app(CsvReportWriter::class),
+            app(XlsxReportWriter::class),
+            app(PdfReportWriter::class),
         );
 
     // A retried delivery must not overwrite a finished file.

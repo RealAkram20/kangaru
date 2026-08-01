@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Modules\Reports\Enums\ExportFormat;
 use Modules\Reports\Enums\ExportStatus;
+use Modules\Reports\Enums\ReportType;
 
 /**
  * A requested report file and the state of producing it.
@@ -24,6 +25,7 @@ use Modules\Reports\Enums\ExportStatus;
  * @property int $id
  * @property int $tenant_id
  * @property int $requested_by_user_id
+ * @property ReportType $report
  * @property ExportFormat $format
  * @property ExportStatus $status
  * @property array<string, mixed> $filters
@@ -60,6 +62,7 @@ class ReportExport extends Model
     protected function casts(): array
     {
         return [
+            'report' => ReportType::class,
             'format' => ExportFormat::class,
             'status' => ExportStatus::class,
             'filters' => 'array',

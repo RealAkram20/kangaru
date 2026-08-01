@@ -5,9 +5,16 @@ import { formatTimestamp } from '../lib/format'
 import { formatDistance, formatDuration, formatOdometer } from '../lib/tripStatus'
 import type { ApiSuccess } from '../types/api'
 import type { Driver } from '../types/driver'
-import type { TripReportFilters, TripReportMeta, TripReportRow, TripReportSummary } from '../types/report'
+import type {
+  ReportType,
+  TripReportFilters,
+  TripReportMeta,
+  TripReportRow,
+  TripReportSummary,
+} from '../types/report'
 import type { Vehicle } from '../types/vehicle'
 import { ExportPanel } from './reports/ExportPanel'
+import { FleetReport } from './reports/FleetReport'
 import { Badge } from '../components/core/Badge'
 import { Button } from '../components/core/Button'
 import { Card } from '../components/core/Card'
@@ -143,8 +150,18 @@ async function fetchReport(filters: TripReportFilters) {
   return { rows: response.data.data, summary: response.data.meta?.summary ?? null }
 }
 
+const REPORTS: { value: ReportType; label: string }[] = [
+  { value: 'trips', label: 'Trip report' },
+  { value: 'drivers', label: 'Driver report' },
+  { value: 'vehicles', label: 'Vehicle report' },
+]
+
 export function ReportsPage() {
   const month = currentMonth()
+  const [report, setReport] = useState<ReportType>('trips')
+  // Bumped by Run report, so the fleet reports re-fetch on demand rather
+  // than on every keystroke in a date field.
+  const [fleetToken, setFleetToken] = useState(0)
   const [filters, setFilters] = useState<TripReportFilters>({
     from: month.from,
     to: month.to,
@@ -205,7 +222,10 @@ export function ReportsPage() {
         </Alert>
       )}
 
-      <Card title="Trip report" subtitle="Every trip that commenced in the selected period">
+      <Card
+        title={REPORTS.find((r) => r.value === report)?.label ?? 'Report'}
+        subtitle="Every trip that commenced in the selected period"
+      >
         <div
           style={{
             display: 'grid',
@@ -214,6 +234,14 @@ export function ReportsPage() {
             alignItems: 'end',
           }}
         >
+          <FormField label="Report" htmlFor="r-report">
+            <Select
+              id="r-report"
+              value={report}
+              onChange={(e) => setReport(e.target.value as ReportType)}
+              options={REPORTS.map((r) => ({ value: r.value, label: r.label }))}
+            />
+          </FormField>
           <FormField label="From" htmlFor="r-from">
             <Input
               id="r-from"
@@ -230,7 +258,8 @@ export function ReportsPage() {
               onChange={(e) => setFilters({ ...filters, to: e.target.value })}
             />
           </FormField>
-          <FormField label="Vehicle" htmlFor="r-vehicle">
+          {report === 'trips' && (
+            <FormField label="Vehicle" htmlFor="r-vehicle">
             <Select
               id="r-vehicle"
               placeholder="All vehicles"
@@ -238,8 +267,10 @@ export function ReportsPage() {
               onChange={(e) => setFilters({ ...filters, vehicle_id: e.target.value })}
               options={vehicles.map((v) => ({ value: String(v.id), label: v.registration_number }))}
             />
-          </FormField>
-          <FormField label="Driver" htmlFor="r-driver">
+            </FormField>
+          )}
+          {report === 'trips' && (
+            <FormField label="Driver" htmlFor="r-driver">
             <Select
               id="r-driver"
               placeholder="All drivers"
@@ -247,16 +278,27 @@ export function ReportsPage() {
               onChange={(e) => setFilters({ ...filters, driver_id: e.target.value })}
               options={drivers.map((d) => ({ value: String(d.id), label: d.name }))}
             />
-          </FormField>
+            </FormField>
+          )}
           <div style={{ display: 'flex', gap: 'var(--gap-inline)' }}>
-            <Button iconLeft="play" onClick={() => void run(filters)}>
+            <Button
+              iconLeft="play"
+              onClick={() => {
+                if (report === 'trips') void run(filters)
+                else setFleetToken((n) => n + 1)
+              }}
+            >
               Run report
             </Button>
           </div>
         </div>
       </Card>
 
-      {summary && (
+      {report !== 'trips' && (
+        <FleetReport report={report} from={filters.from} to={filters.to} reloadToken={fleetToken} />
+      )}
+
+      {report === 'trips' && summary && (
         <div
           style={{
             display: 'grid',
@@ -294,8 +336,9 @@ export function ReportsPage() {
         </div>
       )}
 
-      <ExportPanel filters={filters} />
+      <ExportPanel filters={filters} report={report} />
 
+      {report === 'trips' && (
       <Card padding="none">
         {rows !== null && rows.length === 0 ? (
           <EmptyState
@@ -312,6 +355,7 @@ export function ReportsPage() {
           />
         )}
       </Card>
+      )}
     </div>
   )
 }

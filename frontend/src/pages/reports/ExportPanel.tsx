@@ -3,7 +3,7 @@ import { apiClient } from '../../lib/apiClient'
 import { apiError } from '../../lib/apiError'
 import { formatRelativeTime } from '../../lib/format'
 import type { ApiSuccess } from '../../types/api'
-import type { ExportFormat, ReportExport, TripReportFilters } from '../../types/report'
+import type { ExportFormat, ReportExport, ReportType, TripReportFilters } from '../../types/report'
 import { Badge } from '../../components/core/Badge'
 import { Button } from '../../components/core/Button'
 import { Card } from '../../components/core/Card'
@@ -42,7 +42,13 @@ function formatBytes(bytes: number | null): string {
  * panel polls while anything is still running and stops as soon as
  * everything is terminal — an idle report page should make no requests.
  */
-export function ExportPanel({ filters }: { filters: TripReportFilters }) {
+export function ExportPanel({
+  filters,
+  report,
+}: {
+  filters: TripReportFilters
+  report: ReportType
+}) {
   const [exports, setExports] = useState<ReportExport[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [requesting, setRequesting] = useState<ExportFormat | null>(null)
@@ -101,10 +107,15 @@ export function ExportPanel({ filters }: { filters: TripReportFilters }) {
     try {
       await apiClient.post('/reports/exports', {
         format,
+        report,
         from: filters.from || null,
         to: filters.to || null,
-        vehicle_id: filters.vehicle_id || null,
-        driver_id: filters.driver_id || null,
+        // The aggregates group by driver or vehicle, so filtering to one of
+        // either is meaningless there — and the server rejects the filter
+        // rather than ignoring it, so it is not sent.
+        ...(report === 'trips'
+          ? { vehicle_id: filters.vehicle_id || null, driver_id: filters.driver_id || null }
+          : {}),
       })
 
       await load()

@@ -11,24 +11,66 @@ reports (PROJECT.md Reports) follow.
 
 ## Responsibilities
 
-- `TripReportRepository` — the report query and its aggregates. A
-  repository because ADR-0002 requires one for "non-trivial queries
-  (joins, aggregates, geospatial, reporting)"; this is all three, and both
-  the paginated view and the CSV export run it.
-- `ReportExport` + `GenerateTripReportExport` — file output, produced on a
+- `ReportSource` — what a report *is*: a title, a column list, a row
+  generator, a summary and a row count. Every writer, the on-screen
+  endpoint and the pre-queue size check all read the same one, so the
+  spreadsheet and the screen cannot disagree about a column or a total.
+  `ReportSourceFactory` maps a `ReportType` to its implementation.
+- `TripReportRepository` / `TripReportSource` — the trip report query and
+  its aggregates. A repository because ADR-0002 requires one for
+  "non-trivial queries (joins, aggregates, geospatial, reporting)"; this is
+  all three.
+- `FleetActivityRepository` / `FleetActivitySource` — the driver and
+  vehicle reports: the same aggregate over trips, grouped by whoever or
+  whatever did the work. One source class for both, because separating them
+  would duplicate every figure so that two headers could differ.
+- `ReportExport` + `GenerateReportExport` — file output, produced on a
   queue (AGENTS.md: "Reports generate asynchronously via queue; nothing
   over 3 s blocks a request"). The request records the intent and returns
   `202`; the file appears when the worker finishes.
-- `TripReportRowMapper` — the single definition of the report's columns.
-  CSV, XLSX and PDF all render from it. Three writers each with their own
-  column list would drift, and the format a client happened to open would
-  decide whether they saw all six required data points.
-- `CsvTripReportWriter`, `XlsxTripReportWriter`, `PdfTripReportWriter` —
-  one per format behind `TripReportWriter`.
+- `TripReportRowMapper` — the single definition of the trip report's
+  columns. Three writers each with their own column list would drift, and
+  the format a client happened to open would decide whether they saw all
+  six required data points.
+- `CsvReportWriter`, `XlsxReportWriter`, `PdfReportWriter` — one per
+  format behind `ReportWriter`, each generic over the report. They take a
+  `ReportSource` as an argument rather than a constructor dependency,
+  because which report they are rendering is decided per job.
 - `PruneReportExports` — scheduled daily; deletes expired files.
 - `TripReportRowResource` — one row, flatter than `TripResource`: a report
   row is read across, and nesting vehicle and driver objects would push the
   registration number and driver name a level below where a reader looks.
+
+## The driver and vehicle reports
+
+`GET /api/v1/reports/drivers` and `/reports/vehicles`. One row per driver
+or vehicle that commenced a trip in the period, ordered by distance so the
+row that matters most is read first.
+
+Neither is paginated: a tenant has tens of drivers, not tens of thousands,
+and a cursor over a `GROUP BY` would cost more than it saved. The trip
+report, which is row-per-trip, keeps its cursor.
+
+They take **only** `from` and `to` (`FleetReportRequest`). Reusing
+`TripReportRequest` would have accepted `vehicle_id`, `driver_id` and
+`status` and quietly ignored them — reporting every driver while claiming
+to report one vehicle's, which is exactly the silence AGENTS.md's
+whitelist rule exists to prevent.
+
+Only trips that actually commenced are counted. A booking cancelled before
+anyone drove it is not work a driver did.
+
+Column headers travel with the rows in `meta.headers`, and the frontend
+renders from them rather than holding its own list. A report that gains a
+figure gains it on screen, in the CSV, in the workbook and in the PDF
+without a frontend change — and the failure mode a client-side copy
+produces is a correctly-populated table under the wrong headings.
+
+`FleetReportTest` asserts the driver and vehicle totals agree with each
+other: the same three journeys grouped two ways must sum the same, or one
+of the reports is wrong. It also asserts the cross-tenant case directly,
+because a leak in an aggregate is not a stray row — it is a bigger number,
+invisible unless the total is checked.
 
 ## The six criteria
 
@@ -120,7 +162,10 @@ The queue driver is `database`, so a worker must be running
 
 ## What's explicitly deferred
 
-1. **Driver, vehicle and financial reports** — only the trip report exists.
+1. **The financial report** — PROJECT.md's fourth. It reads invoices and
+   credit notes rather than trips, so it is a new `ReportSource` over
+   `Modules/Billing` rather than another grouping of the fleet aggregate.
+   Now cheap to add: the pipeline it would plug into is generic.
    Financial reporting waits on `Modules/Billing`.
 2. **Scheduled/emailed reports** — daily, weekly, monthly and annual
    cadences (PROJECT.md) are not built; `Modules/Notifications` is empty.
