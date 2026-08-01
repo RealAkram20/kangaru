@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Enums\UserRole;
 use App\Models\AuditLog;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
@@ -43,6 +44,21 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Driver::class, DriverPolicy::class);
         Gate::policy(Trip::class, TripPolicy::class);
         Gate::policy(Booking::class, BookingPolicy::class);
+
+        // A Gate rather than a Policy: reports are not a model, and
+        // AGENTS.md's authorization rule names Gates alongside Policies.
+        // Drivers and Corporate Employees are excluded — a report spans
+        // the whole tenant's fleet, which is more than either should see.
+        Gate::define('viewReports', fn (User $user) => in_array($user->role, [
+            UserRole::SUPER_ADMIN,
+            UserRole::OPERATIONS_MANAGER,
+            UserRole::DISPATCHER,
+            UserRole::FINANCE,
+            UserRole::FLEET_OWNER,
+            UserRole::BRANCH_MANAGER,
+            UserRole::DEPOT_MANAGER,
+            UserRole::CORPORATE_ADMIN,
+        ], true));
 
         // Stable short aliases for audit_logs.auditable_type instead of raw
         // FQCNs — extend this map when Billing/etc. models start using

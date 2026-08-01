@@ -23,5 +23,6 @@ Route::prefix('v1')->group(function () {
         require base_path('Modules/Bookings/Routes/api.php');
         require base_path('Modules/Dispatch/Routes/api.php');
         require base_path('Modules/Trips/Routes/api.php');
+        require base_path('Modules/Reports/Routes/api.php');
     });
 });

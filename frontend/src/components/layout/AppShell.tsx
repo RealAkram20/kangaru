@@ -23,6 +23,10 @@ const SECTIONS: SidebarSection[] = [
       { id: 'drivers', label: 'Drivers', icon: 'users' },
     ],
   },
+  {
+    label: 'Insight',
+    items: [{ id: 'reports', label: 'Reports', icon: 'file-chart-column' }],
+  },
 ]
 
 /** Sidebar item ids mapped to their route. Every item now has one. */
@@ -34,6 +38,7 @@ const NAV_PATHS: Partial<Record<string, string>> = {
   companies: '/companies',
   vehicles: '/vehicles',
   drivers: '/drivers',
+  reports: '/reports',
 }
 
 const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
@@ -44,6 +49,7 @@ const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
   '/companies': { id: 'companies', title: 'Companies' },
   '/vehicles': { id: 'vehicles', title: 'Vehicles' },
   '/drivers': { id: 'drivers', title: 'Drivers' },
+  '/reports': { id: 'reports', title: 'Reports' },
 }
 
 /**
