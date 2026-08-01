@@ -185,12 +185,16 @@ confirm the notification exists.
 
 Everything here is *not built*, not "partly built".
 
-1. **The entire frontend.** There is no bell, no panel, no page — the API is
-   unconsumed. The bell belongs in `Topbar.tsx` and a nav entry in
-   `SidebarNav.tsx`, both of which are uncommitted work in progress at the
-   time of writing. Building against them would have meant rewriting it.
-   This is the largest gap in the module and the reason it cannot yet be
-   demonstrated.
+1. **Mounting the bell, and a nav entry.** The UI is built — see Frontend
+   below — but `NotificationBell` is not rendered anywhere yet, because the
+   place it belongs (`Topbar.tsx`) is uncommitted work in progress. That
+   file already contains a decorative `IconButton icon="bell"` with no
+   badge, no panel and no data behind it; replacing that one line with
+   `<NotificationBell />` is the whole of the wiring. `SidebarNav.tsx`
+   likewise needs one entry pointing at `/notifications`.
+
+   Until then the page is reachable by URL and by "See all notifications"
+   in the panel, but nothing advertises it.
 2. **SMS.** PROJECT.md lists it; no provider is configured. It is
    deliberately *not* a `NotificationChannel` case — an enum case that
    silently delivers nowhere is worse than its absence, because a
@@ -270,4 +274,41 @@ does not recognise rather than guessing" is the regression test.
 
 ## Frontend
 
-None. See deferred item 1.
+- `frontend/src/lib/notifications.ts` — `useNotifications`, the one hook
+  both surfaces read. Two implementations of "mark this read" would be two
+  chances for the badge and the list to disagree.
+- `frontend/src/components/notifications/NotificationBell.tsx` — the badge
+  and its panel. Takes no props and fetches its own data, so mounting it is
+  literally `<NotificationBell />` wherever the chrome ends up. Polls every
+  60s because nothing is pushed (deferred item 9); closes on outside click
+  and Escape; the unread count is in the button's accessible name, not only
+  in the red dot, so a screen reader user gets "Notifications, 6 unread".
+- `frontend/src/pages/NotificationsPage.tsx` — the full inbox at
+  `/notifications`. Not polled: someone reading their history is not
+  waiting for something to arrive, and a list that reorders under a reader
+  is worse than a stale one.
+
+Marking read is **optimistic**. The endpoint is scoped to the caller's own
+inbox and cannot refuse, so the only failure mode is the network, and a
+badge that lags a click by a round trip reads as broken.
+
+The `body` is rendered as the server sent it, never rebuilt from `context`.
+The row records what this person was *told*; re-deriving the sentence later
+would risk telling them something else.
+
+### A bug only the running app found
+
+`useNotifications` first shipped with a `busy` ref guarding its fetch
+against overlap. Every test passed. In a browser the page sat on
+"Loading…" forever.
+
+`main.tsx` wraps the app in `<StrictMode>`, which double-invokes effects in
+development: the first run took the flag and started fetching, cleanup
+marked that closure cancelled, the second run found the flag still held and
+did nothing, and the first fetch resolved into a cancelled closure and was
+discarded. Nothing ever set state.
+
+Testing Library does not render in StrictMode by default, which is why the
+suite was blind to it. `frontend/src/test/harness.tsx` now wraps every
+render in it — verified by reinstating the guard, which turns all 14
+notification tests red.

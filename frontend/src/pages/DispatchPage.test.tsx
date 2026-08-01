@@ -197,6 +197,12 @@ describe('DispatchPage', () => {
     await user.selectOptions(screen.getByLabelText(/vehicle/i), '7')
     await user.selectOptions(screen.getByLabelText(/driver/i), '3')
     await user.click(screen.getByRole('button', { name: /^assign$/i }))
+
+    // Counted from here: the harness renders in StrictMode like the app,
+    // so the board's three mount requests happen twice. The assertion is
+    // that assignment refetches, not how many the mount made.
+    const before = get.mock.calls.length
+
     await user.click(screen.getByRole('button', { name: /confirm assignment/i }))
 
     expect(await screen.findByText('Booking dispatched')).toBeInTheDocument()
@@ -204,7 +210,7 @@ describe('DispatchPage', () => {
 
     // Reloaded, not patched: another dispatcher may have been deciding at
     // the same time, and a stale queue is what causes the next 409.
-    await waitFor(() => expect(get).toHaveBeenCalledTimes(6))
+    await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(before))
   })
 
   it('shows the server\'s refusal verbatim when it loses a race for the vehicle', async () => {

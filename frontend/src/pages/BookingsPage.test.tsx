@@ -145,12 +145,19 @@ describe('BookingsPage', () => {
     const user = userEvent.setup()
     renderAs(<BookingsPage />)
 
-    await user.click(await screen.findByRole('button', { name: /^approve$/i }))
+    await screen.findByText('Kampala → Entebbe')
+    // Counted from here rather than asserted as a total: the harness
+    // renders in StrictMode like the app does, so mounting fetches twice
+    // in development. What matters is that approving triggers another
+    // fetch, not how many the mount happened to make.
+    const before = get.mock.calls.length
+
+    await user.click(screen.getByRole('button', { name: /^approve$/i }))
 
     await waitFor(() => expect(post).toHaveBeenCalledWith('/bookings/41/approval'))
     // Reloaded rather than patched in place: the decision may have changed
     // more than the row the client can see.
-    await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(before))
   })
 
   it('surfaces the server\'s refusal when an approval is rejected', async () => {

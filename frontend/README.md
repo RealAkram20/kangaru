@@ -97,9 +97,11 @@ the credit note dialog:
 | `pages/BookingsPage.test.tsx` | The booking form. Named by AGENTS.md. |
 | `pages/DispatchPage.test.tsx` | The dispatch board. Named by AGENTS.md. Its point is what the screen does with a 409 when it loses a race for a vehicle — that is the whole reason the server-side lock is worth having. |
 | `pages/billing/CreditNoteDialog.test.tsx` | The only path that changes what a client owes. Highest consequence screen in the app. |
+| `pages/NotificationsPage.test.tsx` | The inbox. |
+| `components/notifications/NotificationBell.test.tsx` | The badge and panel — the one shared component with tests so far. |
 
-Shared components in `src/components/` have **no tests yet**. That is the
-other half of the AGENTS.md sentence and the obvious next pass.
+The rest of `src/components/` has **no tests yet**. That is the other half
+of the AGENTS.md sentence and the obvious next pass.
 
 ### Conventions
 
@@ -114,6 +116,12 @@ other half of the AGENTS.md sentence and the obvious next pass.
   authenticated user without mounting `AuthProvider`, which would hydrate
   itself from `/auth/me` and put an unrelated request in front of every
   assertion), plus `apiOk`/`apiFailure` for the backend's envelopes.
+- **`renderAs` wraps everything in `<StrictMode>`**, because `main.tsx`
+  does. Testing Library does not by default, and the gap is not
+  theoretical — see below. One consequence to know: mount effects run
+  twice, so a test asserting an exact request count will be off. Assert
+  that a count *grew* across an action instead; that is what those tests
+  actually mean.
 - **`apiFailure` builds a real `AxiosError`**, not a plain object. `apiError()`
   gates on `axios.isAxiosError()`, so a hand-rolled `{ response: { data } }`
   falls through to the `NETWORK_ERROR` branch — and the test would then
@@ -134,6 +142,22 @@ retry. Changing it to mint per render turns "reuses the same idempotency
 key when a failed attempt is retried" red with two different UUIDs. Without
 that guard, a retry after a dropped response becomes a second credit
 against the invoice.
+
+### A bug the tests could not see until they rendered like the app
+
+`useNotifications` shipped with a `busy` ref guarding its fetch against
+overlap. All tests passed; the browser sat on "Loading…" forever.
+
+StrictMode double-invokes effects in development. The first run took the
+flag and started fetching, cleanup marked that closure cancelled, the
+second run found the flag held and did nothing, and the first fetch
+resolved into a cancelled closure and was thrown away. Nothing ever set
+state.
+
+The fix was to drop the guard from the effect — `cancelled` alone is
+enough, and two overlapping GETs on mount is a cost worth paying. The
+lasting fix is `renderAs` rendering in StrictMode, verified by reinstating
+the guard: all 14 notification tests go red.
 
 ### An accessibility finding these tests surfaced
 

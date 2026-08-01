@@ -1,6 +1,6 @@
 import { AxiosError, AxiosHeaders } from 'axios'
 import { render } from '@testing-library/react'
-import type { ReactElement } from 'react'
+import { StrictMode, type ReactElement } from 'react'
 import { AuthContext } from '../auth/AuthContext'
 import type { User } from '../types/auth'
 
@@ -31,19 +31,34 @@ export function makeUser(overrides: Partial<User> = {}): User {
  * put an unrelated request in front of every assertion and make each test
  * depend on the shape of a response it does not care about. The context
  * value is what the pages actually consume.
+ *
+ * ## Why StrictMode
+ *
+ * `main.tsx` wraps the app in it, so the app really does mount, unmount and
+ * remount every component and double-invoke every effect in development.
+ * Testing Library does not do that by default, and the gap is not
+ * theoretical: `useNotifications` shipped with a `busy` ref that swallowed
+ * the second invocation and left the page on "Loading…" forever. Every test
+ * passed; the browser showed a spinner.
+ *
+ * Rendering here the way the app renders costs nothing and closes that gap.
+ * A component that cannot survive being mounted twice is a component with a
+ * bug, and this is where it should surface.
  */
 export function renderAs(ui: ReactElement, user: User | null = makeUser()) {
   return render(
-    <AuthContext.Provider
-      value={{
-        user,
-        loading: false,
-        login: () => Promise.resolve(),
-        logout: () => Promise.resolve(),
-      }}
-    >
-      {ui}
-    </AuthContext.Provider>,
+    <StrictMode>
+      <AuthContext.Provider
+        value={{
+          user,
+          loading: false,
+          login: () => Promise.resolve(),
+          logout: () => Promise.resolve(),
+        }}
+      >
+        {ui}
+      </AuthContext.Provider>
+    </StrictMode>,
   )
 }
 

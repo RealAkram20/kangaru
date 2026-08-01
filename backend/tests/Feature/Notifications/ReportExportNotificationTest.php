@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Storage;
 use Modules\Notifications\Enums\NotificationType;
 use Modules\Notifications\Models\Notification;
 use Modules\Reports\Enums\ExportStatus;
+use Modules\Reports\Enums\ReportType;
 use Modules\Reports\Exports\CsvReportWriter;
 use Modules\Reports\Exports\PdfReportWriter;
 use Modules\Reports\Exports\ReportSourceFactory;
@@ -50,6 +51,31 @@ it('tells the requester when their export is ready', function () {
     // a schedule while the row outlives it — a recipient reading this in a
     // fortnight would otherwise follow a dead link with no explanation.
     expect($notification->body)->toContain('days');
+});
+
+it('agrees the row noun with the count', function () {
+    Storage::fake('local');
+
+    $tenant = Tenant::factory()->create();
+    app(TenantContext::class)->set($tenant->id);
+    $manager = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::OPERATIONS_MANAGER]);
+
+    // A financial report over an empty period is one row, and "covering 1
+    // periods" is exactly the sort of thing nobody notices until it is on
+    // a page in front of a client. Caught by looking at the running app.
+    $this->actingAs($manager, 'sanctum')
+        ->postJson('/api/v1/reports/exports', ['report' => 'financial', 'format' => 'csv'])
+        ->assertStatus(202);
+
+    $export = ReportExport::latest('id')->firstOrFail();
+    $notification = Notification::query()->for($manager)->firstOrFail();
+
+    expect($export->row_count)->toBe(0);
+    expect($notification->body)->toContain('0 periods');
+
+    expect(ReportType::FINANCIAL->rowNoun(1))->toBe('period');
+    expect(ReportType::TRIPS->rowNoun(1))->toBe('trip');
+    expect(ReportType::TRIPS->rowNoun())->toBe('trips');
 });
 
 it('does not announce an export that failed', function () {

@@ -34,7 +34,9 @@ class ReportExportReadyNotification extends KangaruNotification
             $export->report->label(),
             $export->format->label(),
             $export->row_count,
-            $export->report->rowNoun(),
+            // Agreeing with the count, so a one-row export does not read
+            // "covering 1 periods".
+            $export->report->rowNoun($export->row_count),
         );
     }
 

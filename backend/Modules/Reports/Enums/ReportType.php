@@ -37,15 +37,25 @@ enum ReportType: string
      * "1,204 trips" are both immediately readable, and the export panel
      * previously hardcoded "trips" for every report — which was wrong for
      * the driver and vehicle reports and would have been misleading here.
+     *
+     * Pass the count to get agreement. Omitting it gives the plural, which
+     * is what a bare column label wants; the notification body reads
+     * "covering 1 period" rather than "1 periods", which is the sort of
+     * thing nobody notices until it is on a page in front of a client.
      */
-    public function rowNoun(): string
+    public function rowNoun(?int $count = null): string
     {
-        return match ($this) {
+        $plural = match ($this) {
             self::TRIPS => 'trips',
             self::DRIVERS => 'drivers',
             self::VEHICLES => 'vehicles',
             self::FINANCIAL => 'periods',
         };
+
+        // Every noun here is a regular plural, so one rule covers them —
+        // substr rather than rtrim, which would eat both esses of a word
+        // like "buses" the day one is added.
+        return $count === 1 ? substr($plural, 0, -1) : $plural;
     }
 
     /**
