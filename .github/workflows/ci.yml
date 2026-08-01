@@ -109,14 +109,19 @@ jobs:
           php artisan migrate --force
 
       # AGENTS.md's coverage gate is 90% on Modules/Billing and
-      # Modules/Dispatch specifically, 70% overall. Modules/Billing is still
-      # empty scaffolding, so its gate lands with the module. Dispatch now
-      # has real code and carries its 90% gate below.
+      # Modules/Dispatch specifically, 70% overall.
       - name: Tests (Pest, 70% overall coverage floor)
         run: vendor/bin/pest --coverage --min=70
 
       - name: Coverage gate — Modules/Dispatch (90%)
         run: vendor/bin/pest --coverage --min=90 --path=Modules/Dispatch --testsuite=Feature,Concurrency
+
+      # Billing's gate runs over both suites for the same reason Dispatch's
+      # does: its concurrency test (InvoiceNumberRaceTest) exercises the
+      # document number counter, and measuring Feature alone would report
+      # that path as uncovered.
+      - name: Coverage gate — Modules/Billing (90%)
+        run: vendor/bin/pest --coverage --min=90 --path=Modules/Billing --testsuite=Feature,Concurrency
 
   frontend:
     name: Frontend (ESLint, tsc, build)
