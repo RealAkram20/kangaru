@@ -10,6 +10,13 @@ use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use Modules\Administration\Policies\AuditLogPolicy;
+use Modules\Billing\Models\CreditNote;
+use Modules\Billing\Models\Invoice;
+use Modules\Billing\Models\RateCard;
+use Modules\Billing\Models\RateCardRate;
+use Modules\Billing\Models\RateCardVersion;
+use Modules\Billing\Policies\InvoicePolicy;
+use Modules\Billing\Policies\RateCardPolicy;
 use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Policies\BookingPolicy;
 use Modules\Clients\Models\Company;
@@ -44,6 +51,8 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Driver::class, DriverPolicy::class);
         Gate::policy(Trip::class, TripPolicy::class);
         Gate::policy(Booking::class, BookingPolicy::class);
+        Gate::policy(RateCard::class, RateCardPolicy::class);
+        Gate::policy(Invoice::class, InvoicePolicy::class);
 
         // A Gate rather than a Policy: reports are not a model, and
         // AGENTS.md's authorization rule names Gates alongside Policies.
@@ -61,8 +70,16 @@ class AppServiceProvider extends ServiceProvider
         ], true));
 
         // Stable short aliases for audit_logs.auditable_type instead of raw
-        // FQCNs — extend this map when Billing/etc. models start using
-        // Auditable.
+        // FQCNs. Every Auditable model must appear here — a missing entry
+        // writes the FQCN instead, and moving the class later would orphan
+        // the audit rows that reference it.
+        //
+        // AGENTS.md requires an audit trail over "rate cards, contracts,
+        // invoices, payments, roles/permissions, and credit limits"; the
+        // five Billing entries below are the rate-card and invoice halves
+        // of that. Invoice/credit-note *lines* are not audited: they are
+        // created with their parent and can never change, so the parent's
+        // own row already covers them.
         Relation::enforceMorphMap([
             'company' => Company::class,
             'user' => User::class,
@@ -70,6 +87,11 @@ class AppServiceProvider extends ServiceProvider
             'driver' => Driver::class,
             'trip' => Trip::class,
             'booking' => Booking::class,
+            'rate_card' => RateCard::class,
+            'rate_card_version' => RateCardVersion::class,
+            'rate_card_rate' => RateCardRate::class,
+            'invoice' => Invoice::class,
+            'credit_note' => CreditNote::class,
         ]);
     }
 }
