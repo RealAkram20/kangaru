@@ -7,6 +7,7 @@ import type { ApiSuccess } from '../types/api'
 import type { Driver } from '../types/driver'
 import type { TripReportFilters, TripReportMeta, TripReportRow, TripReportSummary } from '../types/report'
 import type { Vehicle } from '../types/vehicle'
+import { ExportPanel } from './reports/ExportPanel'
 import { Badge } from '../components/core/Badge'
 import { Button } from '../components/core/Button'
 import { Card } from '../components/core/Card'
@@ -155,7 +156,6 @@ export function ReportsPage() {
   const [error, setError] = useState<string | null>(null)
   const [vehicles, setVehicles] = useState<Vehicle[]>([])
   const [drivers, setDrivers] = useState<Driver[]>([])
-  const [exporting, setExporting] = useState(false)
 
   const apply = useCallback((result: { rows: TripReportRow[]; summary: TripReportSummary | null }) => {
     setRows(result.rows)
@@ -196,41 +196,6 @@ export function ReportsPage() {
     // half-typed date range does not fire a query on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apply])
-
-  /**
-   * Fetched through the API client rather than a plain link so the bearer
-   * token is attached — the export route sits behind auth:sanctum like
-   * every other endpoint, and an anchor tag would arrive unauthenticated.
-   */
-  const download = async () => {
-    setExporting(true)
-    setError(null)
-
-    try {
-      const response = await apiClient.get(`/reports/trips/export?${toQuery(filters)}`, {
-        responseType: 'blob',
-      })
-
-      const disposition = String(response.headers['content-disposition'] ?? '')
-      const match = /filename="?([^"]+)"?/.exec(disposition)
-
-      const url = URL.createObjectURL(response.data as Blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = match?.[1] ?? 'trip-report.csv'
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      URL.revokeObjectURL(url)
-    } catch (failure) {
-      // A refusal (REPORT_TOO_LARGE) arrives as a Blob because of
-      // responseType, so its JSON body has to be read back out.
-      const problem = apiError(failure, 'Could not export this report.')
-      setError(await readBlobError(problem.message, failure))
-    } finally {
-      setExporting(false)
-    }
-  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
@@ -287,15 +252,6 @@ export function ReportsPage() {
             <Button iconLeft="play" onClick={() => void run(filters)}>
               Run report
             </Button>
-            <Button
-              variant="secondary"
-              iconLeft="download"
-              loading={exporting}
-              disabled={rows === null || rows.length === 0}
-              onClick={() => void download()}
-            >
-              CSV
-            </Button>
           </div>
         </div>
       </Card>
@@ -338,6 +294,8 @@ export function ReportsPage() {
         </div>
       )}
 
+      <ExportPanel filters={filters} />
+
       <Card padding="none">
         {rows !== null && rows.length === 0 ? (
           <EmptyState
@@ -358,23 +316,3 @@ export function ReportsPage() {
   )
 }
 
-/**
- * With `responseType: 'blob'`, an error response body is a Blob too, so the
- * server's message (e.g. REPORT_TOO_LARGE, which names the trip count and
- * tells the user how to narrow it) has to be parsed back out of it.
- */
-async function readBlobError(fallback: string, failure: unknown): Promise<string> {
-  const body = (failure as { response?: { data?: unknown } })?.response?.data
-
-  if (body instanceof Blob) {
-    try {
-      const parsed: unknown = JSON.parse(await body.text())
-      const message = (parsed as { message?: unknown }).message
-      if (typeof message === 'string') return message
-    } catch {
-      // Not JSON — fall through to the generic message.
-    }
-  }
-
-  return fallback
-}

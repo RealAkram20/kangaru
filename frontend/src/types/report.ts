@@ -42,3 +42,28 @@ export interface TripReportFilters {
   vehicle_id: string
   driver_id: string
 }
+
+export type ExportFormat = 'csv' | 'xlsx' | 'pdf'
+
+export type ExportStatus = 'queued' | 'processing' | 'completed' | 'failed'
+
+/** A requested report file and the state of producing it. */
+export interface ReportExport {
+  id: number
+  report: string
+  format: ExportFormat
+  format_label: string
+  status: ExportStatus
+  filters: Record<string, string>
+  row_count: number | null
+  file_size: number | null
+  /** The server's own rule — completed and not expired. */
+  is_downloadable: boolean
+  /** No further polling needed once true. */
+  is_terminal: boolean
+  error: string | null
+  requested_by?: string
+  expires_at: string | null
+  created_at: string
+  finished_at: string | null
+}

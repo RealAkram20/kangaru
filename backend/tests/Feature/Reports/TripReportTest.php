@@ -210,31 +210,7 @@ it('rejects an unknown report filter with a 422', function () {
         ->assertJsonPath('code', 'VALIDATION_FAILED');
 });
 
-it('exports a CSV carrying the six data points', function () {
-    ['tenant' => $tenant, 'manager' => $manager] = seedReportFixture();
-
-    $trip = completedTrip($tenant, $manager, [
-        'minutes' => 95, 'odometer_start' => 42_180, 'odometer_end' => 42_222,
-        'origin' => 'Kampala', 'destination' => 'Entebbe Airport',
-    ]);
-
-    $response = $this->actingAs($manager, 'sanctum')->get('/api/v1/reports/trips/export');
-
-    $response->assertOk()
-        ->assertHeader('content-type', 'text/csv; charset=UTF-8');
-
-    expect($response->headers->get('content-disposition'))->toContain('.csv');
-
-    $csv = $response->streamedContent();
-
-    expect($csv)->toStartWith("\xEF\xBB\xBF");  // Excel-on-Windows BOM
-    expect($csv)->toContain('Opening odometer (km)');
-    expect($csv)->toContain('Distance travelled (km)');
-    expect($csv)->toContain($trip->vehicle->registration_number);
-    expect($csv)->toContain('Entebbe Airport');
-    expect($csv)->toContain('42180');
-    expect($csv)->toContain('1:35');  // 95 minutes as h:mm
-});
+// File output moved to the queued exporter — see ReportExportTest.
 
 it('forbids a driver from reading the fleet-wide report', function () {
     ['tenant' => $tenant] = seedReportFixture();

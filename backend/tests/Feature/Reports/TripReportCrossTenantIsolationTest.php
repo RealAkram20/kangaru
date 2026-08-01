@@ -4,9 +4,11 @@ use App\Enums\UserRole;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
+use Illuminate\Support\Facades\Storage;
 use Modules\Bookings\Models\Booking;
 use Modules\Dispatch\Services\DispatchService;
 use Modules\Drivers\Models\Driver;
+use Modules\Reports\Models\ReportExport;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Services\TripStateMachine;
@@ -87,13 +89,62 @@ it('excludes another tenant\'s trips from the report totals', function () {
     expect((float) $summary['distance_km'])->toBe(25.0);
 });
 
-it('excludes another tenant\'s trips from the CSV export', function () {
+it('excludes another tenant\'s trips from a generated export file', function () {
     ['managerA' => $managerA, 'tripA' => $tripA, 'tripB' => $tripB] = seedTwoTenantsWithReportableTrips();
 
-    $csv = $this->actingAs($managerA, 'sanctum')->get('/api/v1/reports/trips/export')->streamedContent();
+    Storage::fake('local');
+
+    // QUEUE_CONNECTION is sync in tests, so the job runs inline and the
+    // file exists by the time the request returns.
+    $this->actingAs($managerA, 'sanctum')
+        ->postJson('/api/v1/reports/exports', ['format' => 'csv'])
+        ->assertStatus(202);
+
+    $export = ReportExport::allTenants()->latest('id')->firstOrFail();
+    $csv = Storage::get($export->path);
 
     expect($csv)->toContain($tripA->vehicle->registration_number);
     expect($csv)->not->toContain($tripB->vehicle->registration_number);
+});
+
+it('refuses to download another tenant\'s export with a 404, not a 403', function () {
+    ['managerA' => $managerA, 'tenantB' => $tenantB] = seedTwoTenantsWithReportableTrips();
+
+    Storage::fake('local');
+
+    $foreign = ReportExport::allTenants()->create([
+        'tenant_id' => $tenantB->id,
+        'requested_by_user_id' => User::factory()->create([
+            'tenant_id' => $tenantB->id, 'role' => UserRole::OPERATIONS_MANAGER,
+        ])->id,
+        'report' => 'trips',
+        'format' => 'csv',
+        'status' => 'completed',
+        'filters' => [],
+        'path' => 'tenants/'.$tenantB->id.'/reports/999/leak.csv',
+    ]);
+
+    Storage::put($foreign->path, 'tenant B private data');
+
+    $this->actingAs($managerA, 'sanctum')
+        ->getJson("/api/v1/reports/exports/{$foreign->id}/download")
+        ->assertStatus(404)
+        ->assertJsonPath('code', 'NOT_FOUND');
+});
+
+it('stores every export under its own tenant\'s directory', function () {
+    ['managerA' => $managerA, 'tenantA' => $tenantA] = seedTwoTenantsWithReportableTrips();
+
+    Storage::fake('local');
+
+    $this->actingAs($managerA, 'sanctum')
+        ->postJson('/api/v1/reports/exports', ['format' => 'csv'])
+        ->assertStatus(202);
+
+    $export = ReportExport::allTenants()->latest('id')->firstOrFail();
+
+    // ADR-0001: "File storage paths are prefixed tenants/{id}/".
+    expect($export->path)->toStartWith("tenants/{$tenantA->id}/");
 });
 
 it('ignores a vehicle_id filter pointing at another tenant\'s vehicle', function () {

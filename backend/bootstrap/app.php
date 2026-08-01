@@ -13,6 +13,7 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Validation\ValidationException;
+use Modules\Reports\Console\PruneReportExports;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
@@ -23,6 +24,13 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
+    // Laravel auto-discovers commands only under app/Console/Commands, so
+    // module-owned commands are registered explicitly — the same
+    // "explicit over convention across Modules\" stance as the policy and
+    // factory registrations.
+    ->withCommands([
+        PruneReportExports::class,
+    ])
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->api(prepend: [
             AssignRequestId::class,
