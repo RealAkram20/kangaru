@@ -1,3 +1,4 @@
+import axios from 'axios'
 import { useState, type FormEvent } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useAuth } from '../auth/useAuth'
@@ -13,6 +14,51 @@ import { Input } from '../components/forms/Input'
  * per PROJECT.md) — building UI against a non-existent endpoint would be
  * dead code. Logo, headline copy, and layout are kept for visual fidelity.
  */
+/**
+ * AGENTS.md Error Handling: "Every error message explains what happened,
+ * why (when appropriate), and what the user should do next."
+ *
+ * This used to be a bare `catch` that reported every failure as "the email
+ * or password you entered is incorrect" — so an unreachable API and a
+ * throttled retry both read as a typo, and the one thing the user could do
+ * about it (start the server, wait a minute) was the one thing the message
+ * never said.
+ */
+function signInErrorMessage(error: unknown): string {
+  if (!axios.isAxiosError(error)) {
+    return 'Something went wrong signing you in. Please try again.'
+  }
+
+  // No response at all: the request never reached a server. Almost always
+  // the API not running, or the wrong VITE_API_BASE_URL.
+  if (!error.response) {
+    const target = import.meta.env.VITE_API_BASE_URL ?? 'the API'
+    return `Cannot reach the KangaruRide server at ${target}. Check that the API is running, then try again.`
+  }
+
+  const { status, data } = error.response
+  const code = (data as { code?: string } | undefined)?.code
+
+  // The login route is throttled to 5 attempts a minute. Without this, a
+  // locked-out user keeps retrying a password that is actually correct.
+  if (status === 429) {
+    return 'Too many sign-in attempts. Please wait a minute and try again.'
+  }
+
+  if (status === 401 || code === 'INVALID_CREDENTIALS') {
+    return 'The email or password you entered is incorrect.'
+  }
+
+  if (status >= 500) {
+    return 'The server ran into a problem signing you in. Please try again, and contact support if it continues.'
+  }
+
+  // Everything else (422 validation, anything new): the server's own
+  // message is written for the user and is more specific than ours.
+  const message = (data as { message?: string } | undefined)?.message
+  return message ?? 'Something went wrong signing you in. Please try again.'
+}
+
 export function LoginPage() {
   const { user, login } = useAuth()
   const [email, setEmail] = useState('')
@@ -30,8 +76,8 @@ export function LoginPage() {
     setSubmitting(true)
     try {
       await login(email, password)
-    } catch {
-      setError('The email or password you entered is incorrect.')
+    } catch (caught) {
+      setError(signInErrorMessage(caught))
     } finally {
       setSubmitting(false)
     }
@@ -116,6 +162,7 @@ export function LoginPage() {
                 size="lg"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                revealable
                 required
               />
             </FormField>
