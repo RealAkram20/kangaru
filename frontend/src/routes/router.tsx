@@ -6,7 +6,9 @@ import { CompaniesPage } from '../pages/CompaniesPage'
 import { DashboardPage } from '../pages/DashboardPage'
 import { DispatchPage } from '../pages/DispatchPage'
 import { DriversPage } from '../pages/DriversPage'
+import { InvoicesPage } from '../pages/InvoicesPage'
 import { LoginPage } from '../pages/LoginPage'
+import { RateCardsPage } from '../pages/RateCardsPage'
 import { ReportsPage } from '../pages/ReportsPage'
 import { TripsPage } from '../pages/TripsPage'
 import { VehiclesPage } from '../pages/VehiclesPage'
@@ -28,6 +30,8 @@ export const router = createBrowserRouter([
       { path: 'bookings', element: <BookingsPage /> },
       { path: 'dispatch', element: <DispatchPage /> },
       { path: 'trips', element: <TripsPage /> },
+      { path: 'invoices', element: <InvoicesPage /> },
+      { path: 'rate-cards', element: <RateCardsPage /> },
       { path: 'reports', element: <ReportsPage /> },
       { path: 'companies', element: <CompaniesPage /> },
       { path: 'vehicles', element: <VehiclesPage /> },

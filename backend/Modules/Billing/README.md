@@ -182,9 +182,9 @@ Everything here is *not built*, not "partly built".
    is not ambiguous about what its integers meant.
 8. **A PDF invoice document.** Invoices are JSON. `Modules/Reports` has a
    PDF writer that a future financial report can reuse.
-9. **A frontend.** There is no Billing page — rate cards are set up and
-   invoices raised through the API. This is the natural next pass, and the
-   biggest single gap in the module.
+9. **Payment recording in the UI.** The Invoices page shows
+   issued-less-credited as "Outstanding" and says so on the tile, because
+   there is nothing else it could honestly mean until payments exist.
 10. **MFA on the roles that can move money.** `InvoicePolicy` and
     `RateCardPolicy` already confine issuing, crediting and rate-setting to
     Super Admin and Finance — the two roles AGENTS.md requires MFA for. The
@@ -194,6 +194,50 @@ Everything here is *not built*, not "partly built".
     Phase 1 tenant operates in Uganda.
 12. **Rate card archival.** `RateCardStatus::ARCHIVED` exists and is never
     set by any route — a card is created active and stays active.
+
+## Frontend
+
+- `frontend/src/pages/RateCardsPage.tsx` — cards, their version history, and
+  the per-category prices of each version. A version shows whether it is
+  **sealed** (an invoice has cited it) before it shows anything else, because
+  that is the fact that decides whether it can still be superseded quietly.
+  There is no edit control anywhere on the page and no route behind one.
+- `frontend/src/pages/billing/RateCardVersionDialog.tsx` — one dialog for
+  both "new card" and "new version", because the payload is the same shape
+  and the backend shares one rule set. The night multiplier is typed as
+  `1.25` and converted to basis points once, on submit, so a float never
+  reaches storage.
+- `frontend/src/pages/InvoicesPage.tsx` and `billing/InvoiceDetail.tsx` —
+  the list with cursor paging, and one invoice's lines with the inputs that
+  produced them. The multiplier column is rendered for every line, including
+  the ones no multiplier touched.
+- `frontend/src/pages/billing/CreditNoteDialog.tsx` — the correction path.
+  Its remaining-balance check is a courtesy that catches the mistake before
+  a round trip; it cannot see a note a colleague is issuing right now, so a
+  422 `CREDIT_NOTE_EXCEEDS_INVOICE` is still surfaced rather than swallowed.
+- `frontend/src/pages/trips/InvoiceTripDialog.tsx` — "Generate invoice" on a
+  completed trip.
+
+Two details worth keeping:
+
+**Idempotency keys are minted per dialog, not per click.** A key identifies
+one intended mutation, so the same dialog retrying after a dropped response
+sends the same key and gets the original invoice back. Minting a new key on
+each click would turn a retry into a second billing attempt — which the
+server refuses, but for the wrong reason and with a confusing message.
+
+**The Trips page no longer offers `Invoice Generated` as a transition.**
+`TripTimeline` filters it out of `allowed_transitions` and shows "Generate
+invoice" instead. It is still a legal next state, so the API keeps serving
+it in that array — but it is not one a client may ask the transitions
+endpoint for, and a button that always 422s is worse than no button.
+
+Actions that move money are hidden from roles that cannot perform them
+(`canManageBilling` in `frontend/src/lib/billing.ts`). That is convenience,
+not authorization — AGENTS.md is explicit that frontend permissions are
+never relied on alone, and every endpoint answers 403 independently. A role
+that cannot read invoices at all gets an explanation rather than a red error
+it can do nothing about.
 
 ## Notes on the tests
 

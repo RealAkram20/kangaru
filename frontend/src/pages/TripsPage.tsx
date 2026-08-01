@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useAuth } from '../auth/useAuth'
 import { apiClient } from '../lib/apiClient'
-import { formatTimestamp } from '../lib/format'
+import { canManageBilling } from '../lib/billing'
+import { formatTimestamp, formatUgx } from '../lib/format'
 import {
   formatDistance,
   formatDuration,
@@ -12,7 +14,9 @@ import {
 } from '../lib/tripStatus'
 import type { ApiSuccess } from '../types/api'
 import type { CursorMeta, Trip, TripEvent, TripStatus } from '../types/trip'
+import { InvoiceTripDialog } from './trips/InvoiceTripDialog'
 import { TransitionDialog } from './trips/TransitionDialog'
+import { Alert } from '../components/feedback/Alert'
 import { Badge } from '../components/core/Badge'
 import { Button } from '../components/core/Button'
 import { Card } from '../components/core/Card'
@@ -82,17 +86,46 @@ const COLUMNS: DataColumn<Trip>[] = [
 ]
 
 export function TripsPage() {
+  const { user } = useAuth()
   const [trips, setTrips] = useState<Trip[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Trip | null>(null)
   const [transitionTo, setTransitionTo] = useState<TripStatus | null>(null)
+  const [invoicing, setInvoicing] = useState<Trip | null>(null)
 
+  const refresh = useCallback(async () => {
+    try {
+      const response = await apiClient.get<ApiSuccess<Trip[], CursorMeta>>('/trips')
+      setTrips(response.data.data)
+      // Keep the open panel pointing at the refreshed row, so its actions
+      // reflect the status the server now holds.
+      setSelected((current) =>
+        current ? (response.data.data.find((trip) => trip.id === current.id) ?? null) : null,
+      )
+    } catch {
+      setError('Could not load trips.')
+    }
+  }, [])
+
+  // Promise chain rather than `void refresh()` so the state update lands
+  // in a callback — setState straight from an effect body cascades renders.
   useEffect(() => {
+    let cancelled = false
+
     apiClient
       .get<ApiSuccess<Trip[], CursorMeta>>('/trips')
-      .then((response) => setTrips(response.data.data))
-      .catch(() => setError('Could not load trips.'))
+      .then((response) => {
+        if (!cancelled) setTrips(response.data.data)
+      })
+      .catch(() => {
+        if (!cancelled) setError('Could not load trips.')
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   // The response to a transition is the updated trip, so the row and the
@@ -119,6 +152,12 @@ export function TripsPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+      {notice && (
+        <Alert tone="success" title="Invoice issued" onDismiss={() => setNotice(null)}>
+          {notice}
+        </Alert>
+      )}
+
       <Card
         title="Trips"
         subtitle={trips ? `${trips.length} total — select a trip to see its timeline` : undefined}
@@ -154,6 +193,8 @@ export function TripsPage() {
           trip={selected}
           onClose={() => setSelected(null)}
           onTransition={setTransitionTo}
+          onInvoice={() => setInvoicing(selected)}
+          canInvoice={selected.status === 'trip_completed' && canManageBilling(user)}
         />
       )}
 
@@ -163,6 +204,23 @@ export function TripsPage() {
           to={transitionTo}
           onClose={() => setTransitionTo(null)}
           onDone={applyTransition}
+        />
+      )}
+
+      {invoicing && (
+        <InvoiceTripDialog
+          trip={invoicing}
+          onClose={() => setInvoicing(null)}
+          onIssued={(invoice) => {
+            setInvoicing(null)
+            setNotice(
+              `${invoice.invoice_number} raised for ${formatUgx(invoice.total_minor)}. See it on the Invoices page.`,
+            )
+            // The trip moved to Invoice Generated inside the same backend
+            // transaction, so the row here is stale — re-read rather than
+            // guess at the new status.
+            void refresh()
+          }}
         />
       )}
     </div>
@@ -182,13 +240,21 @@ function TripTimeline({
   trip,
   onClose,
   onTransition,
+  onInvoice,
+  canInvoice,
 }: {
   trip: Trip
   onClose: () => void
   onTransition: (to: TripStatus) => void
+  onInvoice: () => void
+  canInvoice: boolean
 }) {
   const [events, setEvents] = useState<TripEvent[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // `invoice_generated` is filtered out rather than rendered: it is a legal
+  // next state, but not one a client may ask the transitions endpoint for.
+  const actions = trip.allowed_transitions.filter((to) => to !== 'invoice_generated')
 
   useEffect(() => {
     let cancelled = false
@@ -247,7 +313,7 @@ function TripTimeline({
         <Fact label="Completed" value={trip.completed_at ? formatTimestamp(trip.completed_at) : '—'} />
       </div>
 
-      {trip.allowed_transitions.length > 0 && (
+      {(actions.length > 0 || canInvoice) && (
         <div
           style={{
             display: 'flex',
@@ -258,7 +324,7 @@ function TripTimeline({
             marginBottom: 'var(--space-6)',
           }}
         >
-          {trip.allowed_transitions.map((to) => (
+          {actions.map((to) => (
             <Button
               key={to}
               size="sm"
@@ -269,6 +335,16 @@ function TripTimeline({
               {tripStatusLabel(to)}
             </Button>
           ))}
+          {/* Invoice Generated is the one allowed transition with no button
+              of its own: Modules\Billing applies it inside the transaction
+              that issues the invoice, and the transitions endpoint refuses
+              it outright. Offering it here would be a button that always
+              422s. */}
+          {canInvoice && (
+            <Button size="sm" iconLeft="receipt" onClick={onInvoice}>
+              Generate invoice
+            </Button>
+          )}
         </div>
       )}
 

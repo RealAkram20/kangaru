@@ -44,6 +44,9 @@ it('lists invoices with their lines and a cursor', function () {
         ->assertJsonPath('data.0.invoice_number', $invoice->invoice_number)
         ->assertJsonPath('data.0.lines.0.type', 'base_fare')
         ->assertJsonPath('data.0.lines.0.type_label', 'Base fare')
+        // The line id is served so a credit note can name the line it
+        // corrects; StoreCreditNoteRequest validates against exactly this.
+        ->assertJsonPath('data.0.lines.0.id', $invoice->lines->first()->id)
         // Invoices are append-only and grow without bound, so the list is
         // cursor-paginated per AGENTS.md rather than page-paginated.
         ->assertJsonStructure(['meta' => ['cursor' => ['next']]]);

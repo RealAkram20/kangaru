@@ -24,6 +24,13 @@ const SECTIONS: SidebarSection[] = [
     ],
   },
   {
+    label: 'Finance',
+    items: [
+      { id: 'invoices', label: 'Invoices', icon: 'receipt' },
+      { id: 'rate-cards', label: 'Rate cards', icon: 'tags' },
+    ],
+  },
+  {
     label: 'Insight',
     items: [{ id: 'reports', label: 'Reports', icon: 'file-chart-column' }],
   },
@@ -38,6 +45,8 @@ const NAV_PATHS: Partial<Record<string, string>> = {
   companies: '/companies',
   vehicles: '/vehicles',
   drivers: '/drivers',
+  invoices: '/invoices',
+  'rate-cards': '/rate-cards',
   reports: '/reports',
 }
 
@@ -49,6 +58,8 @@ const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
   '/companies': { id: 'companies', title: 'Companies' },
   '/vehicles': { id: 'vehicles', title: 'Vehicles' },
   '/drivers': { id: 'drivers', title: 'Drivers' },
+  '/invoices': { id: 'invoices', title: 'Invoices' },
+  '/rate-cards': { id: 'rate-cards', title: 'Rate cards' },
   '/reports': { id: 'reports', title: 'Reports' },
 }
 

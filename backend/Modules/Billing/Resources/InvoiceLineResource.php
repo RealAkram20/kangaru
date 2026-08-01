@@ -26,6 +26,14 @@ class InvoiceLineResource extends JsonResource
     public function toArray(Request $request): array
     {
         return [
+            // Served because a credit note line may be attributed to a
+            // specific invoice line, and StoreCreditNoteRequest validates
+            // that reference against `invoice_lines.id`. Without it a client
+            // has no way to name the line it is correcting. Unlike an
+            // invoice, a line has no uuid — it is only ever addressed from
+            // within its own invoice, which is already uuid-keyed, so this
+            // exposes no cross-tenant surface of its own.
+            'id' => $this->id,
             'line_number' => $this->line_number,
             'type' => $this->type->value,
             // The stable machine value plus a display name, so a client
