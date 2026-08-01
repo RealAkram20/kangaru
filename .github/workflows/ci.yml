@@ -162,7 +162,7 @@ jobs:
         run: php bin/coverage-gate.php storage/coverage.xml
 
   frontend:
-    name: Frontend (ESLint, tsc, build)
+    name: Frontend (ESLint, tsc, Vitest, build)
     runs-on: ubuntu-latest
 
     defaults:
@@ -186,6 +186,24 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      # AGENTS.md, Enforcement & Tooling: "Component tests (Vitest +
+      # Testing Library) for shared components and critical flows (booking
+      # form, dispatch board)." Until this step existed that line was a
+      # suggestion — by the document's own definition, "a standard that is
+      # not enforced by tooling".
+      #
+      # Deliberately before the build: a failing test should stop the job
+      # at the cheapest point, and a green build over broken behaviour
+      # tells nobody anything.
+      #
+      # No coverage gate. The backend has one because its gates were
+      # written against a suite that already covered those modules; three
+      # test files do not yet justify a number, and a threshold set to
+      # whatever today happens to measure is a threshold that ratchets on
+      # noise. Revisit once the shared components are covered.
+      - name: Component tests (Vitest + Testing Library)
+        run: npm run test
 
       - name: Build
         run: npm run build

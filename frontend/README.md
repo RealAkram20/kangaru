@@ -72,3 +72,79 @@ npm run dev       # http://localhost:5173, expects the backend on :8000
 ```
 
 Static gates: `npm run lint` (ESLint), `npx tsc --noEmit`, `npm run build`.
+
+## Tests
+
+```bash
+npm run test           # once, as CI runs it
+npm run test:watch     # while working
+npm run test:coverage  # report only — nothing gates on it yet
+```
+
+Vitest + Testing Library, configured inside `vite.config.ts` rather than a
+separate `vitest.config.ts` so tests build through exactly the same
+pipeline as the app. Two configs is two things to keep in step, and the
+failure mode is a test that passes against a build the app never gets.
+
+### What is covered
+
+AGENTS.md asks for "component tests for shared components and critical
+flows (booking form, dispatch board)". Both named flows are covered, plus
+the credit note dialog:
+
+| File | Why it is here |
+|---|---|
+| `pages/BookingsPage.test.tsx` | The booking form. Named by AGENTS.md. |
+| `pages/DispatchPage.test.tsx` | The dispatch board. Named by AGENTS.md. Its point is what the screen does with a 409 when it loses a race for a vehicle — that is the whole reason the server-side lock is worth having. |
+| `pages/billing/CreditNoteDialog.test.tsx` | The only path that changes what a client owes. Highest consequence screen in the app. |
+
+Shared components in `src/components/` have **no tests yet**. That is the
+other half of the AGENTS.md sentence and the obvious next pass.
+
+### Conventions
+
+- **Globals are off.** `describe`/`it`/`expect` are imported in every file,
+  so ESLint and `tsc --noEmit` stay honest without a `types` entry telling
+  them about names that only exist under the runner. The cost is that
+  Testing Library's auto-cleanup does not fire, so `src/test/setup.ts`
+  calls `cleanup()` itself — without it, the second test in a file finds
+  the first one's DOM and `getByRole` throws "found multiple elements",
+  which reads as a component bug.
+- **`src/test/harness.tsx`** supplies `renderAs` (renders with an
+  authenticated user without mounting `AuthProvider`, which would hydrate
+  itself from `/auth/me` and put an unrelated request in front of every
+  assertion), plus `apiOk`/`apiFailure` for the backend's envelopes.
+- **`apiFailure` builds a real `AxiosError`**, not a plain object. `apiError()`
+  gates on `axios.isAxiosError()`, so a hand-rolled `{ response: { data } }`
+  falls through to the `NETWORK_ERROR` branch — and the test would then
+  assert the fallback message while believing it had asserted the server's.
+- **Assert what a user sees**, via roles and labels. A test reaching into
+  component state would keep passing through a rewrite that broke the
+  screen.
+- `src/test/setup.ts` also stubs `HTMLDialogElement.showModal`/`close`,
+  `ResizeObserver` and `scrollIntoView`, none of which jsdom implements.
+  `Dialog` uses a native `<dialog>`, so without the first one every dialog
+  test is a TypeError rather than a failed assertion.
+
+### A guard verified by removing it
+
+`CreditNoteDialog` mints its idempotency key with
+`useMemo(() => newIdempotencyKey(), [])` — once per dialog, reused on every
+retry. Changing it to mint per render turns "reuses the same idempotency
+key when a failed attempt is retried" red with two different UUIDs. Without
+that guard, a retry after a dropped response becomes a second credit
+against the invoice.
+
+### An accessibility finding these tests surfaced
+
+`FormField` renders its required marker *inside* the `<label>`, so a
+required field's accessible name is `"Passenger*"` and a screen reader
+announces "Passenger star". AGENTS.md requires "proper labels, screen
+reader compatibility".
+
+The tests match today's behaviour (`getByLabelText(/^passenger\*/i)`)
+rather than papering over it. The fix is to mark the asterisk
+`aria-hidden="true"` and convey requiredness with `aria-required` on the
+control — which means `FormField` either cloning its child or every caller
+passing `required` to the input too. That is an accessibility pass, not a
+side effect of adding tests, so it is written down here instead.
