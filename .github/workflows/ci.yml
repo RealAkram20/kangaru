@@ -7,6 +7,36 @@ on:
     branches: [main]
 
 jobs:
+  # AGENTS.md Process: "Conventional Commits enforced by commitlint".
+  # Only meaningful on a pull request, where there is a base to diff
+  # against; history before this gate landed is not retro-validated.
+  commits:
+    name: Commit messages (commitlint)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # commitlint needs the full range between base and head, which a
+          # shallow clone does not contain.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Installed into the repo root rather than run via `npx -p`: commitlint
+      # resolves `extends` relative to the config file, so the shared config
+      # has to be reachable from here, which `npx -p` does not arrange.
+      # --no-save keeps it out of any manifest; there is no root package.json
+      # and this gate does not warrant introducing one.
+      - name: Install commitlint
+        run: npm install --no-save --no-package-lock @commitlint/cli@19 @commitlint/config-conventional@19
+
+      - name: Validate commit messages
+        run: npx commitlint --from origin/${{ github.base_ref }} --to HEAD --verbose
+
   backend:
     name: Backend (Pint, Larastan, Pest)
     runs-on: ubuntu-latest
