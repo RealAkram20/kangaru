@@ -8,6 +8,7 @@ use App\Exceptions\FinancialRecordImmutableException;
 use App\Models\Tenant;
 use App\Models\User;
 use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -42,6 +43,8 @@ use Modules\Billing\Enums\RoundingMode;
  * @property string|null $night_ends_at
  * @property int $night_multiplier_bp
  * @property CarbonInterface|null $locked_at
+ * @property-read RateCard $rateCard
+ * @property-read Collection<int, RateCardRate> $rates
  */
 class RateCardVersion extends Model
 {
@@ -133,21 +136,25 @@ class RateCardVersion extends Model
         $this->save();
     }
 
+    /** @return BelongsTo<RateCard, $this> */
     public function rateCard(): BelongsTo
     {
         return $this->belongsTo(RateCard::class);
     }
 
+    /** @return HasMany<RateCardRate, $this> */
     public function rates(): HasMany
     {
         return $this->hasMany(RateCardRate::class);
     }
 
+    /** @return BelongsTo<User, $this> */
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by_user_id');
     }
 
+    /** @return BelongsTo<Tenant, $this> */
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);

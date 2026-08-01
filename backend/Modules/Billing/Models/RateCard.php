@@ -31,9 +31,14 @@ use Modules\Vehicles\Models\Vehicle;
  */
 class RateCard extends Model
 {
+    /** @use HasFactory<RateCardFactory> */
     use Auditable, BelongsToTenant, HasFactory, SoftDeletes;
 
-    /** @see Vehicle::newFactory() for why this is explicit. */
+    /**
+     * @see Vehicle::newFactory() for why this is explicit.
+     *
+     * @return Factory<self>
+     */
     protected static function newFactory(): Factory
     {
         return RateCardFactory::new();
@@ -55,12 +60,17 @@ class RateCard extends Model
         ];
     }
 
+    /** @return BelongsTo<Tenant, $this> */
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);
     }
 
-    /** Newest first — the order a human reads a version history in. */
+    /**
+     * Newest first — the order a human reads a version history in.
+     *
+     * @return HasMany<RateCardVersion, $this>
+     */
     public function versions(): HasMany
     {
         return $this->hasMany(RateCardVersion::class)->orderByDesc('version');

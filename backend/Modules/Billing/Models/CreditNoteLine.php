@@ -57,12 +57,17 @@ class CreditNoteLine extends Model
         });
     }
 
+    /** @return BelongsTo<CreditNote, $this> */
     public function creditNote(): BelongsTo
     {
         return $this->belongsTo(CreditNote::class);
     }
 
-    /** Null on a goodwill or settlement credit that corrects no one line. */
+    /**
+     * Null on a goodwill or settlement credit that corrects no one line.
+     *
+     * @return BelongsTo<InvoiceLine, $this>
+     */
     public function invoiceLine(): BelongsTo
     {
         return $this->belongsTo(InvoiceLine::class);

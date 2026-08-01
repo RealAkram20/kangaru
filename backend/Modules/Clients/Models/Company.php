@@ -27,7 +27,11 @@ class Company extends Model
 {
     use Auditable, BelongsToTenant, HasFactory, SoftDeletes;
 
-    /** @see Vehicle::newFactory() for why this is explicit. */
+    /**
+     * @see Vehicle::newFactory() for why this is explicit.
+     *
+     * @return Factory<self>
+     */
     protected static function newFactory(): Factory
     {
         return CompanyFactory::new();
@@ -56,6 +60,7 @@ class Company extends Model
         ];
     }
 
+    /** @return BelongsTo<Tenant, $this> */
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);

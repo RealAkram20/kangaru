@@ -5,6 +5,7 @@ namespace Modules\Reports\Models;
 use App\Concerns\BelongsToTenant;
 use App\Models\Tenant;
 use App\Models\User;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Modules\Reports\Enums\ExportFormat;
@@ -22,9 +23,19 @@ use Modules\Reports\Enums\ExportStatus;
  *
  * @property int $id
  * @property int $tenant_id
+ * @property int $requested_by_user_id
  * @property ExportFormat $format
  * @property ExportStatus $status
  * @property array<string, mixed> $filters
+ * @property string|null $path
+ * @property int|null $row_count
+ * @property int|null $file_size
+ * @property string|null $error
+ * @property CarbonInterface|null $started_at
+ * @property CarbonInterface|null $finished_at
+ * @property CarbonInterface|null $expires_at
+ * @property CarbonInterface $created_at
+ * @property-read User|null $requestedBy
  */
 class ReportExport extends Model
 {
@@ -60,11 +71,13 @@ class ReportExport extends Model
         ];
     }
 
+    /** @return BelongsTo<Tenant, $this> */
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);
     }
 
+    /** @return BelongsTo<User, $this> */
     public function requestedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'requested_by_user_id');

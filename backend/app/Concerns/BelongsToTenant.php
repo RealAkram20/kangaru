@@ -28,6 +28,10 @@ trait BelongsToTenant
         });
     }
 
+    /**
+     * @param  Builder<static>  $query
+     * @return Builder<static>
+     */
     public function scopeAllTenants(Builder $query): Builder
     {
         return $query->withoutGlobalScope(TenantScope::class);

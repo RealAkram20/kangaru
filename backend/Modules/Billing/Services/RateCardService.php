@@ -23,7 +23,13 @@ use Modules\Billing\Models\RateCardVersion;
 class RateCardService
 {
     /**
-     * @param  array{name: string, description?: string|null, is_default?: bool, version: array<string, mixed>}  $data
+     * Expects `name`, optionally `description` and `is_default`, and a
+     * `version` array in the shape addVersion() takes. Typed loosely
+     * because it arrives straight from a validated FormRequest, which
+     * already guarantees the shape and cannot express it as a PHPStan
+     * array shape.
+     *
+     * @param  array<string, mixed>  $data
      */
     public function create(array $data, User $actor): RateCard
     {

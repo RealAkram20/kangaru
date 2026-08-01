@@ -18,6 +18,14 @@ class CsvTripReportWriter implements TripReportWriter
     public function write(string $localPath, array $filters, array $summary): int
     {
         $handle = fopen($localPath, 'wb');
+
+        // A failed open must not be written through: every fwrite below
+        // would emit a warning and the job would report success against an
+        // export file that does not exist.
+        if ($handle === false) {
+            throw new \RuntimeException("Could not open {$localPath} to write the CSV export.");
+        }
+
         $rows = 0;
 
         try {

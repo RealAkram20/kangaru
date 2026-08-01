@@ -71,10 +71,27 @@ class XlsxTripReportWriter implements TripReportWriter
      */
     private function period(array $filters): string
     {
-        $from = isset($filters['from']) ? date('j M Y', strtotime((string) $filters['from'])) : 'the beginning';
-        $to = isset($filters['to']) ? date('j M Y', strtotime((string) $filters['to'])) : 'today';
+        $from = self::humanDate($filters['from'] ?? null) ?? 'the beginning';
+        $to = self::humanDate($filters['to'] ?? null) ?? 'today';
 
         return "Trips commencing {$from} to {$to}";
+    }
+
+    /**
+     * Renders a filter date for the sheet header, or null when it is absent
+     * or unparseable. A date the user typed is not guaranteed to parse, and
+     * `strtotime` answers false rather than throwing — feeding that straight
+     * to `date()` would silently print 1 Jan 1970 on the export.
+     */
+    private static function humanDate(mixed $value): ?string
+    {
+        if (! is_string($value) && ! is_int($value)) {
+            return null;
+        }
+
+        $timestamp = is_int($value) ? $value : strtotime($value);
+
+        return $timestamp === false ? null : date('j M Y', $timestamp);
     }
 
     /**

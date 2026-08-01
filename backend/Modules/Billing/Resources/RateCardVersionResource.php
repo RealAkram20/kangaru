@@ -21,7 +21,7 @@ class RateCardVersionResource extends JsonResource
         return [
             'id' => $this->id,
             'version' => $this->version,
-            'effective_from' => $this->effective_from?->toDateString(),
+            'effective_from' => $this->effective_from->toDateString(),
             'currency' => $this->currency,
             'rounding_mode' => $this->rounding_mode->value,
             'rounding_mode_label' => $this->rounding_mode->label(),

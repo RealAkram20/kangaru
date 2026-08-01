@@ -29,14 +29,25 @@ use Modules\Vehicles\Models\Vehicle;
  *
  * @property int $id
  * @property int $tenant_id
+ * @property int $requested_by_user_id
+ * @property string $origin
+ * @property string $destination
  * @property BookingStatus $status
  * @property Carbon|null $scheduled_for
+ * @property int|null $approved_by_user_id
+ * @property Carbon|null $approved_at
+ * @property string|null $decision_reason
  */
 class Booking extends Model
 {
+    /** @use HasFactory<BookingFactory> */
     use Auditable, BelongsToTenant, HasFactory, SoftDeletes;
 
-    /** @see Vehicle::newFactory() for why this is explicit. */
+    /**
+     * @see Vehicle::newFactory() for why this is explicit.
+     *
+     * @return Factory<self>
+     */
     protected static function newFactory(): Factory
     {
         return BookingFactory::new();
@@ -74,22 +85,29 @@ class Booking extends Model
         return $this->scheduled_for === null;
     }
 
+    /** @return BelongsTo<Tenant, $this> */
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);
     }
 
+    /** @return BelongsTo<User, $this> */
     public function requestedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'requested_by_user_id');
     }
 
+    /** @return BelongsTo<User, $this> */
     public function approvedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'approved_by_user_id');
     }
 
-    /** At most one — `trips.booking_id` carries a unique index. */
+    /**
+     * At most one — `trips.booking_id` carries a unique index.
+     *
+     * @return HasOne<Trip, $this>
+     */
     public function trip(): HasOne
     {
         return $this->hasOne(Trip::class);

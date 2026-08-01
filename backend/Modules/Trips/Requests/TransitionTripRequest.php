@@ -7,6 +7,7 @@ use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Modules\Trips\Enums\TripStatus;
+use Modules\Trips\Models\Trip;
 
 /**
  * One generic request for every transition — field-level (422) validation
@@ -86,7 +87,11 @@ class TransitionTripRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $validator) {
-            $trip = $this->route('trip');
+            // Only a resolved Trip carries the fields the two rules below
+            // read; typed explicitly so a route parameter that has not been
+            // model-bound cannot silently skip the odometer check.
+            $route = $this->route('trip');
+            $trip = $route instanceof Trip ? $route : null;
 
             if ($this->input('to') === TripStatus::TRIP_COMPLETED->value
                 && $this->filled('odometer_end')

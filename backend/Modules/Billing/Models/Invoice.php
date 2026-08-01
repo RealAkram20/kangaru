@@ -88,31 +88,37 @@ class Invoice extends Model
         return 'uuid';
     }
 
+    /** @return HasMany<InvoiceLine, $this> */
     public function lines(): HasMany
     {
         return $this->hasMany(InvoiceLine::class)->orderBy('line_number');
     }
 
+    /** @return HasMany<CreditNote, $this> */
     public function creditNotes(): HasMany
     {
         return $this->hasMany(CreditNote::class)->orderBy('id');
     }
 
+    /** @return BelongsTo<Trip, $this> */
     public function trip(): BelongsTo
     {
         return $this->belongsTo(Trip::class);
     }
 
+    /** @return BelongsTo<RateCardVersion, $this> */
     public function rateCardVersion(): BelongsTo
     {
         return $this->belongsTo(RateCardVersion::class, 'rate_card_version_id');
     }
 
+    /** @return BelongsTo<User, $this> */
     public function issuedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'issued_by_user_id');
     }
 
+    /** @return BelongsTo<Tenant, $this> */
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);

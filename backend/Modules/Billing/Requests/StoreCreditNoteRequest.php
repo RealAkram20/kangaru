@@ -5,6 +5,7 @@ namespace Modules\Billing\Requests;
 use App\Support\Tenancy\TenantContext;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Modules\Billing\Models\Invoice;
 
 /**
  * A credit note is the only way to change what a client owes, so the two
@@ -38,7 +39,11 @@ class StoreCreditNoteRequest extends FormRequest
      */
     public function rules(): array
     {
+        // The route parameter is only an Invoice once model binding has
+        // resolved it; typed explicitly so the scoping below cannot
+        // silently compare against nothing.
         $invoice = $this->route('invoice');
+        $invoiceId = $invoice instanceof Invoice ? $invoice->id : null;
 
         return [
             'idempotency_key' => ['required', 'string', 'min:8', 'max:128'],
@@ -58,7 +63,7 @@ class StoreCreditNoteRequest extends FormRequest
                 'integer',
                 Rule::exists('invoice_lines', 'id')->where(
                     fn ($query) => $query->where('tenant_id', app(TenantContext::class)->get())
-                        ->where('invoice_id', $invoice?->id)
+                        ->where('invoice_id', $invoiceId)
                 ),
             ],
         ];

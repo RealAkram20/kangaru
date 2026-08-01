@@ -78,6 +78,14 @@ class GenerateTripReportExport implements ShouldQueue
             // Written to the disk as a stream so the file is never held in
             // memory a second time on its way to R2.
             $handle = fopen($localPath, 'rb');
+
+            // A failed open would otherwise be passed to Storage::put() as
+            // `false`, which stores an empty file and reports success — an
+            // export the user can download and that contains nothing.
+            if ($handle === false) {
+                throw new \RuntimeException("Could not reopen {$localPath} to upload the export.");
+            }
+
             Storage::put($storedPath, $handle);
             fclose($handle);
 
@@ -134,10 +142,29 @@ class GenerateTripReportExport implements ShouldQueue
     private function filename(ReportExport $export): string
     {
         $filters = $export->filters;
-        $from = isset($filters['from']) ? date('Y-m-d', strtotime((string) $filters['from'])) : 'all';
-        $to = isset($filters['to']) ? date('Y-m-d', strtotime((string) $filters['to'])) : 'all';
 
-        return "kangaruride-trip-report-{$from}-to-{$to}.".$export->format->extension();
+        return sprintf(
+            'kangaruride-trip-report-%s-to-%s.%s',
+            self::filenameDate($filters['from'] ?? null),
+            self::filenameDate($filters['to'] ?? null),
+            $export->format->extension(),
+        );
+    }
+
+    /**
+     * "all" when the bound is absent or unparseable. `strtotime` answers
+     * false rather than throwing, and passing that to `date()` would name
+     * the file after 1 Jan 1970.
+     */
+    private static function filenameDate(mixed $value): string
+    {
+        if (! is_string($value)) {
+            return 'all';
+        }
+
+        $timestamp = strtotime($value);
+
+        return $timestamp === false ? 'all' : date('Y-m-d', $timestamp);
     }
 
     /**

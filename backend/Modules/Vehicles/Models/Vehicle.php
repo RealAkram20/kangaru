@@ -44,6 +44,8 @@ class Vehicle extends Model
      * for Database\Factories\Modules\Vehicles\Models\VehicleFactory. Same
      * "explicit over convention across Modules\" stance as the policy
      * registrations in AppServiceProvider.
+     *
+     * @return Factory<self>
      */
     protected static function newFactory(): Factory
     {
@@ -71,6 +73,7 @@ class Vehicle extends Model
         ];
     }
 
+    /** @return BelongsTo<Tenant, $this> */
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);

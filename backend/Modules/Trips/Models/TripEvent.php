@@ -5,6 +5,7 @@ namespace Modules\Trips\Models;
 use App\Concerns\BelongsToTenant;
 use App\Exceptions\TripEventImmutableException;
 use App\Models\User;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Modules\Trips\Enums\TripStatus;
@@ -14,6 +15,15 @@ use Modules\Trips\Enums\TripStatus;
  * in an append-only trip_events table"). Written exclusively via the
  * static record() factory — never constructed/saved directly elsewhere.
  * Structurally mirrors App\Models\AuditLog.
+ *
+ * @property int $id
+ * @property int $tenant_id
+ * @property int $trip_id
+ * @property TripStatus|null $from_status
+ * @property TripStatus $to_status
+ * @property int|null $user_id
+ * @property string|null $notes
+ * @property CarbonInterface $created_at
  */
 class TripEvent extends Model
 {
@@ -52,11 +62,13 @@ class TripEvent extends Model
         });
     }
 
+    /** @return BelongsTo<Trip, $this> */
     public function trip(): BelongsTo
     {
         return $this->belongsTo(Trip::class);
     }
 
+    /** @return BelongsTo<User, $this> */
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);

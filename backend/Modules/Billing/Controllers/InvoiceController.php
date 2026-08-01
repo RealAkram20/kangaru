@@ -77,7 +77,13 @@ class InvoiceController extends Controller
         $user = $request->user();
 
         $rateCardId = $request->validated('rate_card_id');
-        $rateCard = $rateCardId === null ? null : RateCard::findOrFail($rateCardId);
+        // sole() rather than findOrFail(): findOrFail's return type widens to
+        // a Collection when handed an array, so the narrower call is what
+        // keeps this a RateCard. GenerateInvoiceRequest has already proved
+        // the id belongs to the caller's tenant and is active.
+        $rateCard = $rateCardId === null
+            ? null
+            : RateCard::query()->whereKey($rateCardId)->sole();
 
         try {
             $invoice = $this->invoices->generateForTrip(

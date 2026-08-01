@@ -53,7 +53,9 @@ class PruneReportExports extends Command
                 continue;
             }
 
-            if (Storage::exists($export->path)) {
+            // A failed export never wrote a file, so there is nothing on
+            // disk to prune — only the row, which is handled below.
+            if ($export->path !== null && Storage::exists($export->path)) {
                 Storage::delete($export->path);
             }
 

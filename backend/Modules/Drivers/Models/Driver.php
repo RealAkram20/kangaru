@@ -28,7 +28,11 @@ class Driver extends Model
 {
     use Auditable, BelongsToTenant, HasFactory, SoftDeletes;
 
-    /** @see Vehicle::newFactory() for why this is explicit. */
+    /**
+     * @see Vehicle::newFactory() for why this is explicit.
+     *
+     * @return Factory<self>
+     */
     protected static function newFactory(): Factory
     {
         return DriverFactory::new();
@@ -52,11 +56,13 @@ class Driver extends Model
         ];
     }
 
+    /** @return BelongsTo<Tenant, $this> */
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);
     }
 
+    /** @return BelongsTo<User, $this> */
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);

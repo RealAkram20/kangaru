@@ -37,9 +37,11 @@ class PdfTripReportWriter implements TripReportWriter
                 // Belt and braces: the controller refuses an oversized
                 // request before queuing, but a report can grow between
                 // being requested and being generated.
-                if (count($rows) > (ExportFormat::PDF->rowLimit() ?? PHP_INT_MAX)) {
+                $limit = ExportFormat::PDF->rowLimit() ?? PHP_INT_MAX;
+
+                if (count($rows) > $limit) {
                     throw new \RuntimeException(
-                        'This report grew beyond the '.number_format(ExportFormat::PDF->rowLimit()).
+                        'This report grew beyond the '.number_format($limit).
                         '-trip limit for PDF while it was queued. Narrow the range and try again, '.
                         'or export it as CSV or Excel.'
                     );

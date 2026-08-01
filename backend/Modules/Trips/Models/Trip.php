@@ -5,6 +5,7 @@ namespace Modules\Trips\Models;
 use App\Concerns\Auditable;
 use App\Concerns\BelongsToTenant;
 use App\Models\Tenant;
+use Carbon\CarbonInterface;
 use Database\Factories\TripFactory;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -28,15 +29,35 @@ use Modules\Vehicles\Models\Vehicle;
  *
  * @property int $id
  * @property int $tenant_id
+ * @property int|null $booking_id
  * @property int $vehicle_id
  * @property int $driver_id
+ * @property string $origin
+ * @property string $destination
  * @property TripStatus $status
+ * @property int|null $odometer_start
+ * @property int|null $odometer_end
+ * @property string|null $distance_km
+ * @property string|null $gps_distance_km
+ * @property bool $distance_variance_flagged
+ * @property bool|null $cancellation_charge_applicable
+ * @property CarbonInterface|null $started_at
+ * @property CarbonInterface|null $completed_at
+ * @property CarbonInterface $created_at
+ * @property CarbonInterface $updated_at
+ * @property-read Vehicle|null $vehicle
+ * @property-read Driver|null $driver
  */
 class Trip extends Model
 {
+    /** @use HasFactory<TripFactory> */
     use Auditable, BelongsToTenant, HasFactory, SoftDeletes;
 
-    /** @see Vehicle::newFactory() for why this is explicit. */
+    /**
+     * @see Vehicle::newFactory() for why this is explicit.
+     *
+     * @return Factory<self>
+     */
     protected static function newFactory(): Factory
     {
         return TripFactory::new();
@@ -95,27 +116,35 @@ class Trip extends Model
         return (int) $this->started_at->diffInMinutes($this->completed_at);
     }
 
-    /** Null for an ad-hoc trip raised directly at the desk, with no booking. */
+    /**
+     * Null for an ad-hoc trip raised directly at the desk, with no booking.
+     *
+     * @return BelongsTo<Booking, $this>
+     */
     public function booking(): BelongsTo
     {
         return $this->belongsTo(Booking::class);
     }
 
+    /** @return BelongsTo<Vehicle, $this> */
     public function vehicle(): BelongsTo
     {
         return $this->belongsTo(Vehicle::class);
     }
 
+    /** @return BelongsTo<Driver, $this> */
     public function driver(): BelongsTo
     {
         return $this->belongsTo(Driver::class);
     }
 
+    /** @return BelongsTo<Tenant, $this> */
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);
     }
 
+    /** @return HasMany<TripEvent, $this> */
     public function events(): HasMany
     {
         return $this->hasMany(TripEvent::class)->orderBy('created_at');

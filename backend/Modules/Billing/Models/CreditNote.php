@@ -84,21 +84,25 @@ class CreditNote extends Model
         return 'uuid';
     }
 
+    /** @return HasMany<CreditNoteLine, $this> */
     public function lines(): HasMany
     {
         return $this->hasMany(CreditNoteLine::class)->orderBy('line_number');
     }
 
+    /** @return BelongsTo<Invoice, $this> */
     public function invoice(): BelongsTo
     {
         return $this->belongsTo(Invoice::class);
     }
 
+    /** @return BelongsTo<User, $this> */
     public function issuedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'issued_by_user_id');
     }
 
+    /** @return BelongsTo<Tenant, $this> */
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);

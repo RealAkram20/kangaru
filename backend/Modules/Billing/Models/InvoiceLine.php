@@ -45,6 +45,7 @@ use Modules\Billing\Enums\RoundingMode;
  * @property int|null $waiting_minutes
  * @property int $multiplier_bp
  * @property RoundingMode $rounding_mode
+ * @property-read Invoice $invoice
  */
 class InvoiceLine extends Model
 {
@@ -94,11 +95,13 @@ class InvoiceLine extends Model
         });
     }
 
+    /** @return BelongsTo<Invoice, $this> */
     public function invoice(): BelongsTo
     {
         return $this->belongsTo(Invoice::class);
     }
 
+    /** @return BelongsTo<RateCardVersion, $this> */
     public function rateCardVersion(): BelongsTo
     {
         return $this->belongsTo(RateCardVersion::class, 'rate_card_version_id');

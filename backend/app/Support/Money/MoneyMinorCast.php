@@ -17,7 +17,13 @@ use Illuminate\Database\Eloquent\Model;
  * The database column stays an integer. Nothing here changes the storage
  * contract; it changes what PHP hands you when you read it.
  *
- * @implements CastsAttributes<Money, Money|int|null>
+ * The `set` half is declared as `mixed` rather than `Money|int|null`: the
+ * interface passes whatever a caller assigned, and PHP does not enforce a
+ * generic at runtime. Narrowing it here would make the guard below provably
+ * unreachable to static analysis while remaining very much reachable in
+ * production, which is the wrong way round.
+ *
+ * @implements CastsAttributes<Money, mixed>
  */
 class MoneyMinorCast implements CastsAttributes
 {

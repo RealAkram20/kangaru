@@ -21,15 +21,21 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * * $km` is a TypeError, which is the point (AGENTS.md: "Raw integer math
  * on money outside the value object fails review").
  *
+ * The `@property` names carry the `_minor` suffix because that is the
+ * attribute name — the column stays an integer and the cast is what makes
+ * it read back as Money. Naming them without the suffix would document
+ * attributes that do not exist, and static analysis would go on believing
+ * the real ones are ints.
+ *
  * @property int $id
  * @property int $tenant_id
  * @property int $rate_card_version_id
  * @property string $vehicle_category
- * @property Money $base_fare
- * @property Money $per_km
- * @property Money $per_waiting_minute
- * @property Money $minimum_charge
- * @property Money|null $maximum_charge
+ * @property Money $base_fare_minor
+ * @property Money $per_km_minor
+ * @property Money $per_waiting_minute_minor
+ * @property Money $minimum_charge_minor
+ * @property Money|null $maximum_charge_minor
  */
 class RateCardRate extends Model
 {
@@ -74,6 +80,7 @@ class RateCardRate extends Model
         });
     }
 
+    /** @return BelongsTo<RateCardVersion, $this> */
     public function version(): BelongsTo
     {
         return $this->belongsTo(RateCardVersion::class, 'rate_card_version_id');

@@ -38,7 +38,20 @@ class TripPricingEngine
      */
     public function price(Trip $trip, RateCardVersion $version): TripPrice
     {
-        $category = $trip->vehicle->category;
+        $vehicle = $trip->vehicle;
+
+        // A trip always has a vehicle — `trips.vehicle_id` is non-nullable
+        // and restrictOnDelete — so a null here means the row was loaded
+        // without the relation, not that the journey had no vehicle.
+        // Pricing without knowing the category would silently bill the
+        // wrong rate, so it stops instead.
+        if ($vehicle === null) {
+            throw new \LogicException(
+                "Trip #{$trip->id} was priced without its vehicle loaded; the vehicle category decides the rate."
+            );
+        }
+
+        $category = $vehicle->category;
         $rate = $version->rateFor($category);
 
         if ($rate === null) {

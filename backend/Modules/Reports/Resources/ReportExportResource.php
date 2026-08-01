@@ -30,7 +30,7 @@ class ReportExportResource extends JsonResource
             'is_downloadable' => $this->status->isDownloadable() && ! $this->isExpired(),
             'is_terminal' => $this->status->isTerminal(),
             'error' => $this->error,
-            'requested_by' => $this->whenLoaded('requestedBy', fn () => $this->requestedBy->name),
+            'requested_by' => $this->whenLoaded('requestedBy', fn () => $this->requestedBy?->name),
             'expires_at' => $this->expires_at,
             'created_at' => $this->created_at,
             'finished_at' => $this->finished_at,

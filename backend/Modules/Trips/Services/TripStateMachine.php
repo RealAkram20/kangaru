@@ -18,6 +18,9 @@ class TripStateMachine
 {
     public function __construct(private readonly TripAssignmentGuard $guard) {}
 
+    /**
+     * @param  array<string, mixed>  $payload
+     */
     public function transition(Trip $trip, TripStatus $to, User $actor, array $payload = []): Trip
     {
         $from = $trip->status;
@@ -69,7 +72,10 @@ class TripStateMachine
     {
         $trip->odometer_end = $payload['odometer_end'];
         $trip->completed_at = now();
-        $trip->distance_km = $trip->odometer_end - $trip->odometer_start;
+        // Cast because `distance_km` is a decimal:2 attribute and reads back
+        // as a string; assigning the raw int would have the property hold
+        // two different types depending on whether the model was reloaded.
+        $trip->distance_km = (string) ($trip->odometer_end - $trip->odometer_start);
         // ADR-0003: the GPS (trip_locations) pipeline isn't wired up yet.
         // gps_distance_km / distance_variance_flagged stay at their
         // defaults (null / false) until that pass exists — see

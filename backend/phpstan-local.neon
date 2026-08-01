@@ -1,0 +1,9 @@
+# Local-only: PHPStan's parallel workers lose the drive letter on this
+# machine (phar://C:/... for a project on D:), so analysis runs in one
+# process here. CI on Ubuntu uses phpstan.neon directly and stays parallel.
+includes:
+    - phpstan.neon
+
+parameters:
+    parallel:
+        maximumNumberOfProcesses: 1

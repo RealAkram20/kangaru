@@ -48,7 +48,11 @@ class InvoiceLineResource extends JsonResource
             'quantity' => $this->quantity,
             'unit_amount_minor' => Shillings::toMinor($this->unitAmount()),
             'amount_minor' => Shillings::toMinor($this->amount()),
-            'currency' => $this->invoice?->currency ?? Shillings::currency(),
+            // From the invoice rather than configuration — an issued
+            // document must not start reporting a currency it was never
+            // priced in. `invoice_id` is a non-nullable FK, so the relation
+            // always resolves.
+            'currency' => $this->invoice->currency,
 
             // AGENTS.md: "Every invoice line stores its inputs ... An
             // invoice must be fully reproducible from stored data."
