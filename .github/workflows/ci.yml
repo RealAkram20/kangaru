@@ -37,6 +37,39 @@ jobs:
       - name: Validate commit messages
         run: npx commitlint --from origin/${{ github.base_ref }} --to HEAD --verbose
 
+  # AGENTS.md Security: "Secrets scanning (gitleaks) on every push. A
+  # committed secret is rotated the same day."
+  #
+  # Runs the release binary rather than the marketplace action: the action
+  # requires a paid licence key once a repository belongs to an organisation,
+  # which would turn this gate off exactly when the project grows into
+  # needing it most. Pinned, so a new gitleaks release cannot change what
+  # passes without a commit here.
+  secrets:
+    name: Secret scanning (gitleaks)
+    runs-on: ubuntu-latest
+
+    env:
+      GITLEAKS_VERSION: 8.30.1
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks scans history, not just the working tree — a secret
+          # that was committed and later removed is still a leaked secret.
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          curl -sSfL \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          sudo install /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Scan repository history
+        run: gitleaks detect --source . --no-banner --redact --exit-code 1
+
   backend:
     name: Backend (Pint, Larastan, Pest)
     runs-on: ubuntu-latest

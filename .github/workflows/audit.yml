@@ -1,0 +1,74 @@
+name: Dependency audit
+
+# AGENTS.md Enforcement & Tooling → Process:
+#
+#   "`composer audit` and `npm audit` weekly; critical CVEs patched within
+#    7 days."
+#
+# Weekly rather than per-push on purpose. A new advisory against an unchanged
+# dependency is not a reason to fail somebody's pull request, but it is a
+# reason to be told — so this runs on a schedule and can be triggered by hand,
+# and never gates a merge.
+on:
+  schedule:
+    # Mondays, 06:00 UTC — 09:00 in Kampala, so the week opens with the answer.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  composer:
+    name: composer audit (PHP)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: composer:v2
+
+      # --no-scripts: an audit needs the lock file, not a working application,
+      # and package discovery would fail without an app key.
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress --no-interaction --no-scripts
+
+      # Audits the whole tree, dev dependencies included: a compromised
+      # test-time package still runs on this runner with the repository
+      # checked out.
+      - name: Audit
+        run: composer audit --locked --no-interaction
+
+  npm:
+    name: npm audit (frontend)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # AGENTS.md's commitment is "critical CVEs patched within 7 days", so
+      # critical is what fails this job. Lower severities are still printed
+      # in the step below for anyone reading the run.
+      - name: Audit (fail on critical)
+        run: npm audit --audit-level=critical
+
+      - name: Full advisory list (informational)
+        if: always()
+        run: npm audit || true

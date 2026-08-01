@@ -1,0 +1,47 @@
+# Code owners
+#
+# AGENTS.md, Enforcement & Tooling → Process:
+#
+#   "Protected `main`. Merges only via PR with at least one approval;
+#    `Modules/Billing` and `Modules/Dispatch` require a CODEOWNERS-designated
+#    reviewer."
+#
+# This file is only half of that rule. GitHub will *request* a review from
+# the owners below automatically, but it will not *require* one until
+# "Require review from Code Owners" is enabled in the branch protection rule
+# for `main`. Without that setting this file is advisory, which is how
+# thirteen commits reached `main` unreviewed on 1 Aug 2026.
+#
+# Setting it: Settings → Branches → Branch protection rules → main →
+#   [x] Require a pull request before merging
+#   [x] Require approvals (1)
+#   [x] Require review from Code Owners
+#   [x] Do not allow bypassing the above settings
+#
+# Last matching pattern wins, so the two money modules are listed last.
+
+# Everything, by default.
+*                           @RealAkram20
+
+# The two modules AGENTS.md singles out. Billing decides what a client owes
+# and Dispatch decides which vehicle is committed where; both carry a 90%
+# coverage gate and both are where a silent bug costs real money.
+/backend/Modules/Billing/   @RealAkram20
+/backend/Modules/Dispatch/  @RealAkram20
+
+# The money primitives Billing is built on. A change here changes every
+# amount in the system, so it travels with the same reviewer.
+/backend/app/Support/Money/  @RealAkram20
+
+# The tenant-scoping enforcement point (ADR-0001). A mistake here is the
+# cross-tenant leak PROJECT.md calls the worst bug this platform can have.
+/backend/app/Support/Tenancy/  @RealAkram20
+/backend/app/Concerns/BelongsToTenant.php  @RealAkram20
+
+# The gates themselves. Weakening a threshold should be as visible as
+# weakening the code it guards.
+/.github/                   @RealAkram20
+/backend/bin/coverage-gate.php  @RealAkram20
+/AGENTS.md                  @RealAkram20
+/PROJECT.md                 @RealAkram20
+/docs/adr/                  @RealAkram20
