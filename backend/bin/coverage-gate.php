@@ -28,7 +28,7 @@
 $reportPath = $argv[1] ?? null;
 
 if ($reportPath === null || ! is_file($reportPath)) {
-    fwrite(STDERR, "Coverage report not found: ".var_export($reportPath, true)."\n");
+    fwrite(STDERR, 'Coverage report not found: '.var_export($reportPath, true)."\n");
     exit(1);
 }
 
