@@ -12,6 +12,7 @@ import { LoginPage } from '../pages/LoginPage'
 import { NotificationsPage } from '../pages/NotificationsPage'
 import { RateCardsPage } from '../pages/RateCardsPage'
 import { ReportsPage } from '../pages/ReportsPage'
+import { RolesPage } from '../pages/RolesPage'
 import { StaffPage } from '../pages/StaffPage'
 import { TripsPage } from '../pages/TripsPage'
 import { VehiclesPage } from '../pages/VehiclesPage'
@@ -75,6 +76,13 @@ export const router = createBrowserRouter([
           </RequireNavAccess>
         ),
       },
+      // Deliberately unguarded, unlike Staff. RequireNavAccess decides by
+      // role slug, and this page exists to create roles no slug list can
+      // know about — a custom role holding `roles.manage` would be turned
+      // away from the one screen built for it. The page gates on whether
+      // the API answers instead, which is the rule itself rather than a
+      // copy of it.
+      { path: 'roles', element: <RolesPage /> },
       {
         path: 'companies',
         element: (

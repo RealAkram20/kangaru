@@ -28,8 +28,9 @@ use Modules\Administration\Services\UserAdminService;
  * email before any tenant is known, and Super Admins have no tenant at all.
  * So nothing scopes these queries automatically, and a forgotten `where`
  * leaks names, emails and roles across tenants. The scoping is applied in
- * `scopedQuery()` below and asserted directly by
- * `UserAdminCrossTenantIsolationTest`.
+ * `scopedQuery()` below and asserted directly by `UserAdminTest` — "never
+ * shows a Corporate Admin the platform accounts or another tenant's" and
+ * "refuses a Corporate Admin another tenant's account directly".
  */
 class UserController extends Controller
 {

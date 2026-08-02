@@ -66,6 +66,17 @@ const VISIBLE_TO: Record<string, Role[]> = {
   // hiding the entry would remove the one page they most need.
   dispatch: DISPATCH_ROLES,
   staff: USER_ADMINISTRATORS,
+  // Modules\Administration\Policies\RolePolicy::viewAny — `roles.manage`
+  // or `staff.view`, which as seeded is exactly this pair. A Corporate
+  // Admin reads the catalogue they assign from; only a Super Admin writes
+  // it, and RolesPage renders read-only for the rest.
+  //
+  // Menu visibility only. The /roles route is deliberately NOT behind
+  // RequireNavAccess: a *custom* role holding `roles.manage` is invisible
+  // to a slug list, and locking it out of the role editor would be this
+  // map contradicting the very feature it is listing. Such a holder
+  // reaches the page by URL and the server serves them.
+  roles: USER_ADMINISTRATORS,
   invoices: BILLING_READERS,
   'rate-cards': BILLING_READERS,
   reports: REPORT_READERS,
