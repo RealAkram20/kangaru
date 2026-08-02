@@ -7,6 +7,7 @@ use App\Enums\Permission;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Support\Api\ApiResponse;
+use App\Support\Database\SearchTerm;
 use App\Support\Tenancy\ClientOptions;
 use Illuminate\Http\JsonResponse;
 use Modules\Trips\Enums\TripStatus;
@@ -74,6 +75,27 @@ class TripController extends Controller
                 $request->filled('tenant_id'),
                 fn ($q) => $q->where('tenant_id', $request->integer('tenant_id')),
             )
+            // The search box, server-side — see BookingController for why
+            // the ORs are wrapped rather than chained onto the outer query.
+            ->when($request->filled('q'), function ($query) use ($request, $user) {
+                $raw = (string) $request->string('q');
+                $term = SearchTerm::contains($raw);
+
+                $query->where(function ($match) use ($term, $raw, $user) {
+                    $match->where('origin', 'like', $term)
+                        ->orWhere('destination', 'like', $term)
+                        ->orWhere('status', 'like', SearchTerm::containsStatus($raw))
+                        // A dispatcher searches by number plate far more
+                        // often than by route, so these two matter more
+                        // than the columns above them.
+                        ->orWhereHas('vehicle', fn ($v) => $v->where('registration_number', 'like', $term))
+                        ->orWhereHas('driver', fn ($d) => $d->where('name', 'like', $term));
+
+                    if ($user->isPlatformLevel()) {
+                        $match->orWhereHas('tenant', fn ($t) => $t->where('name', 'like', $term));
+                    }
+                });
+            })
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
             ->when($request->filled('vehicle_id'), fn ($q) => $q->where('vehicle_id', $request->integer('vehicle_id')))
             ->when($request->filled('driver_id'), fn ($q) => $q->where('driver_id', $request->integer('driver_id')))

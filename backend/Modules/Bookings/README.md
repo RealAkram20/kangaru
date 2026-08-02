@@ -103,13 +103,10 @@ decision reason stay an untouched audit record.
 7. **A booking still requires a tenant and a requesting user.** Walk-in and
    individual riders have neither, so they remain unexpressible — named in
    ADR-0005 and again in ADR-0006, and unchanged by both.
-8. **The search box still only sees what has been loaded.** Paging and the
-   client picker are server-side; the free-text filter is not. It sifts the
-   pages in hand, so typing a passenger's name finds them only if their
-   booking has already been paged to. Making it server-side means a
-   whitelisted `q` parameter and a decision about which columns it spans —
-   small, but it is a decision, and the two controls sitting side by side
-   now behave differently in a way nothing on screen explains.
+8. **No date filter.** `?q=` searches text and `?status=` narrows state,
+   but "everything raised last week" is not expressible — the audit log has
+   `from`/`to` and this does not. The obvious next filter, and the one a
+   monthly reconciliation actually needs.
 
 ## Frontend
 
@@ -157,6 +154,27 @@ so any corporate employee could enumerate the platform's entire client
 list one id at a time, without a single row leaking. `ClientFilterTest`
 asserts the two responses are byte-identical, and it is the test that
 caught it.
+
+**`?q=` searches the whole queue, not the page in hand.** Route, passenger
+and status, plus the client's name for a reader whose queue spans clients.
+Two details in it are about `LIKE` rather than about search, and both
+produce *more* rows than they should — the failure mode nobody notices:
+
+- **Wildcards in the term are escaped** (`App\Support\Database\SearchTerm`).
+  `%` and `_` are `LIKE` operators, and a passenger called `O_Brien` or a
+  search for `50%` carries them innocently. Unescaped, the first matches
+  every name of that shape and the second matches everything. Not
+  injection — the value is still bound — but a wrong answer that looks
+  exactly like a right one.
+- **The OR group is nested.** `where(a)->orWhere(b)` chained onto the outer
+  query escapes the surrounding AND, so `?q=Entebbe&status=cancelled` would
+  return the Entebbe booking regardless of its status. `QueueSearchTest`
+  asserts that combination specifically, and it was verified to fail with
+  the nesting removed.
+
+Statuses are matched the way they are *displayed*: the column holds
+`trip_completed` and somebody reading the screen types "trip completed", so
+spaces fold back to underscores before matching.
 
 `meta.filters.clients` carries what the endpoint will accept, so the picker
 holds no list of its own. It offers **every** client rather than the ones

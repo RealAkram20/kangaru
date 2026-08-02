@@ -14,7 +14,7 @@ class BookingIndexRequest extends FormRequest
      * Query params this endpoint recognizes. Anything else fails
      * validation — AGENTS.md: "unknown filters return 422, not silence."
      */
-    private const ALLOWED_KEYS = ['status', 'dispatchable', 'cursor'];
+    private const ALLOWED_KEYS = ['status', 'dispatchable', 'q', 'cursor'];
 
     public function authorize(): bool
     {
@@ -30,6 +30,10 @@ class BookingIndexRequest extends FormRequest
             'status' => ['sometimes', Rule::enum(BookingStatus::class)],
             // The dispatch queue: everything still awaiting a vehicle.
             'dispatchable' => ['sometimes', 'boolean'],
+            // Free text across route, passenger, status and — for a reader
+            // whose queue spans clients — the client's name. Bounded so a
+            // search box cannot be used to send a megabyte to `LIKE`.
+            'q' => ['sometimes', 'string', 'max:120'],
             'cursor' => ['sometimes', 'string'],
 
             // `tenant_id` is validated only for the reader who may use it.

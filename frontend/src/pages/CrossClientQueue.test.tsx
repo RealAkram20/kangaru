@@ -228,7 +228,7 @@ describe('the cross-client queue names its clients', () => {
     expect(within(dialog).getByText(/for Acme NGO Ltd/)).toBeInTheDocument()
   })
 
-  it('filters the fetched page down to one client by name', async () => {
+  it('searches by client name through the server', async () => {
     serve('platform')
 
     renderAs(<BookingsPage />, PLATFORM_STAFF)
@@ -237,13 +237,10 @@ describe('the cross-client queue names its clients', () => {
 
     await userEvent.type(screen.getByPlaceholderText(/filter by client/i), 'Acme')
 
-    // Asserted inside the table: the picker keeps rendering both names as
-    // options regardless, so an unscoped query would never see a row go.
-    // This box narrows the page in hand — the picker above it is what
-    // narrows the query.
-    const table = within(screen.getByRole('table'))
-    expect(table.queryByText('Centenary Bank')).not.toBeInTheDocument()
-    expect(table.getByText('Acme NGO Ltd')).toBeInTheDocument()
+    // The client's name is one of the columns the endpoint searches, but
+    // only for a reader whose queue spans clients — for a client's own
+    // user there is nothing to tell apart.
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/bookings?q=Acme'))
   })
 })
 

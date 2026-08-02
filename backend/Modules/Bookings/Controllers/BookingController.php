@@ -7,6 +7,7 @@ use App\Enums\Permission;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Support\Api\ApiResponse;
+use App\Support\Database\SearchTerm;
 use App\Support\Tenancy\ClientOptions;
 use Illuminate\Http\JsonResponse;
 use Modules\Bookings\Enums\BookingStatus;
@@ -63,6 +64,30 @@ class BookingController extends Controller
                 $request->filled('tenant_id'),
                 fn ($q) => $q->where('tenant_id', $request->integer('tenant_id')),
             )
+            // The search box, moved server-side so it searches the whole
+            // queue rather than the page in hand. Grouped in its own
+            // closure: without the nesting these ORs would escape the
+            // surrounding AND and return every booking on the platform the
+            // moment any other filter was applied.
+            ->when($request->filled('q'), function ($query) use ($request, $user) {
+                $term = SearchTerm::contains((string) $request->string('q'));
+
+                $query->where(function ($match) use ($term, $request, $user) {
+                    $match->where('origin', 'like', $term)
+                        ->orWhere('destination', 'like', $term)
+                        ->orWhere('passenger_name', 'like', $term)
+                        // Stored snake_case, read with spaces — see
+                        // SearchTerm::containsStatus.
+                        ->orWhere('status', 'like', SearchTerm::containsStatus((string) $request->string('q')));
+
+                    // Only where there is more than one client to tell
+                    // apart. `whereHas` rather than a join, so the match
+                    // cannot duplicate rows.
+                    if ($user->isPlatformLevel()) {
+                        $match->orWhereHas('tenant', fn ($t) => $t->where('name', 'like', $term));
+                    }
+                });
+            })
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
             ->when(
                 $request->boolean('dispatchable'),

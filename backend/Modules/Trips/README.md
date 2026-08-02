@@ -116,9 +116,10 @@ Cancelled: reachable from any state before Trip Started, including Rejected
 9. **`Modules/Drivers` `user_id` linkage** — the column exists but has no
    request-layer/UI support in `Modules/Drivers` yet; populated only via
    direct Eloquent, seeders, or tests for now (see `Modules/Drivers/README.md`).
-10. **The search box still only sees loaded pages.** Paging and the client
-    picker are server-side; the free-text filter sifts what is in hand.
-    Same gap `Modules/Bookings` records, and the same fix.
+10. **No date filter on the trip list.** `?q=` covers route, registration,
+    driver, status and client; `?status=`, `?vehicle_id=` and `?driver_id=`
+    cover the rest. "Every trip in March" is still not expressible here —
+    the trip *report* answers it, the list does not.
 11. **`TripResource` sends three fields the frontend type does not
     declare** — `booking_id`, `odometer_start_photo_url` and
     `odometer_end_photo_url`. Nothing in the UI reads them, so this is
@@ -258,6 +259,13 @@ permission on a surface sees nothing of it either. Both are needed and they
 fail differently — without the first one client reads another's data;
 without the second, belonging to no tenant quietly becomes a permission of
 its own.
+
+**`?q=` searches vehicle registration and driver name as well as the
+route** — `whereHas` rather than a join, so a trip cannot appear twice when
+both match. A dispatcher reaches for a number plate far more often than for
+an origin, which is why those two are in the search at all. See
+`Modules/Bookings` for the wildcard-escaping and OR-nesting notes; the same
+two traps apply here and the same helper handles them.
 
 `trip_events` needs no `forActor()` of its own. `TripEventController` reads
 `$trip->events()`, and by the time it runs the `subject-tenant` middleware

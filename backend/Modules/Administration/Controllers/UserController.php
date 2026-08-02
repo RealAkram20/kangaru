@@ -6,6 +6,7 @@ use App\Enums\UserStatus;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Support\Api\ApiResponse;
+use App\Support\Database\SearchTerm;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Modules\Administration\Models\Role;
@@ -44,7 +45,10 @@ class UserController extends Controller
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
             ->when($request->filled('role'), fn ($q) => $q->where('role', $request->string('role')))
             ->when($request->filled('q'), function ($q) use ($request) {
-                $term = '%'.$request->string('q').'%';
+                // Wildcards in the term are escaped rather than honoured:
+                // an administrator searching for `o_brien` means those
+                // characters, not "any character here".
+                $term = SearchTerm::contains((string) $request->string('q'));
                 $q->where(fn ($w) => $w->where('name', 'like', $term)->orWhere('email', 'like', $term));
             })
             // Suspended accounts last: a staff list is read to find someone

@@ -221,10 +221,16 @@ describe('BookingsPage', () => {
     expect(screen.queryByRole('button', { name: /^cancel$/i })).not.toBeInTheDocument()
   })
 
-  it('filters the list by route, passenger or status', async () => {
+  it('asks the server for the search rather than sifting the page it holds', async () => {
     const user = userEvent.setup()
-    get.mockResolvedValue(
-      apiOk([booking(), booking({ id: 42, origin: 'Gulu', destination: 'Lira', passenger_name: 'Sam Etyang' })]),
+
+    const gulu = booking({ id: 42, origin: 'Gulu', destination: 'Lira', passenger_name: 'Sam Etyang' })
+
+    // The server does the matching now. In-browser filtering searched the
+    // 25 rows in hand and reported the rest of the queue as "no match",
+    // which is a wrong answer rather than a slow one.
+    get.mockImplementation((url: string) =>
+      Promise.resolve(url.includes('q=gulu') ? apiOk([gulu]) : apiOk([booking(), gulu])),
     )
 
     renderAs(<BookingsPage />)
@@ -233,7 +239,9 @@ describe('BookingsPage', () => {
 
     await user.type(screen.getByPlaceholderText(/filter by route/i), 'gulu')
 
-    expect(screen.getByText('Gulu → Lira')).toBeInTheDocument()
-    expect(screen.queryByText('Kampala → Entebbe')).not.toBeInTheDocument()
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/bookings?q=gulu'))
+
+    expect(await screen.findByText('Gulu → Lira')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('Kampala → Entebbe')).not.toBeInTheDocument())
   })
 })

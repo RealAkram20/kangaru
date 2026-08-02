@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../auth/useAuth'
 import { apiClient } from '../lib/apiClient'
 import { canManageBilling } from '../lib/billing'
+import { useDebouncedValue } from '../lib/useDebouncedValue'
 import { formatTimestamp, formatUgx } from '../lib/format'
 import {
   formatDistance,
@@ -45,9 +46,12 @@ const CLIENT_COLUMN: DataColumn<Trip> = {
  * happens server-side, unlike the search box which only ever sifted the
  * page already fetched.
  */
-function tripsUrl(client: string, cursor: string | null = null): string {
+function tripsUrl(client: string, search: string, cursor: string | null = null): string {
   const params = new URLSearchParams()
   if (client !== '') params.set('tenant_id', client)
+  // Server-side: a trip list is append-only and long, and searching the 25
+  // rows in hand while reporting the rest as "no match" is a wrong answer.
+  if (search !== '') params.set('q', search)
   // Opaque, and sent back unaltered: it encodes a sort position rather
   // than an offset, so trips created while somebody is paging do not shift
   // the page under them.
@@ -134,6 +138,9 @@ export function TripsPage() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  // Held back until typing settles — see BookingsPage. Every keystroke
+  // would otherwise be a request, and their answers can land out of order.
+  const search = useDebouncedValue(query.trim())
   const [selected, setSelected] = useState<Trip | null>(null)
   const [transitionTo, setTransitionTo] = useState<TripStatus | null>(null)
   const [invoicing, setInvoicing] = useState<Trip | null>(null)
@@ -153,7 +160,7 @@ export function TripsPage() {
    */
   const refresh = useCallback(async () => {
     try {
-      const response = await apiClient.get<ApiSuccess<Trip[], ScopedCursorMeta>>(tripsUrl(client))
+      const response = await apiClient.get<ApiSuccess<Trip[], ScopedCursorMeta>>(tripsUrl(client, search))
       setTrips(response.data.data)
       setScope(response.data.meta?.scope ?? 'tenant')
       setClients(response.data.meta?.filters?.clients ?? [])
@@ -166,7 +173,7 @@ export function TripsPage() {
     } catch {
       setError('Could not load trips.')
     }
-  }, [client])
+  }, [client, search])
 
   const loadMore = useCallback(async () => {
     if (next === null) return
@@ -174,7 +181,7 @@ export function TripsPage() {
     setLoadingMore(true)
     try {
       const response = await apiClient.get<ApiSuccess<Trip[], ScopedCursorMeta>>(
-        tripsUrl(client, next),
+        tripsUrl(client, search, next),
       )
       // Appended, so the trips already read stay put — this is the one
       // path that must not replace the list.
@@ -185,7 +192,7 @@ export function TripsPage() {
     } finally {
       setLoadingMore(false)
     }
-  }, [client, next])
+  }, [client, search, next])
 
   // Promise chain rather than `void refresh()` so the state update lands
   // in a callback — setState straight from an effect body cascades renders.
@@ -193,7 +200,7 @@ export function TripsPage() {
     let cancelled = false
 
     apiClient
-      .get<ApiSuccess<Trip[], ScopedCursorMeta>>(tripsUrl(client))
+      .get<ApiSuccess<Trip[], ScopedCursorMeta>>(tripsUrl(client, search))
       .then((response) => {
         if (cancelled) return
 
@@ -211,7 +218,7 @@ export function TripsPage() {
     }
     // Re-fetches on a client change: the narrowing is server-side, so the
     // other clients' rows were never here to filter.
-  }, [client])
+  }, [client, search])
 
   // The response to a transition is the updated trip, so the row and the
   // open panel are refreshed from it rather than re-fetching the list.
@@ -221,24 +228,10 @@ export function TripsPage() {
     setTransitionTo(null)
   }
 
-  const filtered = useMemo(() => {
-    if (!trips) return []
-    const q = query.trim().toLowerCase()
-    if (!q) return trips
-    return trips.filter(
-      (t) =>
-        t.origin.toLowerCase().includes(q) ||
-        t.destination.toLowerCase().includes(q) ||
-        t.vehicle?.registration_number.toLowerCase().includes(q) ||
-        t.driver?.name.toLowerCase().includes(q) ||
-        // Only ever set on a cross-client listing, so a client's own
-        // filter behaves exactly as it did — there is nothing to match.
-        // For Shanitah's staff it is the most useful term in the box:
-        // "Centenary" narrows a merged list to one client.
-        t.client?.name.toLowerCase().includes(q) ||
-        tripStatusLabel(t.status).toLowerCase().includes(q),
-    )
-  }, [trips, query])
+  // Already what the server matched — route, registration, driver, status
+  // and, for a cross-client reader, the client's name. Filtering again here
+  // would only be able to narrow the page in hand.
+  const rows = trips ?? []
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
@@ -286,7 +279,7 @@ export function TripsPage() {
         ) : (
           <DataTable<Trip>
             columns={columns}
-            rows={filtered}
+            rows={rows}
             dense
             onRowClick={(row) => setSelected((current) => (current?.id === row.id ? null : row))}
             emptyMessage={trips === null ? 'Loading…' : query ? 'No trips match your filter' : 'No trips yet'}

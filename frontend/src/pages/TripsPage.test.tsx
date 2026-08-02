@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiFailure, apiOk, makeUser, renderAs } from '../test/harness'
@@ -235,31 +235,61 @@ describe('TripsPage', () => {
     expect(within(panel).getAllByText('—').length).toBeGreaterThanOrEqual(6)
   })
 
-  it('filters on the rows already loaded, without asking the server again', async () => {
+  it('asks the server for the search rather than sifting the page it holds', async () => {
     const user = userEvent.setup()
-    board([
-      trip(),
-      trip({
-        id: 42,
-        origin: 'Gulu',
-        destination: 'Lira',
-        vehicle: { id: 9, registration_number: 'UBB 456B' } as Trip['vehicle'],
-      }),
-    ])
+
+    const other = trip({
+      id: 42,
+      origin: 'Gulu',
+      destination: 'Lira',
+      vehicle: { id: 9, registration_number: 'UBB 456B' } as Trip['vehicle'],
+    })
+
+    // The server answers the search; the page renders what it gets back.
+    // This used to filter in the browser, which meant a trip list longer
+    // than one page reported everything past row 25 as "no match".
+    get.mockImplementation((url: string) => {
+      if (url.includes('/events')) return Promise.resolve(apiOk([event()]))
+      if (url.includes('q=UBB')) return Promise.resolve(apiOk([other], { cursor: { next: null } }))
+
+      return Promise.resolve(apiOk([trip(), other], { cursor: { next: null } }))
+    })
 
     renderAs(<TripsPage />, makeUser({ role: 'dispatcher' }))
 
     await screen.findByText('UAA 123A')
-    const before = get.mock.calls.length
 
     await user.type(
       screen.getByPlaceholderText(/filter by route, vehicle, driver or status/i),
       'UBB',
     )
 
-    expect(screen.getByText('UBB 456B')).toBeInTheDocument()
-    expect(screen.queryByText('UAA 123A')).toBeNull()
-    expect(get.mock.calls.length).toBe(before)
+    // Debounced, so this settles a moment after the last keystroke rather
+    // than firing one request per character.
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/trips?q=UBB'))
+
+    expect(await screen.findByText('UBB 456B')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('UAA 123A')).toBeNull())
+  })
+
+  it('sends one request for a burst of typing, not one per keystroke', async () => {
+    const user = userEvent.setup()
+    board([trip()])
+
+    renderAs(<TripsPage />, makeUser({ role: 'dispatcher' }))
+
+    await screen.findByText('UAA 123A')
+    get.mockClear()
+
+    await user.type(screen.getByPlaceholderText(/filter by route/i), 'Entebbe')
+
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/trips?q=Entebbe'))
+
+    // Seven characters, one request. Without the debounce each keystroke
+    // is a query and their answers can arrive out of order, leaving the
+    // rows for "E" on screen after the ones for "Entebbe".
+    const searches = get.mock.calls.filter(([url]) => String(url).includes('q='))
+    expect(searches).toHaveLength(1)
   })
 
   it('says the board is empty when it is', async () => {
@@ -272,12 +302,23 @@ describe('TripsPage', () => {
 
   it('says the filter matched nothing, rather than that there are no trips', async () => {
     const user = userEvent.setup()
+
+    get.mockImplementation((url: string) => {
+      if (url.includes('/events')) return Promise.resolve(apiOk([event()]))
+      if (url.includes('q=')) return Promise.resolve(apiOk([], { cursor: { next: null } }))
+
+      return Promise.resolve(apiOk([trip()], { cursor: { next: null } }))
+    })
+
     renderAs(<TripsPage />, makeUser({ role: 'dispatcher' }))
 
     await screen.findByText('UAA 123A')
     await user.type(screen.getByPlaceholderText(/filter by route/i), 'zzz')
 
-    expect(screen.getByText('No trips match your filter')).toBeInTheDocument()
+    // An empty result from a search is a different thing from an empty
+    // list, and saying "No trips yet" to somebody who has just searched
+    // reads as data loss.
+    expect(await screen.findByText('No trips match your filter')).toBeInTheDocument()
     expect(screen.queryByText('No trips yet')).toBeNull()
   })
 

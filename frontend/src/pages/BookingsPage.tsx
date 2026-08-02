@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../auth/useAuth'
 import { apiClient } from '../lib/apiClient'
 import { apiError, fieldErrors } from '../lib/apiError'
+import { useDebouncedValue } from '../lib/useDebouncedValue'
 import { bookingStatusIcon, bookingStatusLabel, bookingStatusTone, pickupLabel } from '../lib/bookingStatus'
 import type { ApiSuccess, FilterOption, ScopedCursorMeta, TenancyScope } from '../types/api'
 import type { Booking } from '../types/booking'
@@ -47,9 +48,17 @@ interface BookingList {
  * unaltered — it encodes the sort position, not an offset, which is why
  * rows inserted while somebody is paging do not shift the page under them.
  */
-async function fetchBookings(client: string, cursor: string | null): Promise<BookingList> {
+async function fetchBookings(
+  client: string,
+  search: string,
+  cursor: string | null,
+): Promise<BookingList> {
   const params = new URLSearchParams()
   if (client !== '') params.set('tenant_id', client)
+  // Server-side since the queue can be longer than a page: the old
+  // in-browser filter searched the 25 rows in hand and reported the rest
+  // as "no match", which is a wrong answer rather than a slow one.
+  if (search !== '') params.set('q', search)
   if (cursor !== null) params.set('cursor', cursor)
 
   const query = params.toString()
@@ -84,6 +93,10 @@ export function BookingsPage() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  // What the box shows vs. what the last request used. Every keystroke
+  // would otherwise be a request, and their answers can arrive out of
+  // order — "E" resolving after "Entebbe" leaves the wrong rows on screen.
+  const search = useDebouncedValue(query.trim())
   const [creating, setCreating] = useState(false)
   const [decision, setDecision] = useState<{ booking: Booking; kind: 'rejection' | 'cancellation' } | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -113,8 +126,8 @@ export function BookingsPage() {
    * same booking twice.
    */
   const load = useCallback(
-    () => fetchBookings(client, null).then((list) => apply(list, false), onLoadFailure(setLoadError)),
-    [apply, client],
+    () => fetchBookings(client, search, null).then((list) => apply(list, false), onLoadFailure(setLoadError)),
+    [apply, client, search],
   )
 
   // Re-runs when the chosen client changes, because the narrowing happens
@@ -122,7 +135,7 @@ export function BookingsPage() {
   useEffect(() => {
     let cancelled = false
 
-    fetchBookings(client, null)
+    fetchBookings(client, search, null)
       .then((list) => {
         if (!cancelled) apply(list, false)
       })
@@ -133,20 +146,20 @@ export function BookingsPage() {
     return () => {
       cancelled = true
     }
-  }, [apply, client])
+  }, [apply, client, search])
 
   const loadMore = useCallback(async () => {
     if (next === null) return
 
     setLoadingMore(true)
     try {
-      apply(await fetchBookings(client, next), true)
+      apply(await fetchBookings(client, search, next), true)
     } catch (error) {
       onLoadFailure(setLoadError)(error)
     } finally {
       setLoadingMore(false)
     }
-  }, [apply, client, next])
+  }, [apply, client, search, next])
 
   const canApprove = user !== null && APPROVER_ROLES.includes(user.role)
 
@@ -245,21 +258,10 @@ export function BookingsPage() {
     [canApprove, approve, scope],
   )
 
-  const filtered = useMemo(() => {
-    if (!bookings) return []
-    const q = query.trim().toLowerCase()
-    if (!q) return bookings
-    return bookings.filter(
-      (b) =>
-        b.origin.toLowerCase().includes(q) ||
-        b.destination.toLowerCase().includes(q) ||
-        b.passenger_name.toLowerCase().includes(q) ||
-        // Present only on a cross-client queue, where it is the term a
-        // dispatcher most wants — see TripsPage for the same filter.
-        b.client?.name.toLowerCase().includes(q) ||
-        bookingStatusLabel(b.status).toLowerCase().includes(q),
-    )
-  }, [bookings, query])
+  // The rows are already what the server matched, so there is nothing left
+  // to filter here. The in-browser version this replaces searched only the
+  // page in hand and reported everything beyond it as "no match".
+  const rows = bookings ?? []
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
@@ -314,7 +316,7 @@ export function BookingsPage() {
       >
         <DataTable<Booking>
           columns={columns}
-          rows={filtered}
+          rows={rows}
           dense
           emptyMessage={
             bookings === null ? 'Loading…' : query ? 'No bookings match your filter' : 'No bookings yet'
@@ -322,10 +324,11 @@ export function BookingsPage() {
         />
 
         {/*
-          Outside the filtered set on purpose: the search box narrows the
-          rows already loaded, so a filter matching nothing on this page
-          must still let you fetch the next one. Hiding the control because
-          the *filtered* view is empty would strand the search.
+          The cursor now belongs to the *searched* query, so "load more"
+          continues the search rather than escaping it — which is why the
+          in-browser filter had to go first. Paging a client-side filter
+          would have loaded the next 25 unfiltered rows into a filtered
+          list.
         */}
         <LoadMore hasMore={next !== null} loading={loadingMore} onLoadMore={() => void loadMore()} />
       </Card>
