@@ -123,7 +123,20 @@ Named here so a half-built thing is not mistaken for a finished one.
 
 - **MFA for Super Admin and Finance.** AGENTS.md marks it required in
   Phase 1 for the two roles that can move money and change rates. Not
-  built. This is the largest known gap in this module.
+  built. This is the largest known gap in this module, and the oldest
+  unmet *stated* requirement in the repository.
+
+  **ADR-0008 is Proposed** and describes it: TOTP rather than SMS (which
+  AGENTS.md's own security section argues against, on SMS-pumping cost),
+  no API token issued before the second factor, forced enrolment rather
+  than a grace period, and recovery codes — which are not optional here,
+  because the item below means a Super Admin who loses their authenticator
+  has no recovery path and is the only account that could fix themselves.
+
+  It also folds in `config/sanctum.php`'s `'expiration' => null`. Tokens
+  currently never expire, against AGENTS.md's "Sanctum tokens with
+  expiry", and a second factor that mints a permanent credential secures
+  one moment and nothing after it. The two are one change.
 - **Resetting somebody else's password.** Deliberate, not an oversight: an
   administrator silently changing another account's password is the one act
   an audit trail cannot tell apart from impersonation. There is no
