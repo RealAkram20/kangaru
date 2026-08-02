@@ -110,12 +110,13 @@ export function ExportPanel({
         report,
         from: filters.from || null,
         to: filters.to || null,
-        // The aggregates group by driver or vehicle, so filtering to one of
-        // either is meaningless there — and the server rejects the filter
-        // rather than ignoring it, so it is not sent.
+        // Each report accepts only its own filters, and the server rejects
+        // the others with a 422 rather than ignoring them — so only the
+        // ones this report can honour are sent.
         ...(report === 'trips'
           ? { vehicle_id: filters.vehicle_id || null, driver_id: filters.driver_id || null }
           : {}),
+        ...(report === 'financial' ? { group_by: filters.group_by } : {}),
       })
 
       await load()
@@ -210,8 +211,14 @@ export function ExportPanel({
 
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span style={{ display: 'block', font: 'var(--type-label)', color: 'var(--text-body)' }}>
-                  {item.format_label}
-                  {item.row_count !== null && ` · ${item.row_count.toLocaleString('en-US')} trips`}
+                  {item.report_label} · {item.format_label}
+                  {/* The noun comes from the server, which knows what the
+                      report it produced counts. This line said "trips" for
+                      every export until the financial report made it
+                      obviously wrong — it was already wrong for the driver
+                      and vehicle ones. */}
+                  {item.row_count !== null &&
+                    ` · ${item.row_count.toLocaleString('en-US')} ${item.row_noun}`}
                   {item.file_size !== null && ` · ${formatBytes(item.file_size)}`}
                 </span>
                 <span style={{ font: 'var(--type-caption)', color: 'var(--text-secondary)' }}>

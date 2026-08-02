@@ -2,18 +2,20 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../auth/useAuth'
 import { apiClient } from '../lib/apiClient'
 import { apiError, fieldErrors } from '../lib/apiError'
+import { useDebouncedValue } from '../lib/useDebouncedValue'
 import { bookingStatusIcon, bookingStatusLabel, bookingStatusTone, pickupLabel } from '../lib/bookingStatus'
-import type { ApiSuccess } from '../types/api'
+import type { ApiSuccess, FilterOption, ScopedCursorMeta, TenancyScope } from '../types/api'
 import type { Booking } from '../types/booking'
-import type { CursorMeta } from '../types/trip'
 import { Badge } from '../components/core/Badge'
 import { Button } from '../components/core/Button'
 import { Card } from '../components/core/Card'
 import { Alert } from '../components/feedback/Alert'
 import { Dialog } from '../components/feedback/Dialog'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
+import { LoadMore } from '../components/data/LoadMore'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { Select } from '../components/forms/Select'
 
 /**
  * Roles the backend's BookingPolicy lets approve or reject. Mirrored here
@@ -23,10 +25,57 @@ import { Input } from '../components/forms/Input'
  */
 const APPROVER_ROLES = ['super_admin', 'operations_manager', 'corporate_admin', 'branch_manager']
 
-async function fetchBookings(): Promise<Booking[]> {
-  const response = await apiClient.get<ApiSuccess<Booking[], CursorMeta>>('/bookings')
+interface BookingList {
+  rows: Booking[]
+  /**
+   * Whose bookings these are, straight from the API (ADR-0006). Read
+   * rather than worked out from the signed-in user, so this page holds no
+   * copy of the rule that decides who reads across clients.
+   */
+  scope: TenancyScope
+  /** The clients this reader may narrow to; empty for a client's own user. */
+  clients: FilterOption[]
+  /** Opaque cursor for the next page, or null at the end of the list. */
+  next: string | null
+}
 
-  return response.data.data
+/**
+ * `client` narrows server-side, which is the point: the filter box below
+ * only ever searched the page already fetched, and at fifty clients that
+ * is the wrong answer rather than a slow one.
+ *
+ * `cursor` continues the same query. It is opaque and must be sent back
+ * unaltered — it encodes the sort position, not an offset, which is why
+ * rows inserted while somebody is paging do not shift the page under them.
+ */
+async function fetchBookings(
+  client: string,
+  search: string,
+  cursor: string | null,
+): Promise<BookingList> {
+  const params = new URLSearchParams()
+  if (client !== '') params.set('tenant_id', client)
+  // Server-side since the queue can be longer than a page: the old
+  // in-browser filter searched the 25 rows in hand and reported the rest
+  // as "no match", which is a wrong answer rather than a slow one.
+  if (search !== '') params.set('q', search)
+  if (cursor !== null) params.set('cursor', cursor)
+
+  const query = params.toString()
+
+  const response = await apiClient.get<ApiSuccess<Booking[], ScopedCursorMeta>>(
+    query === '' ? '/bookings' : `/bookings?${query}`,
+  )
+
+  return {
+    rows: response.data.data,
+    // Defaulted, not assumed: an older API that does not send it is one
+    // client's listing, which is the safe reading — it shows a column too
+    // few rather than mislabelling rows.
+    scope: response.data.meta?.scope ?? 'tenant',
+    clients: response.data.meta?.filters?.clients ?? [],
+    next: response.data.meta?.cursor?.next ?? null,
+  }
 }
 
 function onLoadFailure(setError: (message: string) => void) {
@@ -36,30 +85,59 @@ function onLoadFailure(setError: (message: string) => void) {
 export function BookingsPage() {
   const { user } = useAuth()
   const [bookings, setBookings] = useState<Booking[] | null>(null)
+  const [scope, setScope] = useState<TenancyScope>('tenant')
+  const [clients, setClients] = useState<FilterOption[]>([])
+  // '' is "every client", which is what a dispatch desk wants on open.
+  const [client, setClient] = useState('')
+  const [next, setNext] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  // What the box shows vs. what the last request used. Every keystroke
+  // would otherwise be a request, and their answers can arrive out of
+  // order — "E" resolving after "Entebbe" leaves the wrong rows on screen.
+  const search = useDebouncedValue(query.trim())
   const [creating, setCreating] = useState(false)
   const [decision, setDecision] = useState<{ booking: Booking; kind: 'rejection' | 'cancellation' } | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
   // Kept free of setState so the effect below only ever sets state from a
   // promise callback, never synchronously in its body.
-  const apply = useCallback((rows: Booking[]) => {
-    setBookings(rows)
+  //
+  // `append` is what distinguishes a next page from a fresh query. Paging
+  // accumulates so the rows already read stay on screen; anything else —
+  // changing client, acting on a booking — replaces, because the list it
+  // was paging through no longer describes the query.
+  const apply = useCallback((list: BookingList, append: boolean) => {
+    setBookings((current) => (append ? [...(current ?? []), ...list.rows] : list.rows))
+    setScope(list.scope)
+    setClients(list.clients)
+    setNext(list.next)
     setLoadError(null)
   }, [])
 
+  /**
+   * Re-reads from the first page.
+   *
+   * Called after approving, rejecting or cancelling. It deliberately drops
+   * any pages already loaded rather than re-fetching all of them: the act
+   * that triggered it changed a status, which changes the ordering, and
+   * stitching a refreshed first page onto stale later ones can show the
+   * same booking twice.
+   */
   const load = useCallback(
-    () => fetchBookings().then(apply).catch(onLoadFailure(setLoadError)),
-    [apply],
+    () => fetchBookings(client, search, null).then((list) => apply(list, false), onLoadFailure(setLoadError)),
+    [apply, client, search],
   )
 
+  // Re-runs when the chosen client changes, because the narrowing happens
+  // on the server now — the rows for another client were never fetched.
   useEffect(() => {
     let cancelled = false
 
-    fetchBookings()
-      .then((rows) => {
-        if (!cancelled) apply(rows)
+    fetchBookings(client, search, null)
+      .then((list) => {
+        if (!cancelled) apply(list, false)
       })
       .catch((error: unknown) => {
         if (!cancelled) onLoadFailure(setLoadError)(error)
@@ -68,7 +146,20 @@ export function BookingsPage() {
     return () => {
       cancelled = true
     }
-  }, [apply])
+  }, [apply, client, search])
+
+  const loadMore = useCallback(async () => {
+    if (next === null) return
+
+    setLoadingMore(true)
+    try {
+      apply(await fetchBookings(client, search, next), true)
+    } catch (error) {
+      onLoadFailure(setLoadError)(error)
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [apply, client, search, next])
 
   const canApprove = user !== null && APPROVER_ROLES.includes(user.role)
 
@@ -87,6 +178,19 @@ export function BookingsPage() {
 
   const columns = useMemo<DataColumn<Booking>[]>(
     () => [
+      // First column, and only on a cross-client listing. Shanitah's own
+      // staff read every client's bookings in one table (ADR-0006); without
+      // this the table is a merged queue with nothing distinguishing one
+      // client's request from another's.
+      ...(scope === 'platform'
+        ? [
+            {
+              key: 'tenant_id',
+              header: 'Client',
+              render: (row: Booking) => row.client?.name ?? '—',
+            } satisfies DataColumn<Booking>,
+          ]
+        : []),
       {
         key: 'status',
         header: 'Status',
@@ -151,21 +255,13 @@ export function BookingsPage() {
         },
       },
     ],
-    [canApprove, approve],
+    [canApprove, approve, scope],
   )
 
-  const filtered = useMemo(() => {
-    if (!bookings) return []
-    const q = query.trim().toLowerCase()
-    if (!q) return bookings
-    return bookings.filter(
-      (b) =>
-        b.origin.toLowerCase().includes(q) ||
-        b.destination.toLowerCase().includes(q) ||
-        b.passenger_name.toLowerCase().includes(q) ||
-        bookingStatusLabel(b.status).toLowerCase().includes(q),
-    )
-  }, [bookings, query])
+  // The rows are already what the server matched, so there is nothing left
+  // to filter here. The in-browser version this replaces searched only the
+  // page in hand and reported everything beyond it as "no match".
+  const rows = bookings ?? []
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
@@ -182,9 +278,32 @@ export function BookingsPage() {
         padding="none"
         actions={
           <>
+            {/*
+              Before the search box, because it narrows what is fetched
+              rather than what is displayed. The two read as one control
+              otherwise, and a dispatcher would reasonably expect typing a
+              client's name to do the same job — it does not, and cannot,
+              past the first page.
+            */}
+            {scope === 'platform' && clients.length > 0 && (
+              <Select
+                aria-label="Client"
+                value={client}
+                onChange={(e) => setClient(e.target.value)}
+                options={[
+                  { value: '', label: 'All clients' },
+                  ...clients.map((c) => ({ value: String(c.value), label: c.label })),
+                ]}
+                style={{ width: 200 }}
+              />
+            )}
             <Input
               iconLeft="search"
-              placeholder="Filter by route, passenger or status"
+              placeholder={
+                scope === 'platform'
+                  ? 'Filter by client, route, passenger or status'
+                  : 'Filter by route, passenger or status'
+              }
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               style={{ width: 280 }}
@@ -197,12 +316,21 @@ export function BookingsPage() {
       >
         <DataTable<Booking>
           columns={columns}
-          rows={filtered}
+          rows={rows}
           dense
           emptyMessage={
             bookings === null ? 'Loading…' : query ? 'No bookings match your filter' : 'No bookings yet'
           }
         />
+
+        {/*
+          The cursor now belongs to the *searched* query, so "load more"
+          continues the search rather than escaping it — which is why the
+          in-browser filter had to go first. Paging a client-side filter
+          would have loaded the next 25 unfiltered rows into a filtered
+          list.
+        */}
+        <LoadMore hasMore={next !== null} loading={loadingMore} onLoadMore={() => void loadMore()} />
       </Card>
 
       {creating && (

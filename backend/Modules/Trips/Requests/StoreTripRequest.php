@@ -2,7 +2,6 @@
 
 namespace Modules\Trips\Requests;
 
-use App\Support\Tenancy\TenantContext;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -18,15 +17,13 @@ class StoreTripRequest extends FormRequest
      */
     public function rules(): array
     {
-        $tenantId = app(TenantContext::class)->get();
 
         return [
             'vehicle_id' => [
                 'required',
                 'integer',
                 Rule::exists('vehicles', 'id')->where(
-                    fn ($query) => $query->where('tenant_id', $tenantId)
-                        ->where('status', 'active')
+                    fn ($query) => $query->where('status', 'active')
                         ->whereNull('deleted_at')
                 ),
             ],
@@ -34,8 +31,7 @@ class StoreTripRequest extends FormRequest
                 'required',
                 'integer',
                 Rule::exists('drivers', 'id')->where(
-                    fn ($query) => $query->where('tenant_id', $tenantId)
-                        ->where('status', 'active')
+                    fn ($query) => $query->where('status', 'active')
                         ->whereNull('deleted_at')
                 ),
             ],

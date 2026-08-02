@@ -56,6 +56,24 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Frontend URL
+    |--------------------------------------------------------------------------
+    |
+    | Where the React SPA is served from. Distinct from APP_URL, which is
+    | this API — the two are separate origins in every environment, and in
+    | production they are separate hosts.
+    |
+    | Needed wherever the backend has to produce a link a human will click
+    | rather than a client will call: notification emails are the first such
+    | place. A relative path is useless in an email client, and APP_URL
+    | would point the recipient at a JSON endpoint.
+    |
+    */
+
+    'frontend_url' => env('FRONTEND_URL', 'http://localhost:5173'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |

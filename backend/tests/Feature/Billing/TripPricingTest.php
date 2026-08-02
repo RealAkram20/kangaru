@@ -154,7 +154,7 @@ it('applies the night multiplier only to trips that started inside the night win
     // and no surcharge.
     $this->travelTo(Carbon::parse('2026-07-16 09:00:00', 'UTC'));
 
-    $vehicleTwo = Vehicle::factory()->forTenant($tenant)->create(['category' => 'sedan']);
+    $vehicleTwo = Vehicle::factory()->create(['category' => 'sedan']);
     $day = BillingFixtures::completedTrip($tenant, $dispatcher, $vehicleTwo, $driver, 15_000, 15_042);
 
     expect(priceOf($day, $version)['total'])->toBe(26_000);
@@ -214,7 +214,7 @@ it('refuses to price a vehicle category the rate card version does not cover', f
         'version' => $version] = BillingFixtures::tenantWithRateCard();
 
     // The fixture's version prices `sedan` and nothing else.
-    $bus = Vehicle::factory()->forTenant($tenant)->create(['category' => 'bus']);
+    $bus = Vehicle::factory()->create(['category' => 'bus']);
     $trip = BillingFixtures::completedTrip($tenant, $dispatcher, $bus, $driver);
 
     // Not "charge zero", not "fall back to another category" — a refusal.

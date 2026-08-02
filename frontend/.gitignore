@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Vitest coverage output (npm run test:coverage)
+coverage
+
 # Environment
 .env
 .env.*

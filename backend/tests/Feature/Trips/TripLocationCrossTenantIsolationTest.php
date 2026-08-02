@@ -32,7 +32,7 @@ function isolatedTenantWithRoute(string $label): array
     $driverUser = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::DRIVER]);
     $driver = Driver::factory()->forUser($driverUser)->create();
     $dispatcher = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::DISPATCHER]);
-    $vehicle = Vehicle::factory()->forTenant($tenant)->create();
+    $vehicle = Vehicle::factory()->create();
 
     $trip = Trip::factory()->forTenant($tenant)->forVehicle($vehicle)->forDriver($driver)->create();
 

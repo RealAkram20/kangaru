@@ -35,7 +35,7 @@ function gpsFixture(): array
     $driver = Driver::factory()->forUser($driverUser)->create();
     $dispatcher = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::DISPATCHER]);
     $finance = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::FINANCE]);
-    $vehicle = Vehicle::factory()->forTenant($tenant)->create();
+    $vehicle = Vehicle::factory()->create();
 
     $trip = Trip::factory()->forTenant($tenant)->forVehicle($vehicle)->forDriver($driver)->create();
 

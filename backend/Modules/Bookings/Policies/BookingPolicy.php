@@ -2,70 +2,54 @@
 
 namespace Modules\Bookings\Policies;
 
-use App\Enums\UserRole;
+use App\Enums\Permission;
 use App\Models\User;
 use Modules\Bookings\Models\Booking;
 
+/**
+ * Permission-based since ADR-0004.
+ *
+ * The role sets that used to live here — DESK_ROLES and APPROVER_ROLES —
+ * are now seeded grants. Two of them needed an `.all` / own split rather
+ * than a plain permission, because they were never really about ability:
+ *
+ * - `bookings.view.all` — without it you see the bookings you raised.
+ *   That is what "a Corporate Employee sees their own" meant when it was a
+ *   role comparison in BookingController.
+ * - `bookings.cancel.any` — without it you may still withdraw your own
+ *   request, because it is yours.
+ *
+ * Approval stays separate from the desk: a Dispatcher may see and cancel
+ * anything but not approve it, since "approving your own workload is not a
+ * control". That distinction survives as two permissions instead of two
+ * constants.
+ */
 class BookingPolicy
 {
-    /**
-     * Roles that run the transport desk — they see and act on every booking
-     * in the tenant. Corporate Admin is included: they manage their
-     * company's bookings (PROJECT.md User Roles).
-     */
-    private const DESK_ROLES = [
-        UserRole::SUPER_ADMIN,
-        UserRole::OPERATIONS_MANAGER,
-        UserRole::DISPATCHER,
-        UserRole::CORPORATE_ADMIN,
-        UserRole::BRANCH_MANAGER,
-        UserRole::DEPOT_MANAGER,
-    ];
-
-    /**
-     * Roles that may approve or reject. Dispatchers deliberately excluded:
-     * approving your own workload is not a control, and PROJECT.md lists
-     * approval as a Corporate Admin / management step.
-     */
-    private const APPROVER_ROLES = [
-        UserRole::SUPER_ADMIN,
-        UserRole::OPERATIONS_MANAGER,
-        UserRole::CORPORATE_ADMIN,
-        UserRole::BRANCH_MANAGER,
-    ];
-
-    /**
-     * Anyone authenticated may list — TenantScope restricts to their tenant
-     * and BookingController further narrows a Corporate Employee to their
-     * own requests.
-     */
     public function viewAny(User $user): bool
     {
+        // Everyone may list; the controller narrows anyone without
+        // `bookings.view.all` to their own.
         return true;
     }
 
     public function view(User $user, Booking $booking): bool
     {
-        if (in_array($user->role, self::DESK_ROLES, true)) {
+        if ($user->hasPermission(Permission::BOOKINGS_VIEW_ALL)) {
             return true;
         }
 
         return $booking->requested_by_user_id === $user->id;
     }
 
-    /**
-     * Corporate Employees request transport — that is the whole point of
-     * the role — so creation is open to every role except Driver, who has
-     * no business raising bookings.
-     */
     public function create(User $user): bool
     {
-        return $user->role !== UserRole::DRIVER;
+        return $user->hasPermission(Permission::BOOKINGS_CREATE);
     }
 
     public function approve(User $user, Booking $booking): bool
     {
-        return in_array($user->role, self::APPROVER_ROLES, true);
+        return $user->hasPermission(Permission::BOOKINGS_APPROVE);
     }
 
     public function reject(User $user, Booking $booking): bool
@@ -73,12 +57,10 @@ class BookingPolicy
         return $this->approve($user, $booking);
     }
 
-    /**
-     * Requesters may withdraw their own booking; the desk may cancel any.
-     */
+    /** Requesters may withdraw their own booking; the desk may cancel any. */
     public function cancel(User $user, Booking $booking): bool
     {
-        if (in_array($user->role, self::DESK_ROLES, true)) {
+        if ($user->hasPermission(Permission::BOOKINGS_CANCEL_ANY)) {
             return true;
         }
 
@@ -86,19 +68,12 @@ class BookingPolicy
     }
 
     /**
-     * Assigning a vehicle and driver is dispatching, so this mirrors
-     * TripPolicy::create rather than the desk roles above — a Corporate
-     * Admin may raise and approve bookings but never dispatch the fleet.
+     * Assigning a vehicle and driver is dispatching, which is why this is
+     * its own permission and not implied by the desk: a Corporate Admin may
+     * raise and approve bookings but never dispatch the fleet.
      */
     public function dispatch(User $user, Booking $booking): bool
     {
-        return in_array($user->role, [
-            UserRole::SUPER_ADMIN,
-            UserRole::OPERATIONS_MANAGER,
-            UserRole::DISPATCHER,
-            UserRole::FLEET_OWNER,
-            UserRole::BRANCH_MANAGER,
-            UserRole::DEPOT_MANAGER,
-        ], true);
+        return $user->hasPermission(Permission::BOOKINGS_DISPATCH);
     }
 }

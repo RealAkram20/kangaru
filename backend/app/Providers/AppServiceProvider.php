@@ -2,14 +2,18 @@
 
 namespace App\Providers;
 
-use App\Enums\UserRole;
+use App\Enums\Permission;
 use App\Models\AuditLog;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
 use Illuminate\Database\Eloquent\Relations\Relation;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
+use Modules\Administration\Models\Role;
 use Modules\Administration\Policies\AuditLogPolicy;
+use Modules\Administration\Policies\RolePolicy;
+use Modules\Administration\Policies\UserPolicy;
 use Modules\Billing\Models\CreditNote;
 use Modules\Billing\Models\Invoice;
 use Modules\Billing\Models\RateCard;
@@ -17,12 +21,19 @@ use Modules\Billing\Models\RateCardRate;
 use Modules\Billing\Models\RateCardVersion;
 use Modules\Billing\Policies\InvoicePolicy;
 use Modules\Billing\Policies\RateCardPolicy;
+use Modules\Bookings\Events\BookingApproved;
+use Modules\Bookings\Events\BookingRejected;
 use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Policies\BookingPolicy;
 use Modules\Clients\Models\Company;
 use Modules\Clients\Policies\CompanyPolicy;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Policies\DriverPolicy;
+use Modules\Fleet\Models\VehicleAllocation;
+use Modules\Notifications\Listeners\SendBookingDecisionNotification;
+use Modules\Notifications\Listeners\SendReportExportReadyNotification;
+use Modules\Reports\Enums\ReportType;
+use Modules\Reports\Events\ReportExportCompleted;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Policies\TripPolicy;
 use Modules\Vehicles\Models\Vehicle;
@@ -53,26 +64,46 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Booking::class, BookingPolicy::class);
         Gate::policy(RateCard::class, RateCardPolicy::class);
         Gate::policy(Invoice::class, InvoicePolicy::class);
+        Gate::policy(User::class, UserPolicy::class);
+        Gate::policy(Role::class, RolePolicy::class);
 
         // A Gate rather than a Policy: reports are not a model, and
         // AGENTS.md's authorization rule names Gates alongside Policies.
-        // Drivers and Corporate Employees are excluded — a report spans
-        // the whole tenant's fleet, which is more than either should see.
-        Gate::define('viewReports', fn (User $user) => in_array($user->role, [
-            UserRole::SUPER_ADMIN,
-            UserRole::OPERATIONS_MANAGER,
-            UserRole::DISPATCHER,
-            UserRole::FINANCE,
-            UserRole::FLEET_OWNER,
-            UserRole::BRANCH_MANAGER,
-            UserRole::DEPOT_MANAGER,
-            UserRole::CORPORATE_ADMIN,
-        ], true));
+        // Drivers and Corporate Employees do not hold `reports.view` — a
+        // report spans the whole tenant's fleet, which is more than either
+        // should see.
+        Gate::define('viewReports', fn (User $user) => $user->hasPermission(Permission::REPORTS_VIEW));
+
+        // Per-report, because "may run a report" and "may see this report's
+        // data" are different questions. `viewReports` above answers only
+        // the first, and gating all four reports on it alone meant a
+        // Dispatcher — refused /invoices — could read and export a client's
+        // invoiced, credited and outstanding totals. See
+        // ReportType::permissions().
+        Gate::define('viewReport', fn (User $user, ReportType $report) => $report->isReadableBy($user));
+
+        // Explicit listener registration, for the same reason the policies
+        // above are explicit: Laravel's event discovery scans app/Listeners
+        // by convention and would never look under Modules\.
+        //
+        // Registered here rather than in a Notifications service provider
+        // because this application has one provider and adding a second
+        // for two lines would be more indirection than it removes.
+        Event::listen(BookingApproved::class, [SendBookingDecisionNotification::class, 'approved']);
+        Event::listen(BookingRejected::class, [SendBookingDecisionNotification::class, 'rejected']);
+        Event::listen(ReportExportCompleted::class, SendReportExportReadyNotification::class);
 
         // Stable short aliases for audit_logs.auditable_type instead of raw
-        // FQCNs. Every Auditable model must appear here — a missing entry
-        // writes the FQCN instead, and moving the class later would orphan
-        // the audit rows that reference it.
+        // FQCNs, so moving a class later cannot orphan the audit rows that
+        // reference it.
+        //
+        // **Every Auditable model must appear here.** The map is *enforced*,
+        // which means a missing entry does not fall back to the FQCN — it
+        // throws ClassMorphViolationException from getMorphClass(). Since
+        // Auditable records on `created`, an unmapped model cannot be
+        // created at all. VehicleAllocation was missing and was exactly
+        // that: ADR-0005 shipped the table, and every insert into it threw.
+        // `AuditableModelsHaveMorphAliasTest` now asserts the pair.
         //
         // AGENTS.md requires an audit trail over "rate cards, contracts,
         // invoices, payments, roles/permissions, and credit limits"; the
@@ -92,6 +123,15 @@ class AppServiceProvider extends ServiceProvider
             'rate_card_rate' => RateCardRate::class,
             'invoice' => Invoice::class,
             'credit_note' => CreditNote::class,
+            // ADR-0004. AGENTS.md requires an audit trail over
+            // "roles/permissions"; since this pass that is literally this
+            // model, and its JSON permissions column is what makes the
+            // before/after diff readable.
+            'role' => Role::class,
+            // ADR-0005's "vehicles supplied to the Bank" — a contract, not
+            // ownership. Audited because it is the record of what a client
+            // was promised.
+            'vehicle_allocation' => VehicleAllocation::class,
         ]);
     }
 }

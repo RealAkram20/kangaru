@@ -1,3 +1,4 @@
+import type { ClientSummary } from './tenant'
 import type { Driver } from './driver'
 import type { Vehicle } from './vehicle'
 
@@ -26,6 +27,11 @@ export type TripStatus =
 export interface Trip {
   id: number
   tenant_id: number
+  /**
+   * The client this trip is for. Present only for a platform-level reader,
+   * whose list spans clients (ADR-0006) — see `ClientSummary`.
+   */
+  client?: ClientSummary
   vehicle_id: number
   vehicle?: Vehicle
   driver_id: number

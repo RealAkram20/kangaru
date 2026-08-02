@@ -189,7 +189,7 @@ it('refuses to spend one credit note key across two invoices', function () {
 
     $secondTrip = BillingFixtures::completedTrip(
         $tenant, $dispatcher,
-        Vehicle::factory()->forTenant($tenant)->create(['category' => 'sedan']),
+        Vehicle::factory()->create(['category' => 'sedan']),
         $driver,
     );
     $this->withHeader('Idempotency-Key', 'idem-api-cnkey-inv2')

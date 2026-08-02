@@ -2,7 +2,6 @@
 
 namespace Modules\Drivers\Requests;
 
-use App\Support\Tenancy\TenantContext;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -26,9 +25,8 @@ class StoreDriverRequest extends FormRequest
                 'required',
                 'string',
                 'max:100',
-                Rule::unique('drivers')->where(
-                    fn ($query) => $query->where('tenant_id', app(TenantContext::class)->get())
-                ),
+                // Global, not per tenant — see StoreVehicleRequest.
+                Rule::unique('drivers'),
             ],
             'license_expiry' => ['required', 'date'],
             'status' => ['nullable', 'string', 'in:active,suspended,inactive'],

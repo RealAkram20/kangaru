@@ -17,6 +17,11 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        // First: every user created below resolves its permissions through
+        // the role of the same slug (ADR-0004). Seeding users before roles
+        // would leave them holding nothing until this ran.
+        $this->call(RoleSeeder::class);
+
         $tenantA = Tenant::create([
             'name' => 'Centenary Bank',
             'slug' => 'centenary-bank',
@@ -59,6 +64,35 @@ class DatabaseSeeder extends Seeder
             'role' => UserRole::CORPORATE_ADMIN,
         ]);
 
+        $this->seedPlatformStaff();
+
+        // Fleet and trips for both tenants, driven through the real state
+        // machine so the seeded timelines are genuine.
+        $this->call(DemoFleetSeeder::class);
+
+        // Three months of closed, invoiced trips behind those, so the
+        // reports have periods to group and the tables have depth. Same
+        // services, same state machine — see the class docblock.
+        $this->call(DemoHistorySeeder::class);
+    }
+
+    /**
+     * Shanitah's own employees (ADR-0005, ADR-0006). They belong to no
+     * tenant, which is what makes them platform staff: `forActor()` drops
+     * tenant scoping for them, so one dispatch desk works every client's
+     * queue and one Finance officer invoices every client.
+     *
+     * These used to be seeded *inside* each client tenant — a "Centenary
+     * Bank dispatcher" and an "Acme NGO dispatcher", as though the Bank
+     * employed them. At two tenants that was survivable; it is not what the
+     * business is, and it does not survive fifty.
+     *
+     * There is deliberately one of each rather than one per client, because
+     * that is the point. A second client's bookings are not a second
+     * dispatcher's job.
+     */
+    private function seedPlatformStaff(): void
+    {
         User::factory()->create([
             'tenant_id' => null,
             'name' => 'Platform Super Admin',
@@ -66,8 +100,23 @@ class DatabaseSeeder extends Seeder
             'role' => UserRole::SUPER_ADMIN,
         ]);
 
-        // Fleet and trips for both tenants, driven through the real state
-        // machine so the seeded timelines are genuine.
-        $this->call(DemoFleetSeeder::class);
+        User::factory()->create([
+            'tenant_id' => null,
+            'name' => 'Dispatch Desk',
+            'email' => 'dispatch@kangaruride.test',
+            'role' => UserRole::DISPATCHER,
+        ]);
+
+        // Finance holds `invoices.view`; the dispatcher above does not. Both
+        // are platform-level, and that is exactly the pair ADR-0006's mirror
+        // isolation test exists to keep honest: belonging to no tenant is
+        // not a permission, and the dispatch desk must stay unable to read a
+        // client's money.
+        User::factory()->create([
+            'tenant_id' => null,
+            'name' => 'Finance Officer',
+            'email' => 'finance@kangaruride.test',
+            'role' => UserRole::FINANCE,
+        ]);
     }
 }

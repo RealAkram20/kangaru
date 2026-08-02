@@ -9,6 +9,7 @@ use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Modules\Reports\Enums\ReportType;
 use Modules\Reports\Models\ReportExport;
 use Modules\Reports\Requests\RequestExportRequest;
 use Modules\Reports\Resources\ReportExportResource;
@@ -20,11 +21,25 @@ class ReportExportController extends Controller
 {
     public function __construct(private readonly ReportExportService $exports) {}
 
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
         $this->authorize('viewReports');
 
+        /** @var User $user */
+        $user = $request->user();
+
+        // Filtered rather than gated wholesale: the list is a mix of report
+        // types, and a reader entitled to trip exports should still see
+        // theirs. Withholding the rows they may not read is the difference
+        // between a filtered list and a leak — an export row carries the
+        // filters it was run with and who ran it, which is itself telling.
+        $readable = array_values(array_filter(
+            ReportType::cases(),
+            fn (ReportType $type) => $type->isReadableBy($user),
+        ));
+
         $exports = ReportExport::with('requestedBy')
+            ->whereIn('report', array_map(fn (ReportType $type) => $type->value, $readable))
             ->latest('id')
             ->limit(20)
             ->get();
@@ -34,7 +49,10 @@ class ReportExportController extends Controller
 
     public function store(RequestExportRequest $request): JsonResponse
     {
-        $this->authorize('viewReports');
+        // The requested report, not the reports area in general. Queueing an
+        // export was the widest hole: it produced a downloadable file of
+        // data the caller could not read on screen.
+        $this->authorize('viewReport', $request->reportType());
 
         /** @var User $user */
         $user = $request->user();
@@ -56,7 +74,9 @@ class ReportExportController extends Controller
 
     public function show(ReportExport $export): JsonResponse
     {
-        $this->authorize('viewReports');
+        // Gated on what this export actually holds, not on what was asked
+        // for — the row is the record of a file that already exists.
+        $this->authorize('viewReport', $export->report);
 
         return ApiResponse::success(new ReportExportResource($export->load('requestedBy')));
     }
@@ -68,7 +88,9 @@ class ReportExportController extends Controller
      */
     public function download(Request $request, ReportExport $export): StreamedResponse|JsonResponse
     {
-        $this->authorize('viewReports');
+        // The last gate before bytes leave the building, and the one that
+        // matters most: a file already on disk, addressable by id.
+        $this->authorize('viewReport', $export->report);
 
         if (! $export->status->isDownloadable()) {
             return ApiResponse::error(

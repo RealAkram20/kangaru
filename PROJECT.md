@@ -78,7 +78,6 @@ To simplify transport operations through technology by providing reliable bookin
 
 ## Phase 1 — explicitly OUT of scope (deferred, not forgotten)
 
-- Automatic dispatch optimization (manual/hybrid only until data exists to tune it)
 - Driver mobile app (drivers use a mobile-responsive web flow in Phase 1)
 - Marketplace features
 - WhatsApp and push notifications
@@ -144,6 +143,12 @@ Corporate clients, departments, employees, branches, cost centers, credit limits
 
 Fleet owners, branches, depots, vehicles, vehicle categories, vehicle status, maintenance, vehicle documents.
 
+**The fleet belongs to the platform** (ADR-0005). Shanitah operates and
+manages every vehicle and driver; a corporate client owns none of either —
+they are a client, not an operator. A vehicle may be *allocated* to a client
+for a period, which is what Centenary Bank's letter means by "vehicles
+supplied to the Bank", but that is a contract, not ownership.
+
 ## Driver Management
 
 Driver profiles, qualifications, availability, assignments, performance, documents.
@@ -154,7 +159,23 @@ Immediate booking, scheduled booking, multi-stop trips, return trips, chauffeur 
 
 ## Dispatch Engine
 
-Manual and hybrid dispatch in Phase 1; automatic dispatch in a later phase. Dispatch considers: preferred driver, preferred vehicle, driver availability, vehicle availability, distance, geofence, vehicle category, branch, depot. Assignment uses pessimistic locking — no double-assignment, ever.
+**Automatic and manual dispatch, both in Phase 1.** Moved from the
+out-of-scope list above by owner approval on 2 August 2026 — the platform is
+a hailing operator (Faras, Uber, Bolt, SafeBoda), and hailing cannot be
+manual.
+
+Dispatch considers: preferred driver, preferred vehicle, driver
+availability, vehicle availability, distance, geofence, vehicle category,
+branch, depot. Assignment uses pessimistic locking — no double-assignment,
+ever.
+
+The two halves have different prerequisites, and the second is not yet met:
+
+- **Availability, vehicle category and passenger count** need only a shared
+  fleet, which ADR-0005 delivers.
+- **Distance** needs live driver positions. ADR-0003's Redis stream and
+  live-position reads are unbuilt, and an automatic dispatcher that cannot
+  tell which driver is nearest is a queue, not a matcher.
 
 ## Trip Management
 

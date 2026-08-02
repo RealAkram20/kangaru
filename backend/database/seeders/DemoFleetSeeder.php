@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Support\Tenancy\TenantContext;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Modules\Billing\Services\CreditNoteService;
 use Modules\Billing\Services\InvoiceService;
 use Modules\Billing\Services\RateCardService;
@@ -33,12 +34,52 @@ class DemoFleetSeeder extends Seeder
 {
     public function run(): void
     {
+        // One fleet, created once (ADR-0005). It used to be built inside
+        // the per-tenant loop, which gave every client a private set of
+        // vehicles and drivers — the misreading this ADR corrects.
+        $fleet = $this->seedPlatformFleet();
+
         foreach (Tenant::all() as $tenant) {
-            $this->seedTenant($tenant);
+            $this->seedTenant($tenant, $fleet['vehicles'], $fleet['drivers']);
         }
     }
 
-    private function seedTenant(Tenant $tenant): void
+    /**
+     * Shanitah's vehicles and drivers. Not tenant-scoped, and deliberately
+     * more of them than one client needs — the point of a shared pool is
+     * that two clients dispatch from it without colliding.
+     *
+     * @return array{vehicles: Collection<int, Vehicle>, drivers: Collection<int, Driver>}
+     */
+    private function seedPlatformFleet(): array
+    {
+        // The first six carry this seeder's live demo trips, three per
+        // tenant. The rest exist because an operator's fleet is not six
+        // vehicles, and because DemoHistorySeeder needs vehicles nothing is
+        // holding: two of the trips below deliberately stop mid-lifecycle
+        // (Trip Started, Driver Arrived) and a live trip occupies its
+        // vehicle indefinitely, so reusing these for history fails with
+        // VEHICLE_UNAVAILABLE — which is the assignment guard working.
+        $categories = ['van', 'sedan', 'suv', 'van', 'sedan', 'suv', 'minibus', 'sedan',
+            'suv', 'van', 'sedan', 'suv', 'pickup', 'minibus'];
+
+        $vehicles = collect($categories)->map(fn (string $category) => match ($category) {
+            'van' => Vehicle::factory()->van()->create(),
+            'suv' => Vehicle::factory()->create(['category' => 'suv', 'model' => 'Land Cruiser']),
+            default => Vehicle::factory()->create(['category' => $category]),
+        });
+
+        return [
+            'vehicles' => $vehicles,
+            'drivers' => collect(range(1, $vehicles->count()))->map(fn () => Driver::factory()->create()),
+        ];
+    }
+
+    /**
+     * @param  Collection<int, Vehicle>  $allVehicles
+     * @param  Collection<int, Driver>  $allDrivers
+     */
+    private function seedTenant(Tenant $tenant, Collection $allVehicles, Collection $allDrivers): void
     {
         // TripStateMachine::transition() calls $trip->refresh(), which goes
         // through TenantScope — and that scope fails closed when no tenant
@@ -46,12 +87,14 @@ class DemoFleetSeeder extends Seeder
         // the context is set by hand here.
         app(TenantContext::class)->set($tenant->id);
 
-        $dispatcher = User::factory()->create([
-            'tenant_id' => $tenant->id,
-            'name' => 'Dispatch Desk',
-            'email' => 'dispatch@'.$tenant->slug.'.test',
-            'role' => UserRole::DISPATCHER,
-        ]);
+        // Shanitah's, not the client's — one dispatch desk and one Finance
+        // officer serve every tenant (ADR-0006). DatabaseSeeder created
+        // them; this seeder only works them. They belong to no tenant, so
+        // the rows they write here land in the *client's* tenant by virtue
+        // of the context bound above, which is the same rule
+        // BindSubjectTenant applies over HTTP.
+        $dispatcher = PlatformStaff::dispatcher();
+        $finance = PlatformStaff::finance();
 
         $requester = User::factory()->create([
             'tenant_id' => $tenant->id,
@@ -60,28 +103,18 @@ class DemoFleetSeeder extends Seeder
             'role' => UserRole::CORPORATE_EMPLOYEE,
         ]);
 
-        // Billing is Finance's job, not the dispatcher's (InvoicePolicy), so
-        // the demo needs a user who is actually allowed to raise an invoice.
-        $finance = User::factory()->create([
-            'tenant_id' => $tenant->id,
-            'name' => 'Finance Officer',
-            'email' => 'finance@'.$tenant->slug.'.test',
-            'role' => UserRole::FINANCE,
-        ]);
-
         $this->seedRateCard($tenant, $finance);
 
-        $vehicles = collect([
-            Vehicle::factory()->forTenant($tenant)->van()->create(),
-            Vehicle::factory()->forTenant($tenant)->create(['category' => 'sedan']),
-            Vehicle::factory()->forTenant($tenant)->create(['category' => 'suv', 'model' => 'Land Cruiser']),
-        ]);
+        // Each tenant's demo trips take a distinct slice of the shared
+        // pool, so the two do not fight over the same vehicle — dispatch
+        // locks a vehicle for the life of a trip, and the seeder would
+        // otherwise fail on the second tenant with VEHICLE_UNAVAILABLE.
+        // A slice is a seeding convenience, not a rule: nothing stops a
+        // dispatcher choosing any vehicle in the pool.
+        $offset = Tenant::query()->where('id', '<', $tenant->id)->count() * 3;
 
-        $drivers = collect([
-            Driver::factory()->forTenant($tenant)->create(),
-            Driver::factory()->forTenant($tenant)->create(),
-            Driver::factory()->forTenant($tenant)->create(),
-        ]);
+        $vehicles = $allVehicles->slice($offset, 3)->values();
+        $drivers = $allDrivers->slice($offset, 3)->values();
 
         $machine = app(TripStateMachine::class);
         $dispatchService = app(DispatchService::class);
@@ -182,6 +215,15 @@ class DemoFleetSeeder extends Seeder
                         'per_waiting_minute_minor' => 700, 'minimum_charge_minor' => 50_000],
                     ['vehicle_category' => 'van', 'base_fare_minor' => 30_000, 'per_km_minor' => 4_000,
                         'per_waiting_minute_minor' => 800, 'minimum_charge_minor' => 60_000],
+                    // Every category the fleet actually runs has to be
+                    // priced: an unpriced one is a vehicle nobody can
+                    // invoice, and the pricing engine refuses the trip
+                    // rather than guessing — which is the right refusal and
+                    // a bad demo.
+                    ['vehicle_category' => 'minibus', 'base_fare_minor' => 40_000, 'per_km_minor' => 4_800,
+                        'per_waiting_minute_minor' => 900, 'minimum_charge_minor' => 80_000],
+                    ['vehicle_category' => 'pickup', 'base_fare_minor' => 28_000, 'per_km_minor' => 3_800,
+                        'per_waiting_minute_minor' => 750, 'minimum_charge_minor' => 55_000],
                 ],
             ],
         ], $finance);

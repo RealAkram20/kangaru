@@ -130,7 +130,7 @@ it('refuses to spend one idempotency key on two different trips', function () {
     $first = BillingFixtures::completedTrip($tenant, $dispatcher, $vehicle, $driver);
     generateInvoice($finance, $first, 'idem-shared-key-001')->assertStatus(201);
 
-    $otherVehicle = Vehicle::factory()->forTenant($tenant)->create(['category' => 'sedan']);
+    $otherVehicle = Vehicle::factory()->create(['category' => 'sedan']);
     $second = BillingFixtures::completedTrip($tenant, $dispatcher, $otherVehicle, $driver);
 
     // Handing back the first trip's invoice would silently answer a
@@ -211,7 +211,7 @@ it('numbers invoices sequentially per tenant, and never shares a series between 
         'vehicle' => $vehicleA, 'driver' => $driverA] = BillingFixtures::tenantWithRateCard();
 
     $tripA1 = BillingFixtures::completedTrip($tenantA, $dispatcherA, $vehicleA, $driverA);
-    $vehicleA2 = Vehicle::factory()->forTenant($tenantA)->create(['category' => 'sedan']);
+    $vehicleA2 = Vehicle::factory()->create(['category' => 'sedan']);
     $tripA2 = BillingFixtures::completedTrip($tenantA, $dispatcherA, $vehicleA2, $driverA);
 
     $year = now()->format('Y');

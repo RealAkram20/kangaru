@@ -27,8 +27,8 @@ function completedTrip(Tenant $tenant, User $actor, array $overrides = []): Trip
     // is bound by hand — exactly as DemoFleetSeeder does.
     app(TenantContext::class)->set($tenant->id);
 
-    $vehicle = Vehicle::factory()->forTenant($tenant)->create();
-    $driver = Driver::factory()->forTenant($tenant)->create();
+    $vehicle = Vehicle::factory()->create();
+    $driver = Driver::factory()->create();
     $booking = Booking::factory()->forTenant($tenant)->create([
         'origin' => $overrides['origin'] ?? 'Kampala',
         'destination' => $overrides['destination'] ?? 'Entebbe',
@@ -74,8 +74,8 @@ function startedTrip(Tenant $tenant, User $actor): Trip
 {
     app(TenantContext::class)->set($tenant->id);
 
-    $vehicle = Vehicle::factory()->forTenant($tenant)->create();
-    $driver = Driver::factory()->forTenant($tenant)->create();
+    $vehicle = Vehicle::factory()->create();
+    $driver = Driver::factory()->create();
     $booking = Booking::factory()->forTenant($tenant)->create();
 
     $trip = app(DispatchService::class)->assign($booking, $vehicle->id, $driver->id, $actor);
@@ -158,8 +158,8 @@ it('leaves completeness null when nothing has completed, rather than reporting a
 it('excludes trips that never commenced', function () {
     ['tenant' => $tenant, 'manager' => $manager] = seedReportFixture();
 
-    $vehicle = Vehicle::factory()->forTenant($tenant)->create();
-    $driver = Driver::factory()->forTenant($tenant)->create();
+    $vehicle = Vehicle::factory()->create();
+    $driver = Driver::factory()->create();
     $booking = Booking::factory()->forTenant($tenant)->create();
     $trip = app(DispatchService::class)->assign($booking, $vehicle->id, $driver->id, $manager);
 

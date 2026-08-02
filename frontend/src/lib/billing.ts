@@ -16,6 +16,26 @@ export function canManageBilling(user: User | null): boolean {
 }
 
 /**
+ * Mirrors `invoices.view` — InvoicePolicy::viewAny, and the second
+ * permission `ReportType::FINANCIAL` now requires.
+ *
+ * The financial report is a view of invoices, so it needs entitlement to
+ * invoices as well as to reports. Dispatcher, Branch Manager, Depot Manager
+ * and Fleet Owner hold `reports.view` without `invoices.view`, and the
+ * server refuses them — this is only so the report picker does not offer a
+ * choice that answers 403. Convenience, not authorization, same as
+ * everything else in this file.
+ */
+export function canViewInvoices(user: User | null): boolean {
+  return (
+    user?.role === 'super_admin' ||
+    user?.role === 'finance' ||
+    user?.role === 'operations_manager' ||
+    user?.role === 'corporate_admin'
+  )
+}
+
+/**
  * A fresh idempotency key for one intended mutation.
  *
  * Generated once when a dialog opens and reused for every retry inside it,
@@ -61,7 +81,15 @@ export const ROUNDING_OPTIONS: { value: RoundingMode; label: string }[] = [
  * but absent there — or the reverse — is a vehicle nobody can invoice, so
  * the two lists exist to be compared.
  */
-export const VEHICLE_CATEGORIES = ['sedan', 'suv', 'van', 'minibus', 'bus', 'pickup', 'truck'] as const
+export const VEHICLE_CATEGORIES = [
+  'sedan',
+  'suv',
+  'van',
+  'minibus',
+  'bus',
+  'pickup',
+  'truck',
+] as const
 
 /**
  * Adjustment lines are corrections to the running subtotal rather than
@@ -69,5 +97,7 @@ export const VEHICLE_CATEGORIES = ['sedan', 'suv', 'van', 'minibus', 'bus', 'pic
  * so both are tinted neutrally rather than as a warning.
  */
 export function lineTypeTone(type: InvoiceLineType): 'neutral' | 'info' {
-  return type === 'minimum_charge_adjustment' || type === 'maximum_charge_adjustment' ? 'info' : 'neutral'
+  return type === 'minimum_charge_adjustment' || type === 'maximum_charge_adjustment'
+    ? 'info'
+    : 'neutral'
 }

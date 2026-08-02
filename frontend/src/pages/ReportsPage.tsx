@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useAuth } from '../auth/useAuth'
+import { canViewInvoices } from '../lib/billing'
 import { apiClient } from '../lib/apiClient'
 import { apiError } from '../lib/apiError'
 import { formatTimestamp } from '../lib/format'
@@ -6,6 +8,7 @@ import { formatDistance, formatDuration, formatOdometer } from '../lib/tripStatu
 import type { ApiSuccess } from '../types/api'
 import type { Driver } from '../types/driver'
 import type {
+  FinancialPeriod,
   ReportType,
   TripReportFilters,
   TripReportMeta,
@@ -14,6 +17,7 @@ import type {
 } from '../types/report'
 import type { Vehicle } from '../types/vehicle'
 import { ExportPanel } from './reports/ExportPanel'
+import { FinancialReport } from './reports/FinancialReport'
 import { FleetReport } from './reports/FleetReport'
 import { Badge } from '../components/core/Badge'
 import { Button } from '../components/core/Button'
@@ -23,6 +27,7 @@ import { DataTable, type DataColumn } from '../components/data/DataTable'
 import { KPIStat } from '../components/data/KPIStat'
 import { Alert } from '../components/feedback/Alert'
 import { EmptyState } from '../components/feedback/EmptyState'
+import { PanelBoundary } from '../components/feedback/PanelBoundary'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
 import { Select } from '../components/forms/Select'
@@ -82,7 +87,12 @@ const COLUMNS: DataColumn<ReportTableRow>[] = [
     render: (row) => formatOdometer(row.odometer_end),
   },
   // 5. Total distance travelled.
-  { key: 'distance_km', header: 'Distance', numeric: true, render: (row) => formatDistance(row.distance_km) },
+  {
+    key: 'distance_km',
+    header: 'Distance',
+    numeric: true,
+    render: (row) => formatDistance(row.distance_km),
+  },
   // 6. Trip duration.
   {
     key: 'duration_minutes',
@@ -150,23 +160,51 @@ async function fetchReport(filters: TripReportFilters) {
   return { rows: response.data.data, summary: response.data.meta?.summary ?? null }
 }
 
-const REPORTS: { value: ReportType; label: string }[] = [
-  { value: 'trips', label: 'Trip report' },
-  { value: 'drivers', label: 'Driver report' },
-  { value: 'vehicles', label: 'Vehicle report' },
+/** PROJECT.md's four Phase 1 reports, in the order it lists them. */
+const REPORTS: { value: ReportType; subtitle: string }[] = [
+  { value: 'trips', subtitle: 'Every trip that commenced in the selected period' },
+  { value: 'drivers', subtitle: 'Every driver who commenced a trip in the selected period' },
+  { value: 'vehicles', subtitle: 'Every vehicle that commenced a trip in the selected period' },
+  { value: 'financial', subtitle: 'Invoiced, credited and outstanding per period' },
+]
+
+const REPORT_LABELS: Record<ReportType, string> = {
+  trips: 'Trip report',
+  drivers: 'Driver report',
+  vehicles: 'Vehicle report',
+  financial: 'Financial report',
+}
+
+const GROUP_BY: { value: FinancialPeriod; label: string }[] = [
+  { value: 'day', label: 'Daily' },
+  { value: 'week', label: 'Weekly' },
+  { value: 'month', label: 'Monthly' },
+  { value: 'year', label: 'Annually' },
 ]
 
 export function ReportsPage() {
+  const { user } = useAuth()
   const month = currentMonth()
+  // The financial report needs `invoices.view` as well as `reports.view`,
+  // so it is not offered to a Dispatcher or Fleet Owner — the server
+  // refuses it, and a picker entry that answers 403 is a dead end rather
+  // than a feature.
+  const available = useMemo(
+    () => REPORTS.filter((r) => r.value !== 'financial' || canViewInvoices(user)),
+    [user],
+  )
   const [report, setReport] = useState<ReportType>('trips')
-  // Bumped by Run report, so the fleet reports re-fetch on demand rather
-  // than on every keystroke in a date field.
+  // Bumped by Run report, so the aggregate reports re-fetch on demand
+  // rather than on every keystroke in a date field.
   const [fleetToken, setFleetToken] = useState(0)
   const [filters, setFilters] = useState<TripReportFilters>({
     from: month.from,
     to: month.to,
     vehicle_id: '',
     driver_id: '',
+    // PROJECT.md and AGENTS.md both describe billing as a monthly cycle,
+    // so that is the period a finance user arrives wanting.
+    group_by: 'month',
   })
   const [rows, setRows] = useState<TripReportRow[] | null>(null)
   const [summary, setSummary] = useState<TripReportSummary | null>(null)
@@ -174,17 +212,22 @@ export function ReportsPage() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([])
   const [drivers, setDrivers] = useState<Driver[]>([])
 
-  const apply = useCallback((result: { rows: TripReportRow[]; summary: TripReportSummary | null }) => {
-    setRows(result.rows)
-    setSummary(result.summary)
-    setError(null)
-  }, [])
+  const apply = useCallback(
+    (result: { rows: TripReportRow[]; summary: TripReportSummary | null }) => {
+      setRows(result.rows)
+      setSummary(result.summary)
+      setError(null)
+    },
+    [],
+  )
 
   const run = useCallback(
     (next: TripReportFilters) =>
       fetchReport(next)
         .then(apply)
-        .catch((failure: unknown) => setError(apiError(failure, 'Could not run this report.').message)),
+        .catch((failure: unknown) =>
+          setError(apiError(failure, 'Could not run this report.').message),
+        ),
     [apply],
   )
 
@@ -223,8 +266,8 @@ export function ReportsPage() {
       )}
 
       <Card
-        title={REPORTS.find((r) => r.value === report)?.label ?? 'Report'}
-        subtitle="Every trip that commenced in the selected period"
+        title={REPORT_LABELS[report]}
+        subtitle={REPORTS.find((r) => r.value === report)?.subtitle ?? ''}
       >
         <div
           style={{
@@ -239,7 +282,7 @@ export function ReportsPage() {
               id="r-report"
               value={report}
               onChange={(e) => setReport(e.target.value as ReportType)}
-              options={REPORTS.map((r) => ({ value: r.value, label: r.label }))}
+              options={available.map((r) => ({ value: r.value, label: REPORT_LABELS[r.value] }))}
             />
           </FormField>
           <FormField label="From" htmlFor="r-from">
@@ -260,24 +303,42 @@ export function ReportsPage() {
           </FormField>
           {report === 'trips' && (
             <FormField label="Vehicle" htmlFor="r-vehicle">
-            <Select
-              id="r-vehicle"
-              placeholder="All vehicles"
-              value={filters.vehicle_id}
-              onChange={(e) => setFilters({ ...filters, vehicle_id: e.target.value })}
-              options={vehicles.map((v) => ({ value: String(v.id), label: v.registration_number }))}
-            />
+              <Select
+                id="r-vehicle"
+                placeholder="All vehicles"
+                value={filters.vehicle_id}
+                onChange={(e) => setFilters({ ...filters, vehicle_id: e.target.value })}
+                options={vehicles.map((v) => ({
+                  value: String(v.id),
+                  label: v.registration_number,
+                }))}
+              />
             </FormField>
           )}
           {report === 'trips' && (
             <FormField label="Driver" htmlFor="r-driver">
-            <Select
-              id="r-driver"
-              placeholder="All drivers"
-              value={filters.driver_id}
-              onChange={(e) => setFilters({ ...filters, driver_id: e.target.value })}
-              options={drivers.map((d) => ({ value: String(d.id), label: d.name }))}
-            />
+              <Select
+                id="r-driver"
+                placeholder="All drivers"
+                value={filters.driver_id}
+                onChange={(e) => setFilters({ ...filters, driver_id: e.target.value })}
+                options={drivers.map((d) => ({ value: String(d.id), label: d.name }))}
+              />
+            </FormField>
+          )}
+          {/* Only the financial report has periods for a cadence to bucket
+              — the others are a row per thing. The server rejects the
+              filter on them rather than ignoring it, so it is not offered. */}
+          {report === 'financial' && (
+            <FormField label="Group by" htmlFor="r-group-by">
+              <Select
+                id="r-group-by"
+                value={filters.group_by}
+                onChange={(e) =>
+                  setFilters({ ...filters, group_by: e.target.value as FinancialPeriod })
+                }
+                options={GROUP_BY}
+              />
             </FormField>
           )}
           <div style={{ display: 'flex', gap: 'var(--gap-inline)' }}>
@@ -294,11 +355,32 @@ export function ReportsPage() {
         </div>
       </Card>
 
-      {report !== 'trips' && (
-        <FleetReport report={report} from={filters.from} to={filters.to} reloadToken={fleetToken} />
+      {/*
+        Each panel is boundaried separately rather than the page as a
+        whole. One boundary around everything would still blank the screen
+        — it would just apologise while doing it. Per panel, a broken
+        financial report leaves the filters, the export panel and the
+        navigation exactly where they were.
+      */}
+      {(report === 'drivers' || report === 'vehicles') && (
+        <PanelBoundary label={`the ${report} report`}>
+          <FleetReport report={report} from={filters.from} to={filters.to} reloadToken={fleetToken} />
+        </PanelBoundary>
+      )}
+
+      {report === 'financial' && (
+        <PanelBoundary label="the financial report">
+          <FinancialReport
+            from={filters.from}
+            to={filters.to}
+            groupBy={filters.group_by}
+            reloadToken={fleetToken}
+          />
+        </PanelBoundary>
       )}
 
       {report === 'trips' && summary && (
+        <PanelBoundary label="the trip summary">
         <div
           style={{
             display: 'grid',
@@ -317,12 +399,14 @@ export function ReportsPage() {
             value={`${summary.distance_km.toLocaleString('en-US')} km`}
             icon="route"
           />
-          <KPIStat label="Time on the road" value={formatDuration(summary.duration_minutes)} icon="clock" />
+          <KPIStat
+            label="Time on the road"
+            value={formatDuration(summary.duration_minutes)}
+            icon="clock"
+          />
           <KPIStat
             label="Records complete"
-            value={
-              summary.completeness_percent === null ? '—' : `${summary.completeness_percent}%`
-            }
+            value={summary.completeness_percent === null ? '—' : `${summary.completeness_percent}%`}
             icon={summary.records_incomplete === 0 ? 'circle-check' : 'triangle-alert'}
             // KPIStat's tone is default|accent only, so the shortfall is
             // carried by the icon and hint rather than a colour it has no
@@ -334,29 +418,36 @@ export function ReportsPage() {
             }
           />
         </div>
+        </PanelBoundary>
       )}
 
-      <ExportPanel filters={filters} report={report} />
+      <PanelBoundary label="the export panel">
+        <ExportPanel filters={filters} report={report} />
+      </PanelBoundary>
 
       {report === 'trips' && (
-      <Card padding="none">
-        {rows !== null && rows.length === 0 ? (
-          <EmptyState
-            icon="file-search"
-            title="No trips in this period"
-            description="No trip commenced between the selected dates. Widen the range or clear the vehicle and driver filters."
-          />
-        ) : (
-          <DataTable<ReportTableRow>
-            columns={COLUMNS}
-            rows={(rows ?? []).map((row) => ({ ...row, id: row.trip_id }))}
-            dense
-            emptyMessage={rows === null ? 'Running…' : 'No trips in this period'}
-          />
-        )}
-      </Card>
+        // The table carrying the Bank's six acceptance criteria. If any
+        // one row is malformed enough to throw, the summary tiles above it
+        // must survive — they are the figures a demo is actually reading.
+        <PanelBoundary label="the trip report table">
+          <Card padding="none">
+            {rows !== null && rows.length === 0 ? (
+              <EmptyState
+                icon="file-search"
+                title="No trips in this period"
+                description="No trip commenced between the selected dates. Widen the range or clear the vehicle and driver filters."
+              />
+            ) : (
+              <DataTable<ReportTableRow>
+                columns={COLUMNS}
+                rows={(rows ?? []).map((row) => ({ ...row, id: row.trip_id }))}
+                dense
+                emptyMessage={rows === null ? 'Running…' : 'No trips in this period'}
+              />
+            )}
+          </Card>
+        </PanelBoundary>
       )}
     </div>
   )
 }
-

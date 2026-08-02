@@ -27,8 +27,8 @@ function raceFixture(): array
 {
     $tenant = Tenant::factory()->create();
     $dispatcher = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::DISPATCHER]);
-    $vehicle = Vehicle::factory()->forTenant($tenant)->create();
-    $driver = Driver::factory()->forTenant($tenant)->create();
+    $vehicle = Vehicle::factory()->create();
+    $driver = Driver::factory()->create();
 
     return compact('tenant', 'dispatcher', 'vehicle', 'driver');
 }
@@ -127,8 +127,8 @@ it('lets exactly one of two dispatchers win the same vehicle', function () {
 it('lets exactly one of two dispatchers win the same driver on different vehicles', function () {
     ['tenant' => $tenant, 'dispatcher' => $dispatcher, 'driver' => $driver] = raceFixture();
 
-    $vehicleA = Vehicle::factory()->forTenant($tenant)->create();
-    $vehicleB = Vehicle::factory()->forTenant($tenant)->create();
+    $vehicleA = Vehicle::factory()->create();
+    $vehicleB = Vehicle::factory()->create();
 
     $first = Booking::factory()->forTenant($tenant)->create();
     $second = Booking::factory()->forTenant($tenant)->create();

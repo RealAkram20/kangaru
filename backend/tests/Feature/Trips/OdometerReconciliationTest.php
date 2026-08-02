@@ -37,8 +37,8 @@ function completedTripWithRoute(int $odometerKm, ?float $gpsKm): array
     app(TenantContext::class)->set($tenant->id);
 
     $actor = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::DISPATCHER]);
-    $vehicle = Vehicle::factory()->forTenant($tenant)->create();
-    $driver = Driver::factory()->forTenant($tenant)->create();
+    $vehicle = Vehicle::factory()->create();
+    $driver = Driver::factory()->create();
 
     $trip = app(TripService::class)->create([
         'tenant_id' => $tenant->id,

@@ -20,11 +20,11 @@ function seedTripStateMachineFixture(): array
 {
     $tenant = Tenant::factory()->create();
 
-    $vehicle = Vehicle::factory()->forTenant($tenant)->van()->create();
-    $otherVehicle = Vehicle::factory()->forTenant($tenant)->create();
+    $vehicle = Vehicle::factory()->van()->create();
+    $otherVehicle = Vehicle::factory()->create();
 
-    $driver = Driver::factory()->forTenant($tenant)->create();
-    $otherDriver = Driver::factory()->forTenant($tenant)->create();
+    $driver = Driver::factory()->create();
+    $otherDriver = Driver::factory()->create();
 
     $dispatcher = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::OPERATIONS_MANAGER]);
 

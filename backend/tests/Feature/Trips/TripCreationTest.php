@@ -14,13 +14,13 @@ function seedTripCreationFixture(): array
     $tenantA = Tenant::factory()->create();
     $tenantB = Tenant::factory()->create();
 
-    $vehicleA = Vehicle::factory()->forTenant($tenantA)->van()->create();
-    $driverA = Driver::factory()->forTenant($tenantA)->create();
+    $vehicleA = Vehicle::factory()->van()->create();
+    $driverA = Driver::factory()->create();
 
-    $inactiveVehicleA = Vehicle::factory()->forTenant($tenantA)->create(['status' => 'maintenance']);
+    $inactiveVehicleA = Vehicle::factory()->create(['status' => 'maintenance']);
 
-    $vehicleB = Vehicle::factory()->forTenant($tenantB)->create();
-    $driverB = Driver::factory()->forTenant($tenantB)->create();
+    $vehicleB = Vehicle::factory()->create();
+    $driverB = Driver::factory()->create();
 
     $dispatcherA = User::factory()->create(['tenant_id' => $tenantA->id, 'role' => UserRole::DISPATCHER]);
 
@@ -46,23 +46,37 @@ it('creates a trip directly in Assigned status with one initial trip event', fun
     expect(TripEvent::where('trip_id', $trip->id)->first()->from_status)->toBeNull();
 });
 
-it('rejects a vehicle_id belonging to another tenant', function () {
-    ['vehicleB' => $vehicleB, 'driverA' => $driverA, 'dispatcherA' => $dispatcherA] = seedTripCreationFixture();
+it('accepts any vehicle and driver from the platform pool', function () {
+    ['vehicleB' => $vehicleB, 'driverB' => $driverB, 'dispatcherA' => $dispatcherA] = seedTripCreationFixture();
 
+    // These two cases asserted that a vehicle and a driver "belonging to
+    // another tenant" were refused. Since ADR-0005 neither belongs to
+    // anybody — Shanitah operates one fleet — so the refusal has gone, on
+    // purpose. Asserted rather than deleted, because a dispatcher silently
+    // losing access to most of the pool is exactly the regression this
+    // change could cause.
     $this->actingAs($dispatcherA, 'sanctum')->postJson('/api/v1/trips', [
         'vehicle_id' => $vehicleB->id,
+        'driver_id' => $driverB->id,
+        'origin' => 'Kampala',
+        'destination' => 'Entebbe',
+    ])->assertStatus(201);
+});
+
+it('still rejects a vehicle or driver that does not exist', function () {
+    ['vehicleA' => $vehicleA, 'driverA' => $driverA, 'dispatcherA' => $dispatcherA] = seedTripCreationFixture();
+
+    // Tenancy is no longer a reason to refuse; not existing still is.
+    $this->actingAs($dispatcherA, 'sanctum')->postJson('/api/v1/trips', [
+        'vehicle_id' => 999_999,
         'driver_id' => $driverA->id,
         'origin' => 'Kampala',
         'destination' => 'Entebbe',
     ])->assertStatus(422)->assertJsonPath('code', 'VALIDATION_FAILED');
-});
-
-it('rejects a driver_id belonging to another tenant', function () {
-    ['vehicleA' => $vehicleA, 'driverB' => $driverB, 'dispatcherA' => $dispatcherA] = seedTripCreationFixture();
 
     $this->actingAs($dispatcherA, 'sanctum')->postJson('/api/v1/trips', [
         'vehicle_id' => $vehicleA->id,
-        'driver_id' => $driverB->id,
+        'driver_id' => 999_999,
         'origin' => 'Kampala',
         'destination' => 'Entebbe',
     ])->assertStatus(422)->assertJsonPath('code', 'VALIDATION_FAILED');

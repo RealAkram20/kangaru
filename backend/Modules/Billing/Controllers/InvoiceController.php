@@ -41,9 +41,12 @@ class InvoiceController extends Controller
     {
         $this->authorize('viewAny', Invoice::class);
 
+        /** @var User $user */
+        $user = $request->user();
+
         // Cursor pagination: invoices are append-only and grow without
         // bound, which is exactly the case AGENTS.md reserves cursors for.
-        $paginator = $this->repository->listing($request->filters())->cursorPaginate(25);
+        $paginator = $this->repository->listing($request->filters(), $user)->cursorPaginate(25);
 
         return ApiResponse::success(
             InvoiceResource::collection($paginator->getCollection()),

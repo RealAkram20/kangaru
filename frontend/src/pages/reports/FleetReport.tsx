@@ -1,22 +1,19 @@
 import { useEffect, useState } from 'react'
 import { Card } from '../../components/core/Card'
-import { DataTable, type DataColumn } from '../../components/data/DataTable'
 import { KPIStat } from '../../components/data/KPIStat'
-import { EmptyState } from '../../components/feedback/EmptyState'
 import { apiClient } from '../../lib/apiClient'
 import { apiError } from '../../lib/apiError'
 import { formatDuration } from '../../lib/tripStatus'
 import type { ApiSuccess } from '../../types/api'
-import type { FleetReportMeta, FleetReportRow, ReportType } from '../../types/report'
+import type { FleetReportMeta, PositionalReportRow, ReportType } from '../../types/report'
+import { PositionalReportTable } from './PositionalReportTable'
 
 /**
  * The driver and vehicle reports.
  *
- * Columns are rendered from `meta.headers` rather than a list held here.
- * The server already defines them once for the screen, the CSV, the
- * workbook and the PDF; a fourth copy in the client is the one that would
- * drift, and the symptom would be a correctly-populated table under the
- * wrong headings.
+ * The table itself is PositionalReportTable, shared with the financial
+ * report — this component is only the two reports' headline figures and
+ * the fetch that produces them.
  */
 export function FleetReport({
   report,
@@ -24,13 +21,13 @@ export function FleetReport({
   to,
   reloadToken,
 }: {
-  report: Exclude<ReportType, 'trips'>
+  report: Extract<ReportType, 'drivers' | 'vehicles'>
   from: string
   to: string
   /** Bumped by the parent when Run report is pressed. */
   reloadToken: number
 }) {
-  const [rows, setRows] = useState<FleetReportRow[] | null>(null)
+  const [rows, setRows] = useState<PositionalReportRow[] | null>(null)
   const [meta, setMeta] = useState<FleetReportMeta | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -42,7 +39,9 @@ export function FleetReport({
     if (to) params.set('to', to)
 
     apiClient
-      .get<ApiSuccess<FleetReportRow[], FleetReportMeta>>(`/reports/${report}?${params.toString()}`)
+      .get<ApiSuccess<PositionalReportRow[], FleetReportMeta>>(
+        `/reports/${report}?${params.toString()}`,
+      )
       .then((response) => {
         if (cancelled) return
         setRows(response.data.data)
@@ -57,25 +56,6 @@ export function FleetReport({
       cancelled = true
     }
   }, [report, from, to, reloadToken])
-
-  // DataTable keys rows off `id`; a positional row has none of its own, so
-  // the index stands in — stable because the server returns them ordered.
-  const tableRows = (rows ?? []).map((row, index) => ({ id: index, cells: row }))
-
-  const columns: DataColumn<{ id: number; cells: FleetReportRow }>[] = (meta?.headers ?? []).map(
-    (header, index) => ({
-      key: 'cells',
-      header,
-      // Right-align the figures, left-align the names. Decided from the
-      // value rather than a hardcoded column index, so adding a column
-      // upstream cannot silently mis-align the table.
-      numeric: typeof (rows?.[0]?.[index]) === 'number',
-      render: (row) => {
-        const cell = row.cells[index]
-        return cell === null || cell === '' ? '—' : String(cell)
-      },
-    }),
-  )
 
   if (error) {
     return (
@@ -124,22 +104,12 @@ export function FleetReport({
         </div>
       )}
 
-      <Card padding="none">
-        {rows !== null && rows.length === 0 ? (
-          <EmptyState
-            icon="file-search"
-            title={report === 'drivers' ? 'No driver activity' : 'No vehicle activity'}
-            description="Nothing commenced a trip between the selected dates. Widen the range and run the report again."
-          />
-        ) : (
-          <DataTable
-            columns={columns}
-            rows={tableRows}
-            dense
-            emptyMessage={rows === null ? 'Running…' : 'No activity in this period'}
-          />
-        )}
-      </Card>
+      <PositionalReportTable
+        rows={rows}
+        headers={meta?.headers ?? []}
+        emptyTitle={report === 'drivers' ? 'No driver activity' : 'No vehicle activity'}
+        emptyDescription="Nothing commenced a trip between the selected dates. Widen the range and run the report again."
+      />
     </div>
   )
 }

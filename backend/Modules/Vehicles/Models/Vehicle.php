@@ -3,30 +3,34 @@
 namespace Modules\Vehicles\Models;
 
 use App\Concerns\Auditable;
-use App\Concerns\BelongsToTenant;
-use App\Models\Tenant;
 use Database\Factories\VehicleFactory;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Modules\Fleet\Models\VehicleAllocation;
 
 /**
- * A fleet vehicle owned by a tenant. Minimal Phase-1 slice: category and
+ * A fleet vehicle. Owned and operated by the platform, not by a client
+ * (ADR-0005) — a corporate account is a client and owns no vehicle. It may
+ * be *allocated* to one for a period, which is what Centenary Bank's letter
+ * means by "vehicles supplied to the Bank"; that lives on
+ * `vehicle_allocations`, not here.
+ *
+ * Deliberately NOT BelongsToTenant. Minimal Phase-1 slice: category and
  * status are validated strings, not reference tables (vehicle categories,
  * branches, depots, maintenance and documents are deferred — see
  * Modules/Vehicles/README.md).
  *
  * @property int $id
- * @property int $tenant_id
  * @property string $registration_number
  * @property string $category
  * @property string $status
  */
 class Vehicle extends Model
 {
-    use Auditable, BelongsToTenant, HasFactory, SoftDeletes;
+    use Auditable, HasFactory, SoftDeletes;
 
     /**
      * The Phase-1 vehicle categories. Not a reference table yet (see the
@@ -53,7 +57,6 @@ class Vehicle extends Model
     }
 
     protected $fillable = [
-        'tenant_id',
         'registration_number',
         'make',
         'model',
@@ -73,9 +76,13 @@ class Vehicle extends Model
         ];
     }
 
-    /** @return BelongsTo<Tenant, $this> */
-    public function tenant(): BelongsTo
+    /**
+     * Periods this vehicle is contracted to a corporate account.
+     *
+     * @return HasMany<VehicleAllocation, $this>
+     */
+    public function allocations(): HasMany
     {
-        return $this->belongsTo(Tenant::class);
+        return $this->hasMany(VehicleAllocation::class);
     }
 }

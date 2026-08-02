@@ -20,11 +20,11 @@ function seedTwoTenantsWithTrips(): array
     $tenantA = Tenant::factory()->create();
     $tenantB = Tenant::factory()->create();
 
-    $vehicleA = Vehicle::factory()->forTenant($tenantA)->van()->create();
-    $driverA = Driver::factory()->forTenant($tenantA)->create();
+    $vehicleA = Vehicle::factory()->van()->create();
+    $driverA = Driver::factory()->create();
 
-    $vehicleB = Vehicle::factory()->forTenant($tenantB)->create();
-    $driverB = Driver::factory()->forTenant($tenantB)->create();
+    $vehicleB = Vehicle::factory()->create();
+    $driverB = Driver::factory()->create();
 
     $tripA = Trip::factory()->forTenant($tenantA)->forVehicle($vehicleA)->forDriver($driverA)
         ->create(['origin' => 'Kampala', 'destination' => 'Entebbe']);

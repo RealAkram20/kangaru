@@ -8,6 +8,8 @@ use App\Models\User;
 use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Modules\Administration\Requests\ChangePasswordRequest;
 use Modules\Administration\Requests\LoginRequest;
 use Modules\Administration\Resources\UserResource;
 use Modules\Administration\Services\AuthService;
@@ -50,5 +52,39 @@ class AuthController extends Controller
     public function me(Request $request): JsonResponse
     {
         return ApiResponse::success(new UserResource($request->user()));
+    }
+
+    /**
+     * Changes your own password, and only your own — there is no user
+     * parameter for an administrator to supply.
+     *
+     * An admin silently resetting someone else's password is the one act an
+     * audit trail cannot tell apart from impersonation, so this module does
+     * not offer it (see the README's deferred list).
+     *
+     * Every token is revoked afterwards, this one included. A password
+     * change is usually a response to "I think someone else has this", and
+     * leaving any session signed in would defeat the point — so the caller
+     * signs back in with the password they just chose.
+     */
+    public function changePassword(ChangePasswordRequest $request): JsonResponse
+    {
+        /** @var User $user */
+        $user = $request->user();
+
+        if (! Hash::check($request->validated('current_password'), $user->password)) {
+            return ApiResponse::error(
+                ErrorCode::INVALID_CREDENTIALS,
+                'Your current password is incorrect.',
+                ['current_password' => ['Your current password is incorrect.']],
+                422,
+            );
+        }
+
+        $this->authService->changePassword($user, $request->validated('password'));
+
+        return ApiResponse::success(
+            message: 'Password changed. You have been signed out everywhere — please sign in again with your new password.',
+        );
     }
 }

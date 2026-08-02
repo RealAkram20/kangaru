@@ -116,6 +116,17 @@ Cancelled: reachable from any state before Trip Started, including Rejected
 9. **`Modules/Drivers` `user_id` linkage** — the column exists but has no
    request-layer/UI support in `Modules/Drivers` yet; populated only via
    direct Eloquent, seeders, or tests for now (see `Modules/Drivers/README.md`).
+10. **No date filter on the trip list.** `?q=` covers route, registration,
+    driver, status and client; `?status=`, `?vehicle_id=` and `?driver_id=`
+    cover the rest. "Every trip in March" is still not expressible here —
+    the trip *report* answers it, the list does not.
+11. **`TripResource` sends three fields the frontend type does not
+    declare** — `booking_id`, `odometer_start_photo_url` and
+    `odometer_end_photo_url`. Nothing in the UI reads them, so this is
+    unused surface rather than a bug, but `tsc -b` rejects any fixture
+    that includes them while `tsc --noEmit` accepts it. Either the type
+    catches up or the resource stops sending what nobody reads; both are
+    decisions, neither is taken.
 
 ## Odometer photos
 
@@ -240,3 +251,23 @@ this resource (including `trip_events`), mirroring
 `CompanyCrossTenantIsolationTest`. `TripStateMachineTest` exercises the
 full transition graph, including illegal-transition 409s and odometer/
 distance side effects.
+
+Since ADR-0006 it has a **mirror**, in
+`tests/Feature/Tenancy/PlatformStaffIsolationTest.php`: the first proves a
+client sees only their own, the second proves a *platform* account with no
+permission on a surface sees nothing of it either. Both are needed and they
+fail differently — without the first one client reads another's data;
+without the second, belonging to no tenant quietly becomes a permission of
+its own.
+
+**`?q=` searches vehicle registration and driver name as well as the
+route** — `whereHas` rather than a join, so a trip cannot appear twice when
+both match. A dispatcher reaches for a number plate far more often than for
+an origin, which is why those two are in the search at all. See
+`Modules/Bookings` for the wildcard-escaping and OR-nesting notes; the same
+two traps apply here and the same helper handles them.
+
+`trip_events` needs no `forActor()` of its own. `TripEventController` reads
+`$trip->events()`, and by the time it runs the `subject-tenant` middleware
+has bound the trip's own tenant — so the timeline is scoped to the client
+whose trip it is, whoever is reading it.

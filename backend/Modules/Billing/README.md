@@ -103,8 +103,9 @@ observed, not theorised: `InvoiceNumberRaceTest` reported
   BelongsToTenant}`, `App\Support\Api\ApiResponse`, `App\Enums\ErrorCode`.
 - `brick/money` (and `brick/math`), added by this module.
 
-Nothing depends on Billing yet. `Modules/Reports` will, when a financial
-report lands.
+`Modules/Reports` depends on Billing, read-only: its financial report
+aggregates `invoices` and `credit_notes` by period. Billing does not depend
+on Reports. Nothing else depends on Billing.
 
 ## Public APIs
 
@@ -161,7 +162,10 @@ Everything here is *not built*, not "partly built".
 1. **Payments, statements, outstanding balances and credit limits.** Nothing
    records money coming in. `Company::$credit_limit_minor` exists and is
    read by nothing. An invoice's `balance` is issued-total-less-credits, not
-   less-payments.
+   less-payments. `Modules/Reports`' financial report inherits this exactly:
+   its "Outstanding" is the same figure, and it carries a
+   `payments_recorded: false` flag so every surface that renders it can say
+   so rather than let a bank read it as "unpaid".
 2. **Monthly consolidated invoicing.** One invoice per trip. PROJECT.md wants
    monthly billing; that makes `invoices.trip_id` nullable with a line-level
    trip reference, which is additive per the zero-downtime rule.
@@ -194,6 +198,19 @@ Everything here is *not built*, not "partly built".
     Phase 1 tenant operates in Uganda.
 12. **Rate card archival.** `RateCardStatus::ARCHIVED` exists and is never
     set by any route — a card is created active and stays active.
+13. **Rate cards are not open to platform staff, and that is deliberate.**
+    ADR-0006 opened the *invoice* listing to Shanitah's Finance officer
+    (`InvoiceRepository::listing()` takes the actor), because Decision 3
+    names that case and invoice generation already binds the trip's tenant.
+    Rate cards were left alone: `POST /rate-cards` has no subject
+    parameter, so a platform actor creating one would write a tenant-less
+    card that prices nothing. Opening the read without the write would ship
+    a half-working screen. Which client a platform-authored rate card
+    belongs to is a product question, unanswered.
+14. **No cross-client invoice run.** One invoice per trip means there is no
+    endpoint that could silently become cross-client — the hazard ADR-0006's
+    Consequences names. It reappears the day monthly consolidated invoicing
+    (item 2) is built, and that build has to answer it.
 
 ## Frontend
 
@@ -264,6 +281,7 @@ suite failed:
 
 | Guard | Test that fails without it |
 |---|---|
+| `RoundingMode::toBrick()` mapping each rule to its own constant | "separates half-up from half-down on an exact tie" |
 | `WaitingTimeCalculator` truncating once, not per pause | "sums waiting seconds across pauses before truncating to minutes" |
 | `CreditNoteService::assertWithinInvoice()` | all of `CreditNoteTest` |
 | `InvoiceService` idempotency replay | "returns the original invoice on a replay of the same idempotency key" |
@@ -275,6 +293,42 @@ client's *money* — their prices, their totals, their disputes — and because
 both tenants' first invoice is numbered `...000001`, so a test asserting on
 invoice numbers alone would pass straight through a leak. It asserts on
 uuids and on row counts.
+
+Since ADR-0006 it has a **mirror**, and this module is where that mirror
+bites hardest: `tests/Feature/Tenancy/PlatformStaffIsolationTest.php` proves
+a platform **Dispatcher** — who belongs to no tenant and therefore reads
+every client's bookings and trips — is still refused the invoice listing,
+a single invoice by uuid, and the rate cards. A platform **Finance officer**
+is shown all of it, because they hold `invoices.view` and the dispatcher
+does not.
+
+That pairing is the whole decision in one test: `tenant_id` being null
+answers *whose* rows, never *what* the reader may see. It was verified to
+fail — `InvoicePolicy::viewAny` was temporarily changed to
+`$user->isPlatformLevel() || $user->hasPermission(...)`, the exact inversion
+ADR-0006 forbids, and both refusal cases went red with the dispatcher
+getting `200` on a client's invoice. This project has already shipped that
+bug once in a different shape (a Dispatcher who could export a client's
+revenue), which is why it has a test rather than a comment.
+
+**All four rounding rules are priced end to end** in `RoundingModeTest`.
+`TripPricingTest` had covered half-up and down; half-down and up — two of
+the four a client's contract can be written on — had never run, so two arms
+of `toBrick()` could have been mapped to the wrong Brick constant and
+nothing would have said so.
+
+The load-bearing case is the **exact tie**. On an ordinary fractional
+amount three of the four rules agree, so only a true half separates half-up
+from half-down. Verified the way the table above describes: mapping
+`HALF_DOWN` to `HalfUp` turns the tie test red while the entire
+pre-existing billing suite stays green — which is precisely why it was
+worth adding rather than assuming the module was covered.
+
+`RoundingMode::default()`'s fallback is covered too: a rate card version
+with no stated rule, and a `money.default_rounding` naming something the
+enum does not have, must yield half-up rather than throw. Billing every
+tenant's trips failing over an env typo is a worse outcome than a silently
+conventional default.
 
 Fixtures live in `tests/Support/BillingFixtures.php` and obey two rules:
 priced rate card versions come from `RateCardService`, and trips are walked

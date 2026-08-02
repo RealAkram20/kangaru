@@ -279,6 +279,11 @@ All of the following run in CI; any failure blocks merge.
 - **Pest** — suite must pass. Coverage gates: **90% on `Modules/Billing` and `Modules/Dispatch`**, 70% overall.
 - Migration reversibility check against MySQL 8.
 - Cross-tenant isolation test suite (ADR-0001) — mandatory, non-skippable.
+  Since ADR-0006 it has two halves, and both are mandatory: that a **client**
+  sees only their own, and the mirror — that a **platform** user with no
+  permission on a surface sees nothing of it either. Platform staff belong
+  to no tenant and so read across all of them; without the second half,
+  having no tenant quietly becomes a permission of its own.
 - Dispatch race-condition test — mandatory.
 
 ## Frontend

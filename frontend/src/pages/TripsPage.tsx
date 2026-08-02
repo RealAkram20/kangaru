@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../auth/useAuth'
 import { apiClient } from '../lib/apiClient'
 import { canManageBilling } from '../lib/billing'
+import { useDebouncedValue } from '../lib/useDebouncedValue'
 import { formatTimestamp, formatUgx } from '../lib/format'
 import {
   formatDistance,
@@ -12,7 +13,7 @@ import {
   tripStatusLabel,
   tripStatusTone,
 } from '../lib/tripStatus'
-import type { ApiSuccess } from '../types/api'
+import type { ApiSuccess, FilterOption, ScopedCursorMeta, TenancyScope } from '../types/api'
 import type { CursorMeta, Trip, TripEvent, TripStatus } from '../types/trip'
 import { InvoiceTripDialog } from './trips/InvoiceTripDialog'
 import { TransitionDialog } from './trips/TransitionDialog'
@@ -22,7 +23,44 @@ import { Button } from '../components/core/Button'
 import { Card } from '../components/core/Card'
 import { Icon } from '../components/core/Icon'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
+import { LoadMore } from '../components/data/LoadMore'
 import { Input } from '../components/forms/Input'
+import { Select } from '../components/forms/Select'
+
+/**
+ * The client column, prepended only on a cross-client listing.
+ *
+ * Shanitah's own staff belong to no tenant and so read every client's
+ * trips in one table (ADR-0006). A client's own listing is all one
+ * client's, and a column repeating their own name on every row is noise.
+ */
+const CLIENT_COLUMN: DataColumn<Trip> = {
+  key: 'tenant_id',
+  header: 'Client',
+  render: (row) => row.client?.name ?? '—',
+}
+
+/**
+ * `client` is a tenant id, or '' for every client. Only platform staff can
+ * send it — the endpoint refuses it from anyone else — and the narrowing
+ * happens server-side, unlike the search box which only ever sifted the
+ * page already fetched.
+ */
+function tripsUrl(client: string, search: string, cursor: string | null = null): string {
+  const params = new URLSearchParams()
+  if (client !== '') params.set('tenant_id', client)
+  // Server-side: a trip list is append-only and long, and searching the 25
+  // rows in hand while reporting the rest as "no match" is a wrong answer.
+  if (search !== '') params.set('q', search)
+  // Opaque, and sent back unaltered: it encodes a sort position rather
+  // than an offset, so trips created while somebody is paging do not shift
+  // the page under them.
+  if (cursor !== null) params.set('cursor', cursor)
+
+  const query = params.toString()
+
+  return query === '' ? '/trips' : `/trips?${query}`
+}
 
 const COLUMNS: DataColumn<Trip>[] = [
   {
@@ -88,17 +126,45 @@ const COLUMNS: DataColumn<Trip>[] = [
 export function TripsPage() {
   const { user } = useAuth()
   const [trips, setTrips] = useState<Trip[] | null>(null)
+  // Whose trips these are, reported by the API rather than inferred from
+  // the signed-in user (ADR-0006). Defaults to one client's, which shows a
+  // column too few rather than mislabelling rows.
+  const [scope, setScope] = useState<TenancyScope>('tenant')
+  const [clients, setClients] = useState<FilterOption[]>([])
+  // '' is every client. Narrowed server-side, unlike the search box.
+  const [client, setClient] = useState('')
+  const [next, setNext] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  // Held back until typing settles — see BookingsPage. Every keystroke
+  // would otherwise be a request, and their answers can land out of order.
+  const search = useDebouncedValue(query.trim())
   const [selected, setSelected] = useState<Trip | null>(null)
   const [transitionTo, setTransitionTo] = useState<TripStatus | null>(null)
   const [invoicing, setInvoicing] = useState<Trip | null>(null)
 
+  const columns = useMemo(
+    () => (scope === 'platform' ? [CLIENT_COLUMN, ...COLUMNS] : COLUMNS),
+    [scope],
+  )
+
+  /**
+   * Re-reads from the first page.
+   *
+   * Drops any pages already loaded rather than re-fetching all of them:
+   * whatever triggered this changed a trip's status, the list is ordered
+   * by creation and filtered by nothing, and stitching a fresh first page
+   * onto stale later ones can show the same trip twice.
+   */
   const refresh = useCallback(async () => {
     try {
-      const response = await apiClient.get<ApiSuccess<Trip[], CursorMeta>>('/trips')
+      const response = await apiClient.get<ApiSuccess<Trip[], ScopedCursorMeta>>(tripsUrl(client, search))
       setTrips(response.data.data)
+      setScope(response.data.meta?.scope ?? 'tenant')
+      setClients(response.data.meta?.filters?.clients ?? [])
+      setNext(response.data.meta?.cursor?.next ?? null)
       // Keep the open panel pointing at the refreshed row, so its actions
       // reflect the status the server now holds.
       setSelected((current) =>
@@ -107,7 +173,26 @@ export function TripsPage() {
     } catch {
       setError('Could not load trips.')
     }
-  }, [])
+  }, [client, search])
+
+  const loadMore = useCallback(async () => {
+    if (next === null) return
+
+    setLoadingMore(true)
+    try {
+      const response = await apiClient.get<ApiSuccess<Trip[], ScopedCursorMeta>>(
+        tripsUrl(client, search, next),
+      )
+      // Appended, so the trips already read stay put — this is the one
+      // path that must not replace the list.
+      setTrips((current) => [...(current ?? []), ...response.data.data])
+      setNext(response.data.meta?.cursor?.next ?? null)
+    } catch {
+      setError('Could not load trips.')
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [client, search, next])
 
   // Promise chain rather than `void refresh()` so the state update lands
   // in a callback — setState straight from an effect body cascades renders.
@@ -115,9 +200,14 @@ export function TripsPage() {
     let cancelled = false
 
     apiClient
-      .get<ApiSuccess<Trip[], CursorMeta>>('/trips')
+      .get<ApiSuccess<Trip[], ScopedCursorMeta>>(tripsUrl(client, search))
       .then((response) => {
-        if (!cancelled) setTrips(response.data.data)
+        if (cancelled) return
+
+        setTrips(response.data.data)
+        setScope(response.data.meta?.scope ?? 'tenant')
+        setClients(response.data.meta?.filters?.clients ?? [])
+        setNext(response.data.meta?.cursor?.next ?? null)
       })
       .catch(() => {
         if (!cancelled) setError('Could not load trips.')
@@ -126,7 +216,9 @@ export function TripsPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+    // Re-fetches on a client change: the narrowing is server-side, so the
+    // other clients' rows were never here to filter.
+  }, [client, search])
 
   // The response to a transition is the updated trip, so the row and the
   // open panel are refreshed from it rather than re-fetching the list.
@@ -136,19 +228,10 @@ export function TripsPage() {
     setTransitionTo(null)
   }
 
-  const filtered = useMemo(() => {
-    if (!trips) return []
-    const q = query.trim().toLowerCase()
-    if (!q) return trips
-    return trips.filter(
-      (t) =>
-        t.origin.toLowerCase().includes(q) ||
-        t.destination.toLowerCase().includes(q) ||
-        t.vehicle?.registration_number.toLowerCase().includes(q) ||
-        t.driver?.name.toLowerCase().includes(q) ||
-        tripStatusLabel(t.status).toLowerCase().includes(q),
-    )
-  }, [trips, query])
+  // Already what the server matched — route, registration, driver, status
+  // and, for a cross-client reader, the client's name. Filtering again here
+  // would only be able to narrow the page in hand.
+  const rows = trips ?? []
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
@@ -162,13 +245,32 @@ export function TripsPage() {
         title="Trips"
         subtitle={trips ? `${trips.length} total — select a trip to see its timeline` : undefined}
         actions={
-          <Input
-            iconLeft="search"
-            placeholder="Filter by route, vehicle, driver or status"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            style={{ width: 300 }}
-          />
+          <>
+            {/* Server-side, so it sits ahead of the search box — see BookingsPage. */}
+            {scope === 'platform' && clients.length > 0 && (
+              <Select
+                aria-label="Client"
+                value={client}
+                onChange={(e) => setClient(e.target.value)}
+                options={[
+                  { value: '', label: 'All clients' },
+                  ...clients.map((c) => ({ value: String(c.value), label: c.label })),
+                ]}
+                style={{ width: 200 }}
+              />
+            )}
+            <Input
+              iconLeft="search"
+              placeholder={
+                scope === 'platform'
+                  ? 'Filter by client, route, vehicle, driver or status'
+                  : 'Filter by route, vehicle, driver or status'
+              }
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              style={{ width: 300 }}
+            />
+          </>
         }
         padding="none"
       >
@@ -176,13 +278,17 @@ export function TripsPage() {
           <p style={{ padding: 'var(--space-6)', color: 'var(--kr-error)' }}>{error}</p>
         ) : (
           <DataTable<Trip>
-            columns={COLUMNS}
-            rows={filtered}
+            columns={columns}
+            rows={rows}
             dense
             onRowClick={(row) => setSelected((current) => (current?.id === row.id ? null : row))}
             emptyMessage={trips === null ? 'Loading…' : query ? 'No trips match your filter' : 'No trips yet'}
           />
         )}
+
+        {/* Outside the filtered set — see BookingsPage. A search matching
+            nothing on this page must still be able to fetch the next. */}
+        <LoadMore hasMore={next !== null} loading={loadingMore} onLoadMore={() => void loadMore()} />
       </Card>
 
       {/* Keyed by id so switching trips remounts with fresh state rather

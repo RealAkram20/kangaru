@@ -2,9 +2,9 @@
 
 namespace Modules\Drivers\Requests;
 
-use App\Support\Tenancy\TenantContext;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Modules\Drivers\Models\Driver;
 
 class UpdateDriverRequest extends FormRequest
 {
@@ -20,6 +20,10 @@ class UpdateDriverRequest extends FormRequest
      */
     public function rules(): array
     {
+        // See UpdateVehicleRequest: `route()` is typed `object|string`, so
+        // the bound model is narrowed rather than assumed.
+        $driver = $this->route('driver');
+
         return [
             'name' => ['sometimes', 'string', 'max:255'],
             'phone' => ['sometimes', 'string', 'max:50'],
@@ -28,9 +32,8 @@ class UpdateDriverRequest extends FormRequest
                 'sometimes',
                 'string',
                 'max:100',
-                Rule::unique('drivers')
-                    ->ignore($this->route('driver'))
-                    ->where(fn ($query) => $query->where('tenant_id', app(TenantContext::class)->get())),
+                // Global since ADR-0005, ignoring this driver's own row.
+                Rule::unique('drivers')->ignore($driver instanceof Driver ? $driver->id : null),
             ],
             'license_expiry' => ['sometimes', 'date'],
             'status' => ['sometimes', 'string', 'in:active,suspended,inactive'],

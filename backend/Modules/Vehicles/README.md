@@ -2,31 +2,38 @@
 
 ## Purpose
 
-Manages a tenant's fleet vehicles — the first entity `Modules/Trips` will
-reference to satisfy the Bank's "vehicle registration details" acceptance
-criterion (PROJECT.md).
+The vehicle register. Supplies "vehicle registration details", one of the
+six data points Centenary Bank's letter requires on every trip
+(PROJECT.md).
+
+**The fleet belongs to the platform (ADR-0005).** Shanitah owns and
+operates every vehicle; a corporate account is a client and owns none. A
+vehicle may be *allocated* to a client for a period — what the Bank's
+letter means by "vehicles supplied to the Bank" — and that is a contract,
+recorded on `vehicle_allocations` in `Modules/Fleet`, not ownership here.
 
 ## Responsibilities
 
 - `Vehicle` — registration number, make/model/year, category, seating
-  capacity, color, VIN, status. One record per physical vehicle.
-- Demonstrates ADR-0001 like `Modules/Clients`: `Vehicle` uses
-  `BelongsToTenant`, so every query is automatically scoped to the
-  authenticated user's tenant. Unlike `Company`, vehicles are always
-  created by an already tenant-scoped user, so the service never needs
-  the `allTenants()` platform-level bypass.
-- `Vehicle` also uses `App\Concerns\Auditable` — every create/update/delete
-  is written to the append-only `audit_logs` table.
-- Deferred to a later pass (PROJECT.md's full Fleet Management scope):
-  fleet owners, branches, depots, a dedicated vehicle-categories reference
-  table, maintenance records, vehicle document uploads.
+  capacity, colour, VIN, status. One record per physical vehicle.
+- `Vehicle::CATEGORIES` is the Phase-1 category list, held as a constant
+  rather than repeated per call site: `Modules/Billing` prices per
+  category, so a category that exists in one list and not another is a
+  vehicle nobody can invoice.
+- `Auditable` — every create/update/delete is written to the append-only
+  `audit_logs` table.
+- `allocations()` — the periods this vehicle is contracted to a corporate
+  account.
 
 ## Dependencies
 
-- `App\Concerns\BelongsToTenant`, `App\Support\Tenancy\TenantScope`,
-  `App\Support\Tenancy\TenantContext` (for tenant-scoped uniqueness on
-  `registration_number`).
-- `App\Support\Api\ApiResponse`.
+- `App\Enums\Permission` — authorization is permission-based (ADR-0004).
+- `App\Concerns\Auditable` — the audit trail.
+- `Modules\Fleet\Models\VehicleAllocation` — the allocation records.
+- `App\Support\Api\ApiResponse`, `App\Enums\ErrorCode` — response envelope.
+
+**Not** `BelongsToTenant`, deliberately. That is the ADR-0005 change: a
+global tenant scope here would hide the shared pool from every dispatcher.
 
 ## Public APIs
 
@@ -34,14 +41,49 @@ Standard REST resource, all behind `auth:sanctum` + `tenant` middleware:
 
 | Method | Path | Policy |
 |---|---|---|
-| GET | `/api/v1/vehicles` | `viewAny` — any authenticated user (tenant scope restricts results) |
-| GET | `/api/v1/vehicles/{id}` | `view` — same tenant only; another tenant's id returns 404, not 403 |
-| POST | `/api/v1/vehicles` | `create` — Super Admin, Operations Manager, Fleet Owner, Branch Manager, Depot Manager |
-| PATCH | `/api/v1/vehicles/{id}` | `update` — same roles as `create` |
-| DELETE | `/api/v1/vehicles/{id}` | `delete` — same roles as `create` |
+| GET | `/api/v1/vehicles` | `viewAny` — `vehicles.view`, seeded on every system role |
+| GET | `/api/v1/vehicles/{id}` | `view` — same permission |
+| POST | `/api/v1/vehicles` | `create` — `vehicles.manage` |
+| PATCH | `/api/v1/vehicles/{id}` | `update` — `vehicles.manage` |
+| DELETE | `/api/v1/vehicles/{id}` | `delete` — `vehicles.manage` |
+
+There is no tenant filtering on these results, and that is the point: one
+pool, every dispatcher sees all of it.
 
 ## Notes
 
-`VehicleCrossTenantIsolationTest` in `tests/Feature/Vehicles/` is the
-AGENTS.md-mandated, non-skippable proof that tenant isolation holds for
-this resource, mirroring `CompanyCrossTenantIsolationTest`.
+`registration_number` is **globally unique**. It was
+`unique(['tenant_id', 'registration_number'])`, which let two tenants
+register the same number plate; a plate is unique in Uganda under any
+reading, and that constraint was wrong independently of ADR-0005.
+
+`tests/Feature/Vehicles/VehicleCrossTenantIsolationTest.php` was
+**repointed, not removed**, when the fleet moved. "Another tenant's
+vehicle" no longer names anything, so it now asserts that the pool is
+deliberately shared — a stray `BelongsToTenant` creeping back fails loudly
+instead of quietly halving what dispatch can reach. AGENTS.md calls the
+isolation suite non-skippable; this records why one member changed meaning.
+
+## What's explicitly deferred
+
+- **Allocation is not enforced.** `vehicle_allocations` exists and records
+  which vehicles are contracted to which client, but **nothing consults
+  it** — dispatch offers the whole pool regardless of contract. The table
+  is currently a record, not a constraint.
+- **Vehicle categories are validated strings, not a reference table.** Adding
+  a category means editing `Vehicle::CATEGORIES` and shipping.
+- **No maintenance records.** PROJECT.md's Fleet Management scope lists
+  maintenance and "Vehicle Maintenance Due" is a named notification type;
+  neither exists.
+- **No vehicle documents** — no insurance, inspection or logbook uploads,
+  and so no expiry tracking, despite "Document Expiring" being a named
+  notification.
+- **No fleet owners, branches or depots.** PROJECT.md has a Fleet Owner
+  role and branch/depot dispatch inputs; there is nothing for them to
+  point at. Ownership by a fleet owner or driver-partner is a `Modules/Fleet`
+  concern and is unbuilt.
+- **No availability model.** A vehicle has a `status` string; there is no
+  calendar, no reservation window, and no way to ask "is this vehicle free
+  at 14:00 on Thursday" except by looking at trips.
+- **No telematics.** Odometer readings come from the driver at trip start
+  and end (`Modules/Trips`), not from the vehicle.

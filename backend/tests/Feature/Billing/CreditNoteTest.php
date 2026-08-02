@@ -178,8 +178,8 @@ it('refuses a credit line attributed to another invoice\'s line', function () {
     // A second invoice in the same tenant, so this is purely about the line
     // belonging to *this* invoice — the cross-tenant case is
     // BillingCrossTenantIsolationTest's job.
-    $vehicle = Vehicle::factory()->forTenant($tenant)->create(['category' => 'sedan']);
-    $driver = Driver::factory()->forTenant($tenant)->create();
+    $vehicle = Vehicle::factory()->create(['category' => 'sedan']);
+    $driver = Driver::factory()->create();
     $dispatcher = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::DISPATCHER]);
 
     $otherTrip = BillingFixtures::completedTrip($tenant, $dispatcher, $vehicle, $driver);

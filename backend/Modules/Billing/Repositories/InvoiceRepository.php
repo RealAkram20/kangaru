@@ -2,6 +2,7 @@
 
 namespace Modules\Billing\Repositories;
 
+use App\Models\User;
 use App\Support\Money\Shillings;
 use Brick\Money\Money;
 use Illuminate\Database\Eloquent\Builder;
@@ -24,12 +25,26 @@ use Modules\Billing\Models\Invoice;
 class InvoiceRepository
 {
     /**
+     * The reader's invoices: one client's for a client's Finance user, every
+     * client's for Shanitah's own Finance officer, who belongs to no tenant
+     * (ADR-0006 Decision 3).
+     *
+     * The actor is a parameter rather than read from `request()` because
+     * this is a repository — the console invoice runs and the tests call it
+     * too, and a repository that reaches for the current request is one that
+     * silently returns nothing outside HTTP.
+     *
+     * `forActor()` decides whose rows; `InvoicePolicy::viewAny` has already
+     * decided whether this reader may have any at all. A platform Dispatcher
+     * never reaches this method — `PlatformStaffIsolationTest` holds that
+     * line — so widening the range here does not widen who may look.
+     *
      * @param  array<string, mixed>  $filters
      * @return Builder<Invoice>
      */
-    public function listing(array $filters): Builder
+    public function listing(array $filters, User $actor): Builder
     {
-        return Invoice::query()
+        return Invoice::forActor($actor)
             ->with(['trip:id,origin,destination,started_at,completed_at,distance_km', 'lines'])
             ->when($filters['from'] ?? null, fn ($q, $from) => $q->where('issued_at', '>=', $from))
             ->when($filters['to'] ?? null, fn ($q, $to) => $q->where('issued_at', '<=', $to))

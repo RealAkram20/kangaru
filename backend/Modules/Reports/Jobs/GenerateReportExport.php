@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Modules\Reports\Enums\ExportFormat;
 use Modules\Reports\Enums\ExportStatus;
+use Modules\Reports\Events\ReportExportCompleted;
 use Modules\Reports\Exports\CsvReportWriter;
 use Modules\Reports\Exports\PdfReportWriter;
 use Modules\Reports\Exports\ReportSourceFactory;
@@ -107,6 +108,12 @@ class GenerateReportExport implements ShouldQueue
                 'format' => $export->format->value,
                 'rows' => $rows,
             ]);
+
+            // After the row is `completed` and the file is on the disk, so a
+            // notification saying it is ready cannot arrive ahead of it.
+            // `requestedBy` is loaded here rather than left to the listener
+            // because that runs with whatever tenant this worker last bound.
+            ReportExportCompleted::dispatch($export->load('requestedBy'));
         } catch (Throwable $e) {
             // The message is shown to the user, so it must explain rather
             // than leak a stack trace (AGENTS.md Error Handling).
