@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Lets the suite be run against any ref on demand, from the Actions tab
+  # or `gh workflow run`. Without it CI only ever fires on `main` and on
+  # pull requests into it, so a long-lived branch can accumulate work that
+  # has never met MySQL 8, PHP 8.4 or the coverage gates — which is exactly
+  # how the `--path` coverage bug noted below survived: the branch that
+  # introduced it could not run the job it broke.
+  workflow_dispatch:
 
 jobs:
   # AGENTS.md Process: "Conventional Commits enforced by commitlint".
