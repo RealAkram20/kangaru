@@ -41,6 +41,13 @@ class TripController extends Controller
         // tenant.
         $query = Trip::forActor($user)->with(['vehicle', 'driver']);
 
+        // Eager-loaded for a platform reader only — see BookingController
+        // for why, and for why reading it per row instead would be the N+1
+        // AGENTS.md forbids.
+        if ($user->isPlatformLevel()) {
+            $query->with('tenant');
+        }
+
         // The listing counterpart of TripPolicy::view. Anyone without
         // `trips.view.all` sees only trips that are theirs — assigned to
         // them as a driver, or produced by a booking they raised.
@@ -71,7 +78,12 @@ class TripController extends Controller
 
         return ApiResponse::success(
             TripResource::collection($paginator->getCollection()),
-            meta: ['cursor' => ['next' => $paginator->nextCursor()?->encode()]],
+            meta: [
+                'cursor' => ['next' => $paginator->nextCursor()?->encode()],
+                // Whether this list spans clients. Same contract as
+                // /bookings and /audit-logs.
+                'scope' => $user->isPlatformLevel() ? 'platform' : 'tenant',
+            ],
         );
     }
 

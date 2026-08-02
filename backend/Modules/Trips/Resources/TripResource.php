@@ -22,6 +22,16 @@ class TripResource extends JsonResource
         return [
             'id' => $this->id,
             'tenant_id' => $this->tenant_id,
+            // Which client this trip is for, by name. See BookingResource
+            // for the reasoning — same rule, same ADR-0006 queue, and a
+            // trips list opened by platform staff spans clients too.
+            'client' => $this->whenLoaded('tenant', function () {
+                // See BookingResource — same shape, same reason for the
+                // local and the null branch.
+                $client = $this->tenant;
+
+                return $client === null ? null : ['id' => $client->id, 'name' => $client->name];
+            }),
             // Null on an ad-hoc trip raised without a booking.
             'booking_id' => $this->booking_id,
             'vehicle_id' => $this->vehicle_id,

@@ -209,6 +209,30 @@ function QueueRow({
     >
       <Identifier size="xs">{pickupLabel(booking)}</Identifier>
       <span style={{ flex: 1, minWidth: 0 }}>
+        {/*
+          Which client this request is, above the route rather than beside
+          it. On a cross-client queue (ADR-0006) this is the first thing a
+          dispatcher must read: the failure it prevents is not a leak but a
+          mistake — assigning a vehicle to what they took for the Bank's
+          airport run when it was another client's.
+
+          Rendered only when the API sent it, which it does only for a
+          platform reader. A client's own queue is all one client's and a
+          column repeating their own name on every row is noise.
+        */}
+        {booking.client && (
+          <span
+            style={{
+              display: 'block',
+              font: 'var(--type-caption-strong, var(--type-caption))',
+              color: 'var(--text-secondary)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.04em',
+            }}
+          >
+            {booking.client.name}
+          </span>
+        )}
         <span style={{ display: 'block', font: 'var(--type-label)', color: 'var(--text-body)' }}>
           {booking.origin} → {booking.destination}
         </span>
@@ -284,6 +308,12 @@ function AssignmentPanel({
             gap: 'var(--space-4)',
           }}
         >
+          {/*
+            First fact, not last: this panel is what a dispatcher reads
+            immediately before committing a vehicle, and on a cross-client
+            queue "whose trip is this" outranks every other detail here.
+          */}
+          {booking.client && <Fact label="Client" value={booking.client.name} />}
           <Fact label="Pickup" value={pickupLabel(booking)} />
           <Fact label="Passengers" value={String(booking.passenger_count)} />
           <Fact label="Contact" value={booking.passenger_phone} />
@@ -367,7 +397,13 @@ function AssignmentPanel({
         title="Confirm assignment"
         description={
           vehicle && driver
-            ? `This commits ${vehicle.registration_number} and ${driver.name} to ${booking.origin} → ${booking.destination}. Neither can be dispatched again until the trip is completed or cancelled.`
+            ? // The client is named in the confirmation itself, not only on
+              // the panel behind it. This sentence is the last thing read
+              // before a vehicle is committed, and on a cross-client queue
+              // it is the sentence that catches the wrong-client mistake.
+              `This commits ${vehicle.registration_number} and ${driver.name} to ${booking.origin} → ${booking.destination}${
+                booking.client ? ` for ${booking.client.name}` : ''
+              }. Neither can be dispatched again until the trip is completed or cancelled.`
             : undefined
         }
         onClose={() => setConfirming(false)}

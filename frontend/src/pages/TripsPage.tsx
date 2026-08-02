@@ -12,7 +12,7 @@ import {
   tripStatusLabel,
   tripStatusTone,
 } from '../lib/tripStatus'
-import type { ApiSuccess } from '../types/api'
+import type { ApiSuccess, ScopedCursorMeta, TenancyScope } from '../types/api'
 import type { CursorMeta, Trip, TripEvent, TripStatus } from '../types/trip'
 import { InvoiceTripDialog } from './trips/InvoiceTripDialog'
 import { TransitionDialog } from './trips/TransitionDialog'
@@ -23,6 +23,19 @@ import { Card } from '../components/core/Card'
 import { Icon } from '../components/core/Icon'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
 import { Input } from '../components/forms/Input'
+
+/**
+ * The client column, prepended only on a cross-client listing.
+ *
+ * Shanitah's own staff belong to no tenant and so read every client's
+ * trips in one table (ADR-0006). A client's own listing is all one
+ * client's, and a column repeating their own name on every row is noise.
+ */
+const CLIENT_COLUMN: DataColumn<Trip> = {
+  key: 'tenant_id',
+  header: 'Client',
+  render: (row) => row.client?.name ?? '—',
+}
 
 const COLUMNS: DataColumn<Trip>[] = [
   {
@@ -88,6 +101,10 @@ const COLUMNS: DataColumn<Trip>[] = [
 export function TripsPage() {
   const { user } = useAuth()
   const [trips, setTrips] = useState<Trip[] | null>(null)
+  // Whose trips these are, reported by the API rather than inferred from
+  // the signed-in user (ADR-0006). Defaults to one client's, which shows a
+  // column too few rather than mislabelling rows.
+  const [scope, setScope] = useState<TenancyScope>('tenant')
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -95,10 +112,16 @@ export function TripsPage() {
   const [transitionTo, setTransitionTo] = useState<TripStatus | null>(null)
   const [invoicing, setInvoicing] = useState<Trip | null>(null)
 
+  const columns = useMemo(
+    () => (scope === 'platform' ? [CLIENT_COLUMN, ...COLUMNS] : COLUMNS),
+    [scope],
+  )
+
   const refresh = useCallback(async () => {
     try {
-      const response = await apiClient.get<ApiSuccess<Trip[], CursorMeta>>('/trips')
+      const response = await apiClient.get<ApiSuccess<Trip[], ScopedCursorMeta>>('/trips')
       setTrips(response.data.data)
+      setScope(response.data.meta?.scope ?? 'tenant')
       // Keep the open panel pointing at the refreshed row, so its actions
       // reflect the status the server now holds.
       setSelected((current) =>
@@ -115,9 +138,12 @@ export function TripsPage() {
     let cancelled = false
 
     apiClient
-      .get<ApiSuccess<Trip[], CursorMeta>>('/trips')
+      .get<ApiSuccess<Trip[], ScopedCursorMeta>>('/trips')
       .then((response) => {
-        if (!cancelled) setTrips(response.data.data)
+        if (cancelled) return
+
+        setTrips(response.data.data)
+        setScope(response.data.meta?.scope ?? 'tenant')
       })
       .catch(() => {
         if (!cancelled) setError('Could not load trips.')
@@ -146,6 +172,11 @@ export function TripsPage() {
         t.destination.toLowerCase().includes(q) ||
         t.vehicle?.registration_number.toLowerCase().includes(q) ||
         t.driver?.name.toLowerCase().includes(q) ||
+        // Only ever set on a cross-client listing, so a client's own
+        // filter behaves exactly as it did — there is nothing to match.
+        // For Shanitah's staff it is the most useful term in the box:
+        // "Centenary" narrows a merged list to one client.
+        t.client?.name.toLowerCase().includes(q) ||
         tripStatusLabel(t.status).toLowerCase().includes(q),
     )
   }, [trips, query])
@@ -164,7 +195,11 @@ export function TripsPage() {
         actions={
           <Input
             iconLeft="search"
-            placeholder="Filter by route, vehicle, driver or status"
+            placeholder={
+              scope === 'platform'
+                ? 'Filter by client, route, vehicle, driver or status'
+                : 'Filter by route, vehicle, driver or status'
+            }
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             style={{ width: 300 }}
@@ -176,7 +211,7 @@ export function TripsPage() {
           <p style={{ padding: 'var(--space-6)', color: 'var(--kr-error)' }}>{error}</p>
         ) : (
           <DataTable<Trip>
-            columns={COLUMNS}
+            columns={columns}
             rows={filtered}
             dense
             onRowClick={(row) => setSelected((current) => (current?.id === row.id ? null : row))}

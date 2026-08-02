@@ -102,17 +102,15 @@ decision reason stay an untouched audit record.
    tedious in practice.
 7. **Cursor paging in the UI** — the API is cursor-paginated but
    `BookingsPage` renders only the first page; there is no "load more" yet.
-8. **The cross-client queue does not say which client a row is.** Since
-   ADR-0006 `GET /bookings` returns every client's bookings to platform
-   staff, which is the point — a matcher that can only see one client's
-   demand is not matching. But `BookingResource` carries no tenant, and
-   `BookingsPage` shows no column for one, so a Shanitah dispatcher sees a
-   merged queue with nothing distinguishing Centenary Bank's request from
-   the next client's. ADR-0006 puts this out of scope deliberately (the
-   backend should land first) and it is now the most visible thing missing.
-9. **A booking still requires a tenant and a requesting user.** Walk-in and
+8. **A booking still requires a tenant and a requesting user.** Walk-in and
    individual riders have neither, so they remain unexpressible — named in
    ADR-0005 and again in ADR-0006, and unchanged by both.
+9. **No server-side filter by client.** `BookingsPage` filters the loaded
+   page by client name in the browser, which is honest for one page of 25
+   and wrong for a real cross-client queue: a dispatcher typing "Centenary"
+   filters what was fetched, not what exists. A `tenant_id` query parameter
+   is the fix and it belongs with cursor paging in the UI (item 7), since
+   both are the same "there is more than one page" problem.
 
 ## Frontend
 
@@ -132,6 +130,22 @@ raised (ADR-0004). Keeping them separate is what stops "belongs to no
 tenant" quietly becoming a permission: a platform account without
 `bookings.view.all` sees the same nothing it would have seen inside a
 tenant.
+
+**The queue names its clients.** `BookingResource` carries `client`
+(`{id, name}`) and the index reports `meta.scope` as `platform` or
+`tenant`, the way `/audit-logs` already does. Both exist because ADR-0006's
+own words are that a cross-client queue which does not show whose each row
+is, is *worse* than no cross-client queue — the failure it prevents is not
+a leak but a mistake, a vehicle committed to what a dispatcher read as the
+Bank's airport run.
+
+`client` is eager-loaded, and only for a platform reader: a client's own
+queue is one client's, and joining to tell them their own name is a query
+for nothing. `whenLoaded` omits the key entirely rather than sending null,
+so a consumer can tell "not applicable" from "no client".
+`CrossClientQueueLabellingTest` asserts the labels, the scope, the omission
+and the absence of an N+1 — the last verified by making the resource read
+the relation lazily and watching seven rows cost seven extra queries.
 
 `BookingCrossTenantIsolationTest` in `tests/Feature/Bookings/` is the
 AGENTS.md-mandated, non-skippable proof that tenant isolation holds for this

@@ -3,9 +3,8 @@ import { useAuth } from '../auth/useAuth'
 import { apiClient } from '../lib/apiClient'
 import { apiError, fieldErrors } from '../lib/apiError'
 import { bookingStatusIcon, bookingStatusLabel, bookingStatusTone, pickupLabel } from '../lib/bookingStatus'
-import type { ApiSuccess } from '../types/api'
+import type { ApiSuccess, ScopedCursorMeta, TenancyScope } from '../types/api'
 import type { Booking } from '../types/booking'
-import type { CursorMeta } from '../types/trip'
 import { Badge } from '../components/core/Badge'
 import { Button } from '../components/core/Button'
 import { Card } from '../components/core/Card'
@@ -23,10 +22,26 @@ import { Input } from '../components/forms/Input'
  */
 const APPROVER_ROLES = ['super_admin', 'operations_manager', 'corporate_admin', 'branch_manager']
 
-async function fetchBookings(): Promise<Booking[]> {
-  const response = await apiClient.get<ApiSuccess<Booking[], CursorMeta>>('/bookings')
+interface BookingList {
+  rows: Booking[]
+  /**
+   * Whose bookings these are, straight from the API (ADR-0006). Read
+   * rather than worked out from the signed-in user, so this page holds no
+   * copy of the rule that decides who reads across clients.
+   */
+  scope: TenancyScope
+}
 
-  return response.data.data
+async function fetchBookings(): Promise<BookingList> {
+  const response = await apiClient.get<ApiSuccess<Booking[], ScopedCursorMeta>>('/bookings')
+
+  return {
+    rows: response.data.data,
+    // Defaulted, not assumed: an older API that does not send it is one
+    // client's listing, which is the safe reading — it shows a column too
+    // few rather than mislabelling rows.
+    scope: response.data.meta?.scope ?? 'tenant',
+  }
 }
 
 function onLoadFailure(setError: (message: string) => void) {
@@ -36,6 +51,7 @@ function onLoadFailure(setError: (message: string) => void) {
 export function BookingsPage() {
   const { user } = useAuth()
   const [bookings, setBookings] = useState<Booking[] | null>(null)
+  const [scope, setScope] = useState<TenancyScope>('tenant')
   const [loadError, setLoadError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [creating, setCreating] = useState(false)
@@ -44,8 +60,9 @@ export function BookingsPage() {
 
   // Kept free of setState so the effect below only ever sets state from a
   // promise callback, never synchronously in its body.
-  const apply = useCallback((rows: Booking[]) => {
-    setBookings(rows)
+  const apply = useCallback((list: BookingList) => {
+    setBookings(list.rows)
+    setScope(list.scope)
     setLoadError(null)
   }, [])
 
@@ -58,8 +75,8 @@ export function BookingsPage() {
     let cancelled = false
 
     fetchBookings()
-      .then((rows) => {
-        if (!cancelled) apply(rows)
+      .then((list) => {
+        if (!cancelled) apply(list)
       })
       .catch((error: unknown) => {
         if (!cancelled) onLoadFailure(setLoadError)(error)
@@ -87,6 +104,19 @@ export function BookingsPage() {
 
   const columns = useMemo<DataColumn<Booking>[]>(
     () => [
+      // First column, and only on a cross-client listing. Shanitah's own
+      // staff read every client's bookings in one table (ADR-0006); without
+      // this the table is a merged queue with nothing distinguishing one
+      // client's request from another's.
+      ...(scope === 'platform'
+        ? [
+            {
+              key: 'tenant_id',
+              header: 'Client',
+              render: (row: Booking) => row.client?.name ?? '—',
+            } satisfies DataColumn<Booking>,
+          ]
+        : []),
       {
         key: 'status',
         header: 'Status',
@@ -151,7 +181,7 @@ export function BookingsPage() {
         },
       },
     ],
-    [canApprove, approve],
+    [canApprove, approve, scope],
   )
 
   const filtered = useMemo(() => {
@@ -163,6 +193,9 @@ export function BookingsPage() {
         b.origin.toLowerCase().includes(q) ||
         b.destination.toLowerCase().includes(q) ||
         b.passenger_name.toLowerCase().includes(q) ||
+        // Present only on a cross-client queue, where it is the term a
+        // dispatcher most wants — see TripsPage for the same filter.
+        b.client?.name.toLowerCase().includes(q) ||
         bookingStatusLabel(b.status).toLowerCase().includes(q),
     )
   }, [bookings, query])
@@ -184,7 +217,11 @@ export function BookingsPage() {
           <>
             <Input
               iconLeft="search"
-              placeholder="Filter by route, passenger or status"
+              placeholder={
+                scope === 'platform'
+                  ? 'Filter by client, route, passenger or status'
+                  : 'Filter by route, passenger or status'
+              }
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               style={{ width: 280 }}

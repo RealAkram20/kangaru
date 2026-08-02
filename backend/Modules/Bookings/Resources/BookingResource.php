@@ -21,6 +21,29 @@ class BookingResource extends JsonResource
         return [
             'id' => $this->id,
             'tenant_id' => $this->tenant_id,
+            // Which client this booking belongs to, by name.
+            //
+            // ADR-0006 gave Shanitah's own staff one cross-client queue,
+            // and its own words are that such a queue "does not show which
+            // client each row belongs to is worse than no cross-client
+            // queue". `tenant_id` above has always been here and is not an
+            // answer: a dispatcher cannot read "3".
+            //
+            // Loaded only when the reader is platform-level, so a client's
+            // own listing does not pay for a join telling them their own
+            // name. Absent, not null, when not loaded — `whenLoaded` omits
+            // the key entirely, which is how a client can tell "not
+            // applicable" from "no client".
+            'client' => $this->whenLoaded('tenant', function () {
+                // Read once into a local rather than dereferenced twice.
+                // The relation types as nullable — `whenLoaded` itself
+                // returns null for a loaded-but-null relation before this
+                // closure ever runs, so the branch below is that same
+                // answer written where the type system can see it.
+                $client = $this->tenant;
+
+                return $client === null ? null : ['id' => $client->id, 'name' => $client->name];
+            }),
             'requested_by_user_id' => $this->requested_by_user_id,
             'requested_by' => new UserResource($this->whenLoaded('requestedBy')),
             'passenger_name' => $this->passenger_name,

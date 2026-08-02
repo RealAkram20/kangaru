@@ -116,12 +116,18 @@ Cancelled: reachable from any state before Trip Started, including Rejected
 9. **`Modules/Drivers` `user_id` linkage** — the column exists but has no
    request-layer/UI support in `Modules/Drivers` yet; populated only via
    direct Eloquent, seeders, or tests for now (see `Modules/Drivers/README.md`).
-10. **The trip list does not say which client a trip belongs to.** ADR-0006
-    opened `GET /trips` to platform staff, so a Shanitah dispatcher now sees
-    every client's trips in one list — with no tenant column and nothing on
-    `TripResource` to build one from. Same gap as the dispatch queue, and
-    deferred for the same reason: ADR-0006 put the frontend after the
-    backend on purpose.
+10. **No server-side filter by client on the trip list.** `TripResource`
+    now carries `client` and `TripsPage` shows a Client column for a
+    platform reader, but the filter box narrows only the page already
+    fetched. A `tenant_id` query parameter is the fix, and it is the same
+    gap `Modules/Bookings` records against its queue.
+11. **`TripResource` sends three fields the frontend type does not
+    declare** — `booking_id`, `odometer_start_photo_url` and
+    `odometer_end_photo_url`. Nothing in the UI reads them, so this is
+    unused surface rather than a bug, but `tsc -b` rejects any fixture
+    that includes them while `tsc --noEmit` accepts it. Either the type
+    catches up or the resource stops sending what nobody reads; both are
+    decisions, neither is taken.
 
 ## Odometer photos
 

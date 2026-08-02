@@ -36,6 +36,14 @@ class BookingController extends Controller
         // a matcher that can only see one client's demand is not matching.
         $query = Booking::forActor($user)->with(['requestedBy', 'approvedBy']);
 
+        // Eager-loaded, never lazy: this is a list, and reading the client
+        // off each row without it is the N+1 AGENTS.md forbids. Only for a
+        // platform reader — a client's own queue is one client's, and
+        // joining to tell them their own name is a query for nothing.
+        if ($user->isPlatformLevel()) {
+            $query->with('tenant');
+        }
+
         // A Corporate Employee sees only what they raised — mirrors the way
         // TripController narrows a Driver to their own trips.
         // The listing counterpart of BookingPolicy::view. Anyone without
@@ -63,7 +71,15 @@ class BookingController extends Controller
 
         return ApiResponse::success(
             BookingResource::collection($paginator->getCollection()),
-            meta: ['cursor' => ['next' => $paginator->nextCursor()?->encode()]],
+            meta: [
+                'cursor' => ['next' => $paginator->nextCursor()?->encode()],
+                // Whether this queue spans clients or is one client's.
+                // Served the way /audit-logs already serves it, so the
+                // client holds no copy of the rule: a UI that decided for
+                // itself whether to show a client column would be a fourth
+                // place ADR-0006's predicate lives.
+                'scope' => $user->isPlatformLevel() ? 'platform' : 'tenant',
+            ],
         );
     }
 

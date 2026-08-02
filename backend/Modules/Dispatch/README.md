@@ -97,7 +97,11 @@ trustworthy answer inside the locked transaction, which answers it with a
    are not yet modelled.
 4. **Dispatch decision-time metric** — AGENTS.md's observability section
    wants it on the dashboard; nothing emits it yet.
-5. **Eligibility filtering and route preview in the UI** — the design mock
+5. **No server-side filter by client.** The queue names its client on every
+   row and in the assignment confirmation (see Frontend), and the filter box
+   matches on it — but only across the page already fetched. At two clients
+   that is invisible; it is the first thing to break at fifty.
+6. **Eligibility filtering and route preview in the UI** — the design mock
    (`KangaruRide Design System/ui_kits/platform/DispatchScreen.jsx`) shows
    candidates filtered by category, geofence, depot and distance, plus a
    Mapbox route preview. `DispatchPage` offers every active vehicle and
@@ -110,6 +114,19 @@ trustworthy answer inside the locked transaction, which answers it with a
 `frontend/src/pages/DispatchPage.tsx` — the dispatch board, following the
 design system's `DispatchScreen` layout: queue on the left, selected booking
 and its assignment controls on the right, with a confirmation dialog.
+
+**For Shanitah's own dispatchers the queue spans clients, so it names
+them** — on each queue row, as the first fact on the assignment panel, and
+inside the confirmation dialog's sentence. Three places rather than one
+because the dialog is what has a dispatcher's attention at the moment a
+vehicle is actually committed; naming the client only on the panel behind
+it would put the safeguard where nobody is looking. Removing it from the
+dialog was verified to turn `CrossClientQueue.test.tsx` red.
+
+Whether to show any of it comes from the API's `meta.scope`, never from
+inspecting the signed-in user — a page that worked that out for itself
+would be another copy of ADR-0006's predicate. A client's own board is
+unchanged and shows no client anywhere.
 
 The three `409` codes are surfaced with the server's own message text rather
 than a re-worded client string. The server's message names the conflicting

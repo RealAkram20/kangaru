@@ -1,3 +1,4 @@
+import type { ClientSummary } from './tenant'
 import type { Trip } from './trip'
 
 /** Mirrors Modules/Bookings/Enums/BookingStatus.php. */
@@ -13,6 +14,14 @@ export interface BookingUser {
 export interface Booking {
   id: number
   tenant_id: number
+  /**
+   * Present only when the reader is platform-level — Shanitah's own staff,
+   * whose queue spans every client (ADR-0006). Absent, not null, for a
+   * client's own listing, which is all one client's by definition.
+   *
+   * `tenant_id` above is not a substitute: nobody reads "3" as a bank.
+   */
+  client?: ClientSummary
   requested_by_user_id: number
   requested_by?: BookingUser
   passenger_name: string
