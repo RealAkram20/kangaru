@@ -77,6 +77,11 @@ const VISIBLE_TO: Record<string, Role[]> = {
   // map contradicting the very feature it is listing. Such a holder
   // reaches the page by URL and the server serves them.
   roles: USER_ADMINISTRATORS,
+  // Modules\Administration\Policies\AuditLogPolicy::viewAny — `audit.view`,
+  // seeded on Super Admin and Corporate Admin. Menu visibility only; the
+  // /audit-log route is not behind RequireNavAccess, for the same reason
+  // Roles is not.
+  'audit-log': USER_ADMINISTRATORS,
   invoices: BILLING_READERS,
   'rate-cards': BILLING_READERS,
   reports: REPORT_READERS,

@@ -52,7 +52,21 @@ class AuditLogController extends Controller
 
         return ApiResponse::success(
             AuditLogResource::collection($paginator->getCollection()),
-            meta: ['cursor' => ['next' => $paginator->nextCursor()?->encode()]],
+            meta: [
+                'cursor' => ['next' => $paginator->nextCursor()?->encode()],
+                // What this endpoint will accept, so the reader's filters
+                // hold no copy of it — the same reason RoleController ships
+                // the permission catalogue. A client-side list is how the
+                // whitelist here fell a decade behind the morph map.
+                'filters' => [
+                    'auditable_types' => AuditLogIndexRequest::auditableTypes(),
+                    'actions' => AuditLogIndexRequest::ACTIONS,
+                ],
+                // Whether this reader sees the whole platform or one tenant.
+                // A Super Admin's log includes role changes, which carry a
+                // null tenant_id and are invisible to a tenant-scoped read.
+                'scope' => $user->tenant_id === null ? 'platform' : 'tenant',
+            ],
         );
     }
 }

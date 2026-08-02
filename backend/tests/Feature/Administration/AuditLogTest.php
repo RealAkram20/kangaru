@@ -131,3 +131,41 @@ it('rejects an unknown audit log filter with a 422', function () {
 
     $response->assertStatus(422)->assertJsonPath('code', 'VALIDATION_FAILED');
 });
+
+it('accepts every audited type as a filter, not just company and user', function () {
+    ['admin' => $admin] = seedAuditTenant();
+
+    // The whitelist used to be a hardcoded `company|user` and had not moved
+    // since it was written, so filtering for a role change — the mutation
+    // AGENTS.md names first under "roles/permissions" — answered 422 for a
+    // type the table was full of. It is derived from the morph map now.
+    foreach (['role', 'invoice', 'rate_card', 'vehicle_allocation', 'trip'] as $type) {
+        $this->actingAs($admin, 'sanctum')
+            ->getJson("/api/v1/audit-logs?auditable_type={$type}")
+            ->assertOk();
+    }
+
+    // Still a whitelist, not a free-for-all.
+    $this->actingAs($admin, 'sanctum')
+        ->getJson('/api/v1/audit-logs?auditable_type=not_a_model')
+        ->assertStatus(422)
+        ->assertJsonPath('code', 'VALIDATION_FAILED');
+});
+
+it('tells the reader what it may filter on, and whose log this is', function () {
+    ['admin' => $admin] = seedAuditTenant();
+    $owner = User::factory()->create(['tenant_id' => null, 'role' => UserRole::SUPER_ADMIN]);
+
+    $meta = $this->actingAs($admin, 'sanctum')->getJson('/api/v1/audit-logs')->json('meta');
+
+    // Served so the reader's filter controls hold no copy of the list —
+    // a client-side copy is exactly how the whitelist above went stale.
+    expect($meta['filters']['auditable_types'])->toContain('role', 'company', 'vehicle_allocation');
+    expect($meta['filters']['actions'])->toBe(['created', 'updated', 'deleted']);
+    expect($meta['scope'])->toBe('tenant');
+
+    // A platform reader sees every tenant's trail, plus the role changes
+    // that carry a null tenant_id and are invisible to a scoped read.
+    $ownerMeta = $this->actingAs($owner, 'sanctum')->getJson('/api/v1/audit-logs')->json('meta');
+    expect($ownerMeta['scope'])->toBe('platform');
+});

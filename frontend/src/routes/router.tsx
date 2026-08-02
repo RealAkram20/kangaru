@@ -2,6 +2,7 @@ import { createBrowserRouter } from 'react-router-dom'
 import { ProtectedRoute } from '../auth/ProtectedRoute'
 import { RequireNavAccess } from './RequireNavAccess'
 import { AppShell } from '../components/layout/AppShell'
+import { AuditLogPage } from '../pages/AuditLogPage'
 import { BookingsPage } from '../pages/BookingsPage'
 import { CompaniesPage } from '../pages/CompaniesPage'
 import { DashboardPage } from '../pages/DashboardPage'
@@ -83,6 +84,11 @@ export const router = createBrowserRouter([
       // the API answers instead, which is the rule itself rather than a
       // copy of it.
       { path: 'roles', element: <RolesPage /> },
+      // Unguarded for the same reason as Roles: `audit.view` is a
+      // permission, and a custom role holding it is invisible to
+      // RequireNavAccess's slug list. The page gates on whether the API
+      // answers.
+      { path: 'audit-log', element: <AuditLogPage /> },
       {
         path: 'companies',
         element: (

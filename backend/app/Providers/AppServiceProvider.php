@@ -29,6 +29,7 @@ use Modules\Clients\Models\Company;
 use Modules\Clients\Policies\CompanyPolicy;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Policies\DriverPolicy;
+use Modules\Fleet\Models\VehicleAllocation;
 use Modules\Notifications\Listeners\SendBookingDecisionNotification;
 use Modules\Notifications\Listeners\SendReportExportReadyNotification;
 use Modules\Reports\Events\ReportExportCompleted;
@@ -84,9 +85,16 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(ReportExportCompleted::class, SendReportExportReadyNotification::class);
 
         // Stable short aliases for audit_logs.auditable_type instead of raw
-        // FQCNs. Every Auditable model must appear here — a missing entry
-        // writes the FQCN instead, and moving the class later would orphan
-        // the audit rows that reference it.
+        // FQCNs, so moving a class later cannot orphan the audit rows that
+        // reference it.
+        //
+        // **Every Auditable model must appear here.** The map is *enforced*,
+        // which means a missing entry does not fall back to the FQCN — it
+        // throws ClassMorphViolationException from getMorphClass(). Since
+        // Auditable records on `created`, an unmapped model cannot be
+        // created at all. VehicleAllocation was missing and was exactly
+        // that: ADR-0005 shipped the table, and every insert into it threw.
+        // `AuditableModelsHaveMorphAliasTest` now asserts the pair.
         //
         // AGENTS.md requires an audit trail over "rate cards, contracts,
         // invoices, payments, roles/permissions, and credit limits"; the
@@ -111,6 +119,10 @@ class AppServiceProvider extends ServiceProvider
             // model, and its JSON permissions column is what makes the
             // before/after diff readable.
             'role' => Role::class,
+            // ADR-0005's "vehicles supplied to the Bank" — a contract, not
+            // ownership. Audited because it is the record of what a client
+            // was promised.
+            'vehicle_allocation' => VehicleAllocation::class,
         ]);
     }
 }

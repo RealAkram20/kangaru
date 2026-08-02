@@ -62,7 +62,7 @@ permission catalogue, and the audit log.
 | POST | `/api/v1/roles` | Sanctum + tenant | `RolePolicy::create` — `roles.manage`. Slug derived from the name when omitted |
 | PATCH | `/api/v1/roles/{slug}` | Sanctum + tenant | `RolePolicy::update`. A system role's permissions may change; its name may not |
 | DELETE | `/api/v1/roles/{slug}` | Sanctum + tenant | `RolePolicy::delete` — custom roles only, and 409 `ROLE_IN_USE` while anyone holds it |
-| GET | `/api/v1/audit-logs` | Sanctum + tenant | `AuditLogPolicy::viewAny` — Corporate Admin or Super Admin only. Optional whitelisted filters `auditable_type` (`company`\|`user`), `action` (`created`\|`updated`\|`deleted`); unknown query params → 422. Cursor-paginated (`meta.cursor.next`) |
+| GET | `/api/v1/audit-logs` | Sanctum + tenant | `AuditLogPolicy::viewAny` — `audit.view`. Optional whitelisted filters `auditable_type` (any alias in the enforced morph map) and `action` (`created`\|`updated`\|`deleted`); unknown query params → 422. Cursor-paginated. `meta.filters` carries the accepted values, `meta.scope` says whether this reader is `platform` or `tenant` |
 
 ## Notes
 
@@ -98,11 +98,19 @@ Named here so a half-built thing is not mistaken for a finished one.
   an audit trail cannot tell apart from impersonation. There is no
   endpoint, and adding one needs a decision about how it is evidenced —
   e.g. a forced reset on next login rather than a chosen password.
-- **An audit log UI.** `/audit-logs` has an API, a policy and tests; there
-  is no screen. Worse, role audit rows carry a **null `tenant_id`** — the
-  catalogue is platform-wide — so a tenant-scoped reader will never show
-  them. The platform's own audit trail needs a reader that is not
-  tenant-scoped, which is part of the platform-staff decision below.
+- **Audit log: no export, no search, no date range.** The reader exists
+  (`frontend/src/pages/AuditLogPage.tsx`) with type and action filters,
+  before/after diffs and cursor paging. What it has not got: a date range,
+  free-text search, filtering by actor, and any way to export — a bank
+  asking "show me every credit-limit change in March" cannot be answered
+  from this screen. `AuditLogIndexRequest` accepts three filters and that
+  is the whole surface.
+- **Role audit rows are invisible to a tenant reader**, and this is
+  correct but worth stating: they carry a **null `tenant_id`** because the
+  catalogue is platform-wide, so `TenantScope` hides them. A Corporate
+  Admin's audit log will never show a role change. Only a platform reader
+  (`tenant_id` null) sees them, which is why the endpoint reports
+  `meta.scope`. Widening that is part of the platform-staff decision below.
 - **Platform staff.** ADR-0005 decided Shanitah's dispatchers, Finance, HR
   and Operations are platform-level, but a user with `tenant_id` null gets
   `TenantScope`'s fail-closed default and would see no bookings and no
