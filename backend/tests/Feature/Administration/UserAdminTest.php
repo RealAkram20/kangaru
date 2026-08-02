@@ -100,7 +100,11 @@ it('creates a colleague in the administrator\'s own tenant', function () {
     $response = $this->actingAs($admin, 'sanctum')->postJson('/api/v1/users', [
         'name' => 'Peter Ochieng',
         'email' => 'peter@centenary-bank.test',
-        'role' => 'dispatcher',
+        // corporate_employee, not dispatcher: since ADR-0004 an
+        // administrator may only assign roles contained by their own
+        // permissions, and Dispatcher carries dispatch abilities a
+        // Corporate Admin does not hold.
+        'role' => 'corporate_employee',
         'password' => 'a-long-enough-password',
         // A real, existing tenant that is not theirs — so the assertion
         // below proves the field is *ignored* rather than merely rejected
@@ -125,7 +129,7 @@ it('lets the new colleague sign in with the password they were given', function 
     $this->actingAs($admin, 'sanctum')->postJson('/api/v1/users', [
         'name' => 'Peter Ochieng',
         'email' => 'peter@centenary-bank.test',
-        'role' => 'dispatcher',
+        'role' => 'corporate_employee',
         'password' => 'a-long-enough-password',
     ])->assertStatus(201);
 
@@ -134,7 +138,7 @@ it('lets the new colleague sign in with the password they were given', function 
     $this->postJson('/api/v1/auth/login', [
         'email' => 'peter@centenary-bank.test',
         'password' => 'a-long-enough-password',
-    ])->assertOk()->assertJsonPath('data.user.role', 'dispatcher');
+    ])->assertOk()->assertJsonPath('data.user.role', 'corporate_employee');
 });
 
 it('stops a Corporate Admin minting a Super Admin', function () {
@@ -163,7 +167,9 @@ it('stops a Corporate Admin promoting an existing colleague to Super Admin', fun
         ->assertStatus(422)
         ->assertJsonValidationErrors('role');
 
-    expect($staff->refresh()->role)->toBe(UserRole::CORPORATE_EMPLOYEE);
+    // A slug string since ADR-0004, not an enum case: users.role now
+    // holds custom slugs too.
+    expect($staff->refresh()->roleSlug())->toBe('corporate_employee');
 });
 
 it('lets a Super Admin appoint another Super Admin', function () {
@@ -272,7 +278,7 @@ it('audits a role change with a before and after', function () {
     ['admin' => $admin, 'staff' => $staff] = staffFixture();
 
     $this->actingAs($admin, 'sanctum')
-        ->patchJson("/api/v1/users/{$staff->id}", ['role' => 'dispatcher'])
+        ->patchJson("/api/v1/users/{$staff->id}", ['role' => 'corporate_admin'])
         ->assertOk();
 
     // AGENTS.md requires an audit trail over "roles/permissions" changes.
@@ -287,7 +293,7 @@ it('audits a role change with a before and after', function () {
 
     expect($entry)->not->toBeNull();
     expect($entry->user_id)->toBe($admin->id);
-    expect(json_encode($entry->changes))->toContain('dispatcher');
+    expect(json_encode($entry->changes))->toContain('corporate_admin');
 });
 
 it('forbids everyone who is not an administrator', function () {
@@ -306,17 +312,41 @@ it('forbids everyone who is not an administrator', function () {
     }
 });
 
-it('offers a Corporate Admin every role except Super Admin', function () {
+it('offers only the roles an administrator\'s own permissions contain', function () {
     ['admin' => $admin, 'superAdmin' => $superAdmin] = staffFixture();
 
-    $forAdmin = $this->actingAs($admin, 'sanctum')->getJson('/api/v1/users')->json('meta.assignable_roles');
-    $forOwner = $this->actingAs($superAdmin, 'sanctum')->getJson('/api/v1/users')->json('meta.assignable_roles');
+    $forAdmin = array_column(
+        $this->actingAs($admin, 'sanctum')->getJson('/api/v1/users')->json('meta.assignable_roles'),
+        'value',
+    );
+    $forOwner = array_column(
+        $this->actingAs($superAdmin, 'sanctum')->getJson('/api/v1/users')->json('meta.assignable_roles'),
+        'value',
+    );
 
-    // Served so the client does not keep its own copy of the escalation
-    // rule and drift from it.
-    expect(array_column($forAdmin, 'value'))->not->toContain('super_admin');
-    expect(array_column($forOwner, 'value'))->toContain('super_admin');
-    expect($forAdmin)->toHaveCount(count(UserRole::cases()) - 1);
+    // ADR-0004's subset rule, and the one place it deliberately tightens
+    // behaviour: a Corporate Admin used to be able to assign anything but
+    // Super Admin. They set the new account's initial password, so being
+    // able to assign a role is being able to *become* it — and Dispatcher
+    // carries abilities they do not hold.
+    expect($forAdmin)->toContain('corporate_employee', 'corporate_admin');
+    expect($forAdmin)->not->toContain('dispatcher', 'finance', 'super_admin');
+
+    // A Super Admin holds everything, so everything is assignable.
+    expect($forOwner)->toHaveCount(count(UserRole::cases()));
+    expect($forOwner)->toContain('super_admin');
+});
+
+it('refuses a role carrying permissions the administrator lacks', function () {
+    ['admin' => $admin, 'staff' => $staff] = staffFixture();
+
+    // Not an escalation to Super Admin — a lateral one. Dispatcher can
+    // assign vehicles, which a Corporate Admin cannot, and an administrator
+    // who sets the password could then sign in as them.
+    $this->actingAs($admin, 'sanctum')
+        ->patchJson("/api/v1/users/{$staff->id}", ['role' => 'dispatcher'])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors('role');
 });
 
 it('rejects a filter the staff list does not accept', function () {

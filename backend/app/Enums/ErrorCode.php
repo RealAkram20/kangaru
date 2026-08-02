@@ -29,4 +29,11 @@ enum ErrorCode: string
     case TRIP_ALREADY_INVOICED = 'TRIP_ALREADY_INVOICED';
     case IDEMPOTENCY_KEY_REUSED = 'IDEMPOTENCY_KEY_REUSED';
     case CREDIT_NOTE_EXCEEDS_INVOICE = 'CREDIT_NOTE_EXCEEDS_INVOICE';
+
+    /**
+     * A role still held by accounts cannot be deleted (ADR-0004). Deleting
+     * it would leave them resolving to no permissions, which fails closed —
+     * a silent, total loss of access rather than an error anyone can read.
+     */
+    case ROLE_IN_USE = 'ROLE_IN_USE';
 }

@@ -2,53 +2,50 @@
 
 namespace Modules\Administration\Policies;
 
-use App\Enums\UserRole;
+use App\Enums\Permission;
 use App\Models\User;
+use Modules\Administration\Models\Role;
 
 /**
- * Who may administer accounts.
+ * Who may administer accounts, and which roles they may hand out.
  *
- * Two roles, and no others. PROJECT.md gives Corporate Admin "manages
- * company users and bookings" and Super Admin the platform. Operations
- * Manager is deliberately excluded despite managing operations broadly:
- * creating accounts and assigning roles is an identity act, and the set of
- * people who can grant access should be as small as the product allows.
+ * Permission-based since ADR-0004: `staff.view` and `staff.manage` replace
+ * the two-role constant, so a custom "HR" role can onboard staff without
+ * also gaining the audit log.
  *
- * ## The escalation boundary
+ * ## The escalation rule
  *
- * Only a Super Admin may create, or promote anyone to, Super Admin. That is
- * the one rule that makes the rest safe — without it a Corporate Admin can
- * mint a platform owner and leave their tenant entirely, which is a
- * privilege escalation dressed up as a staff edit.
+ * **Nobody may grant a permission they do not themselves hold.**
+ *
+ * This generalises the old special case — only a Super Admin may appoint a
+ * Super Admin — and closes the hole that special case did not cover. Once
+ * roles are data, a Corporate Admin could otherwise define or pick a custom
+ * role carrying `roles.manage`, assign it to an account they control, and
+ * reach platform administration through a side door without ever touching
+ * the Super Admin slug.
  *
  * ## Acting on yourself
  *
  * You may not change your own role or suspend your own account. Suspending
  * yourself locks the tenant's last administrator out with no way back in;
- * changing your own role is self-promotion with extra steps. Editing your
- * own name is fine and is not this policy's business.
+ * changing your own role is self-promotion with extra steps.
  */
 class UserPolicy
 {
-    private const ADMINISTRATORS = [
-        UserRole::SUPER_ADMIN,
-        UserRole::CORPORATE_ADMIN,
-    ];
-
     public function viewAny(User $user): bool
     {
-        return in_array($user->role, self::ADMINISTRATORS, true);
+        return $user->hasPermission(Permission::STAFF_VIEW);
     }
 
     /**
-     * A Corporate Admin sees their own tenant's staff; a Super Admin sees
-     * anyone.
+     * A tenant administrator sees their own tenant's staff; a platform one
+     * sees anyone.
      *
      * The tenant check lives here as well as in the controller's query.
      * `User` deliberately has no BelongsToTenant — login must find an
      * account before any tenant is known — so nothing scopes these reads
-     * automatically, and a single forgotten `where` would be a
-     * cross-tenant leak of names, emails and roles.
+     * automatically, and a single forgotten `where` would leak names,
+     * emails and roles across tenants.
      */
     public function view(User $user, User $subject): bool
     {
@@ -61,12 +58,12 @@ class UserPolicy
 
     public function create(User $user): bool
     {
-        return $this->viewAny($user);
+        return $user->hasPermission(Permission::STAFF_MANAGE);
     }
 
     public function update(User $user, User $subject): bool
     {
-        return $this->view($user, $subject);
+        return $this->create($user) && $this->sharesTenant($user, $subject);
     }
 
     /**
@@ -76,44 +73,40 @@ class UserPolicy
      */
     public function suspend(User $user, User $subject): bool
     {
-        if (! $this->update($user, $subject)) {
-            return false;
-        }
-
-        // Locking yourself out is never intended, and for the last
-        // administrator in a tenant it is unrecoverable without a console.
-        return $user->id !== $subject->id;
+        return $this->update($user, $subject) && $user->id !== $subject->id;
     }
 
     /**
-     * Whether `$user` may put someone into `$role`.
+     * Whether `$user` may put someone into `$role` — the subset rule above.
      *
-     * Called for both creation and role changes, so the escalation rule
-     * cannot be satisfied by creating a user in a safe role and promoting
-     * them a second later.
+     * Called for both creation and role changes, so it cannot be satisfied
+     * by creating a user in a safe role and promoting them a second later.
+     *
+     * A slug with no matching row grants nothing and is refused rather than
+     * treated as empty: assigning a role that does not exist would leave an
+     * account holding no permissions for reasons nobody could see.
      */
-    public function assignRole(User $user, UserRole $role): bool
+    public function assignRole(User $user, ?Role $role): bool
     {
-        if (! $this->viewAny($user)) {
+        if (! $this->create($user) || $role === null) {
             return false;
         }
 
-        return $role !== UserRole::SUPER_ADMIN || $user->role === UserRole::SUPER_ADMIN;
+        return $user->holdsAll($role->permissions ?? []);
     }
 
     /**
-     * A Super Admin is platform-level and has no tenant of their own, so
-     * "shares a tenant" is meaningless for them — they administer everyone.
-     * Everyone else is confined to the tenant they belong to, and a null
-     * tenant on either side never matches, so a Corporate Admin can never
-     * reach a platform account.
+     * A user with no tenant is platform-level and administers everyone.
+     * Everyone else is confined to their own tenant, and a null on either
+     * side never matches — so a tenant administrator can never reach a
+     * platform account.
      */
     private function sharesTenant(User $user, User $subject): bool
     {
-        if ($user->role === UserRole::SUPER_ADMIN) {
+        if ($user->tenant_id === null) {
             return true;
         }
 
-        return $user->tenant_id !== null && $user->tenant_id === $subject->tenant_id;
+        return $user->tenant_id === $subject->tenant_id;
     }
 }

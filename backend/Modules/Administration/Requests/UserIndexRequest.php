@@ -2,7 +2,6 @@
 
 namespace Modules\Administration\Requests;
 
-use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
@@ -28,7 +27,7 @@ class UserIndexRequest extends FormRequest
     {
         return [
             'status' => ['sometimes', Rule::enum(UserStatus::class)],
-            'role' => ['sometimes', Rule::enum(UserRole::class)],
+            'role' => ['sometimes', 'string', Rule::exists('roles', 'slug')],
             'q' => ['sometimes', 'string', 'max:120'],
         ];
     }

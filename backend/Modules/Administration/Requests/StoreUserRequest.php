@@ -2,12 +2,12 @@
 
 namespace Modules\Administration\Requests;
 
-use App\Enums\UserRole;
 use App\Models\User;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
+use Modules\Administration\Models\Role;
 use Modules\Administration\Policies\UserPolicy;
 
 /**
@@ -40,7 +40,8 @@ class StoreUserRequest extends FormRequest
             // address would make authentication ambiguous. The database
             // already enforces it; this turns a 500 into a 422.
             'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')],
-            'role' => ['required', Rule::enum(UserRole::class)],
+            // Any role slug that exists, system or custom (ADR-0004).
+            'role' => ['required', 'string', Rule::exists('roles', 'slug')],
             // Laravel's defaults plus a length floor. AGENTS.md leaves
             // hashing to the framework but says nothing about strength, so
             // this is the conservative reading rather than an invention.
@@ -56,7 +57,7 @@ class StoreUserRequest extends FormRequest
         $validator->after(function (Validator $validator) {
             /** @var User|null $actor */
             $actor = $this->user();
-            $role = UserRole::tryFrom((string) $this->input('role'));
+            $role = Role::query()->where('slug', $this->input('role'))->first();
 
             if ($actor === null || $role === null) {
                 return;
@@ -80,7 +81,7 @@ class StoreUserRequest extends FormRequest
             if (! $policy->assignRole($actor, $role)) {
                 $validator->errors()->add(
                     'role',
-                    'You cannot create an account with that role. Only a Super Admin may appoint another Super Admin.',
+                    'You cannot create an account with that role: it carries permissions you do not hold yourself.',
                 );
             }
         });

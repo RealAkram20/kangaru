@@ -3,7 +3,9 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Casts\RoleSlug;
 use App\Concerns\Auditable;
+use App\Enums\Permission;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use Carbon\CarbonInterface;
@@ -13,6 +15,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
+use Modules\Administration\Models\Role;
 
 /**
  * Deliberately NOT scoped by BelongsToTenant: login must locate a user by
@@ -24,14 +27,24 @@ use Laravel\Sanctum\HasApiTokens;
  *                              assigns it directly so the status change and its deactivated_at stamp
  *                              happen in one save and produce one audit entry.
  * @property CarbonInterface|null $deactivated_at
- * @property-read UserRole $role Explicit annotation so static analysis
- *   resolves the enum cast correctly through JsonResource's @mixin and
- *   through Policy method parameters, not just direct model access.
+ * @property-read string|UserRole $role The role slug. Usually a string since
+ *   ADR-0004 — but Eloquent's class-cast cache hands back the UserRole a
+ *   model was assigned until it is re-read, so both are real. Compare via
+ *   roleSlug(), never directly. `roleRecord` is the row it resolves to;
+ *   `UserRole` remains a handle on the ten seeded slugs.
  */
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
     use Auditable, HasApiTokens, HasFactory, Notifiable;
+
+    /**
+     * Memoised permission set for this request. Not an attribute — it must
+     * never be mass-assigned, serialised or persisted.
+     *
+     * @var array<int, string>|null
+     */
+    private ?array $resolvedPermissions = null;
 
     /**
      * The attributes that are mass assignable.
@@ -68,7 +81,7 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
-            'role' => UserRole::class,
+            'role' => RoleSlug::class,
             'status' => UserStatus::class,
             'deactivated_at' => 'datetime',
         ];
@@ -82,5 +95,80 @@ class User extends Authenticatable
     public function isActive(): bool
     {
         return $this->status === UserStatus::ACTIVE;
+    }
+
+    /**
+     * The role slug, whatever form the attribute is currently in.
+     *
+     * Reading `$user->role` is not reliably a string. A model that has just
+     * been assigned `UserRole::SUPER_ADMIN` keeps that enum in Eloquent's
+     * class-cast cache until it is re-read from the database — and
+     * `actingAs()` hands controllers exactly such an instance, so a
+     * comparison like `$role->slug === $user->role` is true in production
+     * and false in a test. That was observed, not predicted.
+     *
+     * Every comparison against a slug goes through here.
+     */
+    public function roleSlug(): string
+    {
+        $role = $this->role;
+
+        return $role instanceof UserRole ? $role->value : (string) $role;
+    }
+
+    /** @return BelongsTo<Role, $this> */
+    public function roleRecord(): BelongsTo
+    {
+        // Joined on the slug rather than an id, so `users.role` — which
+        // seeders, factories and every existing test set — remains the
+        // single source of a user's role. ADR-0004's zero-downtime note:
+        // additive first, never a rename in one step.
+        return $this->belongsTo(Role::class, 'role', 'slug');
+    }
+
+    /**
+     * Every permission this user holds, memoised for the request.
+     *
+     * Authorization asks this many times per request — a policy call per
+     * resource in a list — so it must not be a query each time. Held on the
+     * instance rather than in the cache: a role edited mid-request should
+     * take effect on the next one, and a tenant-prefixed cache key for
+     * something this security-sensitive is a staleness bug waiting to
+     * happen.
+     *
+     * @return array<int, string>
+     */
+    public function permissions(): array
+    {
+        if ($this->resolvedPermissions !== null) {
+            return $this->resolvedPermissions;
+        }
+
+        $role = $this->roleRecord;
+
+        return $this->resolvedPermissions = $role instanceof Role ? $role->permissions : [];
+    }
+
+    /**
+     * The question every policy now asks (ADR-0004).
+     *
+     * A user whose role slug matches no row holds nothing. That fails
+     * closed, which is the only safe direction: a typo in `users.role`
+     * takes abilities away rather than handing them out.
+     */
+    public function hasPermission(Permission $permission): bool
+    {
+        return in_array($permission->value, $this->permissions(), true);
+    }
+
+    /**
+     * True only if every one of them is held. Used by the escalation rule —
+     * nobody may grant what they do not have.
+     *
+     * @param  array<int, string>  $permissions
+     */
+    public function holdsAll(array $permissions): bool
+    {
+        return array_diff($permissions, $this->permissions()) === [];
     }
 }

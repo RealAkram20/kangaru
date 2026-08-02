@@ -3,7 +3,7 @@
 namespace Modules\Bookings\Controllers;
 
 use App\Enums\ErrorCode;
-use App\Enums\UserRole;
+use App\Enums\Permission;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Support\Api\ApiResponse;
@@ -32,7 +32,11 @@ class BookingController extends Controller
 
         // A Corporate Employee sees only what they raised — mirrors the way
         // TripController narrows a Driver to their own trips.
-        if ($user->role === UserRole::CORPORATE_EMPLOYEE) {
+        // The listing counterpart of BookingPolicy::view. Anyone without
+        // `bookings.view.all` sees what they raised — which is what "a
+        // Corporate Employee sees only their own" meant before roles became
+        // data (ADR-0004), and now holds for any custom role too.
+        if (! $user->hasPermission(Permission::BOOKINGS_VIEW_ALL)) {
             $query->where('requested_by_user_id', $user->id);
         }
 

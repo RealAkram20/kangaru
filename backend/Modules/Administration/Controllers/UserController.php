@@ -2,13 +2,13 @@
 
 namespace Modules\Administration\Controllers;
 
-use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Support\Api\ApiResponse;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
+use Modules\Administration\Models\Role;
 use Modules\Administration\Policies\UserPolicy;
 use Modules\Administration\Requests\StoreUserRequest;
 use Modules\Administration\Requests\UpdateUserRequest;
@@ -118,28 +118,44 @@ class UserController extends Controller
 
         $query = User::query();
 
-        if ($actor->role !== UserRole::SUPER_ADMIN) {
-            $query->whereNotNull('tenant_id')->where('tenant_id', $actor->tenant_id);
+        // A user with no tenant is platform-level and administers
+        // everyone; everyone else is confined to their own. Keyed off
+        // tenant_id rather than a role name so a custom platform role works
+        // the same way (ADR-0004).
+        if ($actor->tenant_id !== null) {
+            $query->where('tenant_id', $actor->tenant_id);
         }
 
         return $query;
     }
 
     /**
-     * @return array<int, array{value: string, label: string}>
+     * The roles this actor may hand out — every role whose permissions are
+     * a subset of their own (ADR-0004's escalation rule).
+     *
+     * Served so the client keeps no copy of that rule: a role carrying
+     * something the actor lacks is simply never sent, rather than the
+     * frontend being trusted to filter it.
+     *
+     * @return array<int, array{value: string, label: string, description: string|null}>
      */
     private function assignableRoles(): array
     {
         /** @var User $actor */
         $actor = request()->user();
+        $policy = app(UserPolicy::class);
 
-        return array_values(array_map(
-            fn (UserRole $role) => ['value' => $role->value, 'label' => $role->label()],
-            array_filter(
-                UserRole::cases(),
-                fn (UserRole $role) => app(UserPolicy::class)
-                    ->assignRole($actor, $role),
-            ),
-        ));
+        return Role::query()
+            ->orderByDesc('is_system')
+            ->orderBy('name')
+            ->get()
+            ->filter(fn (Role $role) => $policy->assignRole($actor, $role))
+            ->map(fn (Role $role) => [
+                'value' => $role->slug,
+                'label' => $role->name,
+                'description' => $role->description,
+            ])
+            ->values()
+            ->all();
     }
 }

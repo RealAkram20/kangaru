@@ -2,7 +2,7 @@
 
 namespace App\Providers;
 
-use App\Enums\UserRole;
+use App\Enums\Permission;
 use App\Models\AuditLog;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
@@ -10,7 +10,9 @@ use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
+use Modules\Administration\Models\Role;
 use Modules\Administration\Policies\AuditLogPolicy;
+use Modules\Administration\Policies\RolePolicy;
 use Modules\Administration\Policies\UserPolicy;
 use Modules\Billing\Models\CreditNote;
 use Modules\Billing\Models\Invoice;
@@ -61,21 +63,14 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(RateCard::class, RateCardPolicy::class);
         Gate::policy(Invoice::class, InvoicePolicy::class);
         Gate::policy(User::class, UserPolicy::class);
+        Gate::policy(Role::class, RolePolicy::class);
 
         // A Gate rather than a Policy: reports are not a model, and
         // AGENTS.md's authorization rule names Gates alongside Policies.
-        // Drivers and Corporate Employees are excluded — a report spans
-        // the whole tenant's fleet, which is more than either should see.
-        Gate::define('viewReports', fn (User $user) => in_array($user->role, [
-            UserRole::SUPER_ADMIN,
-            UserRole::OPERATIONS_MANAGER,
-            UserRole::DISPATCHER,
-            UserRole::FINANCE,
-            UserRole::FLEET_OWNER,
-            UserRole::BRANCH_MANAGER,
-            UserRole::DEPOT_MANAGER,
-            UserRole::CORPORATE_ADMIN,
-        ], true));
+        // Drivers and Corporate Employees do not hold `reports.view` — a
+        // report spans the whole tenant's fleet, which is more than either
+        // should see.
+        Gate::define('viewReports', fn (User $user) => $user->hasPermission(Permission::REPORTS_VIEW));
 
         // Explicit listener registration, for the same reason the policies
         // above are explicit: Laravel's event discovery scans app/Listeners
@@ -111,6 +106,11 @@ class AppServiceProvider extends ServiceProvider
             'rate_card_rate' => RateCardRate::class,
             'invoice' => Invoice::class,
             'credit_note' => CreditNote::class,
+            // ADR-0004. AGENTS.md requires an audit trail over
+            // "roles/permissions"; since this pass that is literally this
+            // model, and its JSON permissions column is what makes the
+            // before/after diff readable.
+            'role' => Role::class,
         ]);
     }
 }

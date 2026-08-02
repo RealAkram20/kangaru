@@ -2,7 +2,6 @@
 
 namespace Modules\Administration\Controllers;
 
-use App\Enums\UserRole;
 use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
 use App\Models\User;
@@ -20,7 +19,11 @@ class AuditLogController extends Controller
         /** @var User $user */
         $user = $request->user();
 
-        $query = $user->role === UserRole::SUPER_ADMIN
+        // Keyed off having no tenant rather than a role name, so a custom
+        // platform-level role behaves the same way (ADR-0004). A tenant
+        // user always gets TenantScope; only an account that belongs to no
+        // tenant reads across all of them.
+        $query = $user->tenant_id === null
             ? AuditLog::allTenants()
             : AuditLog::query();
 

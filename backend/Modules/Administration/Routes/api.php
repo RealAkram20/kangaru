@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use Modules\Administration\Controllers\AuditLogController;
 use Modules\Administration\Controllers\AuthController;
+use Modules\Administration\Controllers\RoleController;
 use Modules\Administration\Controllers\UserController;
 
 Route::post('/auth/login', [AuthController::class, 'login'])->middleware('throttle:5,1');
@@ -28,4 +29,12 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::post('/users', [UserController::class, 'store'])->name('users.store');
     Route::get('/users/{user}', [UserController::class, 'show'])->name('users.show');
     Route::patch('/users/{user}', [UserController::class, 'update'])->name('users.update');
+
+    // The role catalogue (ADR-0004). Platform-wide and curated by whoever
+    // holds `roles.manage` — Super Admin alone, as seeded. Route key is the
+    // slug, which is what `users.role` stores.
+    Route::get('/roles', [RoleController::class, 'index'])->name('roles.index');
+    Route::post('/roles', [RoleController::class, 'store'])->name('roles.store');
+    Route::patch('/roles/{role}', [RoleController::class, 'update'])->name('roles.update');
+    Route::delete('/roles/{role}', [RoleController::class, 'destroy'])->name('roles.destroy');
 });

@@ -2,7 +2,6 @@
 
 namespace Modules\Administration\Services;
 
-use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -33,11 +32,11 @@ class UserAdminService
             'password' => $attributes['password'],
             'role' => $attributes['role'],
             'status' => UserStatus::ACTIVE,
-            // A Corporate Admin's new colleagues are always their own
+            // A tenant administrator's new colleagues are always their own
             // tenant's, whatever the request said — the field is not even
-            // read for them. Only a Super Admin, who has no tenant of their
-            // own, chooses.
-            'tenant_id' => $actor->role === UserRole::SUPER_ADMIN
+            // read for them. Only a platform-level account, which has no
+            // tenant of its own, chooses.
+            'tenant_id' => $actor->tenant_id === null
                 ? ($attributes['tenant_id'] ?? null)
                 : $actor->tenant_id,
         ]);

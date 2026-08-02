@@ -17,6 +17,11 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        // First: every user created below resolves its permissions through
+        // the role of the same slug (ADR-0004). Seeding users before roles
+        // would leave them holding nothing until this ran.
+        $this->call(RoleSeeder::class);
+
         $tenantA = Tenant::create([
             'name' => 'Centenary Bank',
             'slug' => 'centenary-bank',

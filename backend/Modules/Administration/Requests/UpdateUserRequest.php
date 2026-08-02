@@ -2,12 +2,12 @@
 
 namespace Modules\Administration\Requests;
 
-use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Models\User;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Modules\Administration\Models\Role;
 use Modules\Administration\Policies\UserPolicy;
 
 /**
@@ -46,7 +46,7 @@ class UpdateUserRequest extends FormRequest
                 'max:255',
                 Rule::unique('users', 'email')->ignore($subject?->id),
             ],
-            'role' => ['sometimes', Rule::enum(UserRole::class)],
+            'role' => ['sometimes', 'string', Rule::exists('roles', 'slug')],
             'status' => ['sometimes', Rule::enum(UserStatus::class)],
         ];
     }
@@ -73,18 +73,18 @@ class UpdateUserRequest extends FormRequest
             }
 
             if ($this->filled('role')) {
-                $role = UserRole::tryFrom((string) $this->input('role'));
+                $role = Role::query()->where('slug', $this->input('role'))->first();
 
-                if ($role !== null && ! $policy->assignRole($actor, $role)) {
+                if (! $policy->assignRole($actor, $role)) {
                     $validator->errors()->add(
                         'role',
-                        'You cannot assign that role. Only a Super Admin may appoint another Super Admin.',
+                        'You cannot assign that role: it carries permissions you do not hold yourself.',
                     );
                 }
 
                 // Self-promotion, and equally self-demotion locking a tenant
                 // out of its own administration.
-                if ($actor->id === $subject->id && $role !== $actor->role) {
+                if ($actor->id === $subject->id && $role?->slug !== $actor->roleSlug()) {
                     $validator->errors()->add('role', 'You cannot change your own role.');
                 }
             }
