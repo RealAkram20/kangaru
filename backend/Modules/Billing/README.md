@@ -281,6 +281,7 @@ suite failed:
 
 | Guard | Test that fails without it |
 |---|---|
+| `RoundingMode::toBrick()` mapping each rule to its own constant | "separates half-up from half-down on an exact tie" |
 | `WaitingTimeCalculator` truncating once, not per pause | "sums waiting seconds across pauses before truncating to minutes" |
 | `CreditNoteService::assertWithinInvoice()` | all of `CreditNoteTest` |
 | `InvoiceService` idempotency replay | "returns the original invoice on a replay of the same idempotency key" |
@@ -309,6 +310,25 @@ ADR-0006 forbids, and both refusal cases went red with the dispatcher
 getting `200` on a client's invoice. This project has already shipped that
 bug once in a different shape (a Dispatcher who could export a client's
 revenue), which is why it has a test rather than a comment.
+
+**All four rounding rules are priced end to end** in `RoundingModeTest`.
+`TripPricingTest` had covered half-up and down; half-down and up — two of
+the four a client's contract can be written on — had never run, so two arms
+of `toBrick()` could have been mapped to the wrong Brick constant and
+nothing would have said so.
+
+The load-bearing case is the **exact tie**. On an ordinary fractional
+amount three of the four rules agree, so only a true half separates half-up
+from half-down. Verified the way the table above describes: mapping
+`HALF_DOWN` to `HalfUp` turns the tie test red while the entire
+pre-existing billing suite stays green — which is precisely why it was
+worth adding rather than assuming the module was covered.
+
+`RoundingMode::default()`'s fallback is covered too: a rate card version
+with no stated rule, and a `money.default_rounding` naming something the
+enum does not have, must yield half-up rather than throw. Billing every
+tenant's trips failing over an env typo is a worse outcome than a silently
+conventional default.
 
 Fixtures live in `tests/Support/BillingFixtures.php` and obey two rules:
 priced rate card versions come from `RateCardService`, and trips are walked
