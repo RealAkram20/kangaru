@@ -100,15 +100,16 @@ decision reason stay an untouched audit record.
    with the wrong destination is cancelled and re-raised, which keeps the
    original request intact for audit. Revisit if dispatchers find that
    tedious in practice.
-7. **Cursor paging in the UI** — the API is cursor-paginated but
-   `BookingsPage` renders only the first page; there is no "load more" yet.
-8. **A booking still requires a tenant and a requesting user.** Walk-in and
+7. **A booking still requires a tenant and a requesting user.** Walk-in and
    individual riders have neither, so they remain unexpressible — named in
    ADR-0005 and again in ADR-0006, and unchanged by both.
-9. **Cursor paging still stops at page one**, and the client picker makes
-   that more visible rather than less: narrowing to one client is now a
-   server round trip, but "the next 25 of that client" is still not
-   reachable. Item 7 is the same gap seen from the other side.
+8. **The search box still only sees what has been loaded.** Paging and the
+   client picker are server-side; the free-text filter is not. It sifts the
+   pages in hand, so typing a passenger's name finds them only if their
+   booking has already been paged to. Making it server-side means a
+   whitelisted `q` parameter and a decision about which columns it spans —
+   small, but it is a decision, and the two controls sitting side by side
+   now behave differently in a way nothing on screen explains.
 
 ## Frontend
 

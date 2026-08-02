@@ -22,6 +22,7 @@ import { Button } from '../components/core/Button'
 import { Card } from '../components/core/Card'
 import { Icon } from '../components/core/Icon'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
+import { LoadMore } from '../components/data/LoadMore'
 import { Input } from '../components/forms/Input'
 import { Select } from '../components/forms/Select'
 
@@ -44,8 +45,17 @@ const CLIENT_COLUMN: DataColumn<Trip> = {
  * happens server-side, unlike the search box which only ever sifted the
  * page already fetched.
  */
-function tripsUrl(client: string): string {
-  return client === '' ? '/trips' : `/trips?tenant_id=${encodeURIComponent(client)}`
+function tripsUrl(client: string, cursor: string | null = null): string {
+  const params = new URLSearchParams()
+  if (client !== '') params.set('tenant_id', client)
+  // Opaque, and sent back unaltered: it encodes a sort position rather
+  // than an offset, so trips created while somebody is paging do not shift
+  // the page under them.
+  if (cursor !== null) params.set('cursor', cursor)
+
+  const query = params.toString()
+
+  return query === '' ? '/trips' : `/trips?${query}`
 }
 
 const COLUMNS: DataColumn<Trip>[] = [
@@ -119,6 +129,8 @@ export function TripsPage() {
   const [clients, setClients] = useState<FilterOption[]>([])
   // '' is every client. Narrowed server-side, unlike the search box.
   const [client, setClient] = useState('')
+  const [next, setNext] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -131,12 +143,21 @@ export function TripsPage() {
     [scope],
   )
 
+  /**
+   * Re-reads from the first page.
+   *
+   * Drops any pages already loaded rather than re-fetching all of them:
+   * whatever triggered this changed a trip's status, the list is ordered
+   * by creation and filtered by nothing, and stitching a fresh first page
+   * onto stale later ones can show the same trip twice.
+   */
   const refresh = useCallback(async () => {
     try {
       const response = await apiClient.get<ApiSuccess<Trip[], ScopedCursorMeta>>(tripsUrl(client))
       setTrips(response.data.data)
       setScope(response.data.meta?.scope ?? 'tenant')
       setClients(response.data.meta?.filters?.clients ?? [])
+      setNext(response.data.meta?.cursor?.next ?? null)
       // Keep the open panel pointing at the refreshed row, so its actions
       // reflect the status the server now holds.
       setSelected((current) =>
@@ -146,6 +167,25 @@ export function TripsPage() {
       setError('Could not load trips.')
     }
   }, [client])
+
+  const loadMore = useCallback(async () => {
+    if (next === null) return
+
+    setLoadingMore(true)
+    try {
+      const response = await apiClient.get<ApiSuccess<Trip[], ScopedCursorMeta>>(
+        tripsUrl(client, next),
+      )
+      // Appended, so the trips already read stay put — this is the one
+      // path that must not replace the list.
+      setTrips((current) => [...(current ?? []), ...response.data.data])
+      setNext(response.data.meta?.cursor?.next ?? null)
+    } catch {
+      setError('Could not load trips.')
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [client, next])
 
   // Promise chain rather than `void refresh()` so the state update lands
   // in a callback — setState straight from an effect body cascades renders.
@@ -160,6 +200,7 @@ export function TripsPage() {
         setTrips(response.data.data)
         setScope(response.data.meta?.scope ?? 'tenant')
         setClients(response.data.meta?.filters?.clients ?? [])
+        setNext(response.data.meta?.cursor?.next ?? null)
       })
       .catch(() => {
         if (!cancelled) setError('Could not load trips.')
@@ -251,6 +292,10 @@ export function TripsPage() {
             emptyMessage={trips === null ? 'Loading…' : query ? 'No trips match your filter' : 'No trips yet'}
           />
         )}
+
+        {/* Outside the filtered set — see BookingsPage. A search matching
+            nothing on this page must still be able to fetch the next. */}
+        <LoadMore hasMore={next !== null} loading={loadingMore} onLoadMore={() => void loadMore()} />
       </Card>
 
       {/* Keyed by id so switching trips remounts with fresh state rather

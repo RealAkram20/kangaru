@@ -199,9 +199,14 @@ describe('the cross-client queue names its clients', () => {
 
     renderAs(<DispatchPage />, PLATFORM_STAFF)
 
-    expect(await screen.findByText('Head Office → Entebbe')).toBeInTheDocument()
-    expect(screen.getByText('Centenary Bank')).toBeInTheDocument()
-    expect(screen.getByText('Acme NGO Ltd')).toBeInTheDocument()
+    await screen.findByText('Head Office → Entebbe')
+
+    // Asserted against the queue row itself — a button whose accessible
+    // name is everything it shows. The client picker renders the same two
+    // names as options, so a bare getByText could pass on the picker while
+    // the rows stayed unlabelled, which is the bug this guards.
+    expect(screen.getByRole('button', { name: /Centenary Bank/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Acme NGO Ltd/ })).toBeInTheDocument()
   })
 
   it('names the client in the assignment confirmation, the last screen before a vehicle is committed', async () => {
@@ -299,6 +304,126 @@ describe('the client picker narrows on the server', () => {
     // No `tenant_id` at all, rather than an empty one — the endpoint's
     // whitelist would take `tenant_id=` as a filter and fail validation.
     await waitFor(() => expect(get).toHaveBeenLastCalledWith('/bookings'))
+  })
+})
+
+describe('the dispatch board narrows too', () => {
+  it('re-queries the queue for one client rather than sifting it', async () => {
+    serve('platform')
+
+    renderAs(<DispatchPage />, PLATFORM_STAFF)
+
+    await screen.findByLabelText('Client')
+
+    await userEvent.selectOptions(screen.getByLabelText('Client'), String(NGO.id))
+
+    // `dispatchable=1` has to survive the narrowing: without it the board
+    // would start offering bookings that already have a vehicle.
+    await waitFor(() =>
+      expect(get).toHaveBeenCalledWith('/bookings?dispatchable=1&tenant_id=2'),
+    )
+  })
+
+  it('drops the open assignment panel when the client changes', async () => {
+    serve('platform')
+
+    renderAs(<DispatchPage />, PLATFORM_STAFF)
+
+    await userEvent.click(await screen.findByRole('button', { name: /Centenary Bank/ }))
+
+    // The panel is open against the Bank's booking.
+    expect(await screen.findByLabelText(/vehicle/i)).toBeInTheDocument()
+
+    await userEvent.selectOptions(screen.getByLabelText('Client'), String(NGO.id))
+
+    // Leaving it open would let a dispatcher commit a vehicle to a booking
+    // that is no longer in the queue in front of them.
+    await waitFor(() => expect(screen.queryByLabelText(/vehicle/i)).not.toBeInTheDocument())
+    expect(screen.getByText('Select a booking')).toBeInTheDocument()
+  })
+})
+
+describe('a long queue pages rather than stopping at 25', () => {
+  it('appends the next page instead of replacing what is on screen', async () => {
+    const meta = (next: string | null) => ({
+      cursor: { next },
+      scope: 'platform' as const,
+      filters: { clients: [{ value: BANK.id, label: BANK.name }] },
+    })
+
+    get.mockImplementation((url: string) => {
+      if (url === '/bookings') {
+        return Promise.resolve(apiOk([booking(41, BANK, 'Head Office')], meta('CURSOR2')))
+      }
+      if (url === '/bookings?cursor=CURSOR2') {
+        return Promise.resolve(apiOk([booking(42, NGO, 'Ntinda')], meta(null)))
+      }
+      return Promise.reject(new Error(`unexpected GET ${url}`))
+    })
+
+    renderAs(<BookingsPage />, PLATFORM_STAFF)
+
+    await screen.findByText('Head Office → Entebbe')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Load more' }))
+
+    // Both pages, not just the second. Replacing would lose the rows the
+    // reader has already worked through.
+    expect(await screen.findByText('Ntinda → Entebbe')).toBeInTheDocument()
+    expect(screen.getByText('Head Office → Entebbe')).toBeInTheDocument()
+  })
+
+  it('stops offering more at the end of the list', async () => {
+    const meta = (next: string | null) => ({
+      cursor: { next },
+      scope: 'platform' as const,
+      filters: { clients: [] },
+    })
+
+    get.mockImplementation((url: string) => {
+      if (url === '/bookings') {
+        return Promise.resolve(apiOk([booking(41, BANK, 'Head Office')], meta('CURSOR2')))
+      }
+      if (url === '/bookings?cursor=CURSOR2') {
+        return Promise.resolve(apiOk([booking(42, NGO, 'Ntinda')], meta(null)))
+      }
+      return Promise.reject(new Error(`unexpected GET ${url}`))
+    })
+
+    renderAs(<BookingsPage />, PLATFORM_STAFF)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Load more' }))
+
+    await screen.findByText('Ntinda → Entebbe')
+
+    // Renders nothing rather than a disabled control, so there is no
+    // button inviting a click that would do nothing.
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+  })
+
+  it('offers nothing to load when the first page is the whole list', async () => {
+    serve('tenant')
+
+    renderAs(<BookingsPage />)
+
+    await screen.findByText('Head Office → Entebbe')
+
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+  })
+
+  it('starts over from page one when the client changes', async () => {
+    serve('platform')
+
+    renderAs(<BookingsPage />, PLATFORM_STAFF)
+
+    await screen.findByLabelText('Client')
+
+    await userEvent.selectOptions(screen.getByLabelText('Client'), String(NGO.id))
+
+    // No cursor: a different client is a different query, and carrying a
+    // cursor from the previous one across would ask the server to continue
+    // a list that no longer exists.
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/bookings?tenant_id=2'))
   })
 })
 

@@ -4,6 +4,7 @@ import { Button } from '../components/core/Button'
 import { Card } from '../components/core/Card'
 import { Identifier } from '../components/core/Identifier'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
+import { LoadMore } from '../components/data/LoadMore'
 import { Alert } from '../components/feedback/Alert'
 import { EmptyState } from '../components/feedback/EmptyState'
 import { FormField } from '../components/forms/FormField'
@@ -349,23 +350,11 @@ export function AuditLogPage() {
 
         {openEntry && <ChangeDetail entry={openEntry} />}
 
-        {meta?.cursor.next && (
-          <div
-            style={{
-              padding: 'var(--space-3) var(--space-4)',
-              borderTop: '1px solid var(--border-default)',
-            }}
-          >
-            <Button
-              size="sm"
-              variant="secondary"
-              loading={loadingMore}
-              onClick={() => void loadMore()}
-            >
-              Load more
-            </Button>
-          </div>
-        )}
+        <LoadMore
+          hasMore={meta?.cursor.next != null}
+          loading={loadingMore}
+          onLoadMore={() => void loadMore()}
+        />
       </Card>
     </div>
   )

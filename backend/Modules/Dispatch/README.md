@@ -97,12 +97,12 @@ trustworthy answer inside the locked transaction, which answers it with a
    are not yet modelled.
 4. **Dispatch decision-time metric** — AGENTS.md's observability section
    wants it on the dashboard; nothing emits it yet.
-5. **No client picker on the dispatch board itself.** `/bookings` accepts
-   `?tenant_id=`, and `BookingsPage` and `TripsPage` both offer the picker;
-   `DispatchPage` does not. It names the client on every row and matches on
-   it in the search box, which is enough at two clients and not at fifty —
-   the board is precisely where a dispatcher would want to work one
-   client's queue at a time. The endpoint work is done; the control is not.
+5. **The queue does not page.** `BookingsPage` and `TripsPage` gained a
+   "Load more"; the board did not. Its queue is `?dispatchable=1`, which is
+   self-limiting in a way the other lists are not — a backlog past 25
+   unassigned bookings is a staffing problem before it is a paging one —
+   but at fifty clients it will need one, and narrowing to a client is
+   currently what stands in for it.
 6. **Eligibility filtering and route preview in the UI** — the design mock
    (`KangaruRide Design System/ui_kits/platform/DispatchScreen.jsx`) shows
    candidates filtered by category, geofence, depot and distance, plus a
@@ -129,6 +129,16 @@ Whether to show any of it comes from the API's `meta.scope`, never from
 inspecting the signed-in user — a page that worked that out for itself
 would be another copy of ADR-0006's predicate. A client's own board is
 unchanged and shows no client anywhere.
+
+**The board also narrows to one client**, via the same `?tenant_id=` the
+listings use, with `dispatchable=1` preserved alongside it — dropping that
+would start offering bookings which already have a vehicle. Changing client
+**clears the open assignment panel**, because a booking selected under "All
+clients" is not in the narrowed queue, and a panel left open against a row
+that is no longer listed is how a dispatcher commits a vehicle to something
+they can no longer see. That clearing happens in the change handler rather
+than an effect keyed on the client — ESLint's `set-state-in-effect` rejects
+the latter, and it would also fire once on mount for no reason.
 
 The three `409` codes are surfaced with the server's own message text rather
 than a re-worded client string. The server's message names the conflicting

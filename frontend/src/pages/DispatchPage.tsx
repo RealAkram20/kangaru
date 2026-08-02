@@ -2,10 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { apiClient } from '../lib/apiClient'
 import { apiError } from '../lib/apiError'
 import { bookingStatusLabel, bookingStatusTone, pickupLabel } from '../lib/bookingStatus'
-import type { ApiSuccess } from '../types/api'
+import type { ApiSuccess, FilterOption, ScopedCursorMeta, TenancyScope } from '../types/api'
 import type { Booking } from '../types/booking'
 import type { Driver } from '../types/driver'
-import type { CursorMeta, Trip } from '../types/trip'
+import type { Trip } from '../types/trip'
 import type { Vehicle } from '../types/vehicle'
 import { Badge } from '../components/core/Badge'
 import { Button } from '../components/core/Button'
@@ -33,15 +33,31 @@ interface Board {
   queue: Booking[]
   vehicles: Vehicle[]
   drivers: Driver[]
+  /** Whose queue this is (ADR-0006), reported by the API. */
+  scope: TenancyScope
+  /** The clients a platform dispatcher may narrow to; empty otherwise. */
+  clients: FilterOption[]
+}
+
+/**
+ * `?dispatchable=1` is always present, so the client filter appends.
+ *
+ * Narrowing happens server-side. On this screen that matters more than on
+ * the listings: the board's whole purpose is to work a queue down, and a
+ * dispatcher handling one client's morning cannot do it through a filter
+ * that only sifts the first 25 rows.
+ */
+function queueUrl(client: string): string {
+  return client === '' ? '/bookings?dispatchable=1' : `/bookings?dispatchable=1&tenant_id=${encodeURIComponent(client)}`
 }
 
 /**
  * Only active vehicles and drivers are offered. This is a courtesy filter,
  * not a rule — the server rejects anything inactive or already committed.
  */
-async function fetchBoard(): Promise<Board> {
+async function fetchBoard(client: string): Promise<Board> {
   const [bookings, vehicles, drivers] = await Promise.all([
-    apiClient.get<ApiSuccess<Booking[], CursorMeta>>('/bookings?dispatchable=1'),
+    apiClient.get<ApiSuccess<Booking[], ScopedCursorMeta>>(queueUrl(client)),
     apiClient.get<ApiSuccess<Vehicle[]>>('/vehicles'),
     apiClient.get<ApiSuccess<Driver[]>>('/drivers'),
   ])
@@ -50,6 +66,8 @@ async function fetchBoard(): Promise<Board> {
     queue: bookings.data.data,
     vehicles: vehicles.data.data.filter((v) => v.status === 'active'),
     drivers: drivers.data.data.filter((d) => d.status === 'active'),
+    scope: bookings.data.meta?.scope ?? 'tenant',
+    clients: bookings.data.meta?.filters?.clients ?? [],
   }
 }
 
@@ -62,6 +80,11 @@ export function DispatchPage() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([])
   const [drivers, setDrivers] = useState<Driver[]>([])
   const [selected, setSelected] = useState<Booking | null>(null)
+  const [scope, setScope] = useState<TenancyScope>('tenant')
+  const [clients, setClients] = useState<FilterOption[]>([])
+  // '' is every client — the right default for a desk working the whole
+  // queue, which is what a cross-client board is for.
+  const [client, setClient] = useState('')
   const [loadError, setLoadError] = useState<string | null>(null)
   const [assigned, setAssigned] = useState<{ booking: Booking; trip: Trip } | null>(null)
 
@@ -71,18 +94,20 @@ export function DispatchPage() {
     setQueue(board.queue)
     setVehicles(board.vehicles)
     setDrivers(board.drivers)
+    setScope(board.scope)
+    setClients(board.clients)
     setLoadError(null)
   }, [])
 
   const load = useCallback(
-    () => fetchBoard().then(apply).catch(onLoadFailure(setLoadError)),
-    [apply],
+    () => fetchBoard(client).then(apply).catch(onLoadFailure(setLoadError)),
+    [apply, client],
   )
 
   useEffect(() => {
     let cancelled = false
 
-    fetchBoard()
+    fetchBoard(client)
       .then((board) => {
         if (!cancelled) apply(board)
       })
@@ -93,7 +118,24 @@ export function DispatchPage() {
     return () => {
       cancelled = true
     }
-  }, [apply])
+    // Narrowing is a new query, so the queue is re-fetched rather than
+    // filtered — the other clients' bookings were never here.
+  }, [apply, client])
+
+  /**
+   * Changing client clears the selection as well as re-querying.
+   *
+   * A booking picked under "All clients" is not in the narrowed queue, and
+   * leaving the assignment panel open against a row that is no longer
+   * listed is how a dispatcher commits a vehicle to something they can no
+   * longer see. Done here rather than in an effect keyed on `client` —
+   * that is a setState in an effect body, which ESLint rejects and which
+   * would also run once on mount for no reason.
+   */
+  const chooseClient = (next: string) => {
+    setClient(next)
+    setSelected(null)
+  }
 
   // Re-fetch rather than splicing the assigned booking out of local state:
   // another dispatcher may have taken something else while this one was
@@ -130,9 +172,30 @@ export function DispatchPage() {
           subtitle={queue ? `${queue.length} awaiting a vehicle · immediate first` : undefined}
           padding="none"
           actions={
-            <Button variant="secondary" size="sm" iconLeft="refresh-cw" onClick={() => void load()}>
-              Refresh
-            </Button>
+            <>
+              {/*
+                Narrows the queue server-side. On this board more than
+                anywhere else: a dispatcher works one client's morning down
+                to nothing, and a control that only sifted the loaded page
+                would quietly stop finding work after the first 25.
+              */}
+              {scope === 'platform' && clients.length > 0 && (
+                <Select
+                  aria-label="Client"
+                  value={client}
+                  onChange={(e) => chooseClient(e.target.value)}
+                  size="sm"
+                  options={[
+                    { value: '', label: 'All clients' },
+                    ...clients.map((c) => ({ value: String(c.value), label: c.label })),
+                  ]}
+                  style={{ width: 180 }}
+                />
+              )}
+              <Button variant="secondary" size="sm" iconLeft="refresh-cw" onClick={() => void load()}>
+                Refresh
+              </Button>
+            </>
           }
         >
           {queue === null ? (

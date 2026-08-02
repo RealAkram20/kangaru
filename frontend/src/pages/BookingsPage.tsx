@@ -11,6 +11,7 @@ import { Card } from '../components/core/Card'
 import { Alert } from '../components/feedback/Alert'
 import { Dialog } from '../components/feedback/Dialog'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
+import { LoadMore } from '../components/data/LoadMore'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
 import { Select } from '../components/forms/Select'
@@ -33,17 +34,29 @@ interface BookingList {
   scope: TenancyScope
   /** The clients this reader may narrow to; empty for a client's own user. */
   clients: FilterOption[]
+  /** Opaque cursor for the next page, or null at the end of the list. */
+  next: string | null
 }
 
 /**
  * `client` narrows server-side, which is the point: the filter box below
  * only ever searched the page already fetched, and at fifty clients that
  * is the wrong answer rather than a slow one.
+ *
+ * `cursor` continues the same query. It is opaque and must be sent back
+ * unaltered — it encodes the sort position, not an offset, which is why
+ * rows inserted while somebody is paging do not shift the page under them.
  */
-async function fetchBookings(client: string): Promise<BookingList> {
-  const query = client === '' ? '' : `?tenant_id=${encodeURIComponent(client)}`
+async function fetchBookings(client: string, cursor: string | null): Promise<BookingList> {
+  const params = new URLSearchParams()
+  if (client !== '') params.set('tenant_id', client)
+  if (cursor !== null) params.set('cursor', cursor)
 
-  const response = await apiClient.get<ApiSuccess<Booking[], ScopedCursorMeta>>(`/bookings${query}`)
+  const query = params.toString()
+
+  const response = await apiClient.get<ApiSuccess<Booking[], ScopedCursorMeta>>(
+    query === '' ? '/bookings' : `/bookings?${query}`,
+  )
 
   return {
     rows: response.data.data,
@@ -52,6 +65,7 @@ async function fetchBookings(client: string): Promise<BookingList> {
     // few rather than mislabelling rows.
     scope: response.data.meta?.scope ?? 'tenant',
     clients: response.data.meta?.filters?.clients ?? [],
+    next: response.data.meta?.cursor?.next ?? null,
   }
 }
 
@@ -66,6 +80,8 @@ export function BookingsPage() {
   const [clients, setClients] = useState<FilterOption[]>([])
   // '' is "every client", which is what a dispatch desk wants on open.
   const [client, setClient] = useState('')
+  const [next, setNext] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [creating, setCreating] = useState(false)
@@ -74,15 +90,30 @@ export function BookingsPage() {
 
   // Kept free of setState so the effect below only ever sets state from a
   // promise callback, never synchronously in its body.
-  const apply = useCallback((list: BookingList) => {
-    setBookings(list.rows)
+  //
+  // `append` is what distinguishes a next page from a fresh query. Paging
+  // accumulates so the rows already read stay on screen; anything else —
+  // changing client, acting on a booking — replaces, because the list it
+  // was paging through no longer describes the query.
+  const apply = useCallback((list: BookingList, append: boolean) => {
+    setBookings((current) => (append ? [...(current ?? []), ...list.rows] : list.rows))
     setScope(list.scope)
     setClients(list.clients)
+    setNext(list.next)
     setLoadError(null)
   }, [])
 
+  /**
+   * Re-reads from the first page.
+   *
+   * Called after approving, rejecting or cancelling. It deliberately drops
+   * any pages already loaded rather than re-fetching all of them: the act
+   * that triggered it changed a status, which changes the ordering, and
+   * stitching a refreshed first page onto stale later ones can show the
+   * same booking twice.
+   */
   const load = useCallback(
-    () => fetchBookings(client).then(apply).catch(onLoadFailure(setLoadError)),
+    () => fetchBookings(client, null).then((list) => apply(list, false), onLoadFailure(setLoadError)),
     [apply, client],
   )
 
@@ -91,9 +122,9 @@ export function BookingsPage() {
   useEffect(() => {
     let cancelled = false
 
-    fetchBookings(client)
+    fetchBookings(client, null)
       .then((list) => {
-        if (!cancelled) apply(list)
+        if (!cancelled) apply(list, false)
       })
       .catch((error: unknown) => {
         if (!cancelled) onLoadFailure(setLoadError)(error)
@@ -103,6 +134,19 @@ export function BookingsPage() {
       cancelled = true
     }
   }, [apply, client])
+
+  const loadMore = useCallback(async () => {
+    if (next === null) return
+
+    setLoadingMore(true)
+    try {
+      apply(await fetchBookings(client, next), true)
+    } catch (error) {
+      onLoadFailure(setLoadError)(error)
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [apply, client, next])
 
   const canApprove = user !== null && APPROVER_ROLES.includes(user.role)
 
@@ -276,6 +320,14 @@ export function BookingsPage() {
             bookings === null ? 'Loading…' : query ? 'No bookings match your filter' : 'No bookings yet'
           }
         />
+
+        {/*
+          Outside the filtered set on purpose: the search box narrows the
+          rows already loaded, so a filter matching nothing on this page
+          must still let you fetch the next one. Hiding the control because
+          the *filtered* view is empty would strand the search.
+        */}
+        <LoadMore hasMore={next !== null} loading={loadingMore} onLoadMore={() => void loadMore()} />
       </Card>
 
       {creating && (
