@@ -116,11 +116,9 @@ Cancelled: reachable from any state before Trip Started, including Rejected
 9. **`Modules/Drivers` `user_id` linkage** — the column exists but has no
    request-layer/UI support in `Modules/Drivers` yet; populated only via
    direct Eloquent, seeders, or tests for now (see `Modules/Drivers/README.md`).
-10. **No server-side filter by client on the trip list.** `TripResource`
-    now carries `client` and `TripsPage` shows a Client column for a
-    platform reader, but the filter box narrows only the page already
-    fetched. A `tenant_id` query parameter is the fix, and it is the same
-    gap `Modules/Bookings` records against its queue.
+10. **Cursor paging in the UI.** `?tenant_id=` now narrows to one client
+    server-side, but the list still renders only the first page of
+    whatever comes back. Same gap `Modules/Bookings` records.
 11. **`TripResource` sends three fields the frontend type does not
     declare** — `booking_id`, `odometer_start_photo_url` and
     `odometer_end_photo_url`. Nothing in the UI reads them, so this is

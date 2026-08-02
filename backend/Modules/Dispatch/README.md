@@ -97,10 +97,12 @@ trustworthy answer inside the locked transaction, which answers it with a
    are not yet modelled.
 4. **Dispatch decision-time metric** — AGENTS.md's observability section
    wants it on the dashboard; nothing emits it yet.
-5. **No server-side filter by client.** The queue names its client on every
-   row and in the assignment confirmation (see Frontend), and the filter box
-   matches on it — but only across the page already fetched. At two clients
-   that is invisible; it is the first thing to break at fifty.
+5. **No client picker on the dispatch board itself.** `/bookings` accepts
+   `?tenant_id=`, and `BookingsPage` and `TripsPage` both offer the picker;
+   `DispatchPage` does not. It names the client on every row and matches on
+   it in the search box, which is enough at two clients and not at fifty —
+   the board is precisely where a dispatcher would want to work one
+   client's queue at a time. The endpoint work is done; the control is not.
 6. **Eligibility filtering and route preview in the UI** — the design mock
    (`KangaruRide Design System/ui_kits/platform/DispatchScreen.jsx`) shows
    candidates filtered by category, geofence, depot and distance, plus a

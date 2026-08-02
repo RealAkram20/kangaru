@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiOk, makeUser, renderAs } from '../test/harness'
@@ -129,7 +129,19 @@ const driver: Driver = {
 
 /** Serves whichever listing the page under test asks for, at `scope`. */
 function serve(scope: 'platform' | 'tenant') {
-  const meta = { cursor: { next: null }, scope }
+  const meta = {
+    cursor: { next: null },
+    scope,
+    filters: {
+      clients:
+        scope === 'platform'
+          ? [
+              { value: BANK.id, label: BANK.name },
+              { value: NGO.id, label: NGO.name },
+            ]
+          : [],
+    },
+  }
 
   const bookings =
     scope === 'platform'
@@ -155,14 +167,19 @@ beforeEach(() => {
 })
 
 describe('the cross-client queue names its clients', () => {
+  // Scoped to the table on purpose. The client picker renders the same
+  // names as <option>s, so a bare getByText would match two nodes and
+  // could pass on the picker alone while the rows stayed unlabelled.
   it('gives the bookings table a Client column for platform staff', async () => {
     serve('platform')
 
     renderAs(<BookingsPage />, PLATFORM_STAFF)
 
     expect(await screen.findByRole('columnheader', { name: 'Client' })).toBeInTheDocument()
-    expect(screen.getByText('Centenary Bank')).toBeInTheDocument()
-    expect(screen.getByText('Acme NGO Ltd')).toBeInTheDocument()
+
+    const table = within(screen.getByRole('table'))
+    expect(table.getByText('Centenary Bank')).toBeInTheDocument()
+    expect(table.getByText('Acme NGO Ltd')).toBeInTheDocument()
   })
 
   it('gives the trips table a Client column for platform staff', async () => {
@@ -171,8 +188,10 @@ describe('the cross-client queue names its clients', () => {
     renderAs(<TripsPage />, PLATFORM_STAFF)
 
     expect(await screen.findByRole('columnheader', { name: 'Client' })).toBeInTheDocument()
-    expect(screen.getByText('Centenary Bank')).toBeInTheDocument()
-    expect(screen.getByText('Acme NGO Ltd')).toBeInTheDocument()
+
+    const table = within(screen.getByRole('table'))
+    expect(table.getByText('Centenary Bank')).toBeInTheDocument()
+    expect(table.getByText('Acme NGO Ltd')).toBeInTheDocument()
   })
 
   it('names the client on each row of the dispatch queue', async () => {
@@ -204,21 +223,98 @@ describe('the cross-client queue names its clients', () => {
     expect(within(dialog).getByText(/for Acme NGO Ltd/)).toBeInTheDocument()
   })
 
-  it('filters a merged queue down to one client by name', async () => {
+  it('filters the fetched page down to one client by name', async () => {
     serve('platform')
 
     renderAs(<BookingsPage />, PLATFORM_STAFF)
 
-    await screen.findByText('Centenary Bank')
+    await screen.findByRole('columnheader', { name: 'Client' })
 
     await userEvent.type(screen.getByPlaceholderText(/filter by client/i), 'Acme')
 
-    expect(screen.queryByText('Centenary Bank')).not.toBeInTheDocument()
-    expect(screen.getByText('Acme NGO Ltd')).toBeInTheDocument()
+    // Asserted inside the table: the picker keeps rendering both names as
+    // options regardless, so an unscoped query would never see a row go.
+    // This box narrows the page in hand — the picker above it is what
+    // narrows the query.
+    const table = within(screen.getByRole('table'))
+    expect(table.queryByText('Centenary Bank')).not.toBeInTheDocument()
+    expect(table.getByText('Acme NGO Ltd')).toBeInTheDocument()
+  })
+})
+
+describe('the client picker narrows on the server', () => {
+  it('asks the API for one client rather than sifting the page it already has', async () => {
+    serve('platform')
+
+    renderAs(<BookingsPage />, PLATFORM_STAFF)
+
+    await screen.findByLabelText('Client')
+
+    await userEvent.selectOptions(screen.getByLabelText('Client'), String(NGO.id))
+
+    // The distinction that matters. The search box narrows what was
+    // fetched; this narrows what is fetched, which is the only version
+    // that survives more than one page of queue.
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/bookings?tenant_id=2'))
+  })
+
+  it('does the same on the trips list', async () => {
+    serve('platform')
+
+    renderAs(<TripsPage />, PLATFORM_STAFF)
+
+    await screen.findByLabelText('Client')
+
+    await userEvent.selectOptions(screen.getByLabelText('Client'), String(BANK.id))
+
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/trips?tenant_id=1'))
+  })
+
+  it('offers every client, not only the ones on this page', async () => {
+    serve('platform')
+
+    renderAs(<BookingsPage />, PLATFORM_STAFF)
+
+    const picker = await screen.findByLabelText('Client')
+
+    // Sourced from meta.filters.clients, so the picker can reach a client
+    // whose rows are further down — the reason anybody opens it.
+    expect(within(picker).getByRole('option', { name: 'All clients' })).toBeInTheDocument()
+    expect(within(picker).getByRole('option', { name: 'Centenary Bank' })).toBeInTheDocument()
+    expect(within(picker).getByRole('option', { name: 'Acme NGO Ltd' })).toBeInTheDocument()
+  })
+
+  it('goes back to every client', async () => {
+    serve('platform')
+
+    renderAs(<BookingsPage />, PLATFORM_STAFF)
+
+    await screen.findByLabelText('Client')
+
+    await userEvent.selectOptions(screen.getByLabelText('Client'), String(NGO.id))
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/bookings?tenant_id=2'))
+
+    await userEvent.selectOptions(screen.getByLabelText('Client'), '')
+
+    // No `tenant_id` at all, rather than an empty one — the endpoint's
+    // whitelist would take `tenant_id=` as a filter and fail validation.
+    await waitFor(() => expect(get).toHaveBeenLastCalledWith('/bookings'))
   })
 })
 
 describe("a client's own listing is unchanged", () => {
+  it('shows no client picker', async () => {
+    serve('tenant')
+
+    renderAs(<BookingsPage />)
+
+    await screen.findByText('Head Office → Entebbe')
+
+    // There is no client to choose. The endpoint refuses `tenant_id` from
+    // this account, and `meta.filters.clients` came back empty.
+    expect(screen.queryByLabelText('Client')).not.toBeInTheDocument()
+  })
+
   it('shows no Client column on the bookings table', async () => {
     serve('tenant')
 

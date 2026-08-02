@@ -7,6 +7,7 @@ use App\Enums\Permission;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Support\Api\ApiResponse;
+use App\Support\Tenancy\ClientOptions;
 use Illuminate\Http\JsonResponse;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
@@ -68,6 +69,11 @@ class TripController extends Controller
         }
 
         $query
+            // Platform readers only — see BookingController.
+            ->when(
+                $request->filled('tenant_id'),
+                fn ($q) => $q->where('tenant_id', $request->integer('tenant_id')),
+            )
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
             ->when($request->filled('vehicle_id'), fn ($q) => $q->where('vehicle_id', $request->integer('vehicle_id')))
             ->when($request->filled('driver_id'), fn ($q) => $q->where('driver_id', $request->integer('driver_id')))
@@ -83,6 +89,7 @@ class TripController extends Controller
                 // Whether this list spans clients. Same contract as
                 // /bookings and /audit-logs.
                 'scope' => $user->isPlatformLevel() ? 'platform' : 'tenant',
+                'filters' => ['clients' => ClientOptions::forActor($user)],
             ],
         );
     }

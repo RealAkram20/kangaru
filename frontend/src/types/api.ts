@@ -24,8 +24,20 @@ export interface ApiError {
  */
 export type TenancyScope = 'platform' | 'tenant'
 
+/** A selectable value the endpoint will accept, served alongside the page. */
+export interface FilterOption {
+  value: number
+  label: string
+}
+
 /** A cursor-paginated listing that also reports whose rows it contains. */
 export interface ScopedCursorMeta {
   cursor: { next: string | null }
   scope: TenancyScope
+  /**
+   * The clients this reader may narrow to, served by the endpoint so no
+   * picker keeps a list of its own. Empty for a client's own user, who has
+   * no choice of client to make.
+   */
+  filters?: { clients: FilterOption[] }
 }

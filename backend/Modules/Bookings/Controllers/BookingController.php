@@ -7,6 +7,7 @@ use App\Enums\Permission;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Support\Api\ApiResponse;
+use App\Support\Tenancy\ClientOptions;
 use Illuminate\Http\JsonResponse;
 use Modules\Bookings\Enums\BookingStatus;
 use Modules\Bookings\Models\Booking;
@@ -55,6 +56,13 @@ class BookingController extends Controller
         }
 
         $query
+            // Narrowing a cross-client queue to one client. Refused at
+            // validation for anyone whose queue is one client's already,
+            // so reaching here means the actor is platform-level.
+            ->when(
+                $request->filled('tenant_id'),
+                fn ($q) => $q->where('tenant_id', $request->integer('tenant_id')),
+            )
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
             ->when(
                 $request->boolean('dispatchable'),
@@ -79,6 +87,11 @@ class BookingController extends Controller
                 // itself whether to show a client column would be a fourth
                 // place ADR-0006's predicate lives.
                 'scope' => $user->isPlatformLevel() ? 'platform' : 'tenant',
+                // What this endpoint will accept, so a client picker holds
+                // no list of its own — the same reason /audit-logs ships
+                // its own filter values. Empty for a client's own user,
+                // who has no choice of client to make.
+                'filters' => ['clients' => ClientOptions::forActor($user)],
             ],
         );
     }

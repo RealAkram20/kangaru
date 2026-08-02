@@ -127,8 +127,18 @@ it('reads the clients without an N+1', function () {
 
     expect(collect($response->json('data')))->toHaveCount(7);
 
-    // The eager load is one query for every client on the page. A lazy
-    // read would be one per row, so the bound is what distinguishes them —
-    // seven rows must not cost seven client lookups.
-    expect($queries)->toBeLessThan(12);
+    // The bound has to separate two measured numbers rather than be a
+    // round figure, or it stops meaning anything the first time a query is
+    // added legitimately — which has already happened once, when
+    // `meta.filters.clients` took the baseline from 11 to 12.
+    //
+    //   12 — eager-loaded: one query for the whole page's clients.
+    //   17 — the same page with the resource reading the relation lazily,
+    //        i.e. seven rows costing seven extra lookups.
+    //
+    // 14 sits between them with room for another query or two before it
+    // needs revisiting, and still fails on an N+1 at this page size. If a
+    // future change pushes the baseline past it, re-measure both numbers
+    // rather than nudging this one up.
+    expect($queries)->toBeLessThan(14);
 });

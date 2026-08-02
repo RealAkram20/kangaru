@@ -105,12 +105,10 @@ decision reason stay an untouched audit record.
 8. **A booking still requires a tenant and a requesting user.** Walk-in and
    individual riders have neither, so they remain unexpressible — named in
    ADR-0005 and again in ADR-0006, and unchanged by both.
-9. **No server-side filter by client.** `BookingsPage` filters the loaded
-   page by client name in the browser, which is honest for one page of 25
-   and wrong for a real cross-client queue: a dispatcher typing "Centenary"
-   filters what was fetched, not what exists. A `tenant_id` query parameter
-   is the fix and it belongs with cursor paging in the UI (item 7), since
-   both are the same "there is more than one page" problem.
+9. **Cursor paging still stops at page one**, and the client picker makes
+   that more visible rather than less: narrowing to one client is now a
+   server round trip, but "the next 25 of that client" is still not
+   reachable. Item 7 is the same gap seen from the other side.
 
 ## Frontend
 
@@ -146,6 +144,25 @@ so a consumer can tell "not applicable" from "no client".
 `CrossClientQueueLabellingTest` asserts the labels, the scope, the omission
 and the absence of an N+1 — the last verified by making the resource read
 the relation lazily and watching seven rows cost seven extra queries.
+
+**`?tenant_id=` narrows to one client, and refusing it is security, not
+validation.** The parameter is whitelisted only for a reader whose queue
+spans clients; for everyone else it is not a recognised filter at all.
+
+The rule that matters is that the refusal must not depend on the *value*.
+`exists:tenants,id` was first applied to everybody, which meant naming a
+real client produced one error and naming a nonexistent id produced two —
+so any corporate employee could enumerate the platform's entire client
+list one id at a time, without a single row leaking. `ClientFilterTest`
+asserts the two responses are byte-identical, and it is the test that
+caught it.
+
+`meta.filters.clients` carries what the endpoint will accept, so the picker
+holds no list of its own. It offers **every** client rather than the ones
+on the current page — unlike `/audit-logs`' actors, because a picker that
+could not reach the client further down the queue is useless for the reason
+anybody opens it, and tenants are bounded at 50 by PROJECT.md where a
+trail's actors are not.
 
 `BookingCrossTenantIsolationTest` in `tests/Feature/Bookings/` is the
 AGENTS.md-mandated, non-skippable proof that tenant isolation holds for this

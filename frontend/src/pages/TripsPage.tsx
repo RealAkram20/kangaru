@@ -12,7 +12,7 @@ import {
   tripStatusLabel,
   tripStatusTone,
 } from '../lib/tripStatus'
-import type { ApiSuccess, ScopedCursorMeta, TenancyScope } from '../types/api'
+import type { ApiSuccess, FilterOption, ScopedCursorMeta, TenancyScope } from '../types/api'
 import type { CursorMeta, Trip, TripEvent, TripStatus } from '../types/trip'
 import { InvoiceTripDialog } from './trips/InvoiceTripDialog'
 import { TransitionDialog } from './trips/TransitionDialog'
@@ -23,6 +23,7 @@ import { Card } from '../components/core/Card'
 import { Icon } from '../components/core/Icon'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
 import { Input } from '../components/forms/Input'
+import { Select } from '../components/forms/Select'
 
 /**
  * The client column, prepended only on a cross-client listing.
@@ -35,6 +36,16 @@ const CLIENT_COLUMN: DataColumn<Trip> = {
   key: 'tenant_id',
   header: 'Client',
   render: (row) => row.client?.name ?? '—',
+}
+
+/**
+ * `client` is a tenant id, or '' for every client. Only platform staff can
+ * send it — the endpoint refuses it from anyone else — and the narrowing
+ * happens server-side, unlike the search box which only ever sifted the
+ * page already fetched.
+ */
+function tripsUrl(client: string): string {
+  return client === '' ? '/trips' : `/trips?tenant_id=${encodeURIComponent(client)}`
 }
 
 const COLUMNS: DataColumn<Trip>[] = [
@@ -105,6 +116,9 @@ export function TripsPage() {
   // the signed-in user (ADR-0006). Defaults to one client's, which shows a
   // column too few rather than mislabelling rows.
   const [scope, setScope] = useState<TenancyScope>('tenant')
+  const [clients, setClients] = useState<FilterOption[]>([])
+  // '' is every client. Narrowed server-side, unlike the search box.
+  const [client, setClient] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -119,9 +133,10 @@ export function TripsPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const response = await apiClient.get<ApiSuccess<Trip[], ScopedCursorMeta>>('/trips')
+      const response = await apiClient.get<ApiSuccess<Trip[], ScopedCursorMeta>>(tripsUrl(client))
       setTrips(response.data.data)
       setScope(response.data.meta?.scope ?? 'tenant')
+      setClients(response.data.meta?.filters?.clients ?? [])
       // Keep the open panel pointing at the refreshed row, so its actions
       // reflect the status the server now holds.
       setSelected((current) =>
@@ -130,7 +145,7 @@ export function TripsPage() {
     } catch {
       setError('Could not load trips.')
     }
-  }, [])
+  }, [client])
 
   // Promise chain rather than `void refresh()` so the state update lands
   // in a callback — setState straight from an effect body cascades renders.
@@ -138,12 +153,13 @@ export function TripsPage() {
     let cancelled = false
 
     apiClient
-      .get<ApiSuccess<Trip[], ScopedCursorMeta>>('/trips')
+      .get<ApiSuccess<Trip[], ScopedCursorMeta>>(tripsUrl(client))
       .then((response) => {
         if (cancelled) return
 
         setTrips(response.data.data)
         setScope(response.data.meta?.scope ?? 'tenant')
+        setClients(response.data.meta?.filters?.clients ?? [])
       })
       .catch(() => {
         if (!cancelled) setError('Could not load trips.')
@@ -152,7 +168,9 @@ export function TripsPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+    // Re-fetches on a client change: the narrowing is server-side, so the
+    // other clients' rows were never here to filter.
+  }, [client])
 
   // The response to a transition is the updated trip, so the row and the
   // open panel are refreshed from it rather than re-fetching the list.
@@ -193,17 +211,32 @@ export function TripsPage() {
         title="Trips"
         subtitle={trips ? `${trips.length} total — select a trip to see its timeline` : undefined}
         actions={
-          <Input
-            iconLeft="search"
-            placeholder={
-              scope === 'platform'
-                ? 'Filter by client, route, vehicle, driver or status'
-                : 'Filter by route, vehicle, driver or status'
-            }
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            style={{ width: 300 }}
-          />
+          <>
+            {/* Server-side, so it sits ahead of the search box — see BookingsPage. */}
+            {scope === 'platform' && clients.length > 0 && (
+              <Select
+                aria-label="Client"
+                value={client}
+                onChange={(e) => setClient(e.target.value)}
+                options={[
+                  { value: '', label: 'All clients' },
+                  ...clients.map((c) => ({ value: String(c.value), label: c.label })),
+                ]}
+                style={{ width: 200 }}
+              />
+            )}
+            <Input
+              iconLeft="search"
+              placeholder={
+                scope === 'platform'
+                  ? 'Filter by client, route, vehicle, driver or status'
+                  : 'Filter by route, vehicle, driver or status'
+              }
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              style={{ width: 300 }}
+            />
+          </>
         }
         padding="none"
       >

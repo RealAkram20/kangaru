@@ -3,7 +3,7 @@ import { useAuth } from '../auth/useAuth'
 import { apiClient } from '../lib/apiClient'
 import { apiError, fieldErrors } from '../lib/apiError'
 import { bookingStatusIcon, bookingStatusLabel, bookingStatusTone, pickupLabel } from '../lib/bookingStatus'
-import type { ApiSuccess, ScopedCursorMeta, TenancyScope } from '../types/api'
+import type { ApiSuccess, FilterOption, ScopedCursorMeta, TenancyScope } from '../types/api'
 import type { Booking } from '../types/booking'
 import { Badge } from '../components/core/Badge'
 import { Button } from '../components/core/Button'
@@ -13,6 +13,7 @@ import { Dialog } from '../components/feedback/Dialog'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { Select } from '../components/forms/Select'
 
 /**
  * Roles the backend's BookingPolicy lets approve or reject. Mirrored here
@@ -30,10 +31,19 @@ interface BookingList {
    * copy of the rule that decides who reads across clients.
    */
   scope: TenancyScope
+  /** The clients this reader may narrow to; empty for a client's own user. */
+  clients: FilterOption[]
 }
 
-async function fetchBookings(): Promise<BookingList> {
-  const response = await apiClient.get<ApiSuccess<Booking[], ScopedCursorMeta>>('/bookings')
+/**
+ * `client` narrows server-side, which is the point: the filter box below
+ * only ever searched the page already fetched, and at fifty clients that
+ * is the wrong answer rather than a slow one.
+ */
+async function fetchBookings(client: string): Promise<BookingList> {
+  const query = client === '' ? '' : `?tenant_id=${encodeURIComponent(client)}`
+
+  const response = await apiClient.get<ApiSuccess<Booking[], ScopedCursorMeta>>(`/bookings${query}`)
 
   return {
     rows: response.data.data,
@@ -41,6 +51,7 @@ async function fetchBookings(): Promise<BookingList> {
     // client's listing, which is the safe reading — it shows a column too
     // few rather than mislabelling rows.
     scope: response.data.meta?.scope ?? 'tenant',
+    clients: response.data.meta?.filters?.clients ?? [],
   }
 }
 
@@ -52,6 +63,9 @@ export function BookingsPage() {
   const { user } = useAuth()
   const [bookings, setBookings] = useState<Booking[] | null>(null)
   const [scope, setScope] = useState<TenancyScope>('tenant')
+  const [clients, setClients] = useState<FilterOption[]>([])
+  // '' is "every client", which is what a dispatch desk wants on open.
+  const [client, setClient] = useState('')
   const [loadError, setLoadError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [creating, setCreating] = useState(false)
@@ -63,18 +77,21 @@ export function BookingsPage() {
   const apply = useCallback((list: BookingList) => {
     setBookings(list.rows)
     setScope(list.scope)
+    setClients(list.clients)
     setLoadError(null)
   }, [])
 
   const load = useCallback(
-    () => fetchBookings().then(apply).catch(onLoadFailure(setLoadError)),
-    [apply],
+    () => fetchBookings(client).then(apply).catch(onLoadFailure(setLoadError)),
+    [apply, client],
   )
 
+  // Re-runs when the chosen client changes, because the narrowing happens
+  // on the server now — the rows for another client were never fetched.
   useEffect(() => {
     let cancelled = false
 
-    fetchBookings()
+    fetchBookings(client)
       .then((list) => {
         if (!cancelled) apply(list)
       })
@@ -85,7 +102,7 @@ export function BookingsPage() {
     return () => {
       cancelled = true
     }
-  }, [apply])
+  }, [apply, client])
 
   const canApprove = user !== null && APPROVER_ROLES.includes(user.role)
 
@@ -215,6 +232,25 @@ export function BookingsPage() {
         padding="none"
         actions={
           <>
+            {/*
+              Before the search box, because it narrows what is fetched
+              rather than what is displayed. The two read as one control
+              otherwise, and a dispatcher would reasonably expect typing a
+              client's name to do the same job — it does not, and cannot,
+              past the first page.
+            */}
+            {scope === 'platform' && clients.length > 0 && (
+              <Select
+                aria-label="Client"
+                value={client}
+                onChange={(e) => setClient(e.target.value)}
+                options={[
+                  { value: '', label: 'All clients' },
+                  ...clients.map((c) => ({ value: String(c.value), label: c.label })),
+                ]}
+                style={{ width: 200 }}
+              />
+            )}
             <Input
               iconLeft="search"
               placeholder={
