@@ -10,6 +10,7 @@ use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use Carbon\CarbonInterface;
 use Database\Factories\UserFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -95,6 +96,47 @@ class User extends Authenticatable
     public function isActive(): bool
     {
         return $this->status === UserStatus::ACTIVE;
+    }
+
+    /**
+     * Shanitah's own staff — dispatchers, Finance, Operations, HR, Super
+     * Admin — as opposed to a client's users (ADR-0005, ADR-0006).
+     *
+     * Keyed off having no tenant rather than a role name, so a custom
+     * platform-level role behaves the same way without anybody remembering
+     * to add it to a list (ADR-0004).
+     *
+     * This answers *whose* records the user may reach, never *what* they may
+     * do with them. Permission is `hasPermission()`, and the two compose:
+     * platform-level plus `trips.view.all` is every client's trips; platform
+     * level without `invoices.view` is still no client's money.
+     */
+    public function isPlatformLevel(): bool
+    {
+        return $this->tenant_id === null;
+    }
+
+    /**
+     * `BelongsToTenant::scopeForActor` for the one model that does not have
+     * it (ADR-0006).
+     *
+     * `User` deliberately carries no global tenant scope — login has to find
+     * an account by email before any tenant is known — so the same rule has
+     * to be expressed the other way round: add the `where` for a tenant
+     * actor rather than drop a scope for a platform one. Same name on
+     * purpose. A staff list is names, emails and roles, and it was one of
+     * the five places the predicate was written out by hand.
+     *
+     * @param  Builder<User>  $query
+     * @return Builder<User>
+     */
+    public function scopeForActor(Builder $query, User $actor): Builder
+    {
+        // Never `where tenant_id = null`: a tenant actor whose own tenant_id
+        // were somehow null must match nothing, not every platform account.
+        return $actor->isPlatformLevel()
+            ? $query
+            : $query->where('tenant_id', $actor->tenant_id);
     }
 
     /**

@@ -82,9 +82,13 @@ trustworthy answer inside the locked transaction, which answers it with a
 
 ## What's explicitly deferred
 
-1. **Automatic dispatch** — out of scope for Phase 1 by PROJECT.md.
-   `DispatchService` takes the vehicle and driver as arguments; nothing
-   suggests them.
+1. **Automatic dispatch** — moved *into* Phase 1 by owner approval on
+   2 August 2026 (PROJECT.md), and still not built. `DispatchService` takes
+   the vehicle and driver as arguments; nothing suggests them. ADR-0006
+   unblocks it rather than delivering it: the cross-client queue a matcher
+   needs now exists. The availability half remains buildable; the distance
+   half still waits on ADR-0003's live positions, and a dispatcher that
+   cannot tell which driver is nearest is a queue, not a matcher.
 2. **Dispatch inputs listed in PROJECT.md** — preferred driver/vehicle,
    geofence, vehicle category, branch, depot. None are consulted; the
    reference tables they need (`Modules/Fleet`, geofencing) do not exist.
@@ -117,6 +121,23 @@ row out of local state — another dispatcher may have taken something else in
 the meantime, and a stale queue is what causes the next 409.
 
 ## Notes
+
+**The dispatcher is Shanitah's, and the work is the client's.** Since
+ADR-0006 the seeded dispatch desk belongs to no tenant, so
+`BelongsToTenant::creating` has nothing to auto-fill `tenant_id` from. The
+`subject-tenant` middleware binds the *booking's* tenant for the duration
+of the request, so the trip, its `trip_events` and its notifications all
+land in the client's records rather than in a tenant-less limbo. No code in
+this module says so, which is deliberate — the rule is stated once, in
+`app/Http/Middleware/BindSubjectTenant.php`, rather than in every service
+that writes.
+
+Worth knowing how it fails: remove that middleware and assignment answers
+**404**, not a foreign-key error. `DispatchService`'s `lockForUpdate()`
+re-read of the booking goes through `TenantScope` with nothing bound, and
+the fail-closed default catches it before any write happens. That is
+ADR-0001 doing its job, and it is still a broken dispatch —
+`PlatformTenantBindingTest` holds the line.
 
 `tests/Concurrency/DispatchRaceTest.php` is the AGENTS.md-mandated,
 non-skippable race test. It launches **two real OS processes**, released at

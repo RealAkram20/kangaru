@@ -105,10 +105,10 @@ class UserController extends Controller
     /**
      * Every account this actor may administer.
      *
-     * A Super Admin is platform-level and sees all of them; everyone else
-     * sees their own tenant's. `whereNotNull` matters: without it a
-     * Corporate Admin whose own `tenant_id` were ever null would match
-     * every platform account.
+     * A platform-level account administers all of them; everyone else sees
+     * their own tenant's. That rule is `User::scopeForActor` since ADR-0006
+     * — the same name every other cross-tenant read now uses, written out
+     * by hand here until then.
      *
      * @return Builder<User>
      */
@@ -117,17 +117,7 @@ class UserController extends Controller
         /** @var User $actor */
         $actor = request()->user();
 
-        $query = User::query();
-
-        // A user with no tenant is platform-level and administers
-        // everyone; everyone else is confined to their own. Keyed off
-        // tenant_id rather than a role name so a custom platform role works
-        // the same way (ADR-0004).
-        if ($actor->tenant_id !== null) {
-            $query->where('tenant_id', $actor->tenant_id);
-        }
-
-        return $query;
+        return User::forActor($actor);
     }
 
     /**

@@ -116,6 +116,12 @@ Cancelled: reachable from any state before Trip Started, including Rejected
 9. **`Modules/Drivers` `user_id` linkage** — the column exists but has no
    request-layer/UI support in `Modules/Drivers` yet; populated only via
    direct Eloquent, seeders, or tests for now (see `Modules/Drivers/README.md`).
+10. **The trip list does not say which client a trip belongs to.** ADR-0006
+    opened `GET /trips` to platform staff, so a Shanitah dispatcher now sees
+    every client's trips in one list — with no tenant column and nothing on
+    `TripResource` to build one from. Same gap as the dispatch queue, and
+    deferred for the same reason: ADR-0006 put the frontend after the
+    backend on purpose.
 
 ## Odometer photos
 
@@ -240,3 +246,16 @@ this resource (including `trip_events`), mirroring
 `CompanyCrossTenantIsolationTest`. `TripStateMachineTest` exercises the
 full transition graph, including illegal-transition 409s and odometer/
 distance side effects.
+
+Since ADR-0006 it has a **mirror**, in
+`tests/Feature/Tenancy/PlatformStaffIsolationTest.php`: the first proves a
+client sees only their own, the second proves a *platform* account with no
+permission on a surface sees nothing of it either. Both are needed and they
+fail differently — without the first one client reads another's data;
+without the second, belonging to no tenant quietly becomes a permission of
+its own.
+
+`trip_events` needs no `forActor()` of its own. `TripEventController` reads
+`$trip->events()`, and by the time it runs the `subject-tenant` middleware
+has bound the trip's own tenant — so the timeline is scoped to the client
+whose trip it is, whoever is reading it.

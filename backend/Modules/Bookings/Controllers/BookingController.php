@@ -28,7 +28,13 @@ class BookingController extends Controller
         /** @var User $user */
         $user = $request->user();
 
-        $query = Booking::with(['requestedBy', 'approvedBy']);
+        // `forActor` decides *whose* bookings are in range — one client's for
+        // a client's user, every client's for Shanitah's own staff, who
+        // belong to no tenant (ADR-0006). The permission check below decides
+        // what they may see of them, and the two are deliberately separate:
+        // a platform Dispatcher needs the whole cross-client queue, because
+        // a matcher that can only see one client's demand is not matching.
+        $query = Booking::forActor($user)->with(['requestedBy', 'approvedBy']);
 
         // A Corporate Employee sees only what they raised — mirrors the way
         // TripController narrows a Driver to their own trips.

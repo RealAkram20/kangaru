@@ -23,10 +23,9 @@ class AuditLogController extends Controller
         // Keyed off having no tenant rather than a role name, so a custom
         // platform-level role behaves the same way (ADR-0004). A tenant
         // user always gets TenantScope; only an account that belongs to no
-        // tenant reads across all of them.
-        $query = $user->tenant_id === null
-            ? AuditLog::allTenants()
-            : AuditLog::query();
+        // tenant reads across all of them. One name for that since
+        // ADR-0006 — this was one of the five hand-rolled copies.
+        $query = AuditLog::forActor($user);
 
         $query
             ->when(
@@ -83,7 +82,7 @@ class AuditLogController extends Controller
                 // Whether this reader sees the whole platform or one tenant.
                 // A Super Admin's log includes role changes, which carry a
                 // null tenant_id and are invisible to a tenant-scoped read.
-                'scope' => $user->tenant_id === null ? 'platform' : 'tenant',
+                'scope' => $user->isPlatformLevel() ? 'platform' : 'tenant',
             ],
         );
     }
@@ -105,11 +104,7 @@ class AuditLogController extends Controller
      */
     private function actors(User $user): array
     {
-        $query = $user->tenant_id === null
-            ? AuditLog::allTenants()
-            : AuditLog::query();
-
-        $ids = $query->whereNotNull('user_id')->distinct()->pluck('user_id');
+        $ids = AuditLog::forActor($user)->whereNotNull('user_id')->distinct()->pluck('user_id');
 
         return User::query()
             ->whereIn('id', $ids)

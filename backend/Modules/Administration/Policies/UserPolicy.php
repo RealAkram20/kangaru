@@ -103,7 +103,7 @@ class UserPolicy
      */
     private function sharesTenant(User $user, User $subject): bool
     {
-        if ($user->tenant_id === null) {
+        if ($user->isPlatformLevel()) {
             return true;
         }
 

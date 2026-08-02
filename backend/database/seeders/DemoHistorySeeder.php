@@ -102,12 +102,15 @@ class DemoHistorySeeder extends Seeder
         // the seeder silently produces an empty demo.
         app(TenantContext::class)->set($tenant->id);
 
-        $dispatcher = $this->userFor($tenant, UserRole::DISPATCHER);
+        // Shanitah's staff, shared across every client (ADR-0006); the
+        // requester and the administrator are the client's own.
+        $dispatcher = PlatformStaff::dispatcher();
+        $finance = PlatformStaff::finance();
+
         $requester = $this->userFor($tenant, UserRole::CORPORATE_EMPLOYEE);
-        $finance = $this->userFor($tenant, UserRole::FINANCE);
         $admin = $this->userFor($tenant, UserRole::CORPORATE_ADMIN);
 
-        if ($dispatcher === null || $requester === null || $finance === null) {
+        if ($requester === null) {
             return;
         }
 

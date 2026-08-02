@@ -16,7 +16,12 @@ use Illuminate\Support\Facades\Route;
 Route::prefix('v1')->group(function () {
     require base_path('Modules/Administration/Routes/api.php');
 
-    Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
+    // `tenant` binds the actor's own tenant before model binding;
+    // `subject-tenant` binds the acted-on record's tenant after it, for
+    // platform staff who have none of their own (ADR-0006). Both are forced
+    // into the right slots by bootstrap/app.php's priority list — the order
+    // written here is not what decides it.
+    Route::middleware(['auth:sanctum', 'tenant', 'subject-tenant'])->group(function () {
         require base_path('Modules/Clients/Routes/api.php');
         require base_path('Modules/Vehicles/Routes/api.php');
         require base_path('Modules/Drivers/Routes/api.php');

@@ -102,6 +102,17 @@ decision reason stay an untouched audit record.
    tedious in practice.
 7. **Cursor paging in the UI** — the API is cursor-paginated but
    `BookingsPage` renders only the first page; there is no "load more" yet.
+8. **The cross-client queue does not say which client a row is.** Since
+   ADR-0006 `GET /bookings` returns every client's bookings to platform
+   staff, which is the point — a matcher that can only see one client's
+   demand is not matching. But `BookingResource` carries no tenant, and
+   `BookingsPage` shows no column for one, so a Shanitah dispatcher sees a
+   merged queue with nothing distinguishing Centenary Bank's request from
+   the next client's. ADR-0006 puts this out of scope deliberately (the
+   backend should land first) and it is now the most visible thing missing.
+9. **A booking still requires a tenant and a requesting user.** Walk-in and
+   individual riders have neither, so they remain unexpressible — named in
+   ADR-0005 and again in ADR-0006, and unchanged by both.
 
 ## Frontend
 
@@ -111,6 +122,16 @@ based on role, but that is presentation only: the server still returns 403
 regardless (AGENTS.md — never rely solely on frontend permissions).
 
 ## Notes
+
+**Who is in range vs. what they may see.** `BookingController::index` asks
+two separate questions, in this order: `Booking::forActor($user)` decides
+*whose* bookings are in range — one client's for a client's user, every
+client's for Shanitah's staff, who belong to no tenant (ADR-0006) — and the
+`bookings.view.all` check then narrows anyone without it to what they
+raised (ADR-0004). Keeping them separate is what stops "belongs to no
+tenant" quietly becoming a permission: a platform account without
+`bookings.view.all` sees the same nothing it would have seen inside a
+tenant.
 
 `BookingCrossTenantIsolationTest` in `tests/Feature/Bookings/` is the
 AGENTS.md-mandated, non-skippable proof that tenant isolation holds for this

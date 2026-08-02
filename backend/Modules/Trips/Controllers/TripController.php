@@ -34,7 +34,12 @@ class TripController extends Controller
         /** @var User $user */
         $user = $request->user();
 
-        $query = Trip::with(['vehicle', 'driver']);
+        // Whose trips (ADR-0006) before what may be seen of them (ADR-0004).
+        // Platform staff belong to no tenant and read every client's; the
+        // narrowing below still applies to them, so a platform account
+        // without `trips.view.all` sees the same nothing it would inside a
+        // tenant.
+        $query = Trip::forActor($user)->with(['vehicle', 'driver']);
 
         // The listing counterpart of TripPolicy::view. Anyone without
         // `trips.view.all` sees only trips that are theirs — assigned to

@@ -1,6 +1,6 @@
 # ADR-0006: Platform Staff and Cross-Tenant Operational Reads
 
-**Status:** Proposed
+**Status:** Accepted (2 August 2026)
 
 **Amends:** ADR-0001 (Multi-Tenancy Model). Tenant scoping stands and the
 scope still fails closed; this defines the one reviewed way past it.
@@ -209,3 +209,77 @@ cross-tenant reach at the point of grant. Rejected: it doubles a catalogue
 that ADR-0004 deliberately keeps as one curated list, and every new
 permission would need two cases and a rule about what happens when they
 disagree.
+
+---
+
+## Implementation notes (2 August 2026)
+
+Written after the pass, because three things were not visible from the
+proposal and one part of the Scope moved.
+
+### Route-model binding was half the bug
+
+The proposal treats this as a listing problem. It is not: `SubstituteBindings`
+resolves `{trip}`, `{booking}`, `{invoice}` through the same global scope,
+so a platform account 404'd on **every single-resource URL in the
+application** even where the listing had been hand-patched. That is why
+`CompanyService::list()` was bypassed but `GET /companies/{id}` still
+worked only by accident of ordering (see `bootstrap/app.php`'s existing
+priority note).
+
+`BelongsToTenant::resolveRouteBinding` is therefore actor-aware too, and
+applies to every tenant-owned model rather than the three named in Scope.
+Narrowing it to bookings and trips would have recreated the per-model
+copies this ADR exists to end. Resolution is not authorization: the policy
+still runs, so a platform Dispatcher who resolves an invoice by id is
+refused by `InvoicePolicy` exactly as they are refused the listing — 403,
+not 404, because AGENTS.md's "404 masks cross-tenant IDs" protects clients
+from probing each other and platform staff are not another client.
+
+### Decision 4 is middleware, not a call in each service
+
+`BindSubjectTenant` runs immediately after `SubstituteBindings` and binds
+the tenant of the route's own bound record for the rest of the request. The
+alternative — `TenantContext::for()` inside `DispatchService`,
+`TripStateMachine`, `BookingService`, `InvoiceService` and `CreditNoteService`
+— is the fifth-copy problem with a worse failure mode: the service that
+forgot it writes a tenant-less row into a client's history.
+
+`TenantContext::for()` still exists and is still the right tool for code
+that is not a request. `CompanyService::create` uses it.
+
+Removing the middleware makes five tests in `PlatformTenantBindingTest` go
+red. The observed failure is a 404 rather than the foreign-key violation
+the proposal predicted: `DispatchService`'s locking re-read of the booking
+hits the fail-closed scope first. Fail-closed catching it is the system
+working, and it is still a broken dispatch.
+
+### Invoice reads were opened; rate cards were not
+
+Decision 3's own worked example — "a platform Finance officer holds
+`invoices.view` and sees all of it" — was not true of the invoice listing,
+which is a repository call. `InvoiceRepository::listing()` now takes the
+actor. Invoice *generation* needed nothing: `POST /trips/{trip}/invoice`
+has the trip as its subject, so Decision 4 binds the client's tenant, and
+no cross-client invoice run exists to become silent.
+
+**Rate cards were deliberately left tenant-only**, and this is a departure
+worth naming. Reading them for a platform Finance officer is one line; but
+`POST /rate-cards` has no subject parameter, so a platform actor creating
+one would produce a tenant-less rate card that prices nothing. Opening the
+read without the write would ship a half-working screen. Which client a
+platform-authored rate card belongs to is a product question, and it is the
+same shape as the reports question below.
+
+### Still open, and named here so it is not mistaken for done
+
+- **Reports and exports**, exactly as the Consequences predicted. A
+  platform account gets `200` with zero rows on all four reports — empty,
+  not broken. Verified, not assumed.
+- **Notifications.** `Notification` is tenant-scoped, so a platform user's
+  inbox is empty by fail-closed rather than by having no mail. It is
+  downstream of the reports decision — the notification that matters is
+  "your export is ready" — so it moves with that, not before it.
+- **The dispatch UI has no tenant column.** Per Scope, and it now matters
+  more: the cross-client queue this ADR delivers is live, and a row does
+  not say which client it belongs to.

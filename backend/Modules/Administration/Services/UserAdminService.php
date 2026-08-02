@@ -35,8 +35,13 @@ class UserAdminService
             // A tenant administrator's new colleagues are always their own
             // tenant's, whatever the request said — the field is not even
             // read for them. Only a platform-level account, which has no
-            // tenant of its own, chooses.
-            'tenant_id' => $actor->tenant_id === null
+            // tenant of its own, chooses; and it may choose null, which
+            // since ADR-0006 is a deliberate act rather than a fallback.
+            // That creates Shanitah staff who read across every client, so
+            // it is Super Admin's to do — `staff.manage` is the gate, and
+            // the escalation rule (ADR-0004) is what keeps a Corporate
+            // Admin from reaching it.
+            'tenant_id' => $actor->isPlatformLevel()
                 ? ($attributes['tenant_id'] ?? null)
                 : $actor->tenant_id,
         ]);

@@ -198,6 +198,19 @@ Everything here is *not built*, not "partly built".
     Phase 1 tenant operates in Uganda.
 12. **Rate card archival.** `RateCardStatus::ARCHIVED` exists and is never
     set by any route — a card is created active and stays active.
+13. **Rate cards are not open to platform staff, and that is deliberate.**
+    ADR-0006 opened the *invoice* listing to Shanitah's Finance officer
+    (`InvoiceRepository::listing()` takes the actor), because Decision 3
+    names that case and invoice generation already binds the trip's tenant.
+    Rate cards were left alone: `POST /rate-cards` has no subject
+    parameter, so a platform actor creating one would write a tenant-less
+    card that prices nothing. Opening the read without the write would ship
+    a half-working screen. Which client a platform-authored rate card
+    belongs to is a product question, unanswered.
+14. **No cross-client invoice run.** One invoice per trip means there is no
+    endpoint that could silently become cross-client — the hazard ADR-0006's
+    Consequences names. It reappears the day monthly consolidated invoicing
+    (item 2) is built, and that build has to answer it.
 
 ## Frontend
 
@@ -279,6 +292,23 @@ client's *money* — their prices, their totals, their disputes — and because
 both tenants' first invoice is numbered `...000001`, so a test asserting on
 invoice numbers alone would pass straight through a leak. It asserts on
 uuids and on row counts.
+
+Since ADR-0006 it has a **mirror**, and this module is where that mirror
+bites hardest: `tests/Feature/Tenancy/PlatformStaffIsolationTest.php` proves
+a platform **Dispatcher** — who belongs to no tenant and therefore reads
+every client's bookings and trips — is still refused the invoice listing,
+a single invoice by uuid, and the rate cards. A platform **Finance officer**
+is shown all of it, because they hold `invoices.view` and the dispatcher
+does not.
+
+That pairing is the whole decision in one test: `tenant_id` being null
+answers *whose* rows, never *what* the reader may see. It was verified to
+fail — `InvoicePolicy::viewAny` was temporarily changed to
+`$user->isPlatformLevel() || $user->hasPermission(...)`, the exact inversion
+ADR-0006 forbids, and both refusal cases went red with the dispatcher
+getting `200` on a client's invoice. This project has already shipped that
+bug once in a different shape (a Dispatcher who could export a client's
+revenue), which is why it has a test rather than a comment.
 
 Fixtures live in `tests/Support/BillingFixtures.php` and obey two rules:
 priced rate card versions come from `RateCardService`, and trips are walked

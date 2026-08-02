@@ -87,27 +87,20 @@ class DemoFleetSeeder extends Seeder
         // the context is set by hand here.
         app(TenantContext::class)->set($tenant->id);
 
-        $dispatcher = User::factory()->create([
-            'tenant_id' => $tenant->id,
-            'name' => 'Dispatch Desk',
-            'email' => 'dispatch@'.$tenant->slug.'.test',
-            'role' => UserRole::DISPATCHER,
-        ]);
+        // Shanitah's, not the client's — one dispatch desk and one Finance
+        // officer serve every tenant (ADR-0006). DatabaseSeeder created
+        // them; this seeder only works them. They belong to no tenant, so
+        // the rows they write here land in the *client's* tenant by virtue
+        // of the context bound above, which is the same rule
+        // BindSubjectTenant applies over HTTP.
+        $dispatcher = PlatformStaff::dispatcher();
+        $finance = PlatformStaff::finance();
 
         $requester = User::factory()->create([
             'tenant_id' => $tenant->id,
             'name' => 'Staff Requester',
             'email' => 'staff@'.$tenant->slug.'.test',
             'role' => UserRole::CORPORATE_EMPLOYEE,
-        ]);
-
-        // Billing is Finance's job, not the dispatcher's (InvoicePolicy), so
-        // the demo needs a user who is actually allowed to raise an invoice.
-        $finance = User::factory()->create([
-            'tenant_id' => $tenant->id,
-            'name' => 'Finance Officer',
-            'email' => 'finance@'.$tenant->slug.'.test',
-            'role' => UserRole::FINANCE,
         ]);
 
         $this->seedRateCard($tenant, $finance);

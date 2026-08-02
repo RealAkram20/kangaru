@@ -49,9 +49,15 @@ Standard REST resource, all behind `auth:sanctum` + `tenant` middleware:
 | DELETE | `/api/v1/companies/{id}` | `delete` — `companies.delete` |
 
 Creating a company is deliberately platform-level: a Super Admin has no
-tenant context for the scope to auto-fill `tenant_id` from, so the
-controller reaches for `Company::allTenants()->create(...)`. That is the
-rare, reviewed opt-out ADR-0001 allows.
+tenant context for the scope to auto-fill `tenant_id` from. Since ADR-0006
+the service binds the *requested* tenant for the duration of the write —
+`TenantContext::for($attributes['tenant_id'], ...)` — rather than mass
+assigning past the scope with `allTenants()`. Same row, but it states which
+client the write is for instead of stating that scoping does not apply.
+
+The listing is `Company::forActor($user)`: one client's profile for a
+client's user, every client's for platform staff. That was the first of the
+five hand-rolled bypasses ADR-0006 collapsed into one name.
 
 ## Notes
 

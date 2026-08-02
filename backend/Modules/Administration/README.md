@@ -70,10 +70,41 @@ permission catalogue, and the audit log.
 deliberately has no `BelongsToTenant`: login must find an account by email
 before any tenant is known, and Super Admins have no tenant at all. Nothing
 scopes those queries automatically, so a forgotten `where` leaks names,
-emails and roles across tenants. It is applied in `UserController::scopedQuery()`
-and asserted by `UserAdminTest` — note that this module's isolation cases
-live in that file rather than in a `*CrossTenantIsolationTest` of their own,
-unlike every other module's.
+emails and roles across tenants. Since ADR-0006 it is expressed as
+`User::scopeForActor` — the same name every other cross-tenant read uses —
+which for this model has to add the `where` for a tenant actor rather than
+drop a scope for a platform one, because there is no scope to drop. Applied
+in `UserController::scopedQuery()` and asserted by `UserAdminTest`; note
+that this module's isolation cases live in that file rather than in a
+`*CrossTenantIsolationTest` of their own, unlike every other module's.
+
+**Three of ADR-0006's five hand-rolled bypasses were in this module** —
+`UserController::scopedQuery()`, `UserAdminService::create()` and
+`UserPolicy::sharesTenant()` — each writing `tenant_id === null` out by
+hand. They now say `isPlatformLevel()` and `forActor()`. Behaviour is
+unchanged by design; the point is that the sixth copy cannot be written
+differently.
+
+**Creating a tenant-less account is a serious act.** `UserAdminService`
+lets a platform-level actor pass `tenant_id: null`, which since ADR-0006
+mints Shanitah staff who read across every client. `staff.manage` is the
+gate and ADR-0004's escalation rule is what keeps a Corporate Admin away
+from it — a tenant administrator's new colleagues are always their own
+tenant's, whatever the request body says.
+
+**The audit log's platform reader now has a name.** `AuditLog::forActor()`
+replaces the hand-rolled `allTenants()` branch, and `meta.scope` still
+reports `platform` or `tenant` so the UI can say which trail is on screen.
+This is what makes role changes readable at all: role rows carry a null
+`tenant_id` because the catalogue is platform-wide (ADR-0004), so no
+tenant-scoped reader would ever show them.
+
+**A client sees us in their own log.** A platform dispatcher acting on a
+client's trip is recorded against *that client's* tenant (ADR-0006
+Decision 5), because `AuditLog::record()` sources `tenant_id` from the
+audited model rather than from the actor. Asserted from the client's side
+in `PlatformTenantBindingTest` — read through the tenant-scoped reader the
+client actually uses, not through `allTenants()`.
 
 **Roles are deliberately not tenant-scoped.** There is one platform-wide
 catalogue and every tenant picks from it, which is what keeps the

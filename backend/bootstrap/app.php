@@ -2,6 +2,7 @@
 
 use App\Enums\ErrorCode;
 use App\Http\Middleware\AssignRequestId;
+use App\Http\Middleware\BindSubjectTenant;
 use App\Http\Middleware\IdentifyTenant;
 use App\Support\Api\ApiResponse;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -11,6 +12,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Validation\ValidationException;
 use Modules\Reports\Console\PruneReportExports;
@@ -40,6 +42,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->alias([
             'tenant' => IdentifyTenant::class,
+            'subject-tenant' => BindSubjectTenant::class,
         ]);
 
         // Laravel's default middleware priority runs SubstituteBindings
@@ -54,6 +57,16 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->appendToPriorityList(
             after: AuthenticatesRequests::class,
             append: IdentifyTenant::class,
+        );
+
+        // And its counterpart runs immediately AFTER model binding, because
+        // it exists to read the bound record (ADR-0006 Decision 4: platform
+        // staff write into the tenant of the record they are acting on, not
+        // their own — they have none). Before SubstituteBindings there is no
+        // subject to read, so the ordering is the feature, not a detail.
+        $middleware->appendToPriorityList(
+            after: SubstituteBindings::class,
+            append: BindSubjectTenant::class,
         );
 
         // This is an API-only app with no 'login' route. Laravel's
