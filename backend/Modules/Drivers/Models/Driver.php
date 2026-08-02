@@ -3,7 +3,6 @@
 namespace Modules\Drivers\Models;
 
 use App\Concerns\Auditable;
-use App\Concerns\BelongsToTenant;
 use App\Models\Tenant;
 use App\Models\User;
 use Database\Factories\DriverFactory;
@@ -19,14 +18,13 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * Modules/Drivers/README.md.
  *
  * @property int $id
- * @property int $tenant_id
  * @property string $name
  * @property string $license_number
  * @property string $status
  */
 class Driver extends Model
 {
-    use Auditable, BelongsToTenant, HasFactory, SoftDeletes;
+    use Auditable, HasFactory, SoftDeletes;
 
     /**
      * @see Vehicle::newFactory() for why this is explicit.
@@ -39,7 +37,6 @@ class Driver extends Model
     }
 
     protected $fillable = [
-        'tenant_id',
         'user_id',
         'name',
         'phone',

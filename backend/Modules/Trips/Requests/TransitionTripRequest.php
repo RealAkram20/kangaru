@@ -2,7 +2,6 @@
 
 namespace Modules\Trips\Requests;
 
-use App\Support\Tenancy\TenantContext;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -28,7 +27,6 @@ class TransitionTripRequest extends FormRequest
     public function rules(): array
     {
         $to = $this->input('to');
-        $tenantId = app(TenantContext::class)->get();
         $reasonRequired = in_array($to, [
             TripStatus::CANCELLED->value,
             TripStatus::REJECTED->value,
@@ -84,8 +82,7 @@ class TransitionTripRequest extends FormRequest
                 'nullable',
                 'integer',
                 Rule::exists('vehicles', 'id')->where(
-                    fn ($query) => $query->where('tenant_id', $tenantId)
-                        ->where('status', 'active')
+                    fn ($query) => $query->where('status', 'active')
                         ->whereNull('deleted_at')
                 ),
             ],
@@ -93,8 +90,7 @@ class TransitionTripRequest extends FormRequest
                 'nullable',
                 'integer',
                 Rule::exists('drivers', 'id')->where(
-                    fn ($query) => $query->where('tenant_id', $tenantId)
-                        ->where('status', 'active')
+                    fn ($query) => $query->where('status', 'active')
                         ->whereNull('deleted_at')
                 ),
             ],

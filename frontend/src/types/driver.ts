@@ -1,6 +1,7 @@
+// Platform-level like Vehicle (ADR-0005): a driver works for Shanitah,
+// not for a corporate client.
 export interface Driver {
   id: number
-  tenant_id: number
   name: string
   phone: string
   email: string | null

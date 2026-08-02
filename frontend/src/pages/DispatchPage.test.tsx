@@ -18,6 +18,8 @@ const post = vi.mocked(apiClient.post)
 function booking(overrides: Partial<Booking> = {}): Booking {
   return {
     id: 41,
+    // Bookings are still tenant-scoped — they are the client's. Only the
+    // fleet moved to the platform (ADR-0005).
     tenant_id: 1,
     requested_by_user_id: 9,
     requested_by: { id: 9, name: 'Moses Kato', email: 'moses@x.test', role: 'corporate_admin' },
@@ -42,7 +44,6 @@ function booking(overrides: Partial<Booking> = {}): Booking {
 function vehicle(overrides: Partial<Vehicle> = {}): Vehicle {
   return {
     id: 7,
-    tenant_id: 1,
     registration_number: 'UAA 111A',
     make: 'Toyota',
     model: 'Hiace',
@@ -61,7 +62,6 @@ function vehicle(overrides: Partial<Vehicle> = {}): Vehicle {
 function driver(overrides: Partial<Driver> = {}): Driver {
   return {
     id: 3,
-    tenant_id: 1,
     name: 'Ada Nakato',
     phone: '+256700999888',
     email: null,

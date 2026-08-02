@@ -52,16 +52,25 @@ function fleetTrip(Tenant $tenant, User $actor, Vehicle $vehicle, Driver $driver
  */
 function fleetFixture(): array
 {
+    // Plates are globally unique since ADR-0005 — the fleet is the
+    // platform's, and a registration is unique in Uganda. This fixture is
+    // called twice by the isolation case below, so the second call has to
+    // produce different vehicles rather than colliding on a hardcoded
+    // plate the way it could when uniqueness was per tenant.
+    static $run = 0;
+    $run++;
+    $plate = fn (string $base) => $run === 1 ? $base : $base.' /'.$run;
+
     $tenant = Tenant::factory()->create();
     app(TenantContext::class)->set($tenant->id);
 
     $manager = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::OPERATIONS_MANAGER]);
 
-    $ada = Driver::factory()->forTenant($tenant)->create(['name' => 'Ada Nakato']);
-    $ben = Driver::factory()->forTenant($tenant)->create(['name' => 'Ben Okello']);
+    $ada = Driver::factory()->create(['name' => 'Ada Nakato']);
+    $ben = Driver::factory()->create(['name' => 'Ben Okello']);
 
-    $van = Vehicle::factory()->forTenant($tenant)->van()->create(['registration_number' => 'UAA 111A']);
-    $car = Vehicle::factory()->forTenant($tenant)->create(['registration_number' => 'UBB 222B']);
+    $van = Vehicle::factory()->van()->create(['registration_number' => $plate('UAA 111A')]);
+    $car = Vehicle::factory()->create(['registration_number' => $plate('UBB 222B')]);
 
     // Ada: two trips, 40 + 60 = 100 km, both on the van.
     fleetTrip($tenant, $manager, $van, $ada, 40);
@@ -97,12 +106,15 @@ it('totals distance and trips per driver, busiest first', function () {
 });
 
 it('totals the same journeys per vehicle', function () {
-    ['manager' => $manager] = fleetFixture();
+    ['manager' => $manager, 'van' => $van] = fleetFixture();
 
     $response = $this->actingAs($manager, 'sanctum')->getJson('/api/v1/reports/vehicles')->assertOk();
 
     expect($response->json('data'))->toHaveCount(2);
-    expect($response->json('data.0.0'))->toBe('UAA 111A');
+    // Read off the fixture rather than a literal: plates are globally
+    // unique since ADR-0005, so the fixture varies them per call and a
+    // hardcoded expectation would depend on test ordering.
+    expect($response->json('data.0.0'))->toBe($van->registration_number);
     expect($response->json('data.0.1'))->toBe('van');
     expect((float) $response->json('data.0.5'))->toBe(100.0);
 
@@ -119,7 +131,7 @@ it('counts only trips that actually commenced', function () {
 
     // Assigned and then cancelled: a booking nobody drove. Counting it
     // against Ada would make an abandoned job look like work she did.
-    $spare = Vehicle::factory()->forTenant($tenant)->create();
+    $spare = Vehicle::factory()->create();
     $trip = app(TripService::class)->create([
         'tenant_id' => $tenant->id,
         'vehicle_id' => $spare->id,

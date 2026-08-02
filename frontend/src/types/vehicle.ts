@@ -1,6 +1,7 @@
+// The fleet belongs to the platform, not to a client (ADR-0005), so
+// there is no tenant_id here — Shanitah operates every vehicle.
 export interface Vehicle {
   id: number
-  tenant_id: number
   registration_number: string
   make: string
   model: string

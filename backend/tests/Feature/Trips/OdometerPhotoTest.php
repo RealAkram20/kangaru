@@ -34,7 +34,7 @@ function photoFixture(): array
     $driverUser = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::DRIVER]);
     $driver = Driver::factory()->forUser($driverUser)->create();
     $dispatcher = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::DISPATCHER]);
-    $vehicle = Vehicle::factory()->forTenant($tenant)->create();
+    $vehicle = Vehicle::factory()->create();
 
     $trip = app(TripService::class)->create([
         'tenant_id' => $tenant->id,

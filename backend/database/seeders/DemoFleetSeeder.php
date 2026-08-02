@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Support\Tenancy\TenantContext;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Modules\Billing\Services\CreditNoteService;
 use Modules\Billing\Services\InvoiceService;
 use Modules\Billing\Services\RateCardService;
@@ -33,12 +34,50 @@ class DemoFleetSeeder extends Seeder
 {
     public function run(): void
     {
+        // One fleet, created once (ADR-0005). It used to be built inside
+        // the per-tenant loop, which gave every client a private set of
+        // vehicles and drivers — the misreading this ADR corrects.
+        $fleet = $this->seedPlatformFleet();
+
         foreach (Tenant::all() as $tenant) {
-            $this->seedTenant($tenant);
+            $this->seedTenant($tenant, $fleet['vehicles'], $fleet['drivers']);
         }
     }
 
-    private function seedTenant(Tenant $tenant): void
+    /**
+     * Shanitah's vehicles and drivers. Not tenant-scoped, and deliberately
+     * more of them than one client needs — the point of a shared pool is
+     * that two clients dispatch from it without colliding.
+     *
+     * @return array{vehicles: Collection<int, Vehicle>, drivers: Collection<int, Driver>}
+     */
+    private function seedPlatformFleet(): array
+    {
+        return [
+            'vehicles' => collect([
+                Vehicle::factory()->van()->create(),
+                Vehicle::factory()->create(['category' => 'sedan']),
+                Vehicle::factory()->create(['category' => 'suv', 'model' => 'Land Cruiser']),
+                Vehicle::factory()->van()->create(),
+                Vehicle::factory()->create(['category' => 'sedan']),
+                Vehicle::factory()->create(['category' => 'suv', 'model' => 'Land Cruiser']),
+            ]),
+            'drivers' => collect([
+                Driver::factory()->create(),
+                Driver::factory()->create(),
+                Driver::factory()->create(),
+                Driver::factory()->create(),
+                Driver::factory()->create(),
+                Driver::factory()->create(),
+            ]),
+        ];
+    }
+
+    /**
+     * @param  Collection<int, Vehicle>  $allVehicles
+     * @param  Collection<int, Driver>  $allDrivers
+     */
+    private function seedTenant(Tenant $tenant, Collection $allVehicles, Collection $allDrivers): void
     {
         // TripStateMachine::transition() calls $trip->refresh(), which goes
         // through TenantScope — and that scope fails closed when no tenant
@@ -71,17 +110,16 @@ class DemoFleetSeeder extends Seeder
 
         $this->seedRateCard($tenant, $finance);
 
-        $vehicles = collect([
-            Vehicle::factory()->forTenant($tenant)->van()->create(),
-            Vehicle::factory()->forTenant($tenant)->create(['category' => 'sedan']),
-            Vehicle::factory()->forTenant($tenant)->create(['category' => 'suv', 'model' => 'Land Cruiser']),
-        ]);
+        // Each tenant's demo trips take a distinct slice of the shared
+        // pool, so the two do not fight over the same vehicle — dispatch
+        // locks a vehicle for the life of a trip, and the seeder would
+        // otherwise fail on the second tenant with VEHICLE_UNAVAILABLE.
+        // A slice is a seeding convenience, not a rule: nothing stops a
+        // dispatcher choosing any vehicle in the pool.
+        $offset = Tenant::query()->where('id', '<', $tenant->id)->count() * 3;
 
-        $drivers = collect([
-            Driver::factory()->forTenant($tenant)->create(),
-            Driver::factory()->forTenant($tenant)->create(),
-            Driver::factory()->forTenant($tenant)->create(),
-        ]);
+        $vehicles = $allVehicles->slice($offset, 3)->values();
+        $drivers = $allDrivers->slice($offset, 3)->values();
 
         $machine = app(TripStateMachine::class);
         $dispatchService = app(DispatchService::class);

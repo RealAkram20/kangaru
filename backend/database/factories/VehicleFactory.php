@@ -2,7 +2,6 @@
 
 namespace Database\Factories;
 
-use App\Models\Tenant;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Modules\Vehicles\Models\Vehicle;
 
@@ -23,7 +22,6 @@ class VehicleFactory extends Factory
     public function definition(): array
     {
         return [
-            'tenant_id' => Tenant::factory(),
             'registration_number' => fake()->unique()->regexify('U[A-Z]{2} [0-9]{3}[A-Z]'),
             'make' => 'Toyota',
             'model' => fake()->randomElement(['Hiace', 'Corolla', 'Land Cruiser', 'Noah']),
@@ -32,11 +30,6 @@ class VehicleFactory extends Factory
             'seating_capacity' => 5,
             'status' => 'active',
         ];
-    }
-
-    public function forTenant(Tenant $tenant): static
-    {
-        return $this->state(fn (array $attributes) => ['tenant_id' => $tenant->id]);
     }
 
     public function van(): static

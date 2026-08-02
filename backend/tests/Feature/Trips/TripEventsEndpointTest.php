@@ -13,8 +13,8 @@ function seedTripEventsFixture(): array
 {
     $tenant = Tenant::factory()->create();
 
-    $vehicle = Vehicle::factory()->forTenant($tenant)->van()->create();
-    $driver = Driver::factory()->forTenant($tenant)->create();
+    $vehicle = Vehicle::factory()->van()->create();
+    $driver = Driver::factory()->create();
     $dispatcher = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::OPERATIONS_MANAGER]);
 
     $trip = Trip::factory()->forTenant($tenant)->forVehicle($vehicle)->forDriver($driver)

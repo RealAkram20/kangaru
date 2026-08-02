@@ -2,7 +2,6 @@
 
 namespace Modules\Vehicles\Requests;
 
-use App\Support\Tenancy\TenantContext;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Modules\Vehicles\Models\Vehicle;
@@ -24,9 +23,11 @@ class StoreVehicleRequest extends FormRequest
                 'required',
                 'string',
                 'max:50',
-                Rule::unique('vehicles')->where(
-                    fn ($query) => $query->where('tenant_id', app(TenantContext::class)->get())
-                ),
+                // Global, not per tenant: the fleet is the platform's
+                // (ADR-0005), and a number plate is unique in Uganda under
+                // any reading. The old per-tenant rule let two clients each
+                // register UAA 111A.
+                Rule::unique('vehicles'),
             ],
             'make' => ['required', 'string', 'max:100'],
             'model' => ['required', 'string', 'max:100'],

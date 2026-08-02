@@ -58,7 +58,7 @@ function invoiceRaceFixture(): array
     // Two vehicles, because a completed trip still has to have been
     // dispatched, and TripAssignmentGuard would refuse to put one vehicle
     // on two live trips at once.
-    $second = Vehicle::factory()->forTenant($tenant)->create(['category' => 'sedan']);
+    $second = Vehicle::factory()->create(['category' => 'sedan']);
 
     $trips = [
         BillingFixtures::completedTrip($tenant, $dispatcher, $vehicle, $driver, 15_000, 15_042),

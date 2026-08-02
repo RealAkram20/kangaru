@@ -32,8 +32,8 @@ function seedTwoTenantsWithReportableTrips(): array
         // each half of the fixture is genuinely built in its own context.
         app(TenantContext::class)->set($tenant->id);
 
-        $vehicle = Vehicle::factory()->forTenant($tenant)->create();
-        $driver = Driver::factory()->forTenant($tenant)->create();
+        $vehicle = Vehicle::factory()->create();
+        $driver = Driver::factory()->create();
         $booking = Booking::factory()->forTenant($tenant)->create();
 
         $trip = app(DispatchService::class)->assign($booking, $vehicle->id, $driver->id, $actor);

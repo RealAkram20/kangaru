@@ -106,7 +106,7 @@ it('refuses to invoice another tenant\'s trip', function () {
 
     $unbilledTrip = BillingFixtures::completedTrip(
         $b['tenant'], $b['dispatcher'],
-        Vehicle::factory()->forTenant($b['tenant'])->create(['category' => 'sedan']),
+        Vehicle::factory()->create(['category' => 'sedan']),
         $b['driver'],
     );
 
@@ -139,7 +139,7 @@ it('refuses to price a trip with another tenant\'s rate card', function () {
 
     $trip = BillingFixtures::completedTrip(
         $a['tenant'], $a['dispatcher'],
-        Vehicle::factory()->forTenant($a['tenant'])->create(['category' => 'sedan']),
+        Vehicle::factory()->create(['category' => 'sedan']),
         $a['driver'],
     );
 

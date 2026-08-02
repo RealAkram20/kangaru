@@ -57,8 +57,8 @@ class BillingFixtures
         $finance = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::FINANCE]);
         $dispatcher = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::DISPATCHER]);
 
-        $vehicle = Vehicle::factory()->forTenant($tenant)->create(['category' => 'sedan']);
-        $driver = Driver::factory()->forTenant($tenant)->create();
+        $vehicle = Vehicle::factory()->create(['category' => 'sedan']);
+        $driver = Driver::factory()->create();
 
         $card = app(RateCardService::class)->create([
             'name' => 'Standard',

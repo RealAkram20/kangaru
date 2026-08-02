@@ -13,7 +13,7 @@ function seedTripPolicyFixture(): array
 {
     $tenant = Tenant::factory()->create();
 
-    $vehicle = Vehicle::factory()->forTenant($tenant)->van()->create();
+    $vehicle = Vehicle::factory()->van()->create();
 
     $driverUser = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::DRIVER]);
     $driver = Driver::factory()->forUser($driverUser)->create(['name' => 'Driver A']);

@@ -60,8 +60,8 @@ function employeeTripFixture(): array
         // and refuses to commit either to two live trips at once.
         return app(DispatchService::class)->assign(
             $booking->refresh(),
-            Vehicle::factory()->forTenant($tenant)->create()->id,
-            Driver::factory()->forTenant($tenant)->create()->id,
+            Vehicle::factory()->create()->id,
+            Driver::factory()->create()->id,
             $dispatcher,
         );
     };
@@ -121,8 +121,8 @@ it('hides a trip that has no booking behind it', function () {
     // to an employee, so nothing should show it to one — the `?->` in the
     // policy yields null, which never equals a user id.
     $orphan = Trip::factory()->forTenant($tenant)
-        ->forVehicle(Vehicle::factory()->forTenant($tenant)->create())
-        ->forDriver(Driver::factory()->forTenant($tenant)->create())
+        ->forVehicle(Vehicle::factory()->create())
+        ->forDriver(Driver::factory()->create())
         ->create(['booking_id' => null, 'origin' => 'Kampala', 'destination' => 'Gulu']);
 
     $response = $this->actingAs($mine, 'sanctum')->getJson('/api/v1/trips')->assertOk();

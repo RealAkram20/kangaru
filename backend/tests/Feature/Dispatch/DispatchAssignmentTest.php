@@ -18,10 +18,10 @@ function seedDispatchFixture(): array
     $dispatcher = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::DISPATCHER]);
     $employee = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::CORPORATE_EMPLOYEE]);
 
-    $vehicle = Vehicle::factory()->forTenant($tenant)->van()->create();
-    $otherVehicle = Vehicle::factory()->forTenant($tenant)->create();
-    $driver = Driver::factory()->forTenant($tenant)->create();
-    $otherDriver = Driver::factory()->forTenant($tenant)->create();
+    $vehicle = Vehicle::factory()->van()->create();
+    $otherVehicle = Vehicle::factory()->create();
+    $driver = Driver::factory()->create();
+    $otherDriver = Driver::factory()->create();
 
     $booking = Booking::factory()->forTenant($tenant)->create([
         'origin' => 'Kampala', 'destination' => 'Entebbe Airport',
