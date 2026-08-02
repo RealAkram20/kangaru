@@ -185,6 +185,18 @@ confirm the notification exists.
 
 Everything here is *not built*, not "partly built".
 
+0. **A platform account's inbox is empty by fail-closed, not by having no
+   mail.** `Notification` is `BelongsToTenant`, so `Notification::query()`
+   returns nothing for a user with no tenant however the `for($user)` scope
+   narrows it. ADR-0006 deliberately did not touch this: the notification
+   that matters to Shanitah's staff is "your export is ready", and exports
+   are blocked on ADR-0007. Opening the read first would fix nothing a
+   platform user could observe. It moves when reports move.
+
+   Note the fix, when it comes, is safe on its own terms — an inbox is
+   already scoped to one recipient, so `forActor()` here widens *whose
+   tenant*, never *whose mail*.
+
 1. **Mounting the bell, and a nav entry.** The UI is built — see Frontend
    below — but `NotificationBell` is not rendered anywhere yet, because the
    place it belongs (`Topbar.tsx`) is uncommitted work in progress. That

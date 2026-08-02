@@ -262,6 +262,30 @@ The queue driver is `database`, so a worker must be running
 
 ## What's explicitly deferred
 
+0. **Every report is empty for platform staff, and this is the module's
+   largest open question.** ADR-0006 gave Shanitah's own staff cross-client
+   reads on bookings, trips and invoices, but left reports alone on
+   purpose. All four repositories build on Eloquent models, so `TenantScope`
+   fails closed and a platform account gets `200` with **zero rows** —
+   measured, not assumed:
+
+   | Account | trips | drivers | vehicles | financial |
+   |---|---|---|---|---|
+   | tenant admin | 26 | 7 | 7 | 4 |
+   | `superadmin@kangaruride.test` | 0 | 0 | 0 | 0 |
+
+   It is not "another `forActor()`". These are aggregates: summing two
+   clients' revenue into one "Total invoiced" row is not a wider report, it
+   is a different and misleading number — and the driver and vehicle
+   reports aggregate a *shared* fleet (ADR-0005), where the platform-wide
+   figure may well be the correct one. Three decisions wearing one name.
+
+   **ADR-0007 is Proposed and awaiting the owner's call.** Nothing here
+   changes until it is accepted. Exports and the notification that follows
+   them move with it — `ReportExport` is `BelongsToTenant` and an export
+   request names a report type and a date range, so there is no subject
+   record for ADR-0006's `BindSubjectTenant` to read.
+
 1. **Payments, and therefore a true "outstanding".** The financial report's
    outstanding figure is issued-less-credited because nothing in the
    platform records money coming in (`Modules/Billing`, deferred item 1).
