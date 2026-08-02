@@ -13,7 +13,7 @@ class AuditLogIndexRequest extends FormRequest
      * Query params this endpoint recognizes. Anything else fails
      * validation — AGENTS.md: "unknown filters return 422, not silence."
      */
-    private const ALLOWED_KEYS = ['auditable_type', 'action', 'cursor'];
+    private const ALLOWED_KEYS = ['auditable_type', 'action', 'user_id', 'from', 'to', 'cursor'];
 
     public function authorize(): bool
     {
@@ -34,7 +34,28 @@ class AuditLogIndexRequest extends FormRequest
             // stale; this one cannot.
             'auditable_type' => ['sometimes', 'string', Rule::in(self::auditableTypes())],
             'action' => ['sometimes', 'string', Rule::in(self::ACTIONS)],
+            // Who did it. Not validated against `users` existing: an actor
+            // may have been an account that has since been anonymised under
+            // the retention policy, and the trail must outlive them.
+            'user_id' => ['sometimes', 'integer', 'min:1'],
+            // Dates, not datetimes. "Every credit-limit change in March" is
+            // the question this endpoint exists to answer, and nobody asks
+            // it to the second.
+            'from' => ['sometimes', 'date_format:Y-m-d'],
+            'to' => ['sometimes', 'date_format:Y-m-d', 'after_or_equal:from'],
             'cursor' => ['sometimes', 'string'],
+        ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'to.after_or_equal' => 'The end of the range cannot fall before its start.',
+            'from.date_format' => 'Dates are YYYY-MM-DD, e.g. 2026-03-01.',
+            'to.date_format' => 'Dates are YYYY-MM-DD, e.g. 2026-03-31.',
         ];
     }
 

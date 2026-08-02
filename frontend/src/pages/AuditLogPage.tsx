@@ -7,6 +7,7 @@ import { DataTable, type DataColumn } from '../components/data/DataTable'
 import { Alert } from '../components/feedback/Alert'
 import { EmptyState } from '../components/feedback/EmptyState'
 import { FormField } from '../components/forms/FormField'
+import { Input } from '../components/forms/Input'
 import { Select } from '../components/forms/Select'
 import { apiClient } from '../lib/apiClient'
 import { apiError } from '../lib/apiError'
@@ -32,6 +33,21 @@ import type { AuditAction, AuditLogEntry, AuditLogMeta } from '../types/auditLog
 
 /** DataTable keys rows off `id`, which an audit row already has. */
 type Row = AuditLogEntry
+
+interface Filters {
+  auditable_type: string
+  action: string
+  user_id: string
+  /** YYYY-MM-DD. `to` is inclusive of its whole day, server-side. */
+  from: string
+  to: string
+}
+
+const EMPTY_FILTERS: Filters = { auditable_type: '', action: '', user_id: '', from: '', to: '' }
+
+function hasAnyFilter(filters: Filters): boolean {
+  return Object.values(filters).some((value) => value !== '')
+}
 
 const ACTION_TONE: Record<AuditAction, 'success' | 'info' | 'error'> = {
   created: 'success',
@@ -71,7 +87,12 @@ function displayValue(value: unknown): string {
 export function AuditLogPage() {
   const [entries, setEntries] = useState<AuditLogEntry[] | null>(null)
   const [meta, setMeta] = useState<AuditLogMeta | null>(null)
-  const [filters, setFilters] = useState({ auditable_type: '', action: '' })
+  // `draft` is what the controls show; `filters` is what the last request
+  // actually used. Split because a date is typed a character at a time —
+  // querying on each keystroke would fire "2026-0" as a range, and paging
+  // must keep using the filters the current page was fetched with.
+  const [draft, setDraft] = useState<Filters>(EMPTY_FILTERS)
+  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
   const [error, setError] = useState<string | null>(null)
   const [refused, setRefused] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -101,16 +122,17 @@ export function AuditLogPage() {
   }, [])
 
   const load = useCallback(
-    (next: typeof filters, cursor: string | null) =>
+    (next: Filters, cursor: string | null) =>
       fetchEntries(next, cursor).then((result) => applyResult(result, cursor !== null), fail),
     [applyResult, fail],
   )
 
   useEffect(() => {
-    void load({ auditable_type: '', action: '' }, null)
+    void load(EMPTY_FILTERS, null)
   }, [load])
 
-  const apply = (next: typeof filters) => {
+  const apply = (next: Filters) => {
+    setDraft(next)
     setFilters(next)
     setEntries(null)
     setExpanded(null)
@@ -232,8 +254,8 @@ export function AuditLogPage() {
             <Select
               id="a-type"
               placeholder="Everything"
-              value={filters.auditable_type}
-              onChange={(e) => apply({ ...filters, auditable_type: e.target.value })}
+              value={draft.auditable_type}
+              onChange={(e) => setDraft({ ...draft, auditable_type: e.target.value })}
               // Straight from the server: this page holds no list of what
               // is auditable, so a newly audited model appears here without
               // a frontend release.
@@ -247,25 +269,57 @@ export function AuditLogPage() {
             <Select
               id="a-action"
               placeholder="Any action"
-              value={filters.action}
-              onChange={(e) => apply({ ...filters, action: e.target.value })}
+              value={draft.action}
+              onChange={(e) => setDraft({ ...draft, action: e.target.value })}
               options={(meta?.filters.actions ?? []).map((action) => ({
                 value: action,
                 label: humaniseType(action),
               }))}
             />
           </FormField>
-          {(filters.auditable_type || filters.action) && (
-            <div>
-              <Button
-                variant="secondary"
-                iconLeft="x"
-                onClick={() => apply({ auditable_type: '', action: '' })}
-              >
-                Clear filters
+          <FormField label="Changed by" htmlFor="a-actor">
+            <Select
+              id="a-actor"
+              placeholder="Anyone"
+              value={draft.user_id}
+              onChange={(e) => setDraft({ ...draft, user_id: e.target.value })}
+              // The people in this log, not every account that exists — and
+              // served, because a reader holding `audit.view` without
+              // `staff.view` cannot call /users.
+              options={(meta?.filters.actors ?? []).map((actor) => ({
+                value: String(actor.value),
+                label: actor.label,
+              }))}
+            />
+          </FormField>
+          <FormField label="From" htmlFor="a-from">
+            <Input
+              id="a-from"
+              type="date"
+              value={draft.from}
+              onChange={(e) => setDraft({ ...draft, from: e.target.value })}
+            />
+          </FormField>
+          <FormField label="To" htmlFor="a-to" hint="Includes the whole of this day.">
+            <Input
+              id="a-to"
+              type="date"
+              value={draft.to}
+              onChange={(e) => setDraft({ ...draft, to: e.target.value })}
+            />
+          </FormField>
+          <div style={{ display: 'flex', gap: 'var(--gap-inline)' }}>
+            {/* Explicit, not on change: a date is typed a character at a
+                time, and "2026-0" is not a range anybody meant to run. */}
+            <Button iconLeft="filter" onClick={() => apply(draft)}>
+              Apply filters
+            </Button>
+            {hasAnyFilter(filters) && (
+              <Button variant="secondary" iconLeft="x" onClick={() => apply(EMPTY_FILTERS)}>
+                Clear
               </Button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </Card>
 
@@ -274,12 +328,12 @@ export function AuditLogPage() {
           <EmptyState
             icon="file-clock"
             title={
-              filters.auditable_type || filters.action
+              hasAnyFilter(filters)
                 ? 'Nothing matches these filters'
                 : 'Nothing has been recorded yet'
             }
             description={
-              filters.auditable_type || filters.action
+              hasAnyFilter(filters)
                 ? 'Widen the filters, or clear them to see the whole trail.'
                 : 'Changes to companies, staff, roles, rate cards and invoices appear here as they happen.'
             }
@@ -318,12 +372,17 @@ export function AuditLogPage() {
 }
 
 async function fetchEntries(
-  filters: { auditable_type: string; action: string },
+  filters: Filters,
   cursor: string | null,
 ): Promise<{ entries: AuditLogEntry[]; meta: AuditLogMeta | null }> {
   const params = new URLSearchParams()
+  // Empty values are omitted rather than sent blank: `from=` fails the
+  // server's Y-m-d format rule, so an untouched field would 422.
   if (filters.auditable_type) params.set('auditable_type', filters.auditable_type)
   if (filters.action) params.set('action', filters.action)
+  if (filters.user_id) params.set('user_id', filters.user_id)
+  if (filters.from) params.set('from', filters.from)
+  if (filters.to) params.set('to', filters.to)
   if (cursor) params.set('cursor', cursor)
 
   const response = await apiClient.get<ApiSuccess<AuditLogEntry[], AuditLogMeta>>(

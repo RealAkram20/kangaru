@@ -36,7 +36,14 @@ function entry(overrides: Partial<AuditLogEntry> = {}): AuditLogEntry {
 function meta(overrides: Partial<AuditLogMeta> = {}): AuditLogMeta {
   return {
     cursor: { next: null },
-    filters: { auditable_types: TYPES, actions: ['created', 'updated', 'deleted'] },
+    filters: {
+      auditable_types: TYPES,
+      actions: ['created', 'updated', 'deleted'],
+      actors: [
+        { value: 5, label: 'Ada Nakato' },
+        { value: 6, label: 'Brian Okello' },
+      ],
+    },
     scope: 'tenant',
     ...overrides,
   }
@@ -55,12 +62,12 @@ describe('AuditLogPage', () => {
   it('shows who changed what, when, and from where', async () => {
     renderAs(<AuditLogPage />)
 
-    // Scoped to the row: "Company" and "Updated" are also options in the
-    // filter selects, which are populated from the same server list.
-    const row = (await screen.findByText('Ada Nakato')).closest('tr') as HTMLElement
+    // Anchored on the IP, and scoped to the row: the record type, the
+    // action and now the actor name all also appear as options in the
+    // filter selects, which are populated from the same server lists.
+    const row = (await screen.findByText('196.43.150.2')).closest('tr') as HTMLElement
 
     // AGENTS.md asks for who, what, before/after, when, and from which IP.
-    expect(within(row).getByText('196.43.150.2')).toBeInTheDocument()
     expect(within(row).getByText('updated')).toBeInTheDocument()
     expect(within(row).getByText('Company')).toBeInTheDocument()
     expect(within(row).getByText('#3')).toBeInTheDocument()
@@ -133,7 +140,7 @@ describe('AuditLogPage', () => {
   it('offers exactly the record types the server said it accepts', async () => {
     renderAs(<AuditLogPage />)
 
-    await screen.findByText('Ada Nakato')
+    await screen.findByText('196.43.150.2')
 
     const options = within(screen.getByLabelText(/^Record type/))
       .getAllByRole('option')
@@ -149,9 +156,10 @@ describe('AuditLogPage', () => {
     const user = userEvent.setup()
     renderAs(<AuditLogPage />)
 
-    await screen.findByText('Ada Nakato')
+    await screen.findByText('196.43.150.2')
 
     await user.selectOptions(screen.getByLabelText(/^Record type/), 'role')
+    await user.click(screen.getByRole('button', { name: /apply filters/i }))
 
     // Cursor-paginated at 25, so filtering locally would report "nothing
     // matches" for entries that had simply not been fetched.
@@ -160,21 +168,96 @@ describe('AuditLogPage', () => {
     )
   })
 
+  /**
+   * "Show me every credit-limit change in March" is the question this
+   * screen exists to answer, and it was unanswerable until these landed.
+   */
+  it('sends a date range and an actor together', async () => {
+    const user = userEvent.setup()
+    renderAs(<AuditLogPage />)
+
+    await screen.findByText('196.43.150.2')
+
+    await user.selectOptions(screen.getByLabelText(/^Record type/), 'company')
+    await user.selectOptions(screen.getByLabelText(/^Changed by/), '6')
+    await user.type(screen.getByLabelText(/^From/), '2026-03-01')
+    await user.type(screen.getByLabelText(/^To/), '2026-03-31')
+    await user.click(screen.getByRole('button', { name: /apply filters/i }))
+
+    await waitFor(() => {
+      const url = get.mock.calls[get.mock.calls.length - 1][0] as string
+      expect(url).toContain('auditable_type=company')
+      expect(url).toContain('user_id=6')
+      expect(url).toContain('from=2026-03-01')
+      expect(url).toContain('to=2026-03-31')
+    })
+  })
+
+  it('does not query while a date is still being typed', async () => {
+    const user = userEvent.setup()
+    renderAs(<AuditLogPage />)
+
+    await screen.findByText('196.43.150.2')
+    const before = get.mock.calls.length
+
+    await user.type(screen.getByLabelText(/^From/), '2026-03-01')
+
+    // "2026-0" is not a range anybody meant to run, and the server would
+    // 422 it on the Y-m-d format rule.
+    expect(get.mock.calls.length).toBe(before)
+  })
+
+  it('omits blank filters rather than sending them empty', async () => {
+    const user = userEvent.setup()
+    renderAs(<AuditLogPage />)
+
+    await screen.findByText('196.43.150.2')
+    await user.selectOptions(screen.getByLabelText(/^Action/), 'deleted')
+    await user.click(screen.getByRole('button', { name: /apply filters/i }))
+
+    await waitFor(() => {
+      const url = get.mock.calls[get.mock.calls.length - 1][0] as string
+      expect(url).toContain('action=deleted')
+      // `from=` fails the server's date_format rule; an untouched field
+      // must not turn into a 422.
+      expect(url).not.toContain('from=')
+      expect(url).not.toContain('user_id=')
+    })
+  })
+
+  it('offers the actors the server said appear in this log', async () => {
+    renderAs(<AuditLogPage />)
+
+    await screen.findByText('196.43.150.2')
+
+    const options = within(screen.getByLabelText(/^Changed by/))
+      .getAllByRole('option')
+      .map((o) => o.textContent)
+
+    // Not every account that exists — the ones in this reader's slice.
+    expect(options).toEqual(['Anyone', 'Ada Nakato', 'Brian Okello'])
+  })
+
   it('pages with the server cursor and appends', async () => {
     const user = userEvent.setup()
     trail([entry()], meta({ cursor: { next: 'cur-2' } }))
 
     renderAs(<AuditLogPage />)
 
-    await screen.findByText('Ada Nakato')
+    await screen.findByText('196.43.150.2')
 
     trail([entry({ id: 2, user: makeUser({ id: 6, name: 'Brian Okello' }) })], meta())
     await user.click(screen.getByRole('button', { name: /load more/i }))
 
     await waitFor(() => expect(get).toHaveBeenCalledWith(expect.stringContaining('cursor=cur-2')))
-    expect(await screen.findByText('Brian Okello')).toBeInTheDocument()
+    // Scoped to the table — both names are also options in "Changed by".
+    await waitFor(() =>
+      expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(3),
+    )
+    const table = within(screen.getByRole('table'))
+    expect(table.getByText('Brian Okello')).toBeInTheDocument()
     // Both pages, not a replacement.
-    expect(screen.getByText('Ada Nakato')).toBeInTheDocument()
+    expect(table.getByText('Ada Nakato')).toBeInTheDocument()
   })
 
   it('names the system when a change had no human actor', async () => {
@@ -219,6 +302,7 @@ describe('AuditLogPage', () => {
     expect(await screen.findByText('Nothing has been recorded yet')).toBeInTheDocument()
 
     await user.selectOptions(screen.getByLabelText(/^Action/), 'deleted')
+    await user.click(screen.getByRole('button', { name: /apply filters/i }))
 
     expect(await screen.findByText('Nothing matches these filters')).toBeInTheDocument()
   })

@@ -38,6 +38,12 @@ export interface AuditLogFilterOptions {
   /** Morph aliases: `company`, `role`, `invoice`, `vehicle_allocation`… */
   auditable_types: string[]
   actions: AuditAction[]
+  /**
+   * The people who appear in this reader's slice of the trail — not every
+   * account that exists. Served rather than read from `/users`, because a
+   * custom role holding `audit.view` without `staff.view` is refused there.
+   */
+  actors: { value: number; label: string }[]
 }
 
 export interface AuditLogMeta extends CursorMeta {

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
 use App\Models\User;
 use App\Support\Api\ApiResponse;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Modules\Administration\Requests\AuditLogIndexRequest;
 use Modules\Administration\Resources\AuditLogResource;
@@ -36,6 +37,22 @@ class AuditLogController extends Controller
                 $request->filled('action'),
                 fn ($q) => $q->where('action', $request->string('action')),
             )
+            ->when(
+                $request->filled('user_id'),
+                fn ($q) => $q->where('user_id', $request->integer('user_id')),
+            )
+            ->when(
+                $request->filled('from'),
+                fn ($q) => $q->where('created_at', '>=', Carbon::parse($request->string('from'))->startOfDay()),
+            )
+            // End of day, not midnight. `to=2026-03-31` means "including
+            // everything that happened on the 31st"; comparing against the
+            // bare date would silently drop that whole day, and a trail that
+            // quietly omits a day is worse than one that refuses the query.
+            ->when(
+                $request->filled('to'),
+                fn ($q) => $q->where('created_at', '<=', Carbon::parse($request->string('to'))->endOfDay()),
+            )
             // Every column UserResource actually returns — a partial select
             // that omits one silently renders it null instead of erroring.
             // Whole, not a column list — see TripEventController for the
@@ -61,6 +78,7 @@ class AuditLogController extends Controller
                 'filters' => [
                     'auditable_types' => AuditLogIndexRequest::auditableTypes(),
                     'actions' => AuditLogIndexRequest::ACTIONS,
+                    'actors' => $this->actors($user),
                 ],
                 // Whether this reader sees the whole platform or one tenant.
                 // A Super Admin's log includes role changes, which carry a
@@ -68,5 +86,36 @@ class AuditLogController extends Controller
                 'scope' => $user->tenant_id === null ? 'platform' : 'tenant',
             ],
         );
+    }
+
+    /**
+     * The people who actually appear in this reader's slice of the trail.
+     *
+     * Served rather than pointing the client at `/users`, because the two
+     * are different questions and different permissions: `AuditLogPolicy`
+     * exists so a custom "Auditor" role can read the log **without**
+     * `staff.view`, and such a reader would get a 403 from the staff list.
+     * This also answers the more useful question — who is in this log — in
+     * place of every account that has ever existed.
+     *
+     * Scoped the same way the listing is, so a tenant reader never learns
+     * the name of another tenant's administrator.
+     *
+     * @return array<int, array{value: int, label: string}>
+     */
+    private function actors(User $user): array
+    {
+        $query = $user->tenant_id === null
+            ? AuditLog::allTenants()
+            : AuditLog::query();
+
+        $ids = $query->whereNotNull('user_id')->distinct()->pluck('user_id');
+
+        return User::query()
+            ->whereIn('id', $ids)
+            ->orderBy('name')
+            ->get(['id', 'name'])
+            ->map(fn (User $actor) => ['value' => $actor->id, 'label' => $actor->name])
+            ->all();
     }
 }

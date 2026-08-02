@@ -62,7 +62,7 @@ permission catalogue, and the audit log.
 | POST | `/api/v1/roles` | Sanctum + tenant | `RolePolicy::create` — `roles.manage`. Slug derived from the name when omitted |
 | PATCH | `/api/v1/roles/{slug}` | Sanctum + tenant | `RolePolicy::update`. A system role's permissions may change; its name may not |
 | DELETE | `/api/v1/roles/{slug}` | Sanctum + tenant | `RolePolicy::delete` — custom roles only, and 409 `ROLE_IN_USE` while anyone holds it |
-| GET | `/api/v1/audit-logs` | Sanctum + tenant | `AuditLogPolicy::viewAny` — `audit.view`. Optional whitelisted filters `auditable_type` (any alias in the enforced morph map) and `action` (`created`\|`updated`\|`deleted`); unknown query params → 422. Cursor-paginated. `meta.filters` carries the accepted values, `meta.scope` says whether this reader is `platform` or `tenant` |
+| GET | `/api/v1/audit-logs` | Sanctum + tenant | `AuditLogPolicy::viewAny` — `audit.view`. Whitelisted filters: `auditable_type` (any alias in the enforced morph map), `action`, `user_id`, `from`/`to` (`Y-m-d`; `to` includes its whole day). Unknown params → 422. Cursor-paginated. `meta.filters` carries the accepted values plus the actors present in this reader's slice; `meta.scope` is `platform` or `tenant` |
 
 ## Notes
 
@@ -98,13 +98,19 @@ Named here so a half-built thing is not mistaken for a finished one.
   an audit trail cannot tell apart from impersonation. There is no
   endpoint, and adding one needs a decision about how it is evidenced —
   e.g. a forced reset on next login rather than a chosen password.
-- **Audit log: no export, no search, no date range.** The reader exists
-  (`frontend/src/pages/AuditLogPage.tsx`) with type and action filters,
-  before/after diffs and cursor paging. What it has not got: a date range,
-  free-text search, filtering by actor, and any way to export — a bank
-  asking "show me every credit-limit change in March" cannot be answered
-  from this screen. `AuditLogIndexRequest` accepts three filters and that
-  is the whole surface.
+- **Audit log: no export and no free-text search.** The reader
+  (`frontend/src/pages/AuditLogPage.tsx`) filters by record type, action,
+  actor and date range, shows before/after diffs and pages by cursor — so
+  "every credit-limit change in March" is answerable. What it still has
+  not got: any way to **export** (a bank will ask for the PDF or the
+  spreadsheet, and `Modules/Reports`' export machinery is not wired to
+  this endpoint), free-text search across the diff itself, and filtering
+  to a single record — you can ask for every Company change but not for
+  Company #3's history.
+- **`meta.filters.actors` runs a `DISTINCT user_id` over the reader's
+  slice on every request.** Fine at Phase 1 volumes and indexed, but it is
+  an unbounded scan on a table PROJECT.md expects to grow indefinitely.
+  Worth caching or bounding before the trail gets large.
 - **Role audit rows are invisible to a tenant reader**, and this is
   correct but worth stating: they carry a **null `tenant_id`** because the
   catalogue is platform-wide, so `TenantScope` hides them. A Corporate
