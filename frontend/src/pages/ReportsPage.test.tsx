@@ -1,0 +1,276 @@
+import { screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { apiFailure, apiOk, renderAs } from '../test/harness'
+import type { TripReportRow, TripReportSummary } from '../types/report'
+import { ReportsPage } from './ReportsPage'
+
+vi.mock('../lib/apiClient', () => ({
+  apiClient: { get: vi.fn(), post: vi.fn() },
+}))
+
+const { apiClient } = await import('../lib/apiClient')
+const get = vi.mocked(apiClient.get)
+
+function row(overrides: Partial<TripReportRow> = {}): TripReportRow {
+  return {
+    trip_id: 41,
+    booking_id: 12,
+    status: 'trip_completed',
+    commenced_at: '2026-07-21T08:14:22.000000Z',
+    completed_at: '2026-07-21T09:20:22.000000Z',
+    vehicle_registration: 'UAA 123A',
+    vehicle_description: 'Toyota Hiace',
+    driver_name: 'Moses Kato',
+    origin: 'Kampala',
+    destination: 'Entebbe',
+    odometer_start: 41200,
+    odometer_end: 41242,
+    distance_km: '42.00',
+    duration_minutes: 66,
+    is_complete: true,
+    ...overrides,
+  } as TripReportRow
+}
+
+function summary(overrides: Partial<TripReportSummary> = {}): TripReportSummary {
+  return {
+    trips: 1,
+    trips_completed: 1,
+    distance_km: 42,
+    duration_minutes: 66,
+    records_incomplete: 0,
+    completeness_percent: 100,
+    ...overrides,
+  }
+}
+
+/**
+ * The page issues four different reads on mount: the report itself, the
+ * vehicle and driver pickers, and ExportPanel's list of past exports. Each
+ * is answered by shape rather than by a catch-all — feeding ExportPanel the
+ * trip rows crashes it on a field they do not have, and because nothing
+ * catches that, the whole page renders blank.
+ */
+function report(rows: TripReportRow[], meta: TripReportSummary | null = summary()) {
+  get.mockImplementation((url: string) => {
+    if (url.startsWith('/vehicles'))
+      return Promise.resolve(apiOk([{ id: 7, registration_number: 'UAA 123A' }]))
+    if (url.startsWith('/drivers')) return Promise.resolve(apiOk([{ id: 3, name: 'Moses Kato' }]))
+    if (url.startsWith('/reports/exports')) return Promise.resolve(apiOk([]))
+    if (url.startsWith('/reports/financial')) {
+      return Promise.resolve(
+        apiOk([], {
+          summary: {
+            invoiced_minor: 0,
+            credited_minor: 0,
+            outstanding_minor: 0,
+            invoices: 0,
+            credit_notes: 0,
+            payments_recorded: false,
+            periods: 0,
+          },
+        }),
+      )
+    }
+    if (url.startsWith('/reports/drivers') || url.startsWith('/reports/vehicles')) {
+      return Promise.resolve(apiOk([]))
+    }
+
+    return Promise.resolve(
+      apiOk(
+        rows,
+        meta === null ? { cursor: { next: null } } : { cursor: { next: null }, summary: meta },
+      ),
+    )
+  })
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  report([row()])
+})
+
+describe('ReportsPage', () => {
+  /**
+   * PROJECT.md: "The Bank's six required data points appear on every trip
+   * report." This is the column-level counterpart to the TripsPage test.
+   */
+  it('carries all six Bank data points as columns', async () => {
+    renderAs(<ReportsPage />)
+
+    await screen.findByText('#41')
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent)
+
+    expect(headers).toEqual(
+      expect.arrayContaining([
+        'Commenced',
+        'Completed',
+        'Vehicle',
+        'Origin',
+        'Destination',
+        'Opening odo.',
+        'Closing odo.',
+        'Distance',
+        'Duration',
+      ]),
+    )
+
+    const line = screen.getByText('#41').closest('tr') as HTMLElement
+    expect(within(line).getByText('UAA 123A')).toBeInTheDocument()
+    expect(within(line).getByText('41,200')).toBeInTheDocument()
+    expect(within(line).getByText('41,242')).toBeInTheDocument()
+    expect(within(line).getByText('42.0 km')).toBeInTheDocument()
+    expect(within(line).getByText('1h 6m')).toBeInTheDocument()
+  })
+
+  /**
+   * A trip still on the road is not a deficient record — it has not
+   * finished. Only a *completed* trip missing a required data point is a
+   * compliance problem, and conflating the two would inflate the number a
+   * bank is shown.
+   */
+  it('does not call an unfinished trip an incomplete record', async () => {
+    report([
+      row(),
+      row({
+        trip_id: 42,
+        completed_at: null,
+        odometer_end: null,
+        distance_km: null,
+        duration_minutes: null,
+        is_complete: false,
+      }),
+      row({ trip_id: 43, odometer_end: null, is_complete: false }),
+    ])
+
+    renderAs(<ReportsPage />)
+
+    await screen.findByText('#41')
+
+    const line = (id: string) => screen.getByText(id).closest('tr') as HTMLElement
+
+    expect(within(line('#41')).getByText('Complete')).toBeInTheDocument()
+    expect(within(line('#42')).getByText('In progress')).toBeInTheDocument()
+    expect(within(line('#43')).getByText('Incomplete')).toBeInTheDocument()
+  })
+
+  it('reports completeness against the Bank criterion, and names the shortfall', async () => {
+    report(
+      [row()],
+      summary({ trips: 4, trips_completed: 3, records_incomplete: 1, completeness_percent: 67 }),
+    )
+
+    renderAs(<ReportsPage />)
+
+    await screen.findByText('#41')
+
+    expect(screen.getByText('67%')).toBeInTheDocument()
+    expect(screen.getByText('1 missing a required data point')).toBeInTheDocument()
+  })
+
+  it('says nothing has completed rather than claiming 100%', async () => {
+    report(
+      [row()],
+      summary({ trips: 2, trips_completed: 0, records_incomplete: 0, completeness_percent: null }),
+    )
+
+    renderAs(<ReportsPage />)
+
+    await screen.findByText('#41')
+
+    // Null is not 100 — a period in which nothing finished has no
+    // completeness figure, and showing one would be an invented compliance
+    // number.
+    // Two levels: KPIStat puts the label and the value in sibling divs, so
+    // the label's own parent is only the header row.
+    const stat = screen.getByText('Records complete').parentElement?.parentElement as HTMLElement
+    expect(within(stat).getByText('—')).toBeInTheDocument()
+    expect(within(stat).queryByText('100%')).toBeNull()
+  })
+
+  it('does not re-query on every keystroke in a date field', async () => {
+    const user = userEvent.setup()
+    renderAs(<ReportsPage />)
+
+    await screen.findByText('#41')
+    const before = get.mock.calls.length
+
+    await user.clear(screen.getByLabelText(/^From/))
+    await user.type(screen.getByLabelText(/^From/), '2026-06-01')
+
+    // A half-typed date range is not a range anybody meant to run.
+    expect(get.mock.calls.length).toBe(before)
+
+    await user.click(screen.getByRole('button', { name: /run report/i }))
+    await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(before))
+  })
+
+  it('sends the vehicle and driver filters the pickers were populated with', async () => {
+    const user = userEvent.setup()
+    renderAs(<ReportsPage />)
+
+    await screen.findByText('#41')
+
+    await user.selectOptions(screen.getByLabelText(/^Vehicle/), '7')
+    await user.click(screen.getByRole('button', { name: /run report/i }))
+
+    await waitFor(() => expect(get).toHaveBeenCalledWith(expect.stringContaining('vehicle_id=7')))
+  })
+
+  /**
+   * Only the financial report buckets by period; the server rejects
+   * `group_by` on the others rather than ignoring it, so offering the
+   * control elsewhere would be offering a 422.
+   */
+  it('offers Group by on the financial report and nowhere else', async () => {
+    const user = userEvent.setup()
+    renderAs(<ReportsPage />)
+
+    await screen.findByText('#41')
+    expect(screen.queryByLabelText(/^Group by/)).toBeNull()
+
+    await user.selectOptions(screen.getByLabelText(/^Report/), 'financial')
+
+    expect(screen.getByLabelText(/^Group by/)).toBeInTheDocument()
+    // And the trip-only filters go away with it.
+    expect(screen.queryByLabelText(/^Vehicle/)).toBeNull()
+    expect(screen.queryByLabelText(/^Driver/)).toBeNull()
+  })
+
+  it('says a period is empty rather than showing a bare table', async () => {
+    report(
+      [],
+      summary({
+        trips: 0,
+        trips_completed: 0,
+        distance_km: 0,
+        duration_minutes: 0,
+        completeness_percent: null,
+      }),
+    )
+
+    renderAs(<ReportsPage />)
+
+    expect(await screen.findByText('No trips in this period')).toBeInTheDocument()
+    expect(
+      screen.getByText(/Widen the range or clear the vehicle and driver filters/i),
+    ).toBeInTheDocument()
+  })
+
+  it('says so when a report cannot be run', async () => {
+    report([row()])
+    get.mockImplementation((url: string) =>
+      url.startsWith('/reports/trips')
+        ? Promise.reject(apiFailure(500, 'SERVER_ERROR', 'The report timed out.'))
+        : Promise.resolve(apiOk([])),
+    )
+
+    renderAs(<ReportsPage />)
+
+    const alert = (await screen.findByText('Report problem')).closest('div') as HTMLElement
+    // Scoped to this alert: ExportPanel raises its own banner for its own
+    // failures, and the two must not be read as one.
+    expect(within(alert).getByText('The report timed out.')).toBeInTheDocument()
+  })
+})
