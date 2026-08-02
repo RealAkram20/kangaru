@@ -12,6 +12,7 @@ import { LoginPage } from '../pages/LoginPage'
 import { NotificationsPage } from '../pages/NotificationsPage'
 import { RateCardsPage } from '../pages/RateCardsPage'
 import { ReportsPage } from '../pages/ReportsPage'
+import { StaffPage } from '../pages/StaffPage'
 import { TripsPage } from '../pages/TripsPage'
 import { VehiclesPage } from '../pages/VehiclesPage'
 
@@ -66,6 +67,14 @@ export const router = createBrowserRouter([
       // Unguarded, like Dashboard, Bookings and Trips: every account has
       // an inbox, and the server scopes each of these to the caller.
       { path: 'notifications', element: <NotificationsPage /> },
+      {
+        path: 'staff',
+        element: (
+          <RequireNavAccess id="staff">
+            <StaffPage />
+          </RequireNavAccess>
+        ),
+      },
       {
         path: 'companies',
         element: (

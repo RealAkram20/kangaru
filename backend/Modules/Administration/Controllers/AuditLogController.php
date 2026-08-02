@@ -35,7 +35,13 @@ class AuditLogController extends Controller
             )
             // Every column UserResource actually returns — a partial select
             // that omits one silently renders it null instead of erroring.
-            ->with('user:id,tenant_id,name,email,role,created_at')
+            // Whole, not a column list — see TripEventController for the
+            // same fix. A select enumerating exactly the columns
+            // UserResource reads couples the two silently: this endpoint
+            // returned 500 the moment the resource gained a field, and no
+            // test noticed because none of them render an audit row's
+            // actor. It was found by calling the endpoint.
+            ->with('user')
             ->orderBy('created_at', 'desc')
             ->orderBy('id', 'desc');
 

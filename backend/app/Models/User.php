@@ -5,6 +5,8 @@ namespace App\Models;
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Concerns\Auditable;
 use App\Enums\UserRole;
+use App\Enums\UserStatus;
+use Carbon\CarbonInterface;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -18,6 +20,10 @@ use Laravel\Sanctum\HasApiTokens;
  * enforced downstream, once IdentifyTenant middleware sets TenantContext
  * from this (now-authenticated) user's tenant_id.
  *
+ * @property UserStatus $status Writable, unlike $role: UserAdminService
+ *                              assigns it directly so the status change and its deactivated_at stamp
+ *                              happen in one save and produce one audit entry.
+ * @property CarbonInterface|null $deactivated_at
  * @property-read UserRole $role Explicit annotation so static analysis
  *   resolves the enum cast correctly through JsonResource's @mixin and
  *   through Policy method parameters, not just direct model access.
@@ -38,6 +44,8 @@ class User extends Authenticatable
         'password',
         'tenant_id',
         'role',
+        'status',
+        'deactivated_at',
     ];
 
     /**
@@ -61,11 +69,18 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'role' => UserRole::class,
+            'status' => UserStatus::class,
+            'deactivated_at' => 'datetime',
         ];
     }
 
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);
+    }
+
+    public function isActive(): bool
+    {
+        return $this->status === UserStatus::ACTIVE;
     }
 }

@@ -22,6 +22,15 @@ class UserResource extends JsonResource
             'name' => $this->name,
             'email' => $this->email,
             'role' => $this->role->value,
+            // Additive fields only (AGENTS.md: new optional fields are
+            // allowed within a version). /auth/me returns this same
+            // resource, so an existing client keeps working and gains a
+            // status it can ignore.
+            'role_label' => $this->role->label(),
+            'status' => $this->status->value,
+            'status_label' => $this->status->label(),
+            'is_active' => $this->isActive(),
+            'deactivated_at' => $this->deactivated_at,
             'created_at' => $this->created_at,
         ];
     }

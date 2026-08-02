@@ -46,6 +46,9 @@ const DISPATCH_ROLES: Role[] = [
   'depot_manager',
 ]
 
+/** Modules\Administration\Policies\UserPolicy::ADMINISTRATORS. */
+const USER_ADMINISTRATORS: Role[] = ['super_admin', 'corporate_admin']
+
 /** InvoicePolicy::READERS and RateCardPolicy::RATE_VIEWERS — identical sets. */
 const BILLING_READERS: Role[] = ['super_admin', 'finance', 'operations_manager', 'corporate_admin']
 
@@ -62,6 +65,7 @@ const VISIBLE_TO: Record<string, Role[]> = {
   // in them (a Corporate Employee sees their own, a Driver sees theirs), so
   // hiding the entry would remove the one page they most need.
   dispatch: DISPATCH_ROLES,
+  staff: USER_ADMINISTRATORS,
   invoices: BILLING_READERS,
   'rate-cards': BILLING_READERS,
   reports: REPORT_READERS,

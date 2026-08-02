@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use Modules\Administration\Policies\AuditLogPolicy;
+use Modules\Administration\Policies\UserPolicy;
 use Modules\Billing\Models\CreditNote;
 use Modules\Billing\Models\Invoice;
 use Modules\Billing\Models\RateCard;
@@ -59,6 +60,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Booking::class, BookingPolicy::class);
         Gate::policy(RateCard::class, RateCardPolicy::class);
         Gate::policy(Invoice::class, InvoicePolicy::class);
+        Gate::policy(User::class, UserPolicy::class);
 
         // A Gate rather than a Policy: reports are not a model, and
         // AGENTS.md's authorization rule names Gates alongside Policies.
