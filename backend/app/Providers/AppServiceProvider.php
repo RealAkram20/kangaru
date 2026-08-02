@@ -32,6 +32,7 @@ use Modules\Drivers\Policies\DriverPolicy;
 use Modules\Fleet\Models\VehicleAllocation;
 use Modules\Notifications\Listeners\SendBookingDecisionNotification;
 use Modules\Notifications\Listeners\SendReportExportReadyNotification;
+use Modules\Reports\Enums\ReportType;
 use Modules\Reports\Events\ReportExportCompleted;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Policies\TripPolicy;
@@ -72,6 +73,14 @@ class AppServiceProvider extends ServiceProvider
         // report spans the whole tenant's fleet, which is more than either
         // should see.
         Gate::define('viewReports', fn (User $user) => $user->hasPermission(Permission::REPORTS_VIEW));
+
+        // Per-report, because "may run a report" and "may see this report's
+        // data" are different questions. `viewReports` above answers only
+        // the first, and gating all four reports on it alone meant a
+        // Dispatcher — refused /invoices — could read and export a client's
+        // invoiced, credited and outstanding totals. See
+        // ReportType::permissions().
+        Gate::define('viewReport', fn (User $user, ReportType $report) => $report->isReadableBy($user));
 
         // Explicit listener registration, for the same reason the policies
         // above are explicit: Laravel's event discovery scans app/Listeners

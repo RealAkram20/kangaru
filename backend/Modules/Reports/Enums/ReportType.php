@@ -2,6 +2,9 @@
 
 namespace Modules\Reports\Enums;
 
+use App\Enums\Permission;
+use App\Models\User;
+
 /**
  * The reports this module can produce.
  *
@@ -28,6 +31,47 @@ enum ReportType: string
             self::VEHICLES => 'Vehicle report',
             self::FINANCIAL => 'Financial report',
         };
+    }
+
+    /**
+     * Every permission a reader must hold to see this report — all of them,
+     * not any.
+     *
+     * `reports.view` alone used to gate all four, on the assumption that
+     * running a report is one ability. It is not: a report is a *view of
+     * some data*, and the reader needs to be allowed that data too. The
+     * assumption held while every report aggregated trips, and stopped
+     * holding when the financial report started aggregating invoices —
+     * `reports.view` and `invoices.view` diverge across four seeded roles,
+     * so a Dispatcher refused `/invoices` could read and export a client's
+     * invoiced, credited and outstanding totals.
+     *
+     * Deliberately additive: `reports.view` says you may use the reports
+     * area at all, and the second permission says which data you may have
+     * in one. A custom role holding `invoices.view` but not `reports.view`
+     * gets the Invoices page and no financial report, which is the right
+     * reading of both grants.
+     *
+     * @return array<int, Permission>
+     */
+    public function permissions(): array
+    {
+        return match ($this) {
+            self::TRIPS, self::DRIVERS, self::VEHICLES => [Permission::REPORTS_VIEW],
+            self::FINANCIAL => [Permission::REPORTS_VIEW, Permission::INVOICES_VIEW],
+        };
+    }
+
+    /** Whether this user may see this report at all. */
+    public function isReadableBy(User $user): bool
+    {
+        foreach ($this->permissions() as $permission) {
+            if (! $user->hasPermission($permission)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**

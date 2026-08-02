@@ -81,9 +81,17 @@ it('gives a custom role exactly the access it was granted, and no more', functio
     // The whole point of the feature: this combination was not expressible
     // before, and it is enforced by the same policies as everything else.
     $this->actingAs($user, 'sanctum')->getJson('/api/v1/trips')->assertOk();
-    $this->actingAs($user, 'sanctum')->getJson('/api/v1/reports/financial')->assertOk();
+    $this->actingAs($user, 'sanctum')->getJson('/api/v1/reports/trips')->assertOk();
     $this->actingAs($user, 'sanctum')->getJson('/api/v1/invoices')->assertForbidden();
     $this->actingAs($user, 'sanctum')->getJson('/api/v1/users')->assertForbidden();
+
+    // This line used to assert 200 on the *financial* report, which
+    // contradicted the test's own name: the role holds `reports.view` and
+    // not `invoices.view`, so a report of invoiced, credited and
+    // outstanding totals is more than it was granted. `reports.view` gated
+    // all four reports at the time, so the assertion recorded the gap
+    // rather than the intent. See ReportAuthorizationTest.
+    $this->actingAs($user, 'sanctum')->getJson('/api/v1/reports/financial')->assertForbidden();
 
     // A complete payload on purpose: an empty one would 422 on validation
     // before the policy ever ran, and a test that accepts 422 as proof of

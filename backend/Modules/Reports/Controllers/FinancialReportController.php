@@ -26,13 +26,17 @@ class FinancialReportController extends Controller
 
     public function index(FinancialReportRequest $request): JsonResponse
     {
-        // The same gate the other reports use. This one arguably wants a
-        // narrower one — it is the tenant's money rather than its mileage —
-        // but Operations Manager and Corporate Admin can already read every
-        // invoice through Modules/Billing's own `viewAny`, so a stricter
-        // gate here would withhold the total of figures they can already
-        // list one by one. The place to tighten that is InvoicePolicy.
-        $this->authorize('viewReports');
+        // `reports.view` **and** `invoices.view` (ReportType::permissions()).
+        //
+        // This used to be the bare `viewReports` gate, reasoned as: Operations
+        // Manager and Corporate Admin can already list every invoice, so
+        // withholding their total would be pointless. True of those two, and
+        // the reason this survived — but they are not the whole set.
+        // Dispatcher, Branch Manager, Depot Manager and Fleet Owner hold
+        // `reports.view` and not `invoices.view`, and this endpoint was
+        // handing them a client's invoiced, credited and outstanding figures
+        // that /invoices refuses them.
+        $this->authorize('viewReport', ReportType::FINANCIAL);
 
         $source = $this->sources->for(ReportType::FINANCIAL);
         $filters = $request->filters();

@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useAuth } from '../auth/useAuth'
+import { canViewInvoices } from '../lib/billing'
 import { apiClient } from '../lib/apiClient'
 import { apiError } from '../lib/apiError'
 import { formatTimestamp } from '../lib/format'
@@ -84,7 +86,12 @@ const COLUMNS: DataColumn<ReportTableRow>[] = [
     render: (row) => formatOdometer(row.odometer_end),
   },
   // 5. Total distance travelled.
-  { key: 'distance_km', header: 'Distance', numeric: true, render: (row) => formatDistance(row.distance_km) },
+  {
+    key: 'distance_km',
+    header: 'Distance',
+    numeric: true,
+    render: (row) => formatDistance(row.distance_km),
+  },
   // 6. Trip duration.
   {
     key: 'duration_minutes',
@@ -175,7 +182,16 @@ const GROUP_BY: { value: FinancialPeriod; label: string }[] = [
 ]
 
 export function ReportsPage() {
+  const { user } = useAuth()
   const month = currentMonth()
+  // The financial report needs `invoices.view` as well as `reports.view`,
+  // so it is not offered to a Dispatcher or Fleet Owner — the server
+  // refuses it, and a picker entry that answers 403 is a dead end rather
+  // than a feature.
+  const available = useMemo(
+    () => REPORTS.filter((r) => r.value !== 'financial' || canViewInvoices(user)),
+    [user],
+  )
   const [report, setReport] = useState<ReportType>('trips')
   // Bumped by Run report, so the aggregate reports re-fetch on demand
   // rather than on every keystroke in a date field.
@@ -195,17 +211,22 @@ export function ReportsPage() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([])
   const [drivers, setDrivers] = useState<Driver[]>([])
 
-  const apply = useCallback((result: { rows: TripReportRow[]; summary: TripReportSummary | null }) => {
-    setRows(result.rows)
-    setSummary(result.summary)
-    setError(null)
-  }, [])
+  const apply = useCallback(
+    (result: { rows: TripReportRow[]; summary: TripReportSummary | null }) => {
+      setRows(result.rows)
+      setSummary(result.summary)
+      setError(null)
+    },
+    [],
+  )
 
   const run = useCallback(
     (next: TripReportFilters) =>
       fetchReport(next)
         .then(apply)
-        .catch((failure: unknown) => setError(apiError(failure, 'Could not run this report.').message)),
+        .catch((failure: unknown) =>
+          setError(apiError(failure, 'Could not run this report.').message),
+        ),
     [apply],
   )
 
@@ -260,7 +281,7 @@ export function ReportsPage() {
               id="r-report"
               value={report}
               onChange={(e) => setReport(e.target.value as ReportType)}
-              options={REPORTS.map((r) => ({ value: r.value, label: REPORT_LABELS[r.value] }))}
+              options={available.map((r) => ({ value: r.value, label: REPORT_LABELS[r.value] }))}
             />
           </FormField>
           <FormField label="From" htmlFor="r-from">
@@ -281,24 +302,27 @@ export function ReportsPage() {
           </FormField>
           {report === 'trips' && (
             <FormField label="Vehicle" htmlFor="r-vehicle">
-            <Select
-              id="r-vehicle"
-              placeholder="All vehicles"
-              value={filters.vehicle_id}
-              onChange={(e) => setFilters({ ...filters, vehicle_id: e.target.value })}
-              options={vehicles.map((v) => ({ value: String(v.id), label: v.registration_number }))}
-            />
+              <Select
+                id="r-vehicle"
+                placeholder="All vehicles"
+                value={filters.vehicle_id}
+                onChange={(e) => setFilters({ ...filters, vehicle_id: e.target.value })}
+                options={vehicles.map((v) => ({
+                  value: String(v.id),
+                  label: v.registration_number,
+                }))}
+              />
             </FormField>
           )}
           {report === 'trips' && (
             <FormField label="Driver" htmlFor="r-driver">
-            <Select
-              id="r-driver"
-              placeholder="All drivers"
-              value={filters.driver_id}
-              onChange={(e) => setFilters({ ...filters, driver_id: e.target.value })}
-              options={drivers.map((d) => ({ value: String(d.id), label: d.name }))}
-            />
+              <Select
+                id="r-driver"
+                placeholder="All drivers"
+                value={filters.driver_id}
+                onChange={(e) => setFilters({ ...filters, driver_id: e.target.value })}
+                options={drivers.map((d) => ({ value: String(d.id), label: d.name }))}
+              />
             </FormField>
           )}
           {/* Only the financial report has periods for a cadence to bucket
@@ -362,12 +386,14 @@ export function ReportsPage() {
             value={`${summary.distance_km.toLocaleString('en-US')} km`}
             icon="route"
           />
-          <KPIStat label="Time on the road" value={formatDuration(summary.duration_minutes)} icon="clock" />
+          <KPIStat
+            label="Time on the road"
+            value={formatDuration(summary.duration_minutes)}
+            icon="clock"
+          />
           <KPIStat
             label="Records complete"
-            value={
-              summary.completeness_percent === null ? '—' : `${summary.completeness_percent}%`
-            }
+            value={summary.completeness_percent === null ? '—' : `${summary.completeness_percent}%`}
             icon={summary.records_incomplete === 0 ? 'circle-check' : 'triangle-alert'}
             // KPIStat's tone is default|accent only, so the shortfall is
             // carried by the icon and hint rather than a colour it has no
@@ -384,24 +410,23 @@ export function ReportsPage() {
       <ExportPanel filters={filters} report={report} />
 
       {report === 'trips' && (
-      <Card padding="none">
-        {rows !== null && rows.length === 0 ? (
-          <EmptyState
-            icon="file-search"
-            title="No trips in this period"
-            description="No trip commenced between the selected dates. Widen the range or clear the vehicle and driver filters."
-          />
-        ) : (
-          <DataTable<ReportTableRow>
-            columns={COLUMNS}
-            rows={(rows ?? []).map((row) => ({ ...row, id: row.trip_id }))}
-            dense
-            emptyMessage={rows === null ? 'Running…' : 'No trips in this period'}
-          />
-        )}
-      </Card>
+        <Card padding="none">
+          {rows !== null && rows.length === 0 ? (
+            <EmptyState
+              icon="file-search"
+              title="No trips in this period"
+              description="No trip commenced between the selected dates. Widen the range or clear the vehicle and driver filters."
+            />
+          ) : (
+            <DataTable<ReportTableRow>
+              columns={COLUMNS}
+              rows={(rows ?? []).map((row) => ({ ...row, id: row.trip_id }))}
+              dense
+              emptyMessage={rows === null ? 'Running…' : 'No trips in this period'}
+            />
+          )}
+        </Card>
       )}
     </div>
   )
 }
-
