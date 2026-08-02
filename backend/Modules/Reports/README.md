@@ -388,6 +388,29 @@ Re-run that check if you touch this repository.
 rows) and `frontend/src/pages/reports/ExportPanel.tsx` (format buttons,
 export list, download).
 
+**Each panel is wrapped in its own `PanelBoundary`.** A React render error
+unmounts the whole tree above it, so one panel dereferencing something the
+API did not send took the entire page with it — no message, no navigation,
+nothing to click. On the screen a bank is shown, that reads as "the product
+is broken" rather than "this figure is unavailable".
+
+Per panel rather than one boundary around the page, which would still blank
+the screen and merely apologise while doing it. A broken financial report
+now leaves the filters, the export panel, the summary tiles and the
+navigation exactly where they were.
+
+It catches **render** errors only — React boundaries never see a rejected
+promise, so a failed `GET` remains each panel's own job and still lands in
+an `Alert`. What this covers is the class no `try` reaches: a `.map` on
+something that arrived null, a field the resource stopped sending. It logs
+the stack rather than swallowing it, and offers a retry, because a render
+error is often transient state. `PanelBoundary.test.tsx` proves a thrown
+child leaves its siblings standing.
+
+The component is generic and lives in `components/feedback/`. Nothing else
+uses it yet; the other pages render one thing each, where a boundary would
+be the whole page and buy nothing.
+
 The three aggregate reports each render their own headline figures —
 `reports/FleetReport.tsx` for drivers and vehicles,
 `reports/FinancialReport.tsx` for the financial one — over a shared

@@ -77,4 +77,82 @@ describe('FormField', () => {
     expect(screen.getByText('Amount is required.')).toBeInTheDocument()
     expect(screen.queryByText('Whole shillings.')).toBeNull()
   })
+
+  it('marks the control itself as required, not only the label', () => {
+    render(
+      <FormField label="Passenger" htmlFor="passenger" required>
+        <Input id="passenger" />
+      </FormField>,
+    )
+
+    // The label's "(required)" is only heard when the label is read. A
+    // screen reader user tabbing straight into the field hears nothing
+    // without this, and field-by-field is how forms are actually
+    // navigated.
+    expect(screen.getByLabelText(/passenger/i)).toHaveAttribute('aria-required', 'true')
+  })
+
+  it('leaves an optional control unmarked rather than saying required="false"', () => {
+    render(
+      <FormField label="Notes" htmlFor="notes">
+        <Input id="notes" />
+      </FormField>,
+    )
+
+    expect(screen.getByLabelText(/notes/i)).not.toHaveAttribute('aria-required')
+  })
+
+  it('points the control at its error text, and marks it invalid', () => {
+    render(
+      <FormField label="Amount" htmlFor="amount" error="Amount is required.">
+        <Input id="amount" />
+      </FormField>,
+    )
+
+    const input = screen.getByLabelText(/amount/i)
+
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+
+    // Without the association the error is on screen and unreachable: a
+    // screen reader announces the field, says nothing about why it was
+    // rejected, and the user is left tabbing for a message they cannot
+    // find.
+    expect(input).toHaveAccessibleDescription('Amount is required.')
+  })
+
+  it('associates a hint the same way when there is no error', () => {
+    render(
+      <FormField label="Amount" htmlFor="amount" hint="Whole shillings.">
+        <Input id="amount" />
+      </FormField>,
+    )
+
+    expect(screen.getByLabelText(/amount/i)).toHaveAccessibleDescription('Whole shillings.')
+  })
+
+  it('does not overrule a caller that set the ARIA itself', () => {
+    render(
+      <FormField label="Passenger" htmlFor="passenger" required>
+        <Input id="passenger" aria-required={false} />
+      </FormField>,
+    )
+
+    // A caller with a reason to differ wins. Cloning is a convenience, not
+    // a policy the component enforces over its callers.
+    expect(screen.getByLabelText(/passenger/i)).toHaveAttribute('aria-required', 'false')
+  })
+
+  it('renders unharmed when it wraps something other than one element', () => {
+    // Children.only throws for zero or several. The field must still
+    // render — degrading to "no annotation" is fine, blowing up the page
+    // to add an ARIA attribute is not.
+    render(
+      <FormField label="Range" required>
+        <Input id="from" />
+        <Input id="to" />
+      </FormField>,
+    )
+
+    expect(screen.getByText('Range')).toBeInTheDocument()
+  })
 })

@@ -27,6 +27,7 @@ import { DataTable, type DataColumn } from '../components/data/DataTable'
 import { KPIStat } from '../components/data/KPIStat'
 import { Alert } from '../components/feedback/Alert'
 import { EmptyState } from '../components/feedback/EmptyState'
+import { PanelBoundary } from '../components/feedback/PanelBoundary'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
 import { Select } from '../components/forms/Select'
@@ -354,20 +355,32 @@ export function ReportsPage() {
         </div>
       </Card>
 
+      {/*
+        Each panel is boundaried separately rather than the page as a
+        whole. One boundary around everything would still blank the screen
+        — it would just apologise while doing it. Per panel, a broken
+        financial report leaves the filters, the export panel and the
+        navigation exactly where they were.
+      */}
       {(report === 'drivers' || report === 'vehicles') && (
-        <FleetReport report={report} from={filters.from} to={filters.to} reloadToken={fleetToken} />
+        <PanelBoundary label={`the ${report} report`}>
+          <FleetReport report={report} from={filters.from} to={filters.to} reloadToken={fleetToken} />
+        </PanelBoundary>
       )}
 
       {report === 'financial' && (
-        <FinancialReport
-          from={filters.from}
-          to={filters.to}
-          groupBy={filters.group_by}
-          reloadToken={fleetToken}
-        />
+        <PanelBoundary label="the financial report">
+          <FinancialReport
+            from={filters.from}
+            to={filters.to}
+            groupBy={filters.group_by}
+            reloadToken={fleetToken}
+          />
+        </PanelBoundary>
       )}
 
       {report === 'trips' && summary && (
+        <PanelBoundary label="the trip summary">
         <div
           style={{
             display: 'grid',
@@ -405,27 +418,35 @@ export function ReportsPage() {
             }
           />
         </div>
+        </PanelBoundary>
       )}
 
-      <ExportPanel filters={filters} report={report} />
+      <PanelBoundary label="the export panel">
+        <ExportPanel filters={filters} report={report} />
+      </PanelBoundary>
 
       {report === 'trips' && (
-        <Card padding="none">
-          {rows !== null && rows.length === 0 ? (
-            <EmptyState
-              icon="file-search"
-              title="No trips in this period"
-              description="No trip commenced between the selected dates. Widen the range or clear the vehicle and driver filters."
-            />
-          ) : (
-            <DataTable<ReportTableRow>
-              columns={COLUMNS}
-              rows={(rows ?? []).map((row) => ({ ...row, id: row.trip_id }))}
-              dense
-              emptyMessage={rows === null ? 'Running…' : 'No trips in this period'}
-            />
-          )}
-        </Card>
+        // The table carrying the Bank's six acceptance criteria. If any
+        // one row is malformed enough to throw, the summary tiles above it
+        // must survive — they are the figures a demo is actually reading.
+        <PanelBoundary label="the trip report table">
+          <Card padding="none">
+            {rows !== null && rows.length === 0 ? (
+              <EmptyState
+                icon="file-search"
+                title="No trips in this period"
+                description="No trip commenced between the selected dates. Widen the range or clear the vehicle and driver filters."
+              />
+            ) : (
+              <DataTable<ReportTableRow>
+                columns={COLUMNS}
+                rows={(rows ?? []).map((row) => ({ ...row, id: row.trip_id }))}
+                dense
+                emptyMessage={rows === null ? 'Running…' : 'No trips in this period'}
+              />
+            )}
+          </Card>
+        </PanelBoundary>
       )}
     </div>
   )
