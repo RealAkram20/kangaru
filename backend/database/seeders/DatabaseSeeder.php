@@ -74,5 +74,10 @@ class DatabaseSeeder extends Seeder
         // Fleet and trips for both tenants, driven through the real state
         // machine so the seeded timelines are genuine.
         $this->call(DemoFleetSeeder::class);
+
+        // Three months of closed, invoiced trips behind those, so the
+        // reports have periods to group and the tables have depth. Same
+        // services, same state machine — see the class docblock.
+        $this->call(DemoHistorySeeder::class);
     }
 }

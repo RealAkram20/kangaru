@@ -53,23 +53,25 @@ class DemoFleetSeeder extends Seeder
      */
     private function seedPlatformFleet(): array
     {
+        // The first six carry this seeder's live demo trips, three per
+        // tenant. The rest exist because an operator's fleet is not six
+        // vehicles, and because DemoHistorySeeder needs vehicles nothing is
+        // holding: two of the trips below deliberately stop mid-lifecycle
+        // (Trip Started, Driver Arrived) and a live trip occupies its
+        // vehicle indefinitely, so reusing these for history fails with
+        // VEHICLE_UNAVAILABLE — which is the assignment guard working.
+        $categories = ['van', 'sedan', 'suv', 'van', 'sedan', 'suv', 'minibus', 'sedan',
+            'suv', 'van', 'sedan', 'suv', 'pickup', 'minibus'];
+
+        $vehicles = collect($categories)->map(fn (string $category) => match ($category) {
+            'van' => Vehicle::factory()->van()->create(),
+            'suv' => Vehicle::factory()->create(['category' => 'suv', 'model' => 'Land Cruiser']),
+            default => Vehicle::factory()->create(['category' => $category]),
+        });
+
         return [
-            'vehicles' => collect([
-                Vehicle::factory()->van()->create(),
-                Vehicle::factory()->create(['category' => 'sedan']),
-                Vehicle::factory()->create(['category' => 'suv', 'model' => 'Land Cruiser']),
-                Vehicle::factory()->van()->create(),
-                Vehicle::factory()->create(['category' => 'sedan']),
-                Vehicle::factory()->create(['category' => 'suv', 'model' => 'Land Cruiser']),
-            ]),
-            'drivers' => collect([
-                Driver::factory()->create(),
-                Driver::factory()->create(),
-                Driver::factory()->create(),
-                Driver::factory()->create(),
-                Driver::factory()->create(),
-                Driver::factory()->create(),
-            ]),
+            'vehicles' => $vehicles,
+            'drivers' => collect(range(1, $vehicles->count()))->map(fn () => Driver::factory()->create()),
         ];
     }
 
@@ -220,6 +222,15 @@ class DemoFleetSeeder extends Seeder
                         'per_waiting_minute_minor' => 700, 'minimum_charge_minor' => 50_000],
                     ['vehicle_category' => 'van', 'base_fare_minor' => 30_000, 'per_km_minor' => 4_000,
                         'per_waiting_minute_minor' => 800, 'minimum_charge_minor' => 60_000],
+                    // Every category the fleet actually runs has to be
+                    // priced: an unpriced one is a vehicle nobody can
+                    // invoice, and the pricing engine refuses the trip
+                    // rather than guessing — which is the right refusal and
+                    // a bad demo.
+                    ['vehicle_category' => 'minibus', 'base_fare_minor' => 40_000, 'per_km_minor' => 4_800,
+                        'per_waiting_minute_minor' => 900, 'minimum_charge_minor' => 80_000],
+                    ['vehicle_category' => 'pickup', 'base_fare_minor' => 28_000, 'per_km_minor' => 3_800,
+                        'per_waiting_minute_minor' => 750, 'minimum_charge_minor' => 55_000],
                 ],
             ],
         ], $finance);
