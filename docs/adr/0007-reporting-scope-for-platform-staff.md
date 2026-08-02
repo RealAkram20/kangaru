@@ -1,6 +1,6 @@
 # ADR-0007: Reporting Scope for Platform Staff
 
-**Status:** Proposed
+**Status:** Accepted (3 August 2026)
 
 **Resolves:** the consequence ADR-0006 named and deliberately did not
 solve — "Reports and exports need a tenant decision."
@@ -66,31 +66,73 @@ has nothing to read, because an export request names a report type and a
 date range, not a record. The write would produce a tenant-less export or
 a foreign-key failure.
 
+**Measured 3 August 2026: it is the foreign-key failure, and it reaches the
+user as a `500`.** A platform Finance officer posting a financial export
+gets `SQLSTATE[23000]: Column 'tenant_id' cannot be null` thrown out of the
+insert. With `APP_DEBUG=false` the error handler catches it and returns the
+correct envelope — `{"success":false,"code":"SERVER_ERROR", ...}` with no
+SQL, no host and no database name — so this is **not** an information
+disclosure, and AGENTS.md's "never expose raw exceptions" rule is being
+honoured. It is still an unhandled integrity violation behind a button on
+the Super Admin demo path.
+
+That distinction matters for sequencing: the export is not merely
+*unscoped pending this decision*, it is **broken today**, and rule 4 is
+therefore a defect fix as much as a scoping change. Even had this ADR been
+rejected outright, the endpoint would owe the actor a clean refusal rather
+than a 500.
+
 The notification that follows ("your export is ready") is tenant-scoped
 for the same reason, which is why a platform user's inbox is empty today.
 Reports, exports and notifications are one problem, not three.
 
 ## Decision
 
-**Not taken.** This ADR is Proposed and needs the owner's call, because
-option 2 below is a product judgement about what a number *means* rather
-than an engineering trade-off.
+**Taken by the owner on 3 August 2026: the recommendation below, with one
+amendment — rule 1 refuses a client's `tenant_id` rather than ignoring it.**
 
-### Recommended: an explicit, required tenant selection for money; spanning for the fleet
+The sharp edge (rule 2) was put as a direct choice — refuse the unfiltered
+cross-client total with `422`, or produce it with a label — and the refusal
+was chosen. The reasoning that settled it is recorded in rule 2.
+
+### An explicit, required tenant selection for money; spanning for the fleet
 
 1. **`reports/trips` and `reports/financial` gain an optional
    `tenant_id` filter, honoured only for platform staff.** A client's user
-   supplying it is ignored — they have exactly one tenant and it is not a
-   parameter they get to choose.
+   supplying it is **refused with `422`, not ignored** — they have exactly
+   one tenant and it is not a parameter they get to choose.
+
+   *Amended from the proposal, which said "ignored".*
+   AGENTS.md is explicit that unknown filters "return 422, not silence".
+   The endpoint already behaves this way — verified 3 August 2026, a client
+   passing `tenant_id` gets `VALIDATION_FAILED` / *"tenant_id" is not a
+   filter this report accepts* — so ignoring would be a deliberate
+   regression to a weaker contract. And silence is the dangerous failure
+   mode: a client who passes `tenant_id=2`, gets their own data back and is
+   told nothing has no way to know the parameter was dropped, so the day
+   the predicate is inverted they get somebody else's data with no signal
+   that anything changed. Refusing loudly also gives the new isolation test
+   an unambiguous assertion — a status code, not the absence of a row.
 
 2. **For `reports/financial`, `tenant_id` is _required_ when the actor is
-   platform staff.** This is the recommendation's sharp edge and the part
-   that wants agreement. An omitted filter returns `422`, not a
-   cross-client total. Refusing to answer is better than answering with a
-   figure whose meaning nobody agreed: "all clients' revenue this month" is
-   a real question, but it is a **platform P&L**, not the client-facing
-   financial report this endpoint is, and it deserves its own endpoint
-   rather than the same one behaving differently depending on who asked.
+   platform staff.** An omitted filter returns `422`, not a cross-client
+   total. Refusing to answer is better than answering with a figure whose
+   meaning nobody agreed: "all clients' revenue this month" is a real
+   question, but it is a **platform P&L**, not the client-facing financial
+   report this endpoint is, and it deserves its own endpoint rather than
+   the same one behaving differently depending on who asked.
+
+   The counter-proposal was to produce the total with `meta.scope` and a
+   header naming it. Rejected on two grounds. First, **this report exports
+   to PDF.** A label on screen survives; a PDF gets forwarded, cropped and
+   screenshotted into a deck, and a number that is only correct while its
+   label is attached will eventually appear without it, in front of a bank.
+   Rule 5 makes the label as good as a label can be, and for a figure like
+   this one that is still not good enough. Second, the refusal is the
+   **reversible** choice: if Shanitah turns out to need a platform P&L, it
+   arrives as a new endpoint and nothing already shipped changes meaning.
+   Producing the total is not reversible — by the time it is reconsidered
+   the number is in somebody's inbox.
 
 3. **`reports/drivers` and `reports/vehicles` span every client for
    platform staff, with no filter.** They aggregate a shared fleet
@@ -142,8 +184,16 @@ that looks like an off-by-one.
 (platform staff see nothing they lack permission for). This adds: a
 platform actor's report, filtered to one tenant, contains **only** that
 tenant — and a client's user supplying `tenant_id` for somebody else's
-tenant is ignored rather than obeyed. That second one is the new escalation
-surface this ADR creates and the test that must exist before it ships.
+tenant is **refused with `422`** rather than obeyed. That second one is the
+new escalation surface this ADR creates and the test that must exist before
+it ships.
+
+Per AGENTS.md's rule that a safety-critical test must be proved to fail
+without the thing it guards: the escalation test is to be written, the
+`tenant_id` authorization check then removed, the test observed going red,
+and the check restored. A test that passes because the filter was never
+honoured for anybody proves nothing — and that is the vacuous pass this
+project has already shipped once, in a race test.
 
 **`records_incomplete` becomes ambiguous across clients.** The trip
 report's completeness figure is measured against PROJECT.md's success

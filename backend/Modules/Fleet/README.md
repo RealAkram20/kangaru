@@ -80,29 +80,38 @@ module is mostly deferral.
    client's trip and nothing objects. The table is a record, not a
    constraint.
 
-   Making it a constraint needs a **product decision that has not been
-   taken**: refuse an unallocated vehicle outright, or rank allocated ones
-   higher and let a dispatcher override with a reason? The two give
-   different businesses. Hard refusal matches a bank that has paid for
-   dedicated vehicles; soft ranking matches a hailing operator with one
-   pool. PROJECT.md describes both businesses, which is exactly why this
-   cannot be settled by reading it. It wants an ADR before any code.
+   **The decision this was blocked on has now been taken — ADR-0009,
+   3 August 2026 — and none of it is built.** An allocation *ranks* rather
+   than refuses: allocated vehicles sort first for that client's bookings,
+   and a dispatcher may override with a recorded reason. Hard refusal
+   survives as a per-contract opt-in, `allocations.exclusive`, defaulting
+   to false. The column does not exist yet either.
 
 2. **`scopeInForceOn` is dead code.** It is correct — "started on or before,
    and either has not ended or ends on or after", so a contract's last day
    is still one of its days — and it is called by nothing. It was written
-   for the dispatch check in item 1.
+   for the dispatch check in item 1, which ADR-0009 has now specified and
+   nobody has yet written.
 
 3. **No overlap constraint.** Nothing stops the same vehicle being allocated
-   to two clients over overlapping periods. Whether that is even wrong
-   depends on item 1: under soft ranking a vehicle shared between two
-   accounts is legitimate; under hard refusal it is a contradiction the
-   database should reject. The constraint cannot be written before the
-   decision.
+   to two clients over overlapping periods.
+
+   ADR-0009 settles what the rule *is*: non-exclusive allocations may
+   overlap freely, and an exclusive one may not overlap anything for that
+   vehicle. It also settles that this **cannot be a schema constraint** —
+   MySQL 8 has no exclusion constraint, a `UNIQUE` index cannot express a
+   range predicate, and a `CHECK` cannot see other rows. It is a
+   service-level check under `SELECT ... FOR UPDATE`, which makes it a
+   concurrency problem with a mandatory race test, in a module that
+   currently has no tests at all (item 7). Specified, not built.
 
 4. **No API and no UI.** Allocations cannot be created, ended, listed or
    viewed by anybody. A Super Admin agreeing a new contract has no screen
    and no endpoint; the row goes in through a seeder or a database console.
+
+   Since ADR-0009 this is the *blocker* rather than a nicety: ranking,
+   exclusivity and the overlap rule are all unreachable until allocations
+   can be written through something other than a seeder.
 
 5. **Fleet ownership beyond Shanitah.** ADR-0005 notes that ownership of a
    vehicle — Shanitah's own, a fleet owner's, or a driver-partner's — is a
