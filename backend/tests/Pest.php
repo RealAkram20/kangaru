@@ -2,6 +2,7 @@
 
 use Illuminate\Foundation\Testing\DatabaseTruncation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Support\ValidatesOpenApiContract;
 use Tests\TestCase;
 
 /*
@@ -15,15 +16,19 @@ use Tests\TestCase;
 |
 */
 
+// ValidatesOpenApiContract is the ADR-0011 gate: it wraps every HTTP
+// round-trip these suites make and validates the JSON response against
+// docs/api/openapi.yaml. The ~471 existing round-trips are the contract
+// tests — there is no second suite.
 pest()->extend(TestCase::class)
-    ->use(RefreshDatabase::class)
+    ->use(RefreshDatabase::class, ValidatesOpenApiContract::class)
     ->in('Feature');
 
 // Concurrency tests spawn real OS processes that must see the fixture data,
 // so they truncate committed rows between tests instead of rolling back an
 // uncommitted transaction the child processes could never read.
 pest()->extend(TestCase::class)
-    ->use(DatabaseTruncation::class)
+    ->use(DatabaseTruncation::class, ValidatesOpenApiContract::class)
     ->in('Concurrency');
 
 /*
