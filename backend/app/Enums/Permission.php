@@ -67,6 +67,15 @@ enum Permission: string
     case VEHICLES_MANAGE = 'vehicles.manage';
     case DRIVERS_VIEW = 'drivers.view';
     case DRIVERS_MANAGE = 'drivers.manage';
+    /**
+     * Seeing which vehicles are contracted to whom (ADR-0009). Separate from
+     * `vehicles.view` because it is a different question: the fleet is
+     * Shanitah's and everyone may read it, while an allocation is a client's
+     * commercial arrangement and is not everyone's business.
+     */
+    case ALLOCATIONS_VIEW = 'allocations.view';
+    /** Agreeing and ending a contract — a commercial act, not an operational one. */
+    case ALLOCATIONS_MANAGE = 'allocations.manage';
 
     // ── Reports ───────────────────────────────────────────────────────
     case REPORTS_VIEW = 'reports.view';
@@ -84,7 +93,7 @@ enum Permission: string
             'trips' => 'Trips',
             'invoices', 'ratecards' => 'Billing',
             'companies' => 'Clients',
-            'vehicles', 'drivers' => 'Fleet',
+            'vehicles', 'drivers', 'allocations' => 'Fleet',
             'reports' => 'Reports',
             default => 'Other',
         };
@@ -121,6 +130,8 @@ enum Permission: string
             self::VEHICLES_MANAGE => 'Add and edit vehicles',
             self::DRIVERS_VIEW => 'See drivers',
             self::DRIVERS_MANAGE => 'Add and edit drivers',
+            self::ALLOCATIONS_VIEW => 'See which vehicles are contracted to whom',
+            self::ALLOCATIONS_MANAGE => 'Agree and end a vehicle allocation',
             self::REPORTS_VIEW => 'Run and export reports',
         };
     }

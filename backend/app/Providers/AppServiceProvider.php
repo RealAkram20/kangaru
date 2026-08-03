@@ -30,6 +30,7 @@ use Modules\Clients\Policies\CompanyPolicy;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Policies\DriverPolicy;
 use Modules\Fleet\Models\VehicleAllocation;
+use Modules\Fleet\Policies\VehicleAllocationPolicy;
 use Modules\Notifications\Listeners\SendBookingDecisionNotification;
 use Modules\Notifications\Listeners\SendReportExportReadyNotification;
 use Modules\Reports\Enums\ReportType;
@@ -66,6 +67,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Invoice::class, InvoicePolicy::class);
         Gate::policy(User::class, UserPolicy::class);
         Gate::policy(Role::class, RolePolicy::class);
+        Gate::policy(VehicleAllocation::class, VehicleAllocationPolicy::class);
 
         // A Gate rather than a Policy: reports are not a model, and
         // AGENTS.md's authorization rule names Gates alongside Policies.
