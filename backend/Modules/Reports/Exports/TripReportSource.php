@@ -3,6 +3,7 @@
 namespace Modules\Reports\Exports;
 
 use Modules\Reports\Repositories\TripReportRepository;
+use Modules\Reports\Support\ReportScope;
 
 /**
  * The trip report, behind the common ReportSource shape.
@@ -11,12 +12,16 @@ use Modules\Reports\Repositories\TripReportRepository;
  * the right pieces, and rewriting them to satisfy a new interface would
  * have risked changing what the Bank's acceptance report says. This only
  * changes who asks.
+ *
+ * Carries its `ReportScope` (ADR-0007), so `rows()`, `summary()` and
+ * `count()` cannot disagree about whose trips they are describing.
  */
 class TripReportSource implements ReportSource
 {
     public function __construct(
         private readonly TripReportRepository $repository,
         private readonly TripReportRowMapper $mapper,
+        private readonly ReportScope $scope,
     ) {}
 
     public function title(): string
@@ -40,7 +45,7 @@ class TripReportSource implements ReportSource
     {
         // Chunked, not fetched: a month at target scale is tens of
         // thousands of trips and the writers stream straight to disk.
-        foreach ($this->repository->chunked($filters) as $chunk) {
+        foreach ($this->repository->chunked($filters, $this->scope) as $chunk) {
             foreach ($chunk as $trip) {
                 yield $this->mapper->row($trip);
             }
@@ -53,7 +58,7 @@ class TripReportSource implements ReportSource
      */
     public function summary(array $filters): array
     {
-        return $this->repository->summary($filters);
+        return $this->repository->summary($filters, $this->scope);
     }
 
     /**
@@ -96,6 +101,6 @@ class TripReportSource implements ReportSource
      */
     public function count(array $filters): int
     {
-        return $this->repository->query($filters)->toBase()->getCountForPagination();
+        return $this->repository->query($filters, $this->scope)->toBase()->getCountForPagination();
     }
 }

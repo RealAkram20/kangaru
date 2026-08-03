@@ -58,7 +58,17 @@ class ReportExportController extends Controller
         $user = $request->user();
 
         try {
-            $export = $this->exports->request($request->reportType(), $request->filters(), $request->exportFormat(), $user);
+            $export = $this->exports->request(
+                $request->reportType(),
+                $request->filters(),
+                $request->exportFormat(),
+                $user,
+                // ADR-0007 rule 4. Resolved here and persisted on the row,
+                // so the file the worker writes minutes later covers what
+                // was asked for — not whatever the requester's own tenancy
+                // or permissions happen to be by then.
+                $request->reportScope(),
+            );
         } catch (ReportTooLargeException $e) {
             return ApiResponse::error(ErrorCode::REPORT_TOO_LARGE, $e->getMessage(), [], 422);
         }

@@ -38,7 +38,15 @@ class FinancialReportController extends Controller
         // that /invoices refuses them.
         $this->authorize('viewReport', ReportType::FINANCIAL);
 
-        $source = $this->sources->for(ReportType::FINANCIAL);
+        // ADR-0007 rule 2, and the sharp edge of the whole decision: for
+        // platform staff `tenant_id` is *required*, so a request that
+        // reaches this line has already named one client. There is no
+        // branch here that produces a cross-client revenue total, because
+        // FinancialReportRequest refuses the request that would ask for
+        // one — 422, not a figure nobody agreed the meaning of.
+        $scope = $request->reportScope();
+
+        $source = $this->sources->for(ReportType::FINANCIAL, $scope);
         $filters = $request->filters();
 
         return ApiResponse::success(
@@ -49,6 +57,7 @@ class FinancialReportController extends Controller
                 'headers' => $source->headers(),
                 'period' => $source->period($filters),
                 'summary' => $source->summary($filters),
+                'scope' => $scope->toArray(),
             ],
         );
     }

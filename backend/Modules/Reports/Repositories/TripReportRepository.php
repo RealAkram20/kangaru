@@ -4,6 +4,7 @@ namespace Modules\Reports\Repositories;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
+use Modules\Reports\Support\ReportScope;
 use Modules\Trips\Models\Trip;
 
 /**
@@ -12,10 +13,22 @@ use Modules\Trips\Models\Trip;
  * is all three of joins, aggregates and reporting, and both the paginated
  * view and the CSV export run it.
  *
- * Built on the Trip model rather than the query builder so ADR-0001's
- * TenantScope applies automatically. A raw DB::table() here would silently
- * report every tenant's trips, which for a bank client is the worst bug
- * this platform can have.
+ * Built on the Trip model rather than the query builder, so a `ReportScope`
+ * is the only thing that can widen it. A raw DB::table() here would report
+ * every tenant's trips with nothing to say so, which for a bank client is
+ * the worst bug this platform can have.
+ *
+ * ## Scoping (ADR-0007)
+ *
+ * Every method takes a `ReportScope` and applies it. Before ADR-0007 these
+ * queries relied on the global `TenantScope` alone, which is why a platform
+ * account — having no tenant to bind — got `200` and zero rows on a
+ * platform that was plainly operating.
+ *
+ * The scope is passed in rather than read from the actor here, because an
+ * export runs this query in a queue worker minutes later, with no actor and
+ * possibly a changed one. What the file covers is decided once, when the
+ * export is requested, and carried.
  */
 class TripReportRepository
 {
@@ -29,9 +42,12 @@ class TripReportRepository
      * @param  array<string, mixed>  $filters
      * @return Builder<Trip>
      */
-    public function query(array $filters): Builder
+    public function query(array $filters, ReportScope $scope): Builder
     {
-        return Trip::query()
+        /** @var Builder<Trip> $query */
+        $query = $scope->apply(Trip::query(), 'trips');
+
+        return $query
             ->with(['vehicle:id,registration_number,make,model', 'driver:id,name', 'booking:id'])
             ->whereNotNull('started_at')
             ->when($filters['from'] ?? null, fn ($q, $from) => $q->where('started_at', '>=', $from))
@@ -54,9 +70,9 @@ class TripReportRepository
      * @param  array<string, mixed>  $filters
      * @return array<string, mixed>
      */
-    public function summary(array $filters): array
+    public function summary(array $filters, ReportScope $scope): array
     {
-        $aggregate = $this->query($filters)
+        $aggregate = $this->query($filters, $scope)
             ->reorder()
             ->selectRaw('COUNT(*) as trips')
             ->selectRaw('COALESCE(SUM(distance_km), 0) as distance_km')
@@ -93,13 +109,13 @@ class TripReportRepository
      * @param  array<string, mixed>  $filters
      * @return \Generator<int, Collection<int, Trip>>
      */
-    public function chunked(array $filters, int $size = 500): \Generator
+    public function chunked(array $filters, ReportScope $scope, int $size = 500): \Generator
     {
         $page = 1;
 
         do {
             /** @var Collection<int, Trip> $rows */
-            $rows = $this->query($filters)->forPage($page, $size)->get();
+            $rows = $this->query($filters, $scope)->forPage($page, $size)->get();
 
             if ($rows->isNotEmpty()) {
                 yield $rows;

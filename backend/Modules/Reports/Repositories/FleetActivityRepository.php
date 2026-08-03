@@ -4,6 +4,7 @@ namespace Modules\Reports\Repositories;
 
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Collection;
+use Modules\Reports\Support\ReportScope;
 use Modules\Trips\Models\Trip;
 
 /**
@@ -13,11 +14,26 @@ use Modules\Trips\Models\Trip;
  * A repository because ADR-0002 requires one for "non-trivial queries
  * (joins, aggregates, geospatial, reporting)" — this is three of the four.
  *
- * Both reports are built on the Trip model rather than the query builder so
- * ADR-0001's TenantScope applies. A raw DB::table() here would total every
- * tenant's fleet into one client's report, which is the same leak as
- * TripReportRepository guards against and just as invisible: it would not
- * show up as a stray row, it would show up as a bigger number.
+ * Both reports are built on the Trip model rather than the query builder,
+ * so a `ReportScope` is the only thing that can widen them. A raw
+ * DB::table() here would total every tenant's fleet into one client's
+ * report, which is the same leak as TripReportRepository guards against and
+ * just as invisible: it would not show up as a stray row, it would show up
+ * as a bigger number.
+ *
+ * ## Scoping (ADR-0007)
+ *
+ * These two reports are the ones ADR-0007 lets span every client for
+ * platform staff, with no filter offered. They aggregate the platform
+ * fleet, which since ADR-0005 is Shanitah's — per-client utilisation of a
+ * pooled vehicle is the less meaningful figure. That is a property of the
+ * scope handed in, not something decided here: the repository applies
+ * whatever scope it is given and has no opinion about who asked.
+ *
+ * `countBy*` take the scope for the same reason the `byX` methods do, and
+ * ADR-0007 named them as the easy ones to miss. A paginated report whose
+ * total was computed under a different scope than its rows is a bug that
+ * looks like an off-by-one.
  */
 class FleetActivityRepository
 {
@@ -27,9 +43,9 @@ class FleetActivityRepository
      * @param  array<string, mixed>  $filters
      * @return Collection<int, \stdClass>
      */
-    public function byDriver(array $filters): Collection
+    public function byDriver(array $filters, ReportScope $scope): Collection
     {
-        return $this->aggregate($filters, 'drivers', 'trips.driver_id', [
+        return $this->aggregate($filters, $scope, 'drivers', 'trips.driver_id', [
             'drivers.name as entity_name',
             'drivers.license_number as entity_reference',
             'drivers.status as entity_status',
@@ -42,9 +58,9 @@ class FleetActivityRepository
      * @param  array<string, mixed>  $filters
      * @return Collection<int, \stdClass>
      */
-    public function byVehicle(array $filters): Collection
+    public function byVehicle(array $filters, ReportScope $scope): Collection
     {
-        return $this->aggregate($filters, 'vehicles', 'trips.vehicle_id', [
+        return $this->aggregate($filters, $scope, 'vehicles', 'trips.vehicle_id', [
             'vehicles.registration_number as entity_name',
             'vehicles.category as entity_reference',
             'vehicles.status as entity_status',
@@ -54,17 +70,17 @@ class FleetActivityRepository
     /**
      * @param  array<string, mixed>  $filters
      */
-    public function countByDriver(array $filters): int
+    public function countByDriver(array $filters, ReportScope $scope): int
     {
-        return $this->byDriver($filters)->count();
+        return $this->byDriver($filters, $scope)->count();
     }
 
     /**
      * @param  array<string, mixed>  $filters
      */
-    public function countByVehicle(array $filters): int
+    public function countByVehicle(array $filters, ReportScope $scope): int
     {
-        return $this->byVehicle($filters)->count();
+        return $this->byVehicle($filters, $scope)->count();
     }
 
     /**
@@ -79,11 +95,19 @@ class FleetActivityRepository
      * @param  array<int, string>  $entityColumns
      * @return QueryBuilder
      */
-    private function aggregate(array $filters, string $table, string $foreignKey, array $entityColumns)
-    {
+    private function aggregate(
+        array $filters,
+        ReportScope $scope,
+        string $table,
+        string $foreignKey,
+        array $entityColumns,
+    ) {
         $singular = rtrim($table, 's');
 
-        return Trip::query()
+        // Qualified as `trips.tenant_id`: `drivers` and `vehicles` lost
+        // their tenant column in ADR-0005, and an unqualified `tenant_id`
+        // across this join would be ambiguous the day either gets one back.
+        return $scope->apply(Trip::query(), 'trips')
             ->join($table, $foreignKey, '=', $table.'.id')
             ->whereNotNull('trips.started_at')
             ->when($filters['from'] ?? null, fn ($q, $from) => $q->where('trips.started_at', '>=', $from))

@@ -8,6 +8,7 @@ use Illuminate\Support\Collection;
 use Modules\Billing\Models\CreditNote;
 use Modules\Billing\Models\Invoice;
 use Modules\Reports\Enums\FinancialPeriod;
+use Modules\Reports\Support\ReportScope;
 
 /**
  * The financial report: what was invoiced and what was credited, bucketed
@@ -36,13 +37,23 @@ use Modules\Reports\Enums\FinancialPeriod;
  * of the invoices raised in it — see the README, which states this on the
  * report itself rather than leaving a reader to infer it.
  *
- * ## Tenancy
+ * ## Tenancy (ADR-0007)
  *
- * Both queries go through the Eloquent models, so ADR-0001's TenantScope
- * applies. A raw DB::table('invoices') here would sum every tenant's money
- * into one client's report, which for a bank client is the worst bug this
- * platform can have — and it would be invisible, because a leak in an
- * aggregate is not a stray row, it is a bigger number.
+ * Both queries go through the Eloquent models and both are constrained by
+ * the `ReportScope` handed in. A raw DB::table('invoices') here would sum
+ * every tenant's money into one client's report, which for a bank client is
+ * the worst bug this platform can have — and it would be invisible, because
+ * a leak in an aggregate is not a stray row, it is a bigger number.
+ *
+ * This report is the one ADR-0007 refuses to let span clients: a platform
+ * user must name the client, or the request is a 422. That refusal is
+ * enforced in `FinancialReportRequest`, not here — by the time a scope
+ * reaches this class the question has been settled, and a repository that
+ * second-guessed it would be a second place for the rule to live. The
+ * consequence worth stating is that `ReportScope::allClients()` *would*
+ * work here if it ever arrived, and produce exactly the misleading total
+ * ADR-0007 exists to prevent. The guard is one layer up and the test that
+ * proves it is `FinancialReportScopeTest`.
  */
 class FinancialActivityRepository
 {
@@ -57,12 +68,17 @@ class FinancialActivityRepository
      * @param  array<string, mixed>  $filters
      * @return Collection<int, FinancialPeriodRow>
      */
-    public function byPeriod(array $filters): Collection
+    public function byPeriod(array $filters, ReportScope $scope): Collection
     {
         $period = FinancialPeriod::fromFilters($filters);
 
-        $invoiced = $this->bucket(Invoice::query(), $period, $filters);
-        $credited = $this->bucket(CreditNote::query(), $period, $filters);
+        // Both documents are scoped independently and identically. Scoping
+        // one and not the other would net a client's invoices against every
+        // client's credit notes — a total that is not merely wide but
+        // arithmetically meaningless, and negative often enough to be
+        // noticed only after somebody asks about it in a meeting.
+        $invoiced = $this->bucket($scope->apply(Invoice::query(), 'invoices'), $period, $filters);
+        $credited = $this->bucket($scope->apply(CreditNote::query(), 'credit_notes'), $period, $filters);
 
         // The union of both sets of keys. Taking the invoice buckets alone
         // would silently drop a period in which nothing was invoiced but

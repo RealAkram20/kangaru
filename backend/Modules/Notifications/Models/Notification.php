@@ -107,19 +107,27 @@ class Notification extends Model
     }
 
     /**
-     * Only ever this user's, and only ever within the bound tenant — the
-     * global scope covers the second, this covers the first.
+     * Only ever this user's.
      *
      * A notification is addressed to one person. Even a tenant admin has no
      * business reading a colleague's, so there is no "all notifications"
      * query anywhere in the module for a policy to have to forbid.
+     *
+     * `forActor` before the `user_id` filter, since ADR-0007: platform staff
+     * belong to no tenant, so the global scope failed closed and their inbox
+     * was empty however much mail they had. Dropping the tenant scope for
+     * them grants nothing here, because `user_id` is the narrower predicate
+     * and it is applied unconditionally — a platform user reads their own
+     * rows and no others, exactly like everybody else. This is the one place
+     * in the codebase where `forActor` is a convenience rather than a
+     * widening, and it is safe for that reason and only that reason.
      *
      * @param  Builder<Notification>  $query
      * @return Builder<Notification>
      */
     public function scopeFor(Builder $query, User $user): Builder
     {
-        return $query->where('user_id', $user->id);
+        return $query->forActor($user)->where('user_id', $user->id);
     }
 
     /**

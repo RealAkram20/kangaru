@@ -8,6 +8,7 @@ use Illuminate\Validation\Rule;
 use Modules\Reports\Enums\ExportFormat;
 use Modules\Reports\Enums\FinancialPeriod;
 use Modules\Reports\Enums\ReportType;
+use Modules\Reports\Requests\Concerns\AcceptsTenantFilter;
 use Modules\Trips\Enums\TripStatus;
 
 /**
@@ -18,6 +19,8 @@ use Modules\Trips\Enums\TripStatus;
  */
 class RequestExportRequest extends FormRequest
 {
+    use AcceptsTenantFilter;
+
     /**
      * The filters each report accepts beyond `from` and `to`, which all of
      * them take.
@@ -62,6 +65,7 @@ class RequestExportRequest extends FormRequest
             'driver_id' => ['nullable', 'integer'],
             'status' => ['nullable', Rule::enum(TripStatus::class)],
             'group_by' => ['nullable', Rule::enum(FinancialPeriod::class)],
+            ...$this->tenantFilterRules(),
         ];
     }
 
@@ -84,6 +88,14 @@ class RequestExportRequest extends FormRequest
                     );
                 }
             }
+
+            // ADR-0007, both directions. `tenant_id` is not in
+            // REPORT_FILTERS above because whether it is accepted depends on
+            // who is asking as well as which report — the loop's condition
+            // is per-report only, and a filter that decides whose money a
+            // file contains needs the actor in the question.
+            $this->validateTenantFilterAccepted($validator);
+            $this->validateTenantFilterRequired($validator);
         });
     }
 

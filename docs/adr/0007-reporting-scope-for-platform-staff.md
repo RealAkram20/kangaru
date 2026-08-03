@@ -226,3 +226,96 @@ uniform than rule 3's split. Rejected because `reports/drivers` and
 `reports/vehicles` aggregate a pool that is genuinely platform-owned, and
 forcing a client selection there answers a worse question than the one
 being asked.
+
+---
+
+## Implementation notes (3 August 2026)
+
+Written after the pass, because three things were not visible from the
+proposal and one of its predictions was wrong in a useful way.
+
+### The scope is a value object, not an actor threaded through
+
+The Consequences predicted "three repositories, seven methods, change
+signature — taking the actor the way `InvoiceRepository::listing()` now
+does". Seven methods did change signature, but they take a `ReportScope`
+rather than a `User`, and the difference is not cosmetic.
+
+An export runs its query in a queue worker minutes after the request, where
+there is no actor. Re-deriving the scope there from `requested_by_user_id`
+would mean the file depended on what that user's role and tenancy happened
+to be when the worker got to it — so an export requested before a
+permission change and written after it would silently cover something else.
+Rule 4 already says the export carries its resolved tenant; making the
+query take a scope rather than an actor is what makes rule 4 true of the
+*rows* and not merely of the row in `report_exports`.
+
+`ReportScope::apply()` is the only place a report's tenant predicate is
+written, and `ReportScopeResolver` the only place a scope is chosen. Both
+shapes drop the global scope and the single-tenant shape re-adds the filter
+by hand, which looks like the more dangerous arrangement and is the safer
+one: **a repository that forgets to apply a scope still has ADR-0001's
+global scope on it**, so forgetting yields a client their own rows and a
+platform user none. Forgetting fails closed and cannot leak. What remains
+is choosing the wrong scope, which is why choosing happens once.
+
+### The export was not unscoped, it was broken
+
+The proposal expected "a tenant-less export or a foreign-key failure". It
+was the foreign-key failure, and it surfaced as a **`500`** — an unhandled
+`SQLSTATE[23000]` from the insert. With `APP_DEBUG=false` the handler
+returns the ordinary `SERVER_ERROR` envelope with no SQL, host or database
+name, so it was never an information disclosure; it was still an unhandled
+integrity violation behind a button on the Super Admin demo.
+
+Worth recording because it changes what rule 4 is. It is a defect fix as
+much as a scoping change, and had this ADR been rejected outright the
+endpoint would still have owed the actor a clean refusal.
+
+### `report_exports.tenant_id` and `notifications.tenant_id` became nullable
+
+Not foreseen, and it follows from rule 3 rather than rule 4. A platform
+user's driver-report export spans every client, so there is no tenant it
+belongs to; the column had to admit that. Null means **platform scope**,
+never "unknown" — both columns are only ever written from a resolved scope
+or a platform recipient.
+
+This is not a new idea in the schema: `audit_logs.tenant_id` has been
+nullable since ADR-0004 for the same reason. It widens nothing, because
+`TenantScope` filters `where tenant_id = <bound>` and that never matches
+null — a client cannot see a platform-scoped row by any query that goes
+through the scope.
+
+Storage paths needed the same treatment. A platform-scoped export goes under
+`platform/reports/{id}/` rather than interpolating a null into
+`tenants/{id}/`, which would have produced `tenants//reports/…` — a path
+belonging to nobody that every platform-wide export would share.
+
+### Notifications moved with it, as predicted, and needed one more line
+
+The Consequences said reports, exports and notifications are one problem.
+They were. `TenantDatabaseChannel` dropped the row for a recipient with no
+tenant, which was correct while nothing addressed platform staff; it now
+writes it with a null tenant. `Notification::scopeFor` also needed
+`forActor()`, or the row would exist and still be unreadable.
+
+That is the one place in the codebase where `forActor()` is a convenience
+rather than a widening, because `scopeFor` narrows on `user_id` first and
+unconditionally. A platform user reads their own mail and no one else's,
+and there is a test whose whole purpose is to say so.
+
+### Both guards were proved by removing them
+
+Per AGENTS.md, and because this project has shipped a vacuous race test
+before. The escalation surface has two layers and each was broken on its
+own:
+
+- dropping `$actor->isPlatformLevel()` from `ReportScopeResolver::accepts()`
+  turns four tests red — the client's `tenant_id` becomes an accepted
+  filter and the 422s become 200s;
+- changing the client branch of `resolve()` to honour a supplied
+  `tenant_id` turns exactly one test red, the unit-level one.
+
+The second only fails on its own because validation stops the request
+before the resolver sees it. That is the point of testing it separately:
+defence in depth is only defence if each layer is proved without the other.

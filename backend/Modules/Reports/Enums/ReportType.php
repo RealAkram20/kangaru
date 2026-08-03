@@ -75,6 +75,26 @@ enum ReportType: string
     }
 
     /**
+     * Whether a platform user may — or must — name the client this report
+     * is about (ADR-0007).
+     *
+     * The three answers are on {@see TenantFilter}, with the reasoning for
+     * each. Kept here rather than in the request classes because the same
+     * rule has to hold in four places that would otherwise each write their
+     * own copy: the on-screen request, the export request, the scope
+     * resolver, and the response that states its own scope. ADR-0006 was
+     * written about what happens when one predicate lives in five places.
+     */
+    public function tenantFilter(): TenantFilter
+    {
+        return match ($this) {
+            self::TRIPS => TenantFilter::OPTIONAL,
+            self::DRIVERS, self::VEHICLES => TenantFilter::NOT_ACCEPTED,
+            self::FINANCIAL => TenantFilter::REQUIRED,
+        };
+    }
+
+    /**
      * What one row counts, for anywhere a row total is shown to a user.
      *
      * "12 rows" is meaningless next to a download; "12 periods" and

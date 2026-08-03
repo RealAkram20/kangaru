@@ -209,9 +209,56 @@ silent ignore:
 
 | Report | Accepts |
 |---|---|
-| trips | `from`, `to`, `vehicle_id`, `driver_id`, `status` |
+| trips | `from`, `to`, `vehicle_id`, `driver_id`, `status`, `tenant_id`¹ |
 | drivers, vehicles | `from`, `to` |
-| financial | `from`, `to`, `group_by` |
+| financial | `from`, `to`, `group_by`, `tenant_id`¹ ² |
+
+¹ Platform staff only. A client's user sending `tenant_id` gets the ordinary
+unrecognised-filter `422` — they have exactly one tenant and it is not a
+parameter they get to choose. ² Required for platform staff; see below.
+
+## Whose figures a report is about (ADR-0007)
+
+Until ADR-0007 all four reports returned `200` with **zero rows** for a
+platform account. Not broken — `TenantScope` failing closed exactly as
+designed, because Shanitah's own staff belong to no tenant. It was the last
+blank screen in the Super Admin demo.
+
+The fix is not "another `forActor()`", because reports are **aggregates**
+and a cross-client aggregate is a different number rather than a longer
+list. Each report answers the question differently:
+
+| Report | Platform staff, unfiltered | Platform staff, `?tenant_id=` |
+|---|---|---|
+| trips | every client, labelled | that client only |
+| drivers, vehicles | every client, always | not accepted — `422` |
+| financial | **`422`** | that client only |
+
+`reports/financial` refuses rather than totalling. Summing Centenary Bank's
+revenue with another client's into one "Total invoiced" is a misleading
+figure, and this report exports to PDF — a number that is only correct while
+its label is attached will eventually appear without it. The platform-wide
+question is real and is a **platform P&L**, which deserves its own endpoint
+(deferred item 0).
+
+`reports/drivers` and `reports/vehicles` span with no filter offered,
+because since ADR-0005 they aggregate a fleet that is genuinely Shanitah's;
+per-client utilisation of a pooled vehicle answers a worse question.
+
+Every report response carries `meta.scope` — `{"type": "tenant"|"all_clients",
+"tenant_id": int|null}` — following `/audit-logs`. A report that spans
+clients must say so on screen and in the exported file, because an exported
+PDF that does not name whose figures it contains is the document that ends
+up in the wrong meeting.
+
+The mechanism is one value object and one resolver:
+`Modules\Reports\Support\ReportScope` writes the tenant predicate (the only
+place it is written), and `ReportScopeResolver` decides which scope a
+request gets (the only place that is decided). `ReportType::tenantFilter()`
+holds the three answers in the table above. A repository that forgets to
+apply a scope still has ADR-0001's global scope on it, so forgetting fails
+closed — a client sees their own rows, a platform user sees none — and
+cannot leak.
 
 A bare `to` date covers the whole of that day — "1st to 31st" must include
 the 31st, not stop at its first second. Every report applies the same rule,
@@ -236,7 +283,19 @@ month's figure and be wrong.
 ## Exports
 
 All three formats AGENTS.md requires — CSV, Excel and PDF — generated on
-the queue and stored under `tenants/{id}/reports/{export}/` (ADR-0001).
+the queue and stored under `tenants/{id}/reports/{export}/` (ADR-0001), or
+under `platform/reports/{export}/` for an export that spans every client.
+
+An export **carries the tenant it was run for**, not the one its requester
+belongs to (ADR-0007 rule 4). Those were the same thing until platform staff
+existed; taking it from the requester is what made `POST /reports/exports`
+answer `500` for them — `report_exports.tenant_id` was non-nullable and
+`BindSubjectTenant` has nothing to bind, because an export request names a
+report and a date range rather than a record. The column is now nullable,
+where null means platform scope and never "unknown". A platform Finance
+officer exporting Centenary Bank's financial report produces *the Bank's*
+export, in the Bank's tenant — which is also what gives the "your export is
+ready" notification somewhere to be read.
 
 CSV and XLSX are written **row by row to a file handle**, so memory stays
 flat whatever the volume; `openspout` was chosen over PhpSpreadsheet
@@ -262,58 +321,52 @@ The queue driver is `database`, so a worker must be running
 
 ## What's explicitly deferred
 
-0. **Every report is empty for platform staff, and this is the module's
-   largest open question.** ADR-0006 gave Shanitah's own staff cross-client
-   reads on bookings, trips and invoices, but left reports alone on
-   purpose. All four repositories build on Eloquent models, so `TenantScope`
-   fails closed and a platform account gets `200` with **zero rows** —
-   measured, not assumed:
+0. **A platform P&L.** ADR-0007 refuses the cross-client revenue total
+   rather than inventing the endpoint that should serve it: a platform
+   Finance officer running `reports/financial` without naming a client gets
+   `422`, not a sum. "All clients' revenue this month" is a real question
+   and Shanitah will eventually want it answered — as its own endpoint,
+   whose figures are labelled a platform P&L rather than as a client-facing
+   financial report that behaves differently depending on who asked.
 
-   | Account | trips | drivers | vehicles | financial |
-   |---|---|---|---|---|
-   | tenant admin | 26 | 7 | 7 | 4 |
-   | `superadmin@kangaruride.test` | 0 | 0 | 0 | 0 |
+   Named here so the 422 is not mistaken for the end of the matter. It is
+   the reversible choice, deliberately: adding the endpoint later breaks
+   nothing, whereas a total shipped now and reconsidered later is already
+   in somebody's inbox.
 
-   It is not "another `forActor()`". These are aggregates: summing two
-   clients' revenue into one "Total invoiced" row is not a wider report, it
-   is a different and misleading number — and the driver and vehicle
-   reports aggregate a *shared* fleet (ADR-0005), where the platform-wide
-   figure may well be the correct one. Three decisions wearing one name.
+1. **An account switcher.** ADR-0006 rejected per-request tenant switching
+   as the *primary* mechanism and called it "genuinely good for Finance and
+   support, and worth having later". `?tenant_id=` is a filter, not that
+   feature, and does not preclude it.
 
-   **ADR-0007 is Proposed and awaiting the owner's call.** Nothing here
-   changes until it is accepted. Exports and the notification that follows
-   them move with it — `ReportExport` is `BelongsToTenant` and an export
-   request names a report type and a date range, so there is no subject
-   record for ADR-0006's `BindSubjectTenant` to read.
-
-1. **Payments, and therefore a true "outstanding".** The financial report's
+2. **Payments, and therefore a true "outstanding".** The financial report's
    outstanding figure is issued-less-credited because nothing in the
    platform records money coming in (`Modules/Billing`, deferred item 1).
    Ageing buckets (30/60/90 days), statements and per-client balances all
    wait on the same thing. The report says so on every surface rather than
    letting the number be misread.
-2. **A per-client financial breakdown.** The report totals the tenant, not
+3. **A per-client financial breakdown.** The report totals the tenant, not
    its companies or cost centres. `Modules/Clients` has both, and invoices
    reach a company through `trip -> booking`, so this is a join and a
    `group_by` away — but it is a second grouping axis on top of the period
    one, and pairing them is a design question (rows per client per month?
    a client filter?) rather than a mechanical addition.
-3. **A cohort view.** Rows report activity *in* a period. "Of what we
+4. **A cohort view.** Rows report activity *in* a period. "Of what we
    invoiced in July, how much has since been credited?" is a different
    question, needs credit notes grouped by their invoice's date rather than
    their own, and would be a second report rather than a flag on this one —
    two numbers under one heading is how a report gets misread.
-4. **Dense period rows.** Only periods with activity produce a row, so a
+5. **Dense period rows.** Only periods with activity produce a row, so a
    month in which nothing was invoiced is absent rather than shown as zero.
    Densifying needs a bounded range, and `from`/`to` are both optional.
-5. **Thousands separators in PDF table cells.** The summary block above the
+6. **Thousands separators in PDF table cells.** The summary block above the
    table reads `UGX 198,000`; the cells below read `198000`. The rows are
    shared with CSV and XLSX, where a formatted string would be unsummable,
    so the fix belongs in `reports/table-pdf.blade.php` — but that template
    also renders the trip report, which is the Bank's acceptance artifact,
    and number_format'ing every numeric cell would round the distance column
    to whole kilometres. It needs a decimals-aware rule, not a one-liner.
-6. **Scheduled reports** — the daily, weekly, monthly and annual *cadences*
+7. **Scheduled reports** — the daily, weekly, monthly and annual *cadences*
    PROJECT.md asks for exist as a `group_by` on the financial report, but
    nothing runs a report on a schedule.
 
@@ -325,14 +378,14 @@ The queue driver is `database`, so a worker must be running
    already appears on the export list with its reason, and telling someone
    a thing they are watching has failed adds noise, not information. That
    changes when exports can be scheduled, because then nobody is watching.
-7. **Cursor paging in the UI** — the trip report's API is cursor-paginated
+8. **Cursor paging in the UI** — the trip report's API is cursor-paginated
    and returns `meta.cursor.next`, but `ReportsPage` renders only the first
    page. The exports cover the full filtered set regardless. The three
    aggregate reports are unpaginated by design and are unaffected.
-8. **Odometer-vs-GPS variance column** — the trip report shows odometer
+9. **Odometer-vs-GPS variance column** — the trip report shows odometer
    distance only. `gps_distance_km` stays null until the ADR-0003 pipeline
    exists.
-9. **PDF pagination of very large reports** — the ceiling avoids the memory
+10. **PDF pagination of very large reports** — the ceiling avoids the memory
    problem rather than solving it. A chunked or paginated PDF writer would
    lift it; nothing needs that yet. The financial report cannot reach the
    ceiling anyway: bucketing bounds it at 366 rows for a year grouped daily.

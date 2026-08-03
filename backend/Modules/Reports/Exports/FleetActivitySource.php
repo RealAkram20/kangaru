@@ -5,6 +5,7 @@ namespace Modules\Reports\Exports;
 use Illuminate\Support\Collection;
 use Modules\Reports\Enums\ReportType;
 use Modules\Reports\Repositories\FleetActivityRepository;
+use Modules\Reports\Support\ReportScope;
 
 /**
  * The driver and vehicle reports.
@@ -13,12 +14,18 @@ use Modules\Reports\Repositories\FleetActivityRepository;
  * different column — separating them would duplicate every figure below so
  * that two headers could differ. What differs is named in `LABELS` and
  * nothing else.
+ *
+ * Carries its `ReportScope` (ADR-0007) rather than taking one per method,
+ * so `ReportSource` stays the interface the three writers already depend on
+ * and a scope cannot be passed to `rows()` that disagrees with the one
+ * passed to `summary()`.
  */
 class FleetActivitySource implements ReportSource
 {
     public function __construct(
         private readonly FleetActivityRepository $repository,
         private readonly ReportType $type,
+        private readonly ReportScope $scope,
     ) {}
 
     /**
@@ -182,7 +189,7 @@ class FleetActivitySource implements ReportSource
     private function fetch(array $filters): Collection
     {
         return $this->type === ReportType::DRIVERS
-            ? $this->repository->byDriver($filters)
-            : $this->repository->byVehicle($filters);
+            ? $this->repository->byDriver($filters, $this->scope)
+            : $this->repository->byVehicle($filters, $this->scope);
     }
 }
