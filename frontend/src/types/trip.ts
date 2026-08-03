@@ -32,9 +32,11 @@ export interface Trip {
    * whose list spans clients (ADR-0006) — see `ClientSummary`.
    */
   client?: ClientSummary
-  vehicle_id: number
+  /** Null on an ad-hoc trip raised without a booking. */
+  booking_id: number | null
+  vehicle_id: number | null
   vehicle?: Vehicle
-  driver_id: number
+  driver_id: number | null
   driver?: Driver
   origin: string
   destination: string
@@ -50,17 +52,23 @@ export interface Trip {
   odometer_start_photo_path: string | null
   odometer_end: number | null
   odometer_end_photo_path: string | null
+  /**
+   * Ready-to-fetch URLs for the odometer dashboard photos; null when none
+   * was captured. Prefer these over building a path from `*_photo_path`.
+   */
+  odometer_start_photo_url: string | null
+  odometer_end_photo_url: string | null
   /** Decimal string from the API (`"42.00"`), not a number. */
   distance_km: string | null
   gps_distance_km: string | null
-  distance_variance_flagged: boolean
+  distance_variance_flagged: boolean | null
   cancellation_charge_applicable: boolean | null
   started_at: string | null
   completed_at: string | null
   /** Bank acceptance criterion #6; null until started AND completed. */
   duration_minutes: number | null
-  created_at: string
-  updated_at: string
+  created_at: string | null
+  updated_at: string | null
 }
 
 /** One row of the append-only trip_events timeline. */

@@ -20,6 +20,7 @@ function trip(overrides: Partial<Trip> = {}): Trip {
   return {
     id: 41,
     tenant_id: 1,
+    booking_id: null,
     vehicle_id: 7,
     vehicle: { id: 7, registration_number: 'UAA 123A' } as Trip['vehicle'],
     driver_id: 3,
@@ -32,6 +33,8 @@ function trip(overrides: Partial<Trip> = {}): Trip {
     odometer_start_photo_path: 'tenants/1/odo/start.jpg',
     odometer_end: 41242,
     odometer_end_photo_path: 'tenants/1/odo/end.jpg',
+    odometer_start_photo_url: '/api/v1/trips/41/odometer-photo/start',
+    odometer_end_photo_url: '/api/v1/trips/41/odometer-photo/end',
     distance_km: '42.00',
     gps_distance_km: '41.80',
     distance_variance_flagged: false,

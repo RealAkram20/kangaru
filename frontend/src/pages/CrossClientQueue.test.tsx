@@ -70,11 +70,7 @@ function trip(id: number, client: { id: number; name: string } | undefined, orig
     id,
     tenant_id: client?.id ?? 1,
     ...(client ? { client } : {}),
-    // Deliberately narrower than what the API sends. `TripResource`
-    // returns `booking_id` and the two `odometer_*_photo_url` fields; the
-    // frontend `Trip` type declares none of them, because nothing here
-    // reads them. `tsc -b` rejects the excess properties even though
-    // `tsc --noEmit` accepts them, and CI runs both.
+    booking_id: null,
     vehicle_id: 7,
     driver_id: 3,
     origin,
@@ -85,6 +81,8 @@ function trip(id: number, client: { id: number; name: string } | undefined, orig
     odometer_start_photo_path: null,
     odometer_end: null,
     odometer_end_photo_path: null,
+    odometer_start_photo_url: null,
+    odometer_end_photo_url: null,
     distance_km: null,
     gps_distance_km: null,
     distance_variance_flagged: false,
