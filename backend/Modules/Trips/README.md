@@ -120,13 +120,6 @@ Cancelled: reachable from any state before Trip Started, including Rejected
     driver, status and client; `?status=`, `?vehicle_id=` and `?driver_id=`
     cover the rest. "Every trip in March" is still not expressible here —
     the trip *report* answers it, the list does not.
-11. **`TripResource` sends three fields the frontend type does not
-    declare** — `booking_id`, `odometer_start_photo_url` and
-    `odometer_end_photo_url`. Nothing in the UI reads them, so this is
-    unused surface rather than a bug, but `tsc -b` rejects any fixture
-    that includes them while `tsc --noEmit` accepts it. Either the type
-    catches up or the resource stops sending what nobody reads; both are
-    decisions, neither is taken.
 
 ## Odometer photos
 
