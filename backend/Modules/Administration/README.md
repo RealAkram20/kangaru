@@ -50,11 +50,12 @@ permission catalogue, and the audit log.
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| POST | `/api/v1/auth/login` | none | Rate limited 5/min/IP. **`202` with a `challenge_id` and no token** for an enrolled MFA-required user (ADR-0008); `200` with a token otherwise, carrying `must_enrol_mfa` |
+| POST | `/api/v1/auth/login` | none | Rate limited 5/min/IP. **`202` with a `challenge_id` and no token** for **any** user holding a confirmed factor (ADR-0010 — the factor, not the role); `200` with a token otherwise, carrying `must_enrol_mfa` |
 | POST | `/api/v1/auth/mfa/verify` | none | Rate limited 10/min/IP. Exchanges `challenge_id` + `code` for a token. Accepts a TOTP code or a recovery code |
 | POST | `/api/v1/auth/mfa/enrol` | Sanctum | Starts enrolment: `secret`, `otpauth_uri`, `qr_svg`. `409 MFA_ALREADY_ENROLLED` if a factor is already confirmed |
 | POST | `/api/v1/auth/mfa/enrol/confirm` | Sanctum | Proves a code and returns the ten recovery codes — **the only time they are legible** |
 | POST | `/api/v1/auth/mfa/recovery-codes` | Sanctum | Regenerates the set, invalidating the old one. Own account only |
+| DELETE | `/api/v1/auth/mfa` | Sanctum | Rate limited 10/min/IP. Removes your own factor against a current TOTP **or recovery** code (ADR-0010). `403` if your role requires one |
 | POST | `/api/v1/auth/logout` | Sanctum | Revokes the current access token |
 | GET | `/api/v1/auth/me` | Sanctum | Returns the authenticated user |
 | PATCH | `/api/v1/auth/password` | Sanctum | Own password only. Rate limited 5/min. Revokes every token, including the caller's |
@@ -95,11 +96,14 @@ Two things the page states rather than hides:
   the form is replaced by a sign-out rather than left looking usable. The
   next request would otherwise 401 and bounce to `/login` with no
   explanation.
-- A role that does not require a factor gets **no "turn it on" button**.
-  `POST /auth/mfa/enrol` would accept the request — it is gated on being
-  signed in, not on the role — but `AuthService::login` only issues a
-  challenge when the role *requires* one, so such a user would end up with
-  an authenticator nothing ever asks for. See the deferred list.
+- A role that does not require a factor still gets **no "turn it on"
+  button**, but the reason has changed. It used to be that enrolling
+  produced an authenticator nothing ever asked for; since ADR-0010 login
+  honours the factor rather than the role, so voluntary enrolment works
+  end to end and `DELETE /auth/mfa` turns it back off. What is missing is
+  only the screen — the ADR puts the UI out of scope the way ADR-0006 and
+  ADR-0009 did, so the capability is reachable by API and not yet offered
+  on the page.
 
 ## Notes
 
@@ -169,19 +173,30 @@ Named here so a half-built thing is not mistaken for a finished one.
   grace period, ten single-use hashed recovery codes, an app-encrypted
   secret, and a 24-hour Sanctum expiry with a scheduled prune.
 
-  **Voluntary MFA for roles that do not require it is reachable and
-  pointless.** `POST /auth/mfa/enrol` is gated on authentication, not on
-  the role, so any user can enrol — but `AuthService::login` issues a
-  challenge only when `requiresMfa()` is true, so the factor is never
-  asked for. Nothing in the UI offers it, and the Settings page says the
-  option is not available rather than pretending otherwise.
+  **~~Voluntary MFA is reachable and pointless~~ — decided and built,
+  ADR-0010 (3 August 2026).** `AuthService::login` challenged on
+  `requiresMfa() && hasMfaEnabled()`, so a user in an unprivileged role
+  could enrol, read `mfa_enabled: true` off their own account and never
+  once be asked for a code. It now challenges on the **factor**;
+  `requiresMfa()` still decides who *must* enrol, through
+  `mustEnrolInMfa()` and `EnsureMfaEnrolled`, and no longer decides who
+  gets asked.
 
-  Two ways out, and it wants a decision rather than a patch: honour
-  `hasMfaEnabled()` at login regardless of the role (more secure, and makes
-  the endpoint honest, but it is a change to when a factor is demanded that
-  ADR-0008 did not decide), or refuse enrolment from roles that do not
-  require one. PROJECT.md puts MFA for other roles out of Phase 1, which
-  argues for the second and against inventing the first here.
+  ADR-0010 also answers the trap that follows from it: honouring a
+  voluntary factor with no way to remove one would leave every opt-in
+  account a lost phone away from being unrecoverable, since ADR-0008
+  builds no administrator reset on purpose. So `DELETE /auth/mfa` removes
+  a factor against a current code — TOTP or recovery — for a role that
+  does not require one, and `403`s for a role that does.
+
+  **~~`RECOVERY_CODE_LOW_WATER_MARK` is read by nothing~~ — built,
+  ADR-0010.** `MfaService::recoveryCodesAreLow()` is its reader, and
+  `UserResource` carries `mfa_recovery_codes_remaining` and
+  `mfa_recovery_codes_low`. The verdict is the service's, not a
+  comparison written in a resource or a screen, so "low" cannot come to
+  mean two numbers in two places. Codes are still never regenerated
+  automatically — replacing a set silently invalidates the printed sheet
+  its holder is relying on.
 
   Still deferred inside it, per the ADR's own Scope: WebAuthn/passkeys,
   trusted devices ("remember this browser"), step-up authentication for

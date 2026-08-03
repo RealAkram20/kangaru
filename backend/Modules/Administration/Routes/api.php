@@ -59,6 +59,17 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/auth/mfa/recovery-codes', [AuthController::class, 'regenerateRecoveryCodes'])
         ->middleware('throttle:5,1')
         ->name('auth.mfa.recovery-codes');
+
+    // ADR-0010 decision 2: voluntary means voluntary in both directions.
+    //
+    // Also not on the forced-enrolment allowlist, and that is the point: a
+    // user who *must* enrol cannot reach this to avoid enrolling, and a user
+    // whose role requires a factor is refused by the controller even if they
+    // can reach it. Throttled like the other code-proving routes — it takes
+    // a current code, so it is a guessing surface.
+    Route::delete('/auth/mfa', [AuthController::class, 'disableMfa'])
+        ->middleware('throttle:10,1')
+        ->name('auth.mfa.disable');
 });
 
 Route::middleware(['auth:sanctum', 'tenant'])->group(function () {

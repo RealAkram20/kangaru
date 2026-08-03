@@ -239,6 +239,64 @@ class MfaService
     }
 
     /**
+     * Whether the holder should be told to generate a fresh set.
+     *
+     * The threshold's only reader, which is the point: ADR-0008 defined
+     * `RECOVERY_CODE_LOW_WATER_MARK` and nothing consulted it, so a user
+     * spent codes one at a time and learned the count by running out — with
+     * a lost phone, no code left, and no administrator able to help, because
+     * ADR-0008 deliberately builds no reset.
+     *
+     * Answered here rather than compared in a resource or a screen, so
+     * "low" cannot come to mean two different numbers in two places.
+     */
+    public function recoveryCodesAreLow(User $user): bool
+    {
+        return $this->remainingRecoveryCodes($user) <= self::RECOVERY_CODE_LOW_WATER_MARK;
+    }
+
+    /**
+     * Removes a second factor, against a current code (ADR-0010 decision 2).
+     *
+     * Whether the *role* permits this is the caller's question, not this
+     * one's — the controller refuses a role that requires a factor. What
+     * this owns is that removal costs a code.
+     *
+     * Requiring one is what stops this being a downgrade path: an attacker
+     * holding a stolen token cannot strip the factor without already holding
+     * the factor. A recovery code is accepted too, because somebody
+     * disabling MFA after losing their phone is the exact person who needs
+     * this and the exact person who cannot produce a TOTP code.
+     *
+     * The recovery codes go with it. Leaving them behind would mean a
+     * re-enrolment silently inheriting a sheet printed against a factor that
+     * no longer exists.
+     *
+     * @throws InvalidMfaCodeException
+     */
+    public function disable(User $user, string $code): void
+    {
+        if (! $user->hasMfaEnabled()) {
+            throw new InvalidMfaCodeException;
+        }
+
+        if (! $this->codeMatches((string) $user->mfa_secret, $code) && ! $this->consumeRecoveryCode($user, $code)) {
+            throw new InvalidMfaCodeException;
+        }
+
+        $user->forceFill([
+            'mfa_secret' => null,
+            'mfa_confirmed_at' => null,
+            'mfa_recovery_codes' => null,
+        ])->save();
+
+        // Turning a second factor *off* is at least as interesting to a
+        // security review as turning it on, and `confirmEnrolment` already
+        // audits the other direction.
+        AuditLog::record($user, 'updated');
+    }
+
+    /**
      * Spends a recovery code if it matches one still unused.
      *
      * Using one **re-arms nothing** (decision 4): it gets you in, the code
