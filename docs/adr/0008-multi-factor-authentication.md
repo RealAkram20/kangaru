@@ -1,6 +1,6 @@
 # ADR-0008: Multi-Factor Authentication for Privileged Roles
 
-**Status:** Proposed
+**Status:** Accepted (3 August 2026)
 
 **Implements:** AGENTS.md Security — *"MFA is required for Super Admin and
 Finance roles in Phase 1 — these roles can move money and change rates."*
@@ -50,9 +50,11 @@ to permanently destroy a platform.
 
 ## Decision
 
-**Not taken.** Proposed for the owner, because two of the choices below are
-product judgements about who gets locked out of what, not engineering
-trade-offs.
+**Taken by the owner on 3 August 2026.** Both of the choices that were put
+to him — forced enrolment (decision 3) and the token expiry (decision 5) —
+were taken as proposed: **enrolment is forced with no grace period, and
+tokens expire after 24 hours for every role.** The reasoning that settled
+each is recorded in place below.
 
 ### 1. The factor is TOTP (RFC 6238). Not SMS.
 
@@ -105,9 +107,18 @@ most likely to ignore it is the busiest, who is usually the one with the
 most access. A grace period is a decision to be non-compliant on a
 schedule.
 
-**This is the first choice that wants your agreement**, because it means an
-existing Finance officer is stopped at their next login until they have an
-authenticator app to hand.
+**Decided as proposed, 3 August 2026.** The argument that settled it is not
+the one above — it is that **a grace period is a rollout strategy and there
+is no rollout.** The platform is not live. There is no existing Finance
+officer to be stopped at their next login; the entire affected population
+is two seeded demo accounts. A grace period would buy permanent complexity
+— a deadline, a nag, an enforcement job, and a window during which the
+requirement is knowingly unmet — in order to be kind to nobody. Forced from
+the start means every privileged user who ever exists enrols at account
+creation and the question is never asked again.
+
+The cost is therefore entirely the demo, which the Consequences below
+handle.
 
 ### 4. Recovery codes: ten, single-use, hashed, shown once
 
@@ -125,17 +136,45 @@ is the correct trade for an account that cannot be reset by anybody else.
 
 ### 5. Token expiry moves with it
 
-`config/sanctum.php` gains an expiry. **24 hours** proposed: long enough
-that a dispatcher is not re-authenticating mid-shift, short enough that a
-leaked token is not a permanent grant.
+`config/sanctum.php` gains an expiry. **24 hours**: long enough that a
+dispatcher is not re-authenticating mid-shift, short enough that a leaked
+token is not a permanent grant.
 
-**This is the second choice that wants your agreement**, because it is the
-one every user feels daily and the number is a judgement rather than a
-derivation.
+**Decided as proposed, 3 August 2026, and deliberately as one number for
+every role.** The alternative put alongside it was a shorter window for
+Super Admin and Finance — better containment of exactly the tokens worth
+stealing. Rejected because there is no refresh-token mechanism: a shorter
+window is not a background renewal, it is a mid-shift interruption, and
+imposing it on precisely the users with the most access is how people start
+sharing accounts and leaving sessions open. The place to tighten privileged
+access is step-up authentication for individual dangerous acts, which is
+already deferred below and is the correct home for it.
 
 Expiry applies to **all** roles, not only MFA'd ones — it is AGENTS.md's
 rule for Sanctum generally, and a never-expiring Corporate Admin token is
 its own problem.
+
+**The change is retroactive, which the proposal did not say.** Sanctum
+validates a token by comparing its `created_at` against the window, not by
+storing an expiry on the row — `laravel/sanctum`'s `Guard` line 128 reads
+`$accessToken->created_at->gt(now()->subMinutes($this->expiration))`.
+Setting `expiration` to `1440` therefore invalidates **every token already
+in the database that is older than 24 hours, at the moment of deploy**. At
+seven users that is a non-event and arguably the cleanest way to make the
+new policy real. At fifty tenants it is a support incident, so it belongs
+in the deploy note now rather than being discovered later.
+
+Two things follow from it:
+
+- **`sanctum:prune-expired` must be scheduled.** Expiry makes a token
+  invalid; it does not delete the row. Without pruning,
+  `personal_access_tokens` accumulates dead credentials indefinitely,
+  which is both a growth problem and a needlessly large blast radius for a
+  database disclosure.
+- **The frontend must handle a 401 mid-session.** Until now no token ever
+  expired, so the SPA has never had to. Given this project has already
+  shipped a page stuck on "Loading..." forever, a clean bounce to the login
+  screen is in scope for this ADR, not a follow-up.
 
 ### 6. The secret is encrypted at rest
 
@@ -156,6 +195,16 @@ The mechanism exists: `AuditLog::diffForUpdate()` strips
 and from serialisation in one move. It needs a test that asserts it,
 because the failure is silent and permanent.
 
+**Verified 3 August 2026, and it covers more than the proposal claimed.**
+`diffForUpdate()` handles the `updated` action only; `created` and
+`deleted` build their payload from `$model->attributesToArray()`, which
+applies `$hidden` as well — confirmed by observing that `password`, already
+hidden, is absent from a fresh `User`'s `attributesToArray()`. So a single
+`$hidden` entry covers all three audit branches, and there is no separate
+create-path leak to close. The test should still assert all three, because
+what is being relied on is Eloquent behaviour two layers down from the
+audit code, and nothing local would notice if it changed.
+
 ## Consequences
 
 **The demo seed breaks unless it is handled.** `superadmin@kangaruride.test`
@@ -165,6 +214,21 @@ with `password`. Either the seeder enrols them with a fixed, documented
 secret, or demo accounts are exempted by environment. The first is
 preferable and must be **local/staging only** — a known TOTP secret in
 production is worse than no TOTP at all.
+
+**Resolved 3 August 2026: the seeded secret, not an enforcement bypass.**
+Both were considered and the bypass — an `MFA_ENFORCED` flag defaulting to
+true, set false locally — is the more obviously safe-looking of the two and
+is rejected anyway. A bypass that is wrong in production fails *silently*:
+the system simply stops asking for a second factor, every request succeeds,
+and nothing anywhere reports that a control is off. A leaked demo secret is
+a worse outcome but a *louder* one, and it can be made loud by
+construction — the enrolment path refuses to seed a fixed secret outside
+`local` and `testing` by throwing, not by skipping.
+
+The seeded secret also carries a benefit the bypass cannot: it keeps the
+owner's own daily login on the same code path production runs, which is a
+partial answer to the risk two paragraphs down — that `actingAs()` means
+the suite will not notice the login flow changing underneath it.
 
 **The Bank demo path is unaffected.** `admin@centenarybank.test` is a
 Corporate Admin, which is not an MFA-required role. PROJECT.md's six
@@ -190,8 +254,9 @@ users?" is on every one of them, and the answer today is no.
 ## Scope
 
 **In:** TOTP enrolment and verification, the two-step login, forced
-enrolment for the two roles, recovery codes, Sanctum token expiry, secret
-encryption, audit events, and login-path tests.
+enrolment for the two roles, recovery codes, Sanctum token expiry, the
+scheduled `sanctum:prune-expired`, the frontend's 401-on-expiry handling,
+secret encryption, audit events, and login-path tests.
 
 **Out, deliberately:**
 
@@ -239,3 +304,140 @@ ignore it longest are the ones with the most access.
 second factor that yields a permanent credential secures one moment and
 nothing after it, so shipping MFA alone would let the project claim a
 control it does not really have.
+
+---
+
+## Implementation notes (3 August 2026)
+
+**Fully implemented, in two commits.** Decision 5 (token expiry) landed
+first and alone; the MFA half followed with its frontend in the same
+change, because it alters what `POST /auth/login` returns and shipping the
+backend without the SPA would have broken every privileged sign-in.
+
+The answer to "is MFA enforced for privileged users?" is now **yes**.
+
+### Why the halves shipped in this order
+
+This ADR argues that the two belong together, and rejects "doing token
+expiry separately, later". That rejection is specifically about shipping
+**MFA without expiry** — a second factor that mints a permanent credential
+secures one moment and nothing after it, and would let the project claim a
+control it does not have.
+
+The reverse ordering carries no such problem. Expiry without MFA is
+strictly less than this ADR asks for, but everything it does deliver is
+real: it closes a standing AGENTS.md violation ("Sanctum tokens with
+expiry") that predates this decision, and it does so without touching the
+login flow. MFA changes what `POST /auth/login` returns, so the backend and
+the SPA have to move together or the demo accounts cannot sign in at all.
+Expiry is the part that could land on its own without leaving a broken
+screen behind it.
+
+### What is built
+
+- `config/sanctum.php` — `expiration` is 1440 minutes, env-overridable via
+  `SANCTUM_TOKEN_EXPIRATION_MINUTES`, documented in `.env.example`.
+- `routes/console.php` — `sanctum:prune-expired` scheduled daily.
+- `tests/Feature/Administration/TokenExpiryTest.php` — six tests, including
+  that the window is retroactive and that it applies to privileged roles
+  identically.
+
+The expiry tests were proved by reverting `expiration` to `null`: three go
+red. That matters more here than usual, because **nothing else in the suite
+would notice the revert** — every other test authenticates with
+`actingAs()`, which bypasses token validation entirely. This is the only
+file that exercises a token's lifetime at all, which is the same blind spot
+the Consequences already flag for the login path.
+
+### The frontend was already done
+
+The Scope lists "the frontend's 401-on-expiry handling" as in scope. It
+already exists: `frontend/src/lib/apiClient.ts` has a response interceptor
+that clears the stored token and redirects to `/login` on any 401, and it
+predates this ADR. Nothing was needed. Naming it here because the Scope
+section implies work that does not exist.
+
+### Still to build — the whole of the MFA half
+
+Decisions 1, 2, 3, 4, 6 and 7: TOTP enrolment and verification, the
+two-step login and its `challenge_id`, forced enrolment for Super Admin and
+Finance, recovery codes, secret encryption, and the audit events. Plus the
+seeder handling in Consequences, and the login-path tests — which the
+Consequences already identify as the risk, since `actingAs()` means the
+suite will keep passing while the login flow changes underneath it.
+
+`spomky-labs/otphp` and `bacon/bacon-qr-code` are **not** installed yet.
+
+### The MFA half (second commit)
+
+Everything in Scope except the deferrals: TOTP enrolment and verification,
+the two-step login, forced enrolment, recovery codes, secret encryption,
+audit events, and login-path tests.
+
+**`roles.requires_mfa` rather than two hardcoded slugs.** The Scope asked
+for "a per-role flag from the start", and since ADR-0004 a role is a row —
+so this is a column, seeded true for `super_admin` and `finance` and
+nothing else. A custom role holding `invoices.manage` moves money exactly
+as Finance does; requiring a factor on it is now configuration.
+
+**Enforcement is middleware on the whole API group**, not a check per
+controller — the same reasoning as ADR-0006's `BindSubjectTenant`. A rule
+applied route-by-route is missing from the route somebody adds next month,
+and here that route would be one a Finance officer reaches without the
+factor the bank was told they use.
+
+Its correctness is entirely in its ordering. Appended to the api group it
+would run *before* the route's `auth:sanctum` — group middleware precedes
+route middleware — see a null user on every request, and enforce nothing at
+all. It is in the priority list after `AuthenticatesRequests` for that
+reason, and that is the whole of why it works.
+
+### Three things found by running it
+
+**The seeder would have shipped the control switched off.** `RoleSeeder`
+writes `permissions` and `is_system`; adding `requires_mfa` to the
+*migration* covered a database that already had roles, and covered nothing
+on a fresh install or in any test. The flag would have defaulted false
+everywhere it had never been switched on — silently, which is precisely the
+failure mode this ADR rejects an enforcement bypass for. Caught because
+enabling it correctly made 25 existing tests fail; had it stayed off, the
+suite would have stayed green and the feature would have been decorative.
+
+**The first demo secret was not decodable.** `KANGARURIDEDEMOSECRET2026...`
+looks like a year and is not valid Base32 (A–Z and 2–7 only). The seed ran
+without complaint and every demo sign-in then failed at the code prompt —
+on accounts no administrator can reset. `DemoAccountMfaTest` now signs in as
+both seeded platform accounts for real, which is the only way that class of
+bug surfaces.
+
+**`tsc --noEmit` passed while `tsc -b` failed**, again — the auth context's
+test harness had not been updated for the new `login` return type. Third
+occurrence in this project.
+
+### What the fixtures had to become
+
+`UserFactory` now creates MFA-required users **already enrolled**, with
+`notEnrolledInMfa()` as the explicit opt-out the forced-enrolment tests use.
+
+This is fidelity rather than convenience. Since decision 3 an unenrolled
+Super Admin can reach nothing but the enrolment endpoints, so a fixture in
+that state is not "a Super Admin" — it is one mid-onboarding, and every
+test about anything else would have been testing a user who cannot do the
+thing under test. The alternative was exempting tests from the middleware,
+which is a control switched off in the environment meant to prove it works.
+
+### Guards proved by removal
+
+- Deleting the challenge branch in `AuthService::login` — **11 tests red**.
+  The privileged login hands out a token again.
+- Removing `mfa_secret` from `User::$hidden` — **1 test red**, and it is the
+  one that matters most: the secret reaches `audit_logs`, which is
+  append-only, so the leak would be permanent and silent.
+- Removing `EnsureMfaEnrolled` from the middleware stack — **1 test red**;
+  an unenrolled Super Admin can use the whole platform.
+
+### Still deferred, unchanged
+
+WebAuthn/passkeys, trusted devices, step-up authentication, and
+admin-initiated MFA reset — all per the Scope above, and all still their own
+decisions.

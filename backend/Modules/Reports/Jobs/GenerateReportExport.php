@@ -15,6 +15,7 @@ use Modules\Reports\Exports\PdfReportWriter;
 use Modules\Reports\Exports\ReportSourceFactory;
 use Modules\Reports\Exports\XlsxReportWriter;
 use Modules\Reports\Models\ReportExport;
+use Modules\Reports\Support\ReportScope;
 use Throwable;
 
 /**
@@ -49,8 +50,7 @@ class GenerateReportExport implements ShouldQueue
     ): void {
         // Queue workers never pass through IdentifyTenant, and TenantScope
         // fails closed, so the export is looked up across tenants by id and
-        // its own tenant is then bound for everything that follows. Every
-        // read after this line is scoped to that tenant.
+        // its own tenant is then bound for everything that follows.
         $export = ReportExport::allTenants()->find($this->exportId);
 
         if ($export === null || $export->status !== ExportStatus::QUEUED) {
@@ -58,7 +58,21 @@ class GenerateReportExport implements ShouldQueue
             return;
         }
 
+        // Binding the tenant is still right for everything that is *not*
+        // the report query — the notification this job's event raises, most
+        // of all, which must land in the client's tenant so the client can
+        // see it. For a platform-scoped export (ADR-0007) there is no
+        // tenant to bind and `set(null)` is correct rather than an
+        // oversight: the scope below is what decides which rows the file
+        // covers, and it does not consult the bound tenant at all.
         $tenant->set($export->tenant_id);
+
+        // Rebuilt from the row, never re-derived from the requester. The
+        // requester's role or tenancy may have changed since they asked,
+        // and the file has to be the one that was requested — ADR-0007 rule
+        // 4 is specifically that the export carries its resolved scope
+        // rather than inheriting one.
+        $scope = ReportScope::fromTenantId($export->tenant_id);
 
         $export->update(['status' => ExportStatus::PROCESSING, 'started_at' => now()]);
 
@@ -71,9 +85,7 @@ class GenerateReportExport implements ShouldQueue
                 ExportFormat::PDF => $pdf,
             };
 
-            // Resolved after the tenant is bound: the source runs
-            // tenant-scoped queries the moment it is asked for rows.
-            $source = $sources->for($export->report);
+            $source = $sources->for($export->report, $scope);
             $rows = $writer->write($source, $localPath, $export->filters, $source->summary($export->filters));
 
             $storedPath = $export->buildPath($this->filename($export));

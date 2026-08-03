@@ -48,9 +48,29 @@ return [
     | considered expired. This will override any values set in the token's
     | "expires_at" attribute, but first-party sessions are not affected.
     |
+    | 24 hours (ADR-0008). AGENTS.md requires "Sanctum tokens with expiry";
+    | this was `null` until 3 August 2026, so every token ever issued was
+    | valid forever and a single leaked one was a permanent grant.
+    |
+    | One number for every role, deliberately. A shorter window for Super
+    | Admin and Finance was considered and rejected: with no refresh-token
+    | mechanism a shorter window is not a background renewal, it is a
+    | mid-shift interruption, and imposing it on exactly the users with the
+    | most access is how people start sharing accounts. Tightening privileged
+    | access belongs in step-up authentication for individual dangerous acts,
+    | which ADR-0008 defers.
+    |
+    | 24 hours covers a 12-hour dispatch shift plus overrun without asking a
+    | dispatcher to re-authenticate in the middle of it.
+    |
+    | **Changing this is retroactive.** Sanctum validates a token by comparing
+    | its `created_at` against the window rather than storing an expiry on the
+    | row (`Laravel\Sanctum\Guard::__invoke`), so lowering this number signs
+    | out every session older than the new value at the moment of deploy.
+    |
     */
 
-    'expiration' => null,
+    'expiration' => (int) env('SANCTUM_TOKEN_EXPIRATION_MINUTES', 1440),
 
     /*
     |--------------------------------------------------------------------------

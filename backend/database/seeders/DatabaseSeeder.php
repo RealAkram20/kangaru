@@ -7,6 +7,7 @@ use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Modules\Clients\Models\Company;
+use RuntimeException;
 
 class DatabaseSeeder extends Seeder
 {
@@ -91,14 +92,35 @@ class DatabaseSeeder extends Seeder
      * that is the point. A second client's bookings are not a second
      * dispatcher's job.
      */
+    /**
+     * The TOTP secret every demo account in an MFA-required role shares.
+     *
+     * Fixed and documented on purpose (ADR-0008 Consequences). The
+     * alternative was exempting demo accounts from enforcement by
+     * environment, and that is the more dangerous of the two: a bypass that
+     * is wrong in production fails *silently* — the system simply stops
+     * asking for a second factor and nothing anywhere reports it. A known
+     * secret is a worse outcome but a louder one, and `enrolDemoMfa()`
+     * below makes it loud by construction.
+     *
+     * A real Base32 secret rather than a placeholder, so a demo signs in
+     * through exactly the code path production runs.
+     *
+     * **Base32 means A–Z and 2–7 only.** The first version of this constant
+     * read `...2026...`, which looks like a year and is not decodable — the
+     * seed ran happily and every demo sign-in then failed at the code
+     * prompt with no administrator able to reset it.
+     */
+    private const DEMO_TOTP_SECRET = 'KANGARURIDEDEMOSECRET234567ABCDE';
+
     private function seedPlatformStaff(): void
     {
-        User::factory()->create([
+        $this->enrolDemoMfa(User::factory()->create([
             'tenant_id' => null,
             'name' => 'Platform Super Admin',
             'email' => 'superadmin@kangaruride.test',
             'role' => UserRole::SUPER_ADMIN,
-        ]);
+        ]));
 
         User::factory()->create([
             'tenant_id' => null,
@@ -112,11 +134,41 @@ class DatabaseSeeder extends Seeder
         // isolation test exists to keep honest: belonging to no tenant is
         // not a permission, and the dispatch desk must stay unable to read a
         // client's money.
-        User::factory()->create([
+        $this->enrolDemoMfa(User::factory()->create([
             'tenant_id' => null,
             'name' => 'Finance Officer',
             'email' => 'finance@kangaruride.test',
             'role' => UserRole::FINANCE,
-        ]);
+        ]));
+    }
+
+    /**
+     * Puts the shared demo secret on an account so a demo can actually sign
+     * in, and refuses loudly anywhere it would be a backdoor.
+     *
+     * The factory already enrols MFA-required users, but with a **random**
+     * secret — correct for a test, useless for a person, because nobody can
+     * produce a code for it. This replaces it with the documented one.
+     *
+     * The environment guard **throws rather than skips**. Skipping would
+     * leave a production Super Admin enrolled against a secret nobody holds
+     * and no administrator can reset — ADR-0008's Context describes exactly
+     * that account as unrecoverable. Failing the seed is the recoverable
+     * outcome; half-running it is not.
+     */
+    private function enrolDemoMfa(User $user): void
+    {
+        if (! app()->environment(['local', 'testing', 'staging'])) {
+            throw new RuntimeException(
+                'Refusing to seed a known TOTP secret in the '.app()->environment().' environment. '
+                .'A published second factor is worse than none. Onboard privileged users through '
+                .'POST /auth/mfa/enrol instead.'
+            );
+        }
+
+        $user->forceFill([
+            'mfa_secret' => self::DEMO_TOTP_SECRET,
+            'mfa_confirmed_at' => now(),
+        ])->save();
     }
 }

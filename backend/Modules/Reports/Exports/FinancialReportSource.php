@@ -7,6 +7,7 @@ use Brick\Money\Money;
 use Modules\Reports\Enums\FinancialPeriod;
 use Modules\Reports\Repositories\FinancialActivityRepository;
 use Modules\Reports\Repositories\FinancialPeriodRow;
+use Modules\Reports\Support\ReportScope;
 
 /**
  * PROJECT.md's fourth Phase 1 report: invoiced, credited and outstanding
@@ -33,7 +34,10 @@ use Modules\Reports\Repositories\FinancialPeriodRow;
  */
 class FinancialReportSource implements ReportSource
 {
-    public function __construct(private readonly FinancialActivityRepository $repository) {}
+    public function __construct(
+        private readonly FinancialActivityRepository $repository,
+        private readonly ReportScope $scope,
+    ) {}
 
     public function title(): string
     {
@@ -75,7 +79,7 @@ class FinancialReportSource implements ReportSource
     {
         $period = FinancialPeriod::fromFilters($filters);
 
-        foreach ($this->repository->byPeriod($filters) as $row) {
+        foreach ($this->repository->byPeriod($filters, $this->scope) as $row) {
             yield [
                 $period->label($row->bucket),
                 $row->invoiceCount,
@@ -104,7 +108,7 @@ class FinancialReportSource implements ReportSource
      */
     public function summary(array $filters): array
     {
-        $rows = $this->repository->byPeriod($filters);
+        $rows = $this->repository->byPeriod($filters, $this->scope);
 
         $invoiced = $rows->reduce(
             fn (Money $carry, FinancialPeriodRow $row) => $carry->plus($row->invoiced),
@@ -145,6 +149,13 @@ class FinancialReportSource implements ReportSource
         $money = fn (string $key): string => $currency.' '.number_format((int) $summary[$key]);
 
         return [
+            // First, deliberately, and on this report more than any other:
+            // ADR-0007 rule 5 exists because "an exported PDF that does not
+            // name whose figures it contains is the document that ends up
+            // in the wrong meeting", and the figures below are somebody's
+            // revenue. The same reasoning is why rule 2 refuses to produce
+            // a cross-client total at all.
+            ['label' => 'Scope', 'value' => $this->scope->describe()],
             ['label' => 'Invoices', 'value' => number_format((int) $summary['invoices'])],
             ['label' => 'Invoiced', 'value' => $money('invoiced_minor')],
             ['label' => 'Credit notes', 'value' => number_format((int) $summary['credit_notes'])],
@@ -195,6 +206,6 @@ class FinancialReportSource implements ReportSource
      */
     public function count(array $filters): int
     {
-        return $this->repository->byPeriod($filters)->count();
+        return $this->repository->byPeriod($filters, $this->scope)->count();
     }
 }

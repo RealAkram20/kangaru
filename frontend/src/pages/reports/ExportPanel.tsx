@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiClient } from '../../lib/apiClient'
-import { apiError } from '../../lib/apiError'
+import { apiError, fieldFirstMessage } from '../../lib/apiError'
 import { formatRelativeTime } from '../../lib/format'
 import type { ApiSuccess } from '../../types/api'
 import type { ExportFormat, ReportExport, ReportType, TripReportFilters } from '../../types/report'
@@ -121,9 +121,13 @@ export function ExportPanel({
 
       await load()
     } catch (failure) {
-      // REPORT_TOO_LARGE lands here; the server's message names the trip
-      // count and says how to narrow it, so it is shown verbatim.
-      setError(apiError(failure, 'Could not start this export.').message)
+      // Two different refusals land here and they carry their sentence in
+      // different places. ADR-0007's "name a client first" is a 422 whose
+      // explanation is in `errors.tenant_id`; REPORT_TOO_LARGE has no field
+      // errors and its envelope message already names the trip count and
+      // says how to narrow it. `fieldFirstMessage` shows whichever exists,
+      // so both read as the deliberate refusals they are.
+      setError(fieldFirstMessage(failure, 'Could not start this export.'))
     } finally {
       setRequesting(null)
     }

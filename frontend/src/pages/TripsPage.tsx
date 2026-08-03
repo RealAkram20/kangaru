@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../auth/useAuth'
+import { ClientFilterSelect } from '../components/filters/ClientFilterSelect'
 import { apiClient } from '../lib/apiClient'
 import { canManageBilling } from '../lib/billing'
 import { useDebouncedValue } from '../lib/useDebouncedValue'
@@ -25,7 +26,6 @@ import { Icon } from '../components/core/Icon'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
 import { LoadMore } from '../components/data/LoadMore'
 import { Input } from '../components/forms/Input'
-import { Select } from '../components/forms/Select'
 
 /**
  * The client column, prepended only on a cross-client listing.
@@ -160,7 +160,9 @@ export function TripsPage() {
    */
   const refresh = useCallback(async () => {
     try {
-      const response = await apiClient.get<ApiSuccess<Trip[], ScopedCursorMeta>>(tripsUrl(client, search))
+      const response = await apiClient.get<ApiSuccess<Trip[], ScopedCursorMeta>>(
+        tripsUrl(client, search),
+      )
       setTrips(response.data.data)
       setScope(response.data.meta?.scope ?? 'tenant')
       setClients(response.data.meta?.filters?.clients ?? [])
@@ -247,18 +249,12 @@ export function TripsPage() {
         actions={
           <>
             {/* Server-side, so it sits ahead of the search box — see BookingsPage. */}
-            {scope === 'platform' && clients.length > 0 && (
-              <Select
-                aria-label="Client"
-                value={client}
-                onChange={(e) => setClient(e.target.value)}
-                options={[
-                  { value: '', label: 'All clients' },
-                  ...clients.map((c) => ({ value: String(c.value), label: c.label })),
-                ]}
-                style={{ width: 200 }}
-              />
-            )}
+            <ClientFilterSelect
+              scope={scope}
+              clients={clients}
+              value={client}
+              onChange={setClient}
+            />
             <Input
               iconLeft="search"
               placeholder={
@@ -282,13 +278,19 @@ export function TripsPage() {
             rows={rows}
             dense
             onRowClick={(row) => setSelected((current) => (current?.id === row.id ? null : row))}
-            emptyMessage={trips === null ? 'Loading…' : query ? 'No trips match your filter' : 'No trips yet'}
+            emptyMessage={
+              trips === null ? 'Loading…' : query ? 'No trips match your filter' : 'No trips yet'
+            }
           />
         )}
 
         {/* Outside the filtered set — see BookingsPage. A search matching
             nothing on this page must still be able to fetch the next. */}
-        <LoadMore hasMore={next !== null} loading={loadingMore} onLoadMore={() => void loadMore()} />
+        <LoadMore
+          hasMore={next !== null}
+          loading={loadingMore}
+          onLoadMore={() => void loadMore()}
+        />
       </Card>
 
       {/* Keyed by id so switching trips remounts with fresh state rather
@@ -416,7 +418,10 @@ function TripTimeline({
         <Fact label="Distance travelled" value={formatDistance(trip.distance_km)} />
         <Fact label="Duration" value={formatDuration(trip.duration_minutes)} />
         <Fact label="Commenced" value={trip.started_at ? formatTimestamp(trip.started_at) : '—'} />
-        <Fact label="Completed" value={trip.completed_at ? formatTimestamp(trip.completed_at) : '—'} />
+        <Fact
+          label="Completed"
+          value={trip.completed_at ? formatTimestamp(trip.completed_at) : '—'}
+        />
       </div>
 
       {(actions.length > 0 || canInvoice) && (
@@ -455,7 +460,9 @@ function TripTimeline({
       )}
 
       {error && <p style={{ color: 'var(--kr-error)' }}>{error}</p>}
-      {!error && events === null && <p style={{ color: 'var(--text-secondary)' }}>Loading timeline…</p>}
+      {!error && events === null && (
+        <p style={{ color: 'var(--text-secondary)' }}>Loading timeline…</p>
+      )}
 
       {events && (
         <ol style={{ listStyle: 'none', margin: 0, padding: 0 }}>
@@ -479,11 +486,30 @@ function TripTimeline({
                   <Icon name={tripStatusIcon(event.to_status)} size={12} />
                 </span>
                 {index < events.length - 1 && (
-                  <span style={{ flex: 1, width: 1, background: 'var(--border-default)', minHeight: 16 }} />
+                  <span
+                    style={{
+                      flex: 1,
+                      width: 1,
+                      background: 'var(--border-default)',
+                      minHeight: 16,
+                    }}
+                  />
                 )}
               </div>
-              <div style={{ paddingBottom: index < events.length - 1 ? 'var(--space-4)' : 0, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+              <div
+                style={{
+                  paddingBottom: index < events.length - 1 ? 'var(--space-4)' : 0,
+                  minWidth: 0,
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 'var(--space-2)',
+                    flexWrap: 'wrap',
+                  }}
+                >
                   <Badge tone={tripStatusTone(event.to_status)} size="sm">
                     {tripStatusLabel(event.to_status)}
                   </Badge>
@@ -496,9 +522,17 @@ function TripTimeline({
                     </span>
                   )}
                 </div>
-                <p style={{ font: 'var(--type-body-dense)', color: 'var(--text-body)', marginTop: 4 }}>
+                <p
+                  style={{
+                    font: 'var(--type-body-dense)',
+                    color: 'var(--text-body)',
+                    marginTop: 4,
+                  }}
+                >
                   {event.user ? event.user.name : 'System'}
-                  {event.notes && <span style={{ color: 'var(--text-secondary)' }}> — {event.notes}</span>}
+                  {event.notes && (
+                    <span style={{ color: 'var(--text-secondary)' }}> — {event.notes}</span>
+                  )}
                 </p>
               </div>
             </li>

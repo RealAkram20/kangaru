@@ -27,3 +27,17 @@ Schedule::command(PruneReportExports::class)
     // slow prune never stacks up behind itself.
     ->withoutOverlapping()
     ->onOneServer();
+
+// Expiry (ADR-0008) makes a token *invalid*; it does not delete the row.
+// Without this, `personal_access_tokens` accumulates dead credentials
+// forever — a growth problem, and a needlessly large blast radius for a
+// database disclosure, since every hash ever issued would still be sitting
+// there.
+//
+// Safe to run against a live system: it only removes rows already past
+// `sanctum.expiration`, which the guard would refuse anyway. Nobody is
+// signed out by this that was not already signed out.
+Schedule::command('sanctum:prune-expired --hours=24')
+    ->daily()
+    ->withoutOverlapping()
+    ->onOneServer();

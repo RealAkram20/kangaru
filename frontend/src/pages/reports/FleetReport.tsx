@@ -7,6 +7,7 @@ import { formatDuration } from '../../lib/tripStatus'
 import type { ApiSuccess } from '../../types/api'
 import type { FleetReportMeta, PositionalReportRow, ReportType } from '../../types/report'
 import { PositionalReportTable } from './PositionalReportTable'
+import { ReportScopeNotice } from './ReportScopeNotice'
 
 /**
  * The driver and vehicle reports.
@@ -67,6 +68,9 @@ export function FleetReport({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+      {/* Above the figures, not below them: it says what they are of. */}
+      <ReportScopeNotice covers={meta?.covers} scope={meta?.scope} />
+
       {meta && (
         <div
           style={{
@@ -84,7 +88,11 @@ export function FleetReport({
             // and the easier one to misread.
             hint="Commenced at least one trip in this period"
           />
-          <KPIStat label="Trips" value={meta.summary.trips.toLocaleString('en-US')} icon="navigation" />
+          <KPIStat
+            label="Trips"
+            value={meta.summary.trips.toLocaleString('en-US')}
+            icon="navigation"
+          />
           <KPIStat
             label="Distance"
             value={`${meta.summary.distance_km.toLocaleString('en-US')} km`}

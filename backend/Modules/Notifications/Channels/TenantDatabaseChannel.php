@@ -41,17 +41,23 @@ class TenantDatabaseChannel
         // answer that cannot be wrong.
         $tenantId = $notifiable->tenant_id;
 
-        if ($tenantId === null) {
-            // Platform-level users (Super Admin has no tenant) have no
-            // tenant-owned inbox to write to. Dropping the row is correct
-            // and silent by design: nothing addressed to them is generated
-            // by the three types built so far, so this is a guard rather
-            // than a path.
-            return;
-        }
+        // A platform user's notification is written with a null tenant
+        // rather than dropped (ADR-0007).
+        //
+        // Dropping it was correct while nothing addressed them: their inbox
+        // was empty by fail-closed, which ADR-0006 recorded as a known
+        // consequence to be revisited with the reports decision. That is
+        // this. A platform Finance officer can now request an export, so
+        // "your export is ready" has somewhere to go, and silently
+        // discarding it would leave them polling a page for a file that
+        // finished ten minutes ago.
+        //
+        // Null does not widen anybody's inbox. `scopeFor` narrows to
+        // `user_id` before anything else, so the row is readable by its one
+        // recipient and nobody else — tenant or no tenant.
 
         // BelongsToTenant fills tenant_id from TenantContext on create when
-        // it is not supplied, so it is supplied explicitly above. Bind it
+        // it is not supplied, so it is supplied explicitly below. Bind it
         // too, or the model's own global scope — applied on insert-adjacent
         // reads — has nothing to work with inside a worker.
         $this->tenant->set($tenantId);

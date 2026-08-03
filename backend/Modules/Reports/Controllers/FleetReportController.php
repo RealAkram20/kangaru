@@ -3,11 +3,13 @@
 namespace Modules\Reports\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Models\User;
 use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Modules\Reports\Enums\ReportType;
 use Modules\Reports\Exports\ReportSourceFactory;
 use Modules\Reports\Requests\FleetReportRequest;
+use Modules\Reports\Support\ReportScopeResolver;
 
 /**
  * The driver and vehicle reports.
@@ -23,7 +25,10 @@ use Modules\Reports\Requests\FleetReportRequest;
  */
 class FleetReportController extends Controller
 {
-    public function __construct(private readonly ReportSourceFactory $sources) {}
+    public function __construct(
+        private readonly ReportSourceFactory $sources,
+        private readonly ReportScopeResolver $scopes,
+    ) {}
 
     public function drivers(FleetReportRequest $request): JsonResponse
     {
@@ -42,7 +47,21 @@ class FleetReportController extends Controller
         // trip report uses.
         $this->authorize('viewReports');
 
-        $source = $this->sources->for($type);
+        /** @var User $actor */
+        $actor = $request->user();
+
+        // ADR-0007 rule 3: these two span every client for platform staff
+        // and take no `tenant_id`. They aggregate the platform fleet, which
+        // since ADR-0005 is Shanitah's — per-client utilisation of a pooled
+        // vehicle is the less meaningful figure, so there is no filter to
+        // offer and nothing here for the request to have validated.
+        //
+        // Resolved from the resolver rather than the request because this
+        // controller serves two report types and FleetReportRequest cannot
+        // know which of them it is being validated for.
+        $scope = $this->scopes->resolve($type, $actor, null);
+
+        $source = $this->sources->for($type, $scope);
         $filters = $request->filters();
 
         // Column headers travel with the data. The alternative is a client
@@ -56,6 +75,7 @@ class FleetReportController extends Controller
                 'headers' => $source->headers(),
                 'period' => $source->period($filters),
                 'summary' => $source->summary($filters),
+                ...$scope->metaFor($actor),
             ],
         );
     }

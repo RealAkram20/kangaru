@@ -50,7 +50,11 @@ permission catalogue, and the audit log.
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| POST | `/api/v1/auth/login` | none | Rate limited 5/min/IP |
+| POST | `/api/v1/auth/login` | none | Rate limited 5/min/IP. **`202` with a `challenge_id` and no token** for an enrolled MFA-required user (ADR-0008); `200` with a token otherwise, carrying `must_enrol_mfa` |
+| POST | `/api/v1/auth/mfa/verify` | none | Rate limited 10/min/IP. Exchanges `challenge_id` + `code` for a token. Accepts a TOTP code or a recovery code |
+| POST | `/api/v1/auth/mfa/enrol` | Sanctum | Starts enrolment: `secret`, `otpauth_uri`, `qr_svg`. `409 MFA_ALREADY_ENROLLED` if a factor is already confirmed |
+| POST | `/api/v1/auth/mfa/enrol/confirm` | Sanctum | Proves a code and returns the ten recovery codes — **the only time they are legible** |
+| POST | `/api/v1/auth/mfa/recovery-codes` | Sanctum | Regenerates the set, invalidating the old one. Own account only |
 | POST | `/api/v1/auth/logout` | Sanctum | Revokes the current access token |
 | GET | `/api/v1/auth/me` | Sanctum | Returns the authenticated user |
 | PATCH | `/api/v1/auth/password` | Sanctum | Own password only. Rate limited 5/min. Revokes every token, including the caller's |
@@ -63,6 +67,39 @@ permission catalogue, and the audit log.
 | PATCH | `/api/v1/roles/{slug}` | Sanctum + tenant | `RolePolicy::update`. A system role's permissions may change; its name may not |
 | DELETE | `/api/v1/roles/{slug}` | Sanctum + tenant | `RolePolicy::delete` — custom roles only, and 409 `ROLE_IN_USE` while anyone holds it |
 | GET | `/api/v1/audit-logs` | Sanctum + tenant | `AuditLogPolicy::viewAny` — `audit.view`. Whitelisted filters: `auditable_type` (any alias in the enforced morph map), `action`, `user_id`, `from`/`to` (`Y-m-d`; `to` includes its whole day). Unknown params → 422. Cursor-paginated. `meta.filters` carries the accepted values plus the actors present in this reader's slice; `meta.scope` is `platform` or `tenant` |
+
+## Frontend
+
+`frontend/src/pages/SettingsPage.tsx` — `/settings`. Your own account:
+password, and the second factor if you have one.
+
+It exists because three endpoints had no caller. `PATCH /auth/password`
+shipped with staff administration and nothing ever called it, so an
+administrator could hand somebody an initial password and that person had
+no way to take it out of the administrator's hands — half a feature, and
+the wrong half. ADR-0008 added two more orphans on top: regenerating
+recovery codes, and knowing whether a factor is even on.
+
+Only ever the signed-in user. No user parameter for an administrator to
+supply, for the same reason this module offers no password reset for
+anyone else.
+
+**The route is registered and there is no navigation entry for it.** It is
+reachable by typing `/settings`. Adding the sidebar row means editing
+`SidebarNav.tsx` and `AppShell.tsx`, which were uncommitted work in
+progress when this shipped.
+
+Two things the page states rather than hides:
+
+- Changing a password revokes **every** token including the caller's, so
+  the form is replaced by a sign-out rather than left looking usable. The
+  next request would otherwise 401 and bounce to `/login` with no
+  explanation.
+- A role that does not require a factor gets **no "turn it on" button**.
+  `POST /auth/mfa/enrol` would accept the request — it is gated on being
+  signed in, not on the role — but `AuthService::login` only issues a
+  challenge when the role *requires* one, so such a user would end up with
+  an authenticator nothing ever asks for. See the deferred list.
 
 ## Notes
 
@@ -121,22 +158,48 @@ account's password could otherwise sign in as it.
 
 Named here so a half-built thing is not mistaken for a finished one.
 
-- **MFA for Super Admin and Finance.** AGENTS.md marks it required in
-  Phase 1 for the two roles that can move money and change rates. Not
-  built. This is the largest known gap in this module, and the oldest
-  unmet *stated* requirement in the repository.
+- **~~MFA for Super Admin and Finance~~ — built, ADR-0008 (3 August 2026).**
+  Kept in place because the *shape* of what remains deferred is easier to
+  read against what it replaced. This was the oldest unmet stated
+  requirement in the repository; it is now met, and the answer to a bank's
+  "is MFA enforced for privileged users?" is yes.
 
-  **ADR-0008 is Proposed** and describes it: TOTP rather than SMS (which
-  AGENTS.md's own security section argues against, on SMS-pumping cost),
-  no API token issued before the second factor, forced enrolment rather
-  than a grace period, and recovery codes — which are not optional here,
-  because the item below means a Super Admin who loses their authenticator
-  has no recovery path and is the only account that could fix themselves.
+  What shipped: TOTP (`spomky-labs/otphp`), a two-step login that issues
+  **no token at all** before the factor is proved, forced enrolment with no
+  grace period, ten single-use hashed recovery codes, an app-encrypted
+  secret, and a 24-hour Sanctum expiry with a scheduled prune.
 
-  It also folds in `config/sanctum.php`'s `'expiration' => null`. Tokens
-  currently never expire, against AGENTS.md's "Sanctum tokens with
-  expiry", and a second factor that mints a permanent credential secures
-  one moment and nothing after it. The two are one change.
+  **Voluntary MFA for roles that do not require it is reachable and
+  pointless.** `POST /auth/mfa/enrol` is gated on authentication, not on
+  the role, so any user can enrol — but `AuthService::login` issues a
+  challenge only when `requiresMfa()` is true, so the factor is never
+  asked for. Nothing in the UI offers it, and the Settings page says the
+  option is not available rather than pretending otherwise.
+
+  Two ways out, and it wants a decision rather than a patch: honour
+  `hasMfaEnabled()` at login regardless of the role (more secure, and makes
+  the endpoint honest, but it is a change to when a factor is demanded that
+  ADR-0008 did not decide), or refuse enrolment from roles that do not
+  require one. PROJECT.md puts MFA for other roles out of Phase 1, which
+  argues for the second and against inventing the first here.
+
+  Still deferred inside it, per the ADR's own Scope: WebAuthn/passkeys,
+  trusted devices ("remember this browser"), step-up authentication for
+  individual dangerous acts, and admin-initiated MFA reset — which is the
+  same hazard as the password item below and has the same answer.
+
+  Two things worth knowing operationally:
+
+  - **`roles.requires_mfa` is a per-role flag**, not two hardcoded slugs.
+    Seeded true for `super_admin` and `finance` and nothing else, but a
+    custom role holding `invoices.manage` moves money exactly as Finance
+    does and can be covered without a release.
+  - **The demo accounts share a fixed, documented TOTP secret**
+    (`DatabaseSeeder::DEMO_TOTP_SECRET`), and the seeder **throws** rather
+    than skipping if asked to write it outside `local`/`testing`/`staging`.
+    A bypass flag was rejected for the opposite reason: it would fail
+    silently in production, and a control that quietly stops asking is
+    worse than one that refuses to install.
 - **Resetting somebody else's password.** Deliberate, not an oversight: an
   administrator silently changing another account's password is the one act
   an audit trail cannot tell apart from impersonation. There is no

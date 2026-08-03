@@ -8,11 +8,18 @@ import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
 
 /**
- * Simplified from `ui_kits/platform/LoginScreen.jsx`: the MFA step and its
- * Badge/Alert/Checkbox usage are dropped since the backend has no MFA
- * endpoint in this pass (MFA is Phase 1-scoped to Super Admin/Finance only,
- * per PROJECT.md) — building UI against a non-existent endpoint would be
- * dead code. Logo, headline copy, and layout are kept for visual fidelity.
+ * Two steps since ADR-0008, for the roles that can move money.
+ *
+ * The comment that used to live here said the MFA step was "dropped since
+ * the backend has no MFA endpoint in this pass" — correct at the time, and
+ * the endpoint now exists. A Super Admin or Finance officer who enters a
+ * correct password gets a `202` and no token at all: decision 2 refuses to
+ * mint credential material before the factor is proved, so there is nothing
+ * to store until the code arrives.
+ *
+ * Everyone else is unchanged. PROJECT.md puts MFA for other roles out of
+ * Phase 1, and the Bank's six acceptance criteria are demonstrated through
+ * a Corporate Admin, which stays a single-step sign-in.
  */
 /**
  * AGENTS.md Error Handling: "Every error message explains what happened,
@@ -60,11 +67,20 @@ function signInErrorMessage(error: unknown): string {
 }
 
 export function LoginPage() {
-  const { user, login } = useAuth()
+  const { user, login, verifyMfa } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  /**
+   * Set when the password was accepted and a factor is still owed. Holding
+   * it here rather than in a route keeps it out of the URL and out of
+   * browser history — it is single-use credential material with a
+   * five-minute life, and a challenge in an address bar is a challenge in a
+   * shoulder-surfed screenshot.
+   */
+  const [challengeId, setChallengeId] = useState<string | null>(null)
+  const [code, setCode] = useState('')
 
   if (user) {
     return <Navigate to="/" replace />
@@ -75,9 +91,41 @@ export function LoginPage() {
     setError(null)
     setSubmitting(true)
     try {
-      await login(email, password)
+      const outcome = await login(email, password)
+
+      if (outcome.status === 'mfa-required') {
+        setChallengeId(outcome.challengeId)
+        // Cleared as soon as it is spent. Leaving a correct password in a
+        // controlled input for the length of the second step is the kind of
+        // thing a screen recording picks up.
+        setPassword('')
+      }
     } catch (caught) {
       setError(signInErrorMessage(caught))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleVerify(event: FormEvent) {
+    event.preventDefault()
+    if (challengeId === null) return
+
+    setError(null)
+    setSubmitting(true)
+    try {
+      await verifyMfa(challengeId, code)
+    } catch (caught) {
+      setError(signInErrorMessage(caught))
+
+      // A challenge is single-use, and the server spends it whether or not
+      // the code was right — otherwise its five-minute window would be an
+      // unlimited guessing budget against six digits. So a failure here is
+      // terminal for this attempt, and the honest response is to send the
+      // user back to the password rather than let them retype a code
+      // against a ticket that is already void.
+      setChallengeId(null)
+      setCode('')
     } finally {
       setSubmitting(false)
     }
@@ -122,55 +170,153 @@ export function LoginPage() {
           Shanitah General Enterprises Ltd · Kampala, Uganda
         </p>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'var(--space-12)' }}>
-        <form onSubmit={handleSubmit} style={{ width: '100%', maxWidth: 360 }}>
-          <h2 style={{ font: 'var(--type-section-title)', fontSize: 'var(--text-2xl)', color: 'var(--text-heading)' }}>
-            Sign in
-          </h2>
-          <p
-            style={{
-              font: 'var(--type-body-dense)',
-              color: 'var(--text-secondary)',
-              marginTop: 6,
-              marginBottom: 'var(--space-6)',
-            }}
-          >
-            Use your organisation email.
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-            {error && (
-              <p style={{ font: 'var(--type-body-dense)', color: 'var(--kr-error)' }} role="alert">
-                {error}
-              </p>
-            )}
-            <FormField label="Work email" required>
-              <Input
-                iconLeft="mail"
-                type="email"
-                placeholder="you@company.co.ug"
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 'var(--space-12)',
+        }}
+      >
+        {challengeId === null ? (
+          <form onSubmit={handleSubmit} style={{ width: '100%', maxWidth: 360 }}>
+            <h2
+              style={{
+                font: 'var(--type-section-title)',
+                fontSize: 'var(--text-2xl)',
+                color: 'var(--text-heading)',
+              }}
+            >
+              Sign in
+            </h2>
+            <p
+              style={{
+                font: 'var(--type-body-dense)',
+                color: 'var(--text-secondary)',
+                marginTop: 6,
+                marginBottom: 'var(--space-6)',
+              }}
+            >
+              Use your organisation email.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+              {error && (
+                <p
+                  style={{ font: 'var(--type-body-dense)', color: 'var(--kr-error)' }}
+                  role="alert"
+                >
+                  {error}
+                </p>
+              )}
+              <FormField label="Work email" htmlFor="login-email" required>
+                <Input
+                  id="login-email"
+                  iconLeft="mail"
+                  type="email"
+                  placeholder="you@company.co.ug"
+                  size="lg"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+              </FormField>
+              <FormField label="Password" htmlFor="login-password" required>
+                <Input
+                  id="login-password"
+                  type="password"
+                  iconLeft="lock"
+                  placeholder="••••••••"
+                  size="lg"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  revealable
+                  required
+                />
+              </FormField>
+              <Button
                 size="lg"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
-            </FormField>
-            <FormField label="Password" required>
-              <Input
-                type="password"
-                iconLeft="lock"
-                placeholder="••••••••"
+                fullWidth
+                iconRight="arrow-right"
+                type="submit"
+                disabled={submitting}
+              >
+                {submitting ? 'Signing in…' : 'Sign in'}
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <form onSubmit={handleVerify} style={{ width: '100%', maxWidth: 360 }}>
+            <h2
+              style={{
+                font: 'var(--type-section-title)',
+                fontSize: 'var(--text-2xl)',
+                color: 'var(--text-heading)',
+              }}
+            >
+              Two-factor authentication
+            </h2>
+            <p
+              style={{
+                font: 'var(--type-body-dense)',
+                color: 'var(--text-secondary)',
+                marginTop: 6,
+                marginBottom: 'var(--space-6)',
+              }}
+            >
+              Your role can issue invoices and change rates, so it needs a second factor. Enter the
+              6-digit code from your authenticator app, or one of your recovery codes.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+              {error && (
+                <p
+                  style={{ font: 'var(--type-body-dense)', color: 'var(--kr-error)' }}
+                  role="alert"
+                >
+                  {error}
+                </p>
+              )}
+              <FormField label="Authentication code" htmlFor="login-mfa-code" required>
+                <Input
+                  id="login-mfa-code"
+                  iconLeft="shield-check"
+                  size="lg"
+                  placeholder="123456"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  // Not `type="number"`: a recovery code is accepted in the
+                  // same box, and a numeric input would refuse it while
+                  // also stripping the leading zero off a TOTP code.
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  required
+                />
+              </FormField>
+              <Button
                 size="lg"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                revealable
-                required
-              />
-            </FormField>
-            <Button size="lg" fullWidth iconRight="arrow-right" type="submit" disabled={submitting}>
-              {submitting ? 'Signing in…' : 'Sign in'}
-            </Button>
-          </div>
-        </form>
+                fullWidth
+                iconRight="arrow-right"
+                type="submit"
+                disabled={submitting}
+              >
+                {submitting ? 'Verifying…' : 'Verify and sign in'}
+              </Button>
+              <Button
+                size="lg"
+                fullWidth
+                variant="ghost"
+                type="button"
+                onClick={() => {
+                  setChallengeId(null)
+                  setCode('')
+                  setError(null)
+                }}
+              >
+                Back to sign in
+              </Button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   )

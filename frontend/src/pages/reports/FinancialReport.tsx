@@ -2,15 +2,12 @@ import { useEffect, useState } from 'react'
 import { Card } from '../../components/core/Card'
 import { KPIStat } from '../../components/data/KPIStat'
 import { apiClient } from '../../lib/apiClient'
-import { apiError } from '../../lib/apiError'
+import { fieldFirstMessage } from '../../lib/apiError'
 import { formatUgx } from '../../lib/format'
 import type { ApiSuccess } from '../../types/api'
-import type {
-  FinancialPeriod,
-  FinancialReportMeta,
-  PositionalReportRow,
-} from '../../types/report'
+import type { FinancialPeriod, FinancialReportMeta, PositionalReportRow } from '../../types/report'
 import { PositionalReportTable } from './PositionalReportTable'
+import { ReportScopeNotice } from './ReportScopeNotice'
 
 /**
  * PROJECT.md's fourth Phase 1 report: invoiced, credited and outstanding
@@ -24,11 +21,21 @@ export function FinancialReport({
   from,
   to,
   groupBy,
+  client,
   reloadToken,
 }: {
   from: string
   to: string
   groupBy: FinancialPeriod
+  /**
+   * The client whose figures these are, as a tenant id, or '' for none
+   * chosen (ADR-0007).
+   *
+   * Only platform staff can set it; for a client's own user it is always
+   * '' and the server scopes them to their own tenant regardless. Empty
+   * from a platform user is a deliberate 422 — see `reportFailureMessage`.
+   */
+  client: string
   /** Bumped by the parent when Run report is pressed. */
   reloadToken: number
 }) {
@@ -43,6 +50,7 @@ export function FinancialReport({
     if (from) params.set('from', from)
     if (to) params.set('to', to)
     params.set('group_by', groupBy)
+    if (client) params.set('tenant_id', client)
 
     apiClient
       .get<ApiSuccess<PositionalReportRow[], FinancialReportMeta>>(
@@ -55,13 +63,17 @@ export function FinancialReport({
         setError(null)
       })
       .catch((failure: unknown) => {
-        if (!cancelled) setError(apiError(failure, 'Could not run this report.').message)
+        if (!cancelled) setError(fieldFirstMessage(failure, 'Could not run this report.'))
       })
 
     return () => {
       cancelled = true
     }
-  }, [from, to, groupBy, reloadToken])
+    // `client` re-fetches immediately rather than waiting for Run report:
+    // changing whose figures these are invalidates every number on screen,
+    // and leaving one client's totals under another's name is the exact
+    // confusion ADR-0007 exists to prevent.
+  }, [from, to, groupBy, client, reloadToken])
 
   if (error) {
     return (
@@ -73,6 +85,13 @@ export function FinancialReport({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+      {/*
+        Above the money, not below it. This is the report where a figure
+        read under the wrong client's name is most costly, and the reason
+        ADR-0007 refuses to produce a cross-client total at all.
+      */}
+      <ReportScopeNotice covers={meta?.covers} scope={meta?.scope} />
+
       {meta && (
         <div
           style={{

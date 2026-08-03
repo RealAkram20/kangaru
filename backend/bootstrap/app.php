@@ -3,6 +3,7 @@
 use App\Enums\ErrorCode;
 use App\Http\Middleware\AssignRequestId;
 use App\Http\Middleware\BindSubjectTenant;
+use App\Http\Middleware\EnsureMfaEnrolled;
 use App\Http\Middleware\IdentifyTenant;
 use App\Support\Api\ApiResponse;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -40,6 +41,22 @@ return Application::configure(basePath: dirname(__DIR__))
             AssignRequestId::class,
         ]);
 
+        // ADR-0008 decision 3: a user whose role requires a second factor
+        // and has not enrolled can do nothing but enrol.
+        //
+        // On the whole API group rather than per-route, for the same reason
+        // BindSubjectTenant is: a rule applied route-by-route is a rule
+        // missing from the route somebody adds next month, and the failure
+        // here is a Finance officer issuing invoices without the factor the
+        // bank was told they use. A new endpoint is covered on arrival.
+        //
+        // Ordered below so it runs *after* authentication — before it,
+        // `$request->user()` is null and this would wave everything
+        // through. That ordering is the whole of its correctness.
+        $middleware->api(append: [
+            EnsureMfaEnrolled::class,
+        ]);
+
         $middleware->alias([
             'tenant' => IdentifyTenant::class,
             'subject-tenant' => BindSubjectTenant::class,
@@ -57,6 +74,17 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->appendToPriorityList(
             after: AuthenticatesRequests::class,
             append: IdentifyTenant::class,
+        );
+
+        // Immediately after authentication, and before anything that reads
+        // data. Appended to the api group above, which alone would place it
+        // *before* the route's `auth:sanctum` — group middleware runs ahead
+        // of route middleware — so it would see a null user on every
+        // request and enforce nothing at all. Being in the priority list is
+        // what actually makes it run in the right place.
+        $middleware->appendToPriorityList(
+            after: AuthenticatesRequests::class,
+            append: EnsureMfaEnrolled::class,
         );
 
         // And its counterpart runs immediately AFTER model binding, because

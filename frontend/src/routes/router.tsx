@@ -10,10 +10,12 @@ import { DispatchPage } from '../pages/DispatchPage'
 import { DriversPage } from '../pages/DriversPage'
 import { InvoicesPage } from '../pages/InvoicesPage'
 import { LoginPage } from '../pages/LoginPage'
+import { MfaEnrolmentPage } from '../pages/MfaEnrolmentPage'
 import { NotificationsPage } from '../pages/NotificationsPage'
 import { RateCardsPage } from '../pages/RateCardsPage'
 import { ReportsPage } from '../pages/ReportsPage'
 import { RolesPage } from '../pages/RolesPage'
+import { SettingsPage } from '../pages/SettingsPage'
 import { StaffPage } from '../pages/StaffPage'
 import { TripsPage } from '../pages/TripsPage'
 import { VehiclesPage } from '../pages/VehiclesPage'
@@ -22,6 +24,21 @@ export const router = createBrowserRouter([
   {
     path: '/login',
     element: <LoginPage />,
+  },
+  // Outside the AppShell branch on purpose (ADR-0008 decision 3). A user
+  // who must enrol can reach nothing else — the shell's navigation would be
+  // a wall of links that all answer 403 — so this route deliberately has no
+  // sidebar to click.
+  //
+  // `allowUnenrolled` is what stops the guard redirecting this route to
+  // itself.
+  {
+    path: '/mfa/setup',
+    element: (
+      <ProtectedRoute allowUnenrolled>
+        <MfaEnrolmentPage />
+      </ProtectedRoute>
+    ),
   },
   {
     path: '/',
@@ -69,6 +86,11 @@ export const router = createBrowserRouter([
       // Unguarded, like Dashboard, Bookings and Trips: every account has
       // an inbox, and the server scopes each of these to the caller.
       { path: 'notifications', element: <NotificationsPage /> },
+      // Unguarded for the strongest version of that reason: this page is
+      // *only ever* about the signed-in user. Every endpoint it calls acts
+      // on the caller and takes no user parameter, so there is no role that
+      // should be turned away from their own password.
+      { path: 'settings', element: <SettingsPage /> },
       {
         path: 'staff',
         element: (

@@ -22,8 +22,21 @@ use Modules\Reports\Enums\ReportType;
  * Not Auditable: an export reads data, it does not change any, so it has
  * nothing to diff. The row itself is the record that it happened.
  *
+ * ## `tenant_id` is nullable, and null means the platform (ADR-0007)
+ *
+ * An export carries the tenant the report was run **for**, resolved from
+ * the request by `ReportScopeResolver` — not inherited from whoever asked.
+ * A platform Finance officer exporting Centenary Bank's financial report
+ * produces the Bank's export, in the Bank's tenant, which is also what puts
+ * the "your export is ready" notification somewhere it can be read.
+ *
+ * Null is the driver and vehicle reports run by platform staff, which
+ * ADR-0007 rule 3 lets span every client because they aggregate a fleet
+ * that is genuinely Shanitah's. It is never "unknown": the column is only
+ * ever written from a resolved scope.
+ *
  * @property int $id
- * @property int $tenant_id
+ * @property int|null $tenant_id
  * @property int $requested_by_user_id
  * @property ReportType $report
  * @property ExportFormat $format
@@ -90,10 +103,24 @@ class ReportExport extends Model
      * ADR-0001 requires tenant-prefixed storage paths. Built here rather
      * than at the call site so every export lands under its own tenant's
      * directory by construction, not by remembering to.
+     *
+     * A platform-scoped export (ADR-0007) has no tenant and goes under
+     * `platform/` instead. Spelling that out matters more than it looks:
+     * interpolating a null `tenant_id` would produce `tenants//reports/...`,
+     * a path that is neither obviously wrong nor attributable to anyone, and
+     * which would collide across every platform-wide export ever run.
      */
     public function buildPath(string $filename): string
     {
-        return "tenants/{$this->tenant_id}/reports/{$this->id}/{$filename}";
+        $prefix = $this->tenant_id === null ? 'platform' : "tenants/{$this->tenant_id}";
+
+        return "{$prefix}/reports/{$this->id}/{$filename}";
+    }
+
+    /** Whether this export's figures span every client (ADR-0007). */
+    public function spansAllClients(): bool
+    {
+        return $this->tenant_id === null;
     }
 
     public function isExpired(): bool

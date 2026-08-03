@@ -11,6 +11,15 @@ enum ErrorCode: string
 {
     case VALIDATION_FAILED = 'VALIDATION_FAILED';
     case INVALID_CREDENTIALS = 'INVALID_CREDENTIALS';
+
+    // ADR-0008. Four codes rather than one, because the client does
+    // something different for each: collect a code, restart the login,
+    // re-prompt, or send the user to enrolment.
+    case MFA_REQUIRED = 'MFA_REQUIRED';
+    case MFA_ENROLMENT_REQUIRED = 'MFA_ENROLMENT_REQUIRED';
+    case MFA_CHALLENGE_INVALID = 'MFA_CHALLENGE_INVALID';
+    case MFA_CODE_INVALID = 'MFA_CODE_INVALID';
+    case MFA_ALREADY_ENROLLED = 'MFA_ALREADY_ENROLLED';
     case UNAUTHENTICATED = 'UNAUTHENTICATED';
     case FORBIDDEN = 'FORBIDDEN';
     case NOT_FOUND = 'NOT_FOUND';

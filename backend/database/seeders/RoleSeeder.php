@@ -37,13 +37,27 @@ class RoleSeeder extends Seeder
                     'description' => $definition['description'],
                     'is_system' => true,
                     'permissions' => array_map(fn (P $p) => $p->value, $definition['permissions']),
+                    // ADR-0008. Seeded here as well as set by the migration,
+                    // and both are needed: the migration covers a database
+                    // that already had roles in it, this covers every fresh
+                    // install and every test run. Without it the flag would
+                    // default false on a new database and the requirement
+                    // would be *silently off* everywhere it had never been
+                    // switched on — the exact failure mode ADR-0008 rejects
+                    // an enforcement bypass for.
+                    'requires_mfa' => $definition['requires_mfa'] ?? false,
                 ],
             );
         }
     }
 
     /**
-     * @return array<string, array{name: string, description: string, permissions: array<int, P>}>
+     * @return array<string, array{
+     *     name: string,
+     *     description: string,
+     *     permissions: array<int, P>,
+     *     requires_mfa?: bool
+     * }>
      */
     public static function definitions(): array
     {
@@ -61,6 +75,11 @@ class RoleSeeder extends Seeder
             UserRole::SUPER_ADMIN->value => [
                 'name' => 'Super Admin',
                 'description' => 'Platform owner. Every permission, including managing roles.',
+                // AGENTS.md: "MFA is required for Super Admin and Finance
+                // roles in Phase 1 — these roles can move money and change
+                // rates." These two and no others; PROJECT.md puts MFA for
+                // everyone else out of Phase 1.
+                'requires_mfa' => true,
                 'permissions' => P::cases(),
             ],
 
@@ -87,6 +106,7 @@ class RoleSeeder extends Seeder
             UserRole::FINANCE->value => [
                 'name' => 'Finance',
                 'description' => 'Invoices, credit notes and rate cards. Cannot dispatch.',
+                'requires_mfa' => true,
                 'permissions' => [
                     ...$everyoneReads, ...$billingRead,
                     P::BOOKINGS_CREATE, P::TRIPS_VIEW_ALL, P::TRIPS_TRANSITION_FINANCE,

@@ -1,3 +1,4 @@
+import type { FilterOption, TenancyScope } from './api'
 import type { TripStatus } from './trip'
 
 /** One row of the trip report — the Bank's six acceptance criteria, flat. */
@@ -31,7 +32,26 @@ export interface TripReportSummary {
   completeness_percent: number | null
 }
 
-export interface TripReportMeta {
+/**
+ * What every report says about whose figures it holds (ADR-0007).
+ *
+ * `scope` is actor-based and shares its vocabulary with `/bookings`,
+ * `/trips` and `/audit-logs` — it answers "is this reader a platform
+ * reader", which is what decides whether a client picker is offered at all.
+ *
+ * `covers` answers the different question of *whose figures these are*, and
+ * is not derivable from `scope`: a platform reader filtered to one client
+ * is still a platform reader. It is the same string the exported XLSX and
+ * PDF header carries, so the screen and the file cannot disagree about the
+ * one thing that decides which meeting a document belongs in.
+ */
+export interface ReportScopeMeta {
+  scope: TenancyScope
+  covers: string
+  filters: { clients: FilterOption[] }
+}
+
+export interface TripReportMeta extends ReportScopeMeta {
   cursor: { next: string | null }
   summary: TripReportSummary
 }
@@ -67,7 +87,7 @@ export type PositionalReportRow = (string | number | null)[]
 export type FleetReportRow = PositionalReportRow
 
 /** The meta every positional report returns, whatever its summary holds. */
-export interface PositionalReportMeta<TSummary> {
+export interface PositionalReportMeta<TSummary> extends ReportScopeMeta {
   report: ReportType
   title: string
   headers: string[]

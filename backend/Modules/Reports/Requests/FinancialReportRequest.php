@@ -6,6 +6,8 @@ use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Modules\Reports\Enums\FinancialPeriod;
+use Modules\Reports\Enums\ReportType;
+use Modules\Reports\Requests\Concerns\AcceptsTenantFilter;
 
 /**
  * Filters for the financial report.
@@ -20,11 +22,18 @@ use Modules\Reports\Enums\FinancialPeriod;
  */
 class FinancialReportRequest extends FormRequest
 {
+    use AcceptsTenantFilter;
+
     private const ALLOWED_KEYS = ['from', 'to', 'group_by'];
 
     public function authorize(): bool
     {
         return true;
+    }
+
+    public function reportType(): ReportType
+    {
+        return ReportType::FINANCIAL;
     }
 
     /**
@@ -36,13 +45,16 @@ class FinancialReportRequest extends FormRequest
             'from' => ['sometimes', 'date'],
             'to' => ['sometimes', 'date'],
             'group_by' => ['sometimes', Rule::enum(FinancialPeriod::class)],
+            ...$this->tenantFilterRules(),
         ];
     }
 
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $validator) {
-            foreach (array_diff(array_keys($this->query()), self::ALLOWED_KEYS) as $key) {
+            $allowed = [...self::ALLOWED_KEYS, ...$this->tenantFilterKeys()];
+
+            foreach (array_diff(array_keys($this->query()), $allowed) as $key) {
                 $validator->errors()->add((string) $key, "\"{$key}\" is not a filter this report accepts.");
             }
 
@@ -50,6 +62,11 @@ class FinancialReportRequest extends FormRequest
                 && strtotime((string) $this->query('to')) < strtotime((string) $this->query('from'))) {
                 $validator->errors()->add('to', 'The end of the range cannot fall before its start.');
             }
+
+            // ADR-0007 rule 2. Deliberately last: if the range is already
+            // nonsense, saying so is more useful than also demanding a
+            // client for a report that would not run anyway.
+            $this->validateTenantFilterRequired($validator);
         });
     }
 
