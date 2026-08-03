@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Support\Api\ApiResponse;
 use App\Support\Database\SearchTerm;
 use App\Support\Tenancy\ClientOptions;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Modules\Bookings\Enums\BookingStatus;
 use Modules\Bookings\Models\Booking;
@@ -92,6 +93,28 @@ class BookingController extends Controller
             ->when(
                 $request->boolean('dispatchable'),
                 fn ($q) => $q->whereIn('status', [BookingStatus::PENDING->value, BookingStatus::APPROVED->value])
+            )
+            // The range bounds the *pickup* moment: `scheduled_for`, or the
+            // moment the booking was raised when there is none — an
+            // immediate booking's pickup *is* its creation. Filtering
+            // `scheduled_for` alone would silently drop every immediate
+            // booking from every range, and a queue that quietly omits the
+            // urgent rows is worse than one that refuses the query.
+            ->when(
+                $request->filled('from'),
+                fn ($q) => $q->whereRaw(
+                    'COALESCE(scheduled_for, created_at) >= ?',
+                    [Carbon::parse($request->string('from'))->startOfDay()],
+                ),
+            )
+            // End of day, not midnight — see AuditLogController: `to=` names
+            // a day whose pickups are wanted, not a midnight to stop before.
+            ->when(
+                $request->filled('to'),
+                fn ($q) => $q->whereRaw(
+                    'COALESCE(scheduled_for, created_at) <= ?',
+                    [Carbon::parse($request->string('to'))->endOfDay()],
+                ),
             )
             // Soonest scheduled pickup first, immediate bookings ahead of
             // them — a dispatch queue ordered by creation time would bury

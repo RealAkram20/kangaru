@@ -24,10 +24,13 @@ class TripFactory extends Factory
     protected $model = Trip::class;
 
     /**
-     * `vehicle_id` and `driver_id` resolve from whatever `tenant_id` ended
-     * up as, so `Trip::factory()->forTenant($t)` yields a trip whose
-     * vehicle and driver are in that same tenant — never a cross-tenant
-     * trip built by accident.
+     * The vehicle and driver are the platform's, not the tenant's — the
+     * fleet stopped belonging to clients when ADR-0005 was enforced
+     * (2026_08_02_160000_move_fleet_to_the_platform). These defaults used
+     * to thread `tenant_id` into both factories and were latently broken
+     * from that migration on: every existing test happened to pass
+     * `forVehicle()`/`forDriver()` explicitly, so the first test to lean on
+     * the defaults failed on a column that no longer exists.
      *
      * @return array<string, mixed>
      */
@@ -35,12 +38,8 @@ class TripFactory extends Factory
     {
         return [
             'tenant_id' => Tenant::factory(),
-            'vehicle_id' => fn (array $attributes) => Vehicle::factory()->create([
-                'tenant_id' => $attributes['tenant_id'],
-            ])->id,
-            'driver_id' => fn (array $attributes) => Driver::factory()->create([
-                'tenant_id' => $attributes['tenant_id'],
-            ])->id,
+            'vehicle_id' => Vehicle::factory(),
+            'driver_id' => Driver::factory(),
             'origin' => 'Kampala',
             'destination' => fake()->randomElement(['Entebbe', 'Jinja', 'Mbarara', 'Gulu']),
             'status' => TripStatus::ASSIGNED,

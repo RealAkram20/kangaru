@@ -14,7 +14,7 @@ class BookingIndexRequest extends FormRequest
      * Query params this endpoint recognizes. Anything else fails
      * validation — AGENTS.md: "unknown filters return 422, not silence."
      */
-    private const ALLOWED_KEYS = ['status', 'dispatchable', 'q', 'cursor'];
+    private const ALLOWED_KEYS = ['status', 'dispatchable', 'q', 'from', 'to', 'cursor'];
 
     public function authorize(): bool
     {
@@ -34,6 +34,12 @@ class BookingIndexRequest extends FormRequest
             // whose queue spans clients — the client's name. Bounded so a
             // search box cannot be used to send a megabyte to `LIKE`.
             'q' => ['sometimes', 'string', 'max:120'],
+            // Dates, not datetimes — same reasoning as AuditLogIndexRequest:
+            // "pickups this week" is the question, and nobody asks it to the
+            // second. They bound the *pickup* moment; see the controller for
+            // what that means for an immediate booking.
+            'from' => ['sometimes', 'date_format:Y-m-d'],
+            'to' => ['sometimes', 'date_format:Y-m-d', 'after_or_equal:from'],
             'cursor' => ['sometimes', 'string'],
 
             // `tenant_id` is validated only for the reader who may use it.
@@ -48,6 +54,18 @@ class BookingIndexRequest extends FormRequest
             ...($this->allowsClientFilter()
                 ? ['tenant_id' => ['sometimes', 'integer', 'exists:tenants,id']]
                 : []),
+        ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'to.after_or_equal' => 'The end of the range cannot fall before its start.',
+            'from.date_format' => 'Dates are YYYY-MM-DD, e.g. 2026-03-01.',
+            'to.date_format' => 'Dates are YYYY-MM-DD, e.g. 2026-03-31.',
         ];
     }
 

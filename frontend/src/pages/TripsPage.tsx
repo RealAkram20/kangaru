@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../auth/useAuth'
 import { ClientFilterSelect } from '../components/filters/ClientFilterSelect'
+import { DateRangeFilter } from '../components/filters/DateRangeFilter'
 import { apiClient } from '../lib/apiClient'
 import { canManageBilling } from '../lib/billing'
 import { useDebouncedValue } from '../lib/useDebouncedValue'
@@ -46,12 +47,22 @@ const CLIENT_COLUMN: DataColumn<Trip> = {
  * happens server-side, unlike the search box which only ever sifted the
  * page already fetched.
  */
-function tripsUrl(client: string, search: string, cursor: string | null = null): string {
+function tripsUrl(
+  client: string,
+  search: string,
+  from: string,
+  to: string,
+  cursor: string | null = null,
+): string {
   const params = new URLSearchParams()
   if (client !== '') params.set('tenant_id', client)
   // Server-side: a trip list is append-only and long, and searching the 25
   // rows in hand while reporting the rest as "no match" is a wrong answer.
   if (search !== '') params.set('q', search)
+  // Bounds when the trip was raised. "Trips *started* in a range" is the
+  // trip report's question, and the server documents the distinction.
+  if (from !== '') params.set('from', from)
+  if (to !== '') params.set('to', to)
   // Opaque, and sent back unaltered: it encodes a sort position rather
   // than an offset, so trips created while somebody is paging do not shift
   // the page under them.
@@ -141,6 +152,10 @@ export function TripsPage() {
   // Held back until typing settles — see BookingsPage. Every keystroke
   // would otherwise be a request, and their answers can land out of order.
   const search = useDebouncedValue(query.trim())
+  // Creation date range, '' meaning unbounded. Not debounced: a date
+  // picker commits a whole value per change, not a keystroke at a time.
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
   const [selected, setSelected] = useState<Trip | null>(null)
   const [transitionTo, setTransitionTo] = useState<TripStatus | null>(null)
   const [invoicing, setInvoicing] = useState<Trip | null>(null)
@@ -161,7 +176,7 @@ export function TripsPage() {
   const refresh = useCallback(async () => {
     try {
       const response = await apiClient.get<ApiSuccess<Trip[], ScopedCursorMeta>>(
-        tripsUrl(client, search),
+        tripsUrl(client, search, from, to),
       )
       setTrips(response.data.data)
       setScope(response.data.meta?.scope ?? 'tenant')
@@ -175,7 +190,7 @@ export function TripsPage() {
     } catch {
       setError('Could not load trips.')
     }
-  }, [client, search])
+  }, [client, search, from, to])
 
   const loadMore = useCallback(async () => {
     if (next === null) return
@@ -183,7 +198,7 @@ export function TripsPage() {
     setLoadingMore(true)
     try {
       const response = await apiClient.get<ApiSuccess<Trip[], ScopedCursorMeta>>(
-        tripsUrl(client, search, next),
+        tripsUrl(client, search, from, to, next),
       )
       // Appended, so the trips already read stay put — this is the one
       // path that must not replace the list.
@@ -194,7 +209,7 @@ export function TripsPage() {
     } finally {
       setLoadingMore(false)
     }
-  }, [client, search, next])
+  }, [client, search, from, to, next])
 
   // Promise chain rather than `void refresh()` so the state update lands
   // in a callback — setState straight from an effect body cascades renders.
@@ -202,7 +217,7 @@ export function TripsPage() {
     let cancelled = false
 
     apiClient
-      .get<ApiSuccess<Trip[], ScopedCursorMeta>>(tripsUrl(client, search))
+      .get<ApiSuccess<Trip[], ScopedCursorMeta>>(tripsUrl(client, search, from, to))
       .then((response) => {
         if (cancelled) return
 
@@ -220,7 +235,7 @@ export function TripsPage() {
     }
     // Re-fetches on a client change: the narrowing is server-side, so the
     // other clients' rows were never here to filter.
-  }, [client, search])
+  }, [client, search, from, to])
 
   // The response to a transition is the updated trip, so the row and the
   // open panel are refreshed from it rather than re-fetching the list.
@@ -255,6 +270,7 @@ export function TripsPage() {
               value={client}
               onChange={setClient}
             />
+            <DateRangeFilter from={from} to={to} onFromChange={setFrom} onToChange={setTo} />
             <Input
               iconLeft="search"
               placeholder={

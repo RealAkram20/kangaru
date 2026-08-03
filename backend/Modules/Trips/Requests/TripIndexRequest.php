@@ -14,7 +14,7 @@ class TripIndexRequest extends FormRequest
      * Query params this endpoint recognizes. Anything else fails
      * validation — AGENTS.md: "unknown filters return 422, not silence."
      */
-    private const ALLOWED_KEYS = ['status', 'vehicle_id', 'driver_id', 'q', 'cursor'];
+    private const ALLOWED_KEYS = ['status', 'vehicle_id', 'driver_id', 'q', 'from', 'to', 'cursor'];
 
     public function authorize(): bool
     {
@@ -33,6 +33,12 @@ class TripIndexRequest extends FormRequest
             // Free text across route, vehicle registration, driver name,
             // status and — for a cross-client reader — the client's name.
             'q' => ['sometimes', 'string', 'max:120'],
+            // Dates, not datetimes — same reasoning as AuditLogIndexRequest.
+            // They bound `created_at`, the axis this list is ordered by;
+            // "trips *started* in a range" is the trip report's question
+            // (TripReportRepository), not this listing's.
+            'from' => ['sometimes', 'date_format:Y-m-d'],
+            'to' => ['sometimes', 'date_format:Y-m-d', 'after_or_equal:from'],
             'cursor' => ['sometimes', 'string'],
 
             // Validated only for the reader who may use it. See
@@ -42,6 +48,18 @@ class TripIndexRequest extends FormRequest
             ...($this->allowsClientFilter()
                 ? ['tenant_id' => ['sometimes', 'integer', 'exists:tenants,id']]
                 : []),
+        ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'to.after_or_equal' => 'The end of the range cannot fall before its start.',
+            'from.date_format' => 'Dates are YYYY-MM-DD, e.g. 2026-03-01.',
+            'to.date_format' => 'Dates are YYYY-MM-DD, e.g. 2026-03-31.',
         ];
     }
 

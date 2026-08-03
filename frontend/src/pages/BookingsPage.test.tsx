@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiFailure, apiOk, makeUser, renderAs } from '../test/harness'
@@ -139,6 +139,23 @@ describe('BookingsPage', () => {
     await user.click(screen.getByRole('button', { name: /create booking/i }))
 
     expect(await screen.findByText('This company has reached its credit limit.')).toBeInTheDocument()
+  })
+
+  it('narrows by pickup date on the server, not the page in hand', async () => {
+    renderAs(<BookingsPage />)
+    await screen.findByText('Kampala → Entebbe')
+
+    // fireEvent rather than user.type: a date input takes a whole value
+    // per change, which is also why the page does not debounce it.
+    fireEvent.change(screen.getByLabelText('From date'), { target: { value: '2026-08-01' } })
+    fireEvent.change(screen.getByLabelText('To date'), { target: { value: '2026-08-31' } })
+
+    await waitFor(() => {
+      const urls = get.mock.calls.map(([url]) => url as string)
+      expect(
+        urls.some((url) => url.includes('from=2026-08-01') && url.includes('to=2026-08-31')),
+      ).toBe(true)
+    })
   })
 
   it('approves a pending booking and reloads the list', async () => {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../auth/useAuth'
 import { ClientFilterSelect } from '../components/filters/ClientFilterSelect'
+import { DateRangeFilter } from '../components/filters/DateRangeFilter'
 import { apiClient } from '../lib/apiClient'
 import { apiError, fieldErrors } from '../lib/apiError'
 import { useDebouncedValue } from '../lib/useDebouncedValue'
@@ -56,6 +57,8 @@ interface BookingList {
 async function fetchBookings(
   client: string,
   search: string,
+  from: string,
+  to: string,
   cursor: string | null,
 ): Promise<BookingList> {
   const params = new URLSearchParams()
@@ -64,6 +67,10 @@ async function fetchBookings(
   // in-browser filter searched the 25 rows in hand and reported the rest
   // as "no match", which is a wrong answer rather than a slow one.
   if (search !== '') params.set('q', search)
+  // Bounds the *pickup* moment — an immediate booking counts as a pickup
+  // on the day it was raised. The server documents and enforces this.
+  if (from !== '') params.set('from', from)
+  if (to !== '') params.set('to', to)
   if (cursor !== null) params.set('cursor', cursor)
 
   const query = params.toString()
@@ -102,6 +109,10 @@ export function BookingsPage() {
   // would otherwise be a request, and their answers can arrive out of
   // order — "E" resolving after "Entebbe" leaves the wrong rows on screen.
   const search = useDebouncedValue(query.trim())
+  // Pickup date range, '' meaning unbounded. Not debounced: a date picker
+  // commits a whole value per change, not a keystroke at a time.
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
   const [creating, setCreating] = useState(false)
   const [decision, setDecision] = useState<{
     booking: Booking
@@ -135,11 +146,11 @@ export function BookingsPage() {
    */
   const load = useCallback(
     () =>
-      fetchBookings(client, search, null).then(
+      fetchBookings(client, search, from, to, null).then(
         (list) => apply(list, false),
         onLoadFailure(setLoadError),
       ),
-    [apply, client, search],
+    [apply, client, search, from, to],
   )
 
   // Re-runs when the chosen client changes, because the narrowing happens
@@ -147,7 +158,7 @@ export function BookingsPage() {
   useEffect(() => {
     let cancelled = false
 
-    fetchBookings(client, search, null)
+    fetchBookings(client, search, from, to, null)
       .then((list) => {
         if (!cancelled) apply(list, false)
       })
@@ -158,20 +169,20 @@ export function BookingsPage() {
     return () => {
       cancelled = true
     }
-  }, [apply, client, search])
+  }, [apply, client, search, from, to])
 
   const loadMore = useCallback(async () => {
     if (next === null) return
 
     setLoadingMore(true)
     try {
-      apply(await fetchBookings(client, search, next), true)
+      apply(await fetchBookings(client, search, from, to, next), true)
     } catch (error) {
       onLoadFailure(setLoadError)(error)
     } finally {
       setLoadingMore(false)
     }
-  }, [apply, client, search, next])
+  }, [apply, client, search, from, to, next])
 
   const canApprove = user !== null && APPROVER_ROLES.includes(user.role)
 
@@ -307,6 +318,7 @@ export function BookingsPage() {
               value={client}
               onChange={setClient}
             />
+            <DateRangeFilter from={from} to={to} onFromChange={setFrom} onToChange={setTo} />
             <Input
               iconLeft="search"
               placeholder={

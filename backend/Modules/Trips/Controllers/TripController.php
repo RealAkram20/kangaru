@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Support\Api\ApiResponse;
 use App\Support\Database\SearchTerm;
 use App\Support\Tenancy\ClientOptions;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
@@ -99,6 +100,19 @@ class TripController extends Controller
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
             ->when($request->filled('vehicle_id'), fn ($q) => $q->where('vehicle_id', $request->integer('vehicle_id')))
             ->when($request->filled('driver_id'), fn ($q) => $q->where('driver_id', $request->integer('driver_id')))
+            // `created_at` — the axis this list is ordered by, present on
+            // every trip. "Trips *started* in a range" is the trip report's
+            // question, and filtering `started_at` here would silently drop
+            // every trip still awaiting its driver from every range.
+            ->when(
+                $request->filled('from'),
+                fn ($q) => $q->where('created_at', '>=', Carbon::parse($request->string('from'))->startOfDay()),
+            )
+            // End of day, not midnight — see AuditLogController.
+            ->when(
+                $request->filled('to'),
+                fn ($q) => $q->where('created_at', '<=', Carbon::parse($request->string('to'))->endOfDay()),
+            )
             ->orderBy('created_at', 'desc')
             ->orderBy('id', 'desc');
 

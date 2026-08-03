@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiFailure, apiOk, makeUser, renderAs } from '../test/harness'
@@ -94,6 +94,23 @@ describe('TripsPage', () => {
    * every trip, and PROJECT.md makes them the Phase 1 acceptance criteria.
    * This is the test that says they reach the screen.
    */
+  it('narrows by creation date on the server, not the page in hand', async () => {
+    renderAs(<TripsPage />, makeUser({ role: 'dispatcher' }))
+    await screen.findByText('UAA 123A')
+
+    // fireEvent rather than user.type: a date input takes a whole value
+    // per change, which is also why the page does not debounce it.
+    fireEvent.change(screen.getByLabelText('From date'), { target: { value: '2026-07-01' } })
+    fireEvent.change(screen.getByLabelText('To date'), { target: { value: '2026-07-31' } })
+
+    await waitFor(() => {
+      const urls = get.mock.calls.map(([url]) => url as string)
+      expect(
+        urls.some((url) => url.includes('from=2026-07-01') && url.includes('to=2026-07-31')),
+      ).toBe(true)
+    })
+  })
+
   it('shows all six of the Bank-required data points', async () => {
     const user = userEvent.setup()
     renderAs(<TripsPage />, makeUser({ role: 'finance' }))

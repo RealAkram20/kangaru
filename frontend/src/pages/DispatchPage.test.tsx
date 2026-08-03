@@ -113,6 +113,49 @@ describe('DispatchPage', () => {
     expect(screen.queryByLabelText(/vehicle/i)).not.toBeInTheDocument()
   })
 
+  it('pages the queue with the cursor, appending rather than replacing', async () => {
+    const user = userEvent.setup()
+    get.mockImplementation((url: string) => {
+      if (url.startsWith('/bookings')) {
+        // The cursor is opaque and sent back unaltered; the second page
+        // ends the queue.
+        return Promise.resolve(
+          url.includes('cursor=abc')
+            ? apiOk([booking({ id: 42, origin: 'Ntinda', destination: 'Kololo' })], {
+                cursor: { next: null },
+              })
+            : apiOk([booking()], { cursor: { next: 'abc' } }),
+        )
+      }
+      if (url.startsWith('/vehicles')) return Promise.resolve(apiOk([vehicle()]))
+      if (url.startsWith('/drivers')) return Promise.resolve(apiOk([driver()]))
+      return Promise.reject(new Error(`unexpected GET ${url}`))
+    })
+
+    renderAs(<DispatchPage />)
+    await screen.findByText('Kampala → Entebbe')
+
+    await user.click(screen.getByRole('button', { name: /load more/i }))
+
+    // Appended: the row already on screen stays put beside the new one. A
+    // queue that replaced its rows would pull the page out from under a
+    // dispatcher mid-read.
+    expect(await screen.findByText('Ntinda → Kololo')).toBeInTheDocument()
+    expect(screen.getByText('Kampala → Entebbe')).toBeInTheDocument()
+
+    // And the control removes itself at the end of the queue.
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument(),
+    )
+  })
+
+  it('offers no load-more when the queue fits one page', async () => {
+    renderAs(<DispatchPage />)
+
+    await screen.findByText('Kampala → Entebbe')
+    expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument()
+  })
+
   it('says the queue is clear rather than showing nothing', async () => {
     board([])
 

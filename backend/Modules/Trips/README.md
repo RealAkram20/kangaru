@@ -57,7 +57,7 @@ deleting a trip would break the audit trail, so it isn't exposed.
 
 | Method | Path | Policy |
 |---|---|---|
-| GET | `/api/v1/trips` | `viewAny` — cursor-paginated; a Driver sees only their own assigned trips |
+| GET | `/api/v1/trips` | `viewAny` — cursor-paginated; a Driver sees only their own assigned trips. Filters: `status`, `vehicle_id`, `driver_id`, `q`, `from`/`to` (creation date — "trips *started* in a range" is the trip report's question) |
 | GET | `/api/v1/trips/{id}` | `view` — same tenant only; a Driver may only view their own trip |
 | POST | `/api/v1/trips` | `create` — Super Admin, Operations Manager, Dispatcher, Fleet Owner, Branch Manager, Depot Manager |
 | POST | `/api/v1/trips/{id}/transitions` | `transition` — role- and target-status-dependent, see `TripPolicy` |
@@ -116,11 +116,7 @@ Cancelled: reachable from any state before Trip Started, including Rejected
 9. **`Modules/Drivers` `user_id` linkage** — the column exists but has no
    request-layer/UI support in `Modules/Drivers` yet; populated only via
    direct Eloquent, seeders, or tests for now (see `Modules/Drivers/README.md`).
-10. **No date filter on the trip list.** `?q=` covers route, registration,
-    driver, status and client; `?status=`, `?vehicle_id=` and `?driver_id=`
-    cover the rest. "Every trip in March" is still not expressible here —
-    the trip *report* answers it, the list does not.
-11. **`TripResource` sends three fields the frontend type does not
+10. **`TripResource` sends three fields the frontend type does not
     declare** — `booking_id`, `odometer_start_photo_url` and
     `odometer_end_photo_url`. Nothing in the UI reads them, so this is
     unused surface rather than a bug, but `tsc -b` rejects any fixture

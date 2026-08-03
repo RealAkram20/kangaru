@@ -461,6 +461,17 @@ paths:
         - { name: status, in: query, schema: { $ref: '#/components/schemas/BookingStatus' } }
         - { name: dispatchable, in: query, schema: { type: boolean } }
         - { name: q, in: query, schema: { type: string, maxLength: 120 } }
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+          description: >-
+            Start of a pickup-date range (inclusive). The pickup moment is
+            `scheduled_for`, or the moment the booking was raised for an
+            immediate booking.
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+          description: End of the pickup-date range — the whole named day is included.
         - { name: tenant_id, in: query, schema: { type: integer }, description: Platform staff only. }
         - { $ref: '#/components/parameters/cursor' }
       responses:
@@ -989,6 +1000,16 @@ paths:
         - { name: vehicle_id, in: query, schema: { type: integer } }
         - { name: driver_id, in: query, schema: { type: integer } }
         - { name: q, in: query, schema: { type: string, maxLength: 120 } }
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+          description: >-
+            Start of a creation-date range (inclusive). Trips *started* in a
+            range are the trip report's question, not this listing's.
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+          description: End of the creation-date range — the whole named day is included.
         - { name: tenant_id, in: query, schema: { type: integer }, description: Platform staff only. }
         - { $ref: '#/components/parameters/cursor' }
       responses:

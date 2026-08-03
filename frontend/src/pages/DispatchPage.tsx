@@ -15,6 +15,7 @@ import { Identifier } from '../components/core/Identifier'
 import { Alert } from '../components/feedback/Alert'
 import { Dialog } from '../components/feedback/Dialog'
 import { EmptyState } from '../components/feedback/EmptyState'
+import { LoadMore } from '../components/data/LoadMore'
 import { FormField } from '../components/forms/FormField'
 import { Select } from '../components/forms/Select'
 
@@ -37,18 +38,24 @@ interface Board {
   scope: TenancyScope
   /** The clients a platform dispatcher may narrow to; empty otherwise. */
   clients: FilterOption[]
+  /** Opaque cursor for the rest of the queue, or null at its end. */
+  next: string | null
 }
 
 /**
- * `?dispatchable=1` is always present, so the client filter appends.
+ * `?dispatchable=1` is always present, so everything else appends.
  *
  * Narrowing happens server-side. On this screen that matters more than on
  * the listings: the board's whole purpose is to work a queue down, and a
  * dispatcher handling one client's morning cannot do it through a filter
  * that only sifts the first 25 rows.
  */
-function queueUrl(client: string): string {
-  return client === '' ? '/bookings?dispatchable=1' : `/bookings?dispatchable=1&tenant_id=${encodeURIComponent(client)}`
+function queueUrl(client: string, cursor: string | null = null): string {
+  const params = new URLSearchParams({ dispatchable: '1' })
+  if (client !== '') params.set('tenant_id', client)
+  if (cursor !== null) params.set('cursor', cursor)
+
+  return `/bookings?${params.toString()}`
 }
 
 /**
@@ -68,6 +75,7 @@ async function fetchBoard(client: string): Promise<Board> {
     drivers: drivers.data.data.filter((d) => d.status === 'active'),
     scope: bookings.data.meta?.scope ?? 'tenant',
     clients: bookings.data.meta?.filters?.clients ?? [],
+    next: bookings.data.meta?.cursor?.next ?? null,
   }
 }
 
@@ -85,6 +93,8 @@ export function DispatchPage() {
   // '' is every client — the right default for a desk working the whole
   // queue, which is what a cross-client board is for.
   const [client, setClient] = useState('')
+  const [next, setNext] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [assigned, setAssigned] = useState<{ booking: Booking; trip: Trip } | null>(null)
 
@@ -96,8 +106,34 @@ export function DispatchPage() {
     setDrivers(board.drivers)
     setScope(board.scope)
     setClients(board.clients)
+    setNext(board.next)
     setLoadError(null)
   }, [])
+
+  /**
+   * Fetches the next page of the queue alone — the vehicle and driver
+   * lists are not paged and re-reading them here would be two requests for
+   * nothing. Appends, so the rows a dispatcher has already read (and the
+   * one they may have selected) stay put; everything else on this board —
+   * narrowing, refreshing, assigning — replaces the queue instead, because
+   * the list it was paging through no longer describes the query.
+   */
+  const loadMore = useCallback(async () => {
+    if (next === null) return
+
+    setLoadingMore(true)
+    try {
+      const response = await apiClient.get<ApiSuccess<Booking[], ScopedCursorMeta>>(
+        queueUrl(client, next),
+      )
+      setQueue((current) => [...(current ?? []), ...response.data.data])
+      setNext(response.data.meta?.cursor?.next ?? null)
+    } catch (error) {
+      onLoadFailure(setLoadError)(error)
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [client, next])
 
   const load = useCallback(
     () => fetchBoard(client).then(apply).catch(onLoadFailure(setLoadError)),
@@ -169,7 +205,11 @@ export function DispatchPage() {
       >
         <Card
           title="Booking queue"
-          subtitle={queue ? `${queue.length} awaiting a vehicle · immediate first` : undefined}
+          // The `+` is the honest reading while a next page exists: the
+          // count is what has been fetched, not the queue's true depth.
+          subtitle={
+            queue ? `${queue.length}${next !== null ? '+' : ''} awaiting a vehicle · immediate first` : undefined
+          }
           padding="none"
           actions={
             <>
@@ -217,6 +257,17 @@ export function DispatchPage() {
               />
             ))
           )}
+          {/*
+            The queue was capped at the first 25 rows with no way on, which
+            on a busy morning silently hid the day's later pickups — a
+            dispatcher cannot work down a queue they cannot reach the end
+            of. Renders nothing once every page is in.
+          */}
+          <LoadMore
+            hasMore={next !== null}
+            loading={loadingMore}
+            onLoadMore={() => void loadMore()}
+          />
         </Card>
 
         {selected ? (

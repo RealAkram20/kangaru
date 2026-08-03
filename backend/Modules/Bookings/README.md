@@ -46,7 +46,7 @@ the transition check.
 
 | Method | Path | Policy |
 |---|---|---|
-| GET | `/api/v1/bookings` | `viewAny` — cursor-paginated; a Corporate Employee sees only their own requests. Filters: `status`, `dispatchable` |
+| GET | `/api/v1/bookings` | `viewAny` — cursor-paginated; a Corporate Employee sees only their own requests. Filters: `status`, `dispatchable`, `q`, `from`/`to` (pickup date; an immediate booking counts on the day it was raised) |
 | GET | `/api/v1/bookings/{id}` | `view` — desk roles see any; others only their own |
 | POST | `/api/v1/bookings` | `create` — every role except Driver |
 | POST | `/api/v1/bookings/{id}/approval` | `approve` — Super Admin, Operations Manager, Corporate Admin, Branch Manager |
@@ -103,10 +103,6 @@ decision reason stay an untouched audit record.
 7. **A booking still requires a tenant and a requesting user.** Walk-in and
    individual riders have neither, so they remain unexpressible — named in
    ADR-0005 and again in ADR-0006, and unchanged by both.
-8. **No date filter.** `?q=` searches text and `?status=` narrows state,
-   but "everything raised last week" is not expressible — the audit log has
-   `from`/`to` and this does not. The obvious next filter, and the one a
-   monthly reconciliation actually needs.
 
 ## Frontend
 

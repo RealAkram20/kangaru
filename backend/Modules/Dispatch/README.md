@@ -133,13 +133,7 @@ trustworthy answer inside the locked transaction, which answers it with a
    are not yet modelled.
 4. **Dispatch decision-time metric** — AGENTS.md's observability section
    wants it on the dashboard; nothing emits it yet.
-5. **The queue does not page.** `BookingsPage` and `TripsPage` gained a
-   "Load more"; the board did not. Its queue is `?dispatchable=1`, which is
-   self-limiting in a way the other lists are not — a backlog past 25
-   unassigned bookings is a staffing problem before it is a paging one —
-   but at fifty clients it will need one, and narrowing to a client is
-   currently what stands in for it.
-6. **Eligibility filtering and route preview in the UI** — the design mock
+5. **Eligibility filtering and route preview in the UI** — the design mock
    (`KangaruRide Design System/ui_kits/platform/DispatchScreen.jsx`) shows
    candidates filtered by category, geofence, depot and distance, plus a
    Mapbox route preview. `DispatchPage` offers every active vehicle and
@@ -165,6 +159,13 @@ Whether to show any of it comes from the API's `meta.scope`, never from
 inspecting the signed-in user — a page that worked that out for itself
 would be another copy of ADR-0006's predicate. A client's own board is
 unchanged and shows no client anywhere.
+
+**The queue pages with the same cursor + "Load more" as the listings.**
+Appending, never replacing, so the rows a dispatcher has already read stay
+put; the count in the card's subtitle carries a `+` while a next page
+exists, because what has been fetched is not the queue's true depth.
+Load-more fetches the queue alone — the vehicle and driver lists are not
+paged, and re-reading them would be two requests for nothing.
 
 **The board also narrows to one client**, via the same `?tenant_id=` the
 listings use, with `dispatchable=1` preserved alongside it — dropping that
