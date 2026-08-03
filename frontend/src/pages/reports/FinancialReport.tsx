@@ -2,15 +2,30 @@ import { useEffect, useState } from 'react'
 import { Card } from '../../components/core/Card'
 import { KPIStat } from '../../components/data/KPIStat'
 import { apiClient } from '../../lib/apiClient'
-import { apiError } from '../../lib/apiError'
+import { apiError, fieldErrors } from '../../lib/apiError'
 import { formatUgx } from '../../lib/format'
 import type { ApiSuccess } from '../../types/api'
-import type {
-  FinancialPeriod,
-  FinancialReportMeta,
-  PositionalReportRow,
-} from '../../types/report'
+import type { FinancialPeriod, FinancialReportMeta, PositionalReportRow } from '../../types/report'
 import { PositionalReportTable } from './PositionalReportTable'
+
+/**
+ * Prefers the field-level explanation over the envelope's generic one.
+ *
+ * Since ADR-0007 this report answers `422` to a platform user who has not
+ * named a client — deliberately, because a total spanning every client is a
+ * different figure and this report exports to PDF. The useful sentence
+ * ("Choose the client this financial report is for…") arrives in
+ * `errors.tenant_id`, while `message` is Laravel's "The given data was
+ * invalid." Showing the latter turns a considered refusal into what looks
+ * like a broken page, which is worse than the blank table it replaced and
+ * fails AGENTS.md's rule that an error says what to do next.
+ */
+function reportFailureMessage(failure: unknown): string {
+  const error = apiError(failure, 'Could not run this report.')
+  const [firstFieldMessage] = Object.values(fieldErrors(error))
+
+  return firstFieldMessage || error.message
+}
 
 /**
  * PROJECT.md's fourth Phase 1 report: invoiced, credited and outstanding
@@ -55,7 +70,7 @@ export function FinancialReport({
         setError(null)
       })
       .catch((failure: unknown) => {
-        if (!cancelled) setError(apiError(failure, 'Could not run this report.').message)
+        if (!cancelled) setError(reportFailureMessage(failure))
       })
 
     return () => {
