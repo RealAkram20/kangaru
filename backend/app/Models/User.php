@@ -28,6 +28,14 @@ use Modules\Administration\Models\Role;
  *                              assigns it directly so the status change and its deactivated_at stamp
  *                              happen in one save and produce one audit entry.
  * @property CarbonInterface|null $deactivated_at
+ * @property string|null $mfa_secret The TOTP shared secret, `encrypted`
+ *                                   cast (ADR-0008). Declared because the column is `text` and static
+ *                                   analysis would otherwise take the raw type over the cast.
+ * @property CarbonInterface|null $mfa_confirmed_at Null until a code has been
+ *                                                  verified against the secret. A stored-but-unconfirmed secret is a
+ *                                                  half-finished enrolment, not an armed factor.
+ * @property array<int, string>|null $mfa_recovery_codes Bcrypt hashes, inside an
+ *                                                       `encrypted:array` cast. Never read back — only checked.
  * @property-read string|UserRole $role The role slug. Usually a string since
  *   ADR-0004 — but Eloquent's class-cast cache hands back the UserRole a
  *   model was assigned until it is re-read, so both are real. Compare via
@@ -70,6 +78,21 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
         'remember_token',
+        // ADR-0008 decision 7, and this list is doing more work than
+        // hiding fields from JSON.
+        //
+        // `AuditLog::diffForUpdate()` strips `$model->getHidden()` from the
+        // changed keys, and the `created`/`deleted` branches build their
+        // payload from `attributesToArray()`, which applies `$hidden` too.
+        // So one entry here keeps a TOTP secret out of all three audit
+        // branches as well as out of every serialisation.
+        //
+        // That matters more than usual because `audit_logs` is append-only:
+        // a secret written into a `changes` column is not deletable, and
+        // the failure would be silent. `MfaSecretIsNeverAuditedTest` asserts
+        // it rather than trusting this comment.
+        'mfa_secret',
+        'mfa_recovery_codes',
     ];
 
     /**
@@ -85,7 +108,50 @@ class User extends Authenticatable
             'role' => RoleSlug::class,
             'status' => UserStatus::class,
             'deactivated_at' => 'datetime',
+            // App-level encryption, the treatment AGENTS.md requires for
+            // driver documents (ADR-0008 decision 6). A TOTP secret in
+            // plaintext is a second factor anybody holding a database dump
+            // can compute, which would leave the login protected and the
+            // control worthless.
+            'mfa_secret' => 'encrypted',
+            // Encrypted *and* individually hashed inside — see
+            // MfaService::generateRecoveryCodes(). Nothing ever reads a
+            // recovery code back, only checks one.
+            'mfa_recovery_codes' => 'encrypted:array',
+            'mfa_confirmed_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Whether this user's role demands a second factor (ADR-0008).
+     *
+     * Read from the role **row**, not from a constant naming two enum
+     * cases. Since ADR-0004 a role is data and custom roles exist; one
+     * holding `invoices.manage` moves money exactly as Finance does, so a
+     * Super Admin has to be able to require MFA on it without a release.
+     *
+     * Defaults to false when the role resolves to nothing — a user whose
+     * role slug no longer exists in the catalogue holds no permissions
+     * either, so there is nothing for a second factor to protect.
+     */
+    public function requiresMfa(): bool
+    {
+        return (bool) $this->roleRecord?->requires_mfa;
+    }
+
+    /** Enrolment is only real once a code has been verified against it. */
+    public function hasMfaEnabled(): bool
+    {
+        return $this->mfa_secret !== null && $this->mfa_confirmed_at !== null;
+    }
+
+    /**
+     * The state ADR-0008 decision 3 forces out of: a user who must use a
+     * second factor and has not set one up.
+     */
+    public function mustEnrolInMfa(): bool
+    {
+        return $this->requiresMfa() && ! $this->hasMfaEnabled();
     }
 
     public function tenant(): BelongsTo

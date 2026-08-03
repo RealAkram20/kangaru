@@ -10,6 +10,7 @@ import { DispatchPage } from '../pages/DispatchPage'
 import { DriversPage } from '../pages/DriversPage'
 import { InvoicesPage } from '../pages/InvoicesPage'
 import { LoginPage } from '../pages/LoginPage'
+import { MfaEnrolmentPage } from '../pages/MfaEnrolmentPage'
 import { NotificationsPage } from '../pages/NotificationsPage'
 import { RateCardsPage } from '../pages/RateCardsPage'
 import { ReportsPage } from '../pages/ReportsPage'
@@ -22,6 +23,21 @@ export const router = createBrowserRouter([
   {
     path: '/login',
     element: <LoginPage />,
+  },
+  // Outside the AppShell branch on purpose (ADR-0008 decision 3). A user
+  // who must enrol can reach nothing else — the shell's navigation would be
+  // a wall of links that all answer 403 — so this route deliberately has no
+  // sidebar to click.
+  //
+  // `allowUnenrolled` is what stops the guard redirecting this route to
+  // itself.
+  {
+    path: '/mfa/setup',
+    element: (
+      <ProtectedRoute allowUnenrolled>
+        <MfaEnrolmentPage />
+      </ProtectedRoute>
+    ),
   },
   {
     path: '/',

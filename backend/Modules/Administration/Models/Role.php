@@ -26,6 +26,10 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property string $name
  * @property string|null $description
  * @property bool $is_system
+ * @property bool $requires_mfa Whether holders of this role must use a
+ *                              second factor (ADR-0008). A per-role flag rather than two hardcoded
+ *                              slugs, because a custom role holding `invoices.manage` moves money
+ *                              exactly as Finance does and must be coverable without a release.
  * @property array<int, string> $permissions Cast to array; declared so
  *                                           static analysis does not fall back to the raw column type.
  */
@@ -33,13 +37,14 @@ class Role extends Model
 {
     use Auditable;
 
-    protected $fillable = ['slug', 'name', 'description', 'is_system', 'permissions'];
+    protected $fillable = ['slug', 'name', 'description', 'is_system', 'permissions', 'requires_mfa'];
 
     protected function casts(): array
     {
         return [
             'permissions' => 'array',
             'is_system' => 'boolean',
+            'requires_mfa' => 'boolean',
         ];
     }
 

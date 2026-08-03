@@ -8,11 +8,27 @@ use Modules\Administration\Requests\LoginRequest;
 
 class AuthService
 {
+    public function __construct(private readonly MfaService $mfa) {}
+
     /**
      * Locates the user unscoped by tenant — login must find a user by email
      * before any tenant is known (User is deliberately not BelongsToTenant).
      *
-     * @return array{user: User, token: string}
+     * ## Three outcomes since ADR-0008, not one
+     *
+     * - **No MFA required** — a token, exactly as before.
+     * - **MFA required and enrolled** — *no token*. A `challenge_id` the
+     *   client exchanges at `POST /auth/mfa/verify`. Decision 2: a partial
+     *   token is a token, so nothing that authenticates a request exists
+     *   until the factor is proved.
+     * - **MFA required and not enrolled** — a token, and nothing it can do
+     *   but enrol. Decision 3 forces enrolment rather than nagging, and
+     *   `EnsureMfaEnrolled` is what makes the token useless for anything
+     *   else. It has to be a real token because enrolling *is* an
+     *   authenticated act — the alternative is a second kind of half-credential,
+     *   which is the thing decision 2 refuses.
+     *
+     * @return array{user: User, token: string|null, challenge: string|null}
      */
     public function login(LoginRequest $request): array
     {
@@ -37,9 +53,45 @@ class AuthService
             throw new InvalidCredentialsException;
         }
 
-        $token = $user->createToken('api')->plainTextToken;
+        // The second factor, for a user who has one (ADR-0008 decision 2).
+        // Checked after the status check, so the ordering of the three
+        // refusals above is unchanged and none of them is distinguishable
+        // by timing.
+        if ($user->requiresMfa() && $user->hasMfaEnabled()) {
+            return [
+                'user' => $user,
+                'token' => null,
+                'challenge' => $this->mfa->issueChallenge($user),
+            ];
+        }
 
-        return ['user' => $user, 'token' => $token];
+        return [
+            'user' => $user,
+            'token' => $user->createToken('api')->plainTextToken,
+            'challenge' => null,
+        ];
+    }
+
+    /**
+     * The second step: a challenge plus a code, for a token.
+     *
+     * @return array{user: User, token: string}
+     *
+     * @throws InvalidMfaChallengeException|InvalidMfaCodeException
+     */
+    public function verifyMfa(string $challenge, string $code): array
+    {
+        $user = $this->mfa->verifyChallenge($challenge, $code);
+
+        // Re-checked here rather than trusted from the challenge. A
+        // challenge can outlive a suspension by up to five minutes, and an
+        // account deactivated during that window must not be able to spend
+        // the ticket it was issued a moment earlier.
+        if (! $user->status->canSignIn()) {
+            throw new InvalidCredentialsException;
+        }
+
+        return ['user' => $user, 'token' => $user->createToken('api')->plainTextToken];
     }
 
     public function logout(User $user): void

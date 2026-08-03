@@ -52,8 +52,16 @@ export function renderAs(ui: ReactElement, user: User | null = makeUser()) {
         value={{
           user,
           loading: false,
-          login: () => Promise.resolve(),
+          login: () => Promise.resolve({ status: 'signed-in' }),
+          verifyMfa: () => Promise.resolve({ status: 'signed-in' }),
           logout: () => Promise.resolve(),
+          // ADR-0008. False for every existing test, which is what keeps
+          // them testing the page they name: a user who must enrol is
+          // redirected out of the application entirely, so a fixture in
+          // that state would render the enrolment screen instead of the
+          // subject under test. `MfaEnrolmentPage`'s own tests set it.
+          mustEnrolMfa: Boolean(user?.must_enrol_mfa),
+          markMfaEnrolled: () => {},
         }}
       >
         {ui}

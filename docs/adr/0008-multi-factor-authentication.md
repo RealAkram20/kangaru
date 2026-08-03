@@ -309,12 +309,12 @@ control it does not really have.
 
 ## Implementation notes (3 August 2026)
 
-**Partially implemented. Decision 5 only — token expiry, its prune, and the
-tests. MFA itself is not built.**
+**Fully implemented, in two commits.** Decision 5 (token expiry) landed
+first and alone; the MFA half followed with its frontend in the same
+change, because it alters what `POST /auth/login` returns and shipping the
+backend without the SPA would have broken every privileged sign-in.
 
-Recorded here so a reader of this ADR does not mistake an Accepted status
-for a delivered control. The answer to "is MFA enforced for privileged
-users?" is still **no**.
+The answer to "is MFA enforced for privileged users?" is now **yes**.
 
 ### Why the halves shipped in this order
 
@@ -367,3 +367,77 @@ Consequences already identify as the risk, since `actingAs()` means the
 suite will keep passing while the login flow changes underneath it.
 
 `spomky-labs/otphp` and `bacon/bacon-qr-code` are **not** installed yet.
+
+### The MFA half (second commit)
+
+Everything in Scope except the deferrals: TOTP enrolment and verification,
+the two-step login, forced enrolment, recovery codes, secret encryption,
+audit events, and login-path tests.
+
+**`roles.requires_mfa` rather than two hardcoded slugs.** The Scope asked
+for "a per-role flag from the start", and since ADR-0004 a role is a row —
+so this is a column, seeded true for `super_admin` and `finance` and
+nothing else. A custom role holding `invoices.manage` moves money exactly
+as Finance does; requiring a factor on it is now configuration.
+
+**Enforcement is middleware on the whole API group**, not a check per
+controller — the same reasoning as ADR-0006's `BindSubjectTenant`. A rule
+applied route-by-route is missing from the route somebody adds next month,
+and here that route would be one a Finance officer reaches without the
+factor the bank was told they use.
+
+Its correctness is entirely in its ordering. Appended to the api group it
+would run *before* the route's `auth:sanctum` — group middleware precedes
+route middleware — see a null user on every request, and enforce nothing at
+all. It is in the priority list after `AuthenticatesRequests` for that
+reason, and that is the whole of why it works.
+
+### Three things found by running it
+
+**The seeder would have shipped the control switched off.** `RoleSeeder`
+writes `permissions` and `is_system`; adding `requires_mfa` to the
+*migration* covered a database that already had roles, and covered nothing
+on a fresh install or in any test. The flag would have defaulted false
+everywhere it had never been switched on — silently, which is precisely the
+failure mode this ADR rejects an enforcement bypass for. Caught because
+enabling it correctly made 25 existing tests fail; had it stayed off, the
+suite would have stayed green and the feature would have been decorative.
+
+**The first demo secret was not decodable.** `KANGARURIDEDEMOSECRET2026...`
+looks like a year and is not valid Base32 (A–Z and 2–7 only). The seed ran
+without complaint and every demo sign-in then failed at the code prompt —
+on accounts no administrator can reset. `DemoAccountMfaTest` now signs in as
+both seeded platform accounts for real, which is the only way that class of
+bug surfaces.
+
+**`tsc --noEmit` passed while `tsc -b` failed**, again — the auth context's
+test harness had not been updated for the new `login` return type. Third
+occurrence in this project.
+
+### What the fixtures had to become
+
+`UserFactory` now creates MFA-required users **already enrolled**, with
+`notEnrolledInMfa()` as the explicit opt-out the forced-enrolment tests use.
+
+This is fidelity rather than convenience. Since decision 3 an unenrolled
+Super Admin can reach nothing but the enrolment endpoints, so a fixture in
+that state is not "a Super Admin" — it is one mid-onboarding, and every
+test about anything else would have been testing a user who cannot do the
+thing under test. The alternative was exempting tests from the middleware,
+which is a control switched off in the environment meant to prove it works.
+
+### Guards proved by removal
+
+- Deleting the challenge branch in `AuthService::login` — **11 tests red**.
+  The privileged login hands out a token again.
+- Removing `mfa_secret` from `User::$hidden` — **1 test red**, and it is the
+  one that matters most: the secret reaches `audit_logs`, which is
+  append-only, so the leak would be permanent and silent.
+- Removing `EnsureMfaEnrolled` from the middleware stack — **1 test red**;
+  an unenrolled Super Admin can use the whole platform.
+
+### Still deferred, unchanged
+
+WebAuthn/passkeys, trusted devices, step-up authentication, and
+admin-initiated MFA reset — all per the Scope above, and all still their own
+decisions.

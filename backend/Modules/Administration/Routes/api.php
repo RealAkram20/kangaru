@@ -6,14 +6,60 @@ use Modules\Administration\Controllers\AuthController;
 use Modules\Administration\Controllers\RoleController;
 use Modules\Administration\Controllers\UserController;
 
-Route::post('/auth/login', [AuthController::class, 'login'])->middleware('throttle:5,1');
-Route::post('/auth/logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
-Route::get('/auth/me', [AuthController::class, 'me'])->middleware('auth:sanctum');
+Route::post('/auth/login', [AuthController::class, 'login'])
+    ->middleware('throttle:5,1')
+    ->name('auth.login');
+Route::post('/auth/logout', [AuthController::class, 'logout'])
+    ->middleware('auth:sanctum')
+    ->name('auth.logout');
+Route::get('/auth/me', [AuthController::class, 'me'])
+    ->middleware('auth:sanctum')
+    ->name('auth.me');
 
 // Changing your own password needs authentication but not a tenant: a
 // Super Admin has none, and every other route below would 404 for them.
 Route::patch('/auth/password', [AuthController::class, 'changePassword'])
-    ->middleware(['auth:sanctum', 'throttle:5,1']);
+    ->middleware(['auth:sanctum', 'throttle:5,1'])
+    ->name('auth.password.change');
+
+/*
+|--------------------------------------------------------------------------
+| Multi-factor authentication (ADR-0008)
+|--------------------------------------------------------------------------
+|
+| These route *names* are load-bearing: `EnsureMfaEnrolled` allows a user
+| who must enrol to reach the enrolment pair and nothing else, and it
+| matches on name rather than path. A path prefix would have opened
+| `auth/mfa/verify` too, which belongs to the other half of the flow and is
+| reached with no token at all.
+|
+*/
+
+// Unauthenticated, deliberately: the caller has proved a password and holds
+// a challenge, which is exactly the state in which no token exists.
+//
+// Throttled harder than login. The login limit is 5/min/IP, which does
+// nothing against a distributed attempt on one known Finance account — but
+// a challenge is single-use, so the real bound on guessing six digits is
+// that each attempt costs a fresh password authentication.
+Route::post('/auth/mfa/verify', [AuthController::class, 'verifyMfa'])
+    ->middleware('throttle:10,1')
+    ->name('auth.mfa.verify');
+
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post('/auth/mfa/enrol', [AuthController::class, 'beginMfaEnrolment'])
+        ->name('auth.mfa.enrol');
+    Route::post('/auth/mfa/enrol/confirm', [AuthController::class, 'confirmMfaEnrolment'])
+        ->middleware('throttle:10,1')
+        ->name('auth.mfa.enrol.confirm');
+
+    // Not on the forced-enrolment allowlist: you cannot regenerate codes
+    // you do not have yet, and the enrolment response is where the first
+    // set comes from.
+    Route::post('/auth/mfa/recovery-codes', [AuthController::class, 'regenerateRecoveryCodes'])
+        ->middleware('throttle:5,1')
+        ->name('auth.mfa.recovery-codes');
+});
 
 Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::get('/audit-logs', [AuditLogController::class, 'index']);

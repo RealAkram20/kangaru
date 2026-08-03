@@ -50,7 +50,11 @@ permission catalogue, and the audit log.
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| POST | `/api/v1/auth/login` | none | Rate limited 5/min/IP |
+| POST | `/api/v1/auth/login` | none | Rate limited 5/min/IP. **`202` with a `challenge_id` and no token** for an enrolled MFA-required user (ADR-0008); `200` with a token otherwise, carrying `must_enrol_mfa` |
+| POST | `/api/v1/auth/mfa/verify` | none | Rate limited 10/min/IP. Exchanges `challenge_id` + `code` for a token. Accepts a TOTP code or a recovery code |
+| POST | `/api/v1/auth/mfa/enrol` | Sanctum | Starts enrolment: `secret`, `otpauth_uri`, `qr_svg`. `409 MFA_ALREADY_ENROLLED` if a factor is already confirmed |
+| POST | `/api/v1/auth/mfa/enrol/confirm` | Sanctum | Proves a code and returns the ten recovery codes — **the only time they are legible** |
+| POST | `/api/v1/auth/mfa/recovery-codes` | Sanctum | Regenerates the set, invalidating the old one. Own account only |
 | POST | `/api/v1/auth/logout` | Sanctum | Revokes the current access token |
 | GET | `/api/v1/auth/me` | Sanctum | Returns the authenticated user |
 | PATCH | `/api/v1/auth/password` | Sanctum | Own password only. Rate limited 5/min. Revokes every token, including the caller's |
@@ -121,22 +125,34 @@ account's password could otherwise sign in as it.
 
 Named here so a half-built thing is not mistaken for a finished one.
 
-- **MFA for Super Admin and Finance.** AGENTS.md marks it required in
-  Phase 1 for the two roles that can move money and change rates. Not
-  built. This is the largest known gap in this module, and the oldest
-  unmet *stated* requirement in the repository.
+- **~~MFA for Super Admin and Finance~~ — built, ADR-0008 (3 August 2026).**
+  Kept in place because the *shape* of what remains deferred is easier to
+  read against what it replaced. This was the oldest unmet stated
+  requirement in the repository; it is now met, and the answer to a bank's
+  "is MFA enforced for privileged users?" is yes.
 
-  **ADR-0008 is Proposed** and describes it: TOTP rather than SMS (which
-  AGENTS.md's own security section argues against, on SMS-pumping cost),
-  no API token issued before the second factor, forced enrolment rather
-  than a grace period, and recovery codes — which are not optional here,
-  because the item below means a Super Admin who loses their authenticator
-  has no recovery path and is the only account that could fix themselves.
+  What shipped: TOTP (`spomky-labs/otphp`), a two-step login that issues
+  **no token at all** before the factor is proved, forced enrolment with no
+  grace period, ten single-use hashed recovery codes, an app-encrypted
+  secret, and a 24-hour Sanctum expiry with a scheduled prune.
 
-  It also folds in `config/sanctum.php`'s `'expiration' => null`. Tokens
-  currently never expire, against AGENTS.md's "Sanctum tokens with
-  expiry", and a second factor that mints a permanent credential secures
-  one moment and nothing after it. The two are one change.
+  Still deferred inside it, per the ADR's own Scope: WebAuthn/passkeys,
+  trusted devices ("remember this browser"), step-up authentication for
+  individual dangerous acts, and admin-initiated MFA reset — which is the
+  same hazard as the password item below and has the same answer.
+
+  Two things worth knowing operationally:
+
+  - **`roles.requires_mfa` is a per-role flag**, not two hardcoded slugs.
+    Seeded true for `super_admin` and `finance` and nothing else, but a
+    custom role holding `invoices.manage` moves money exactly as Finance
+    does and can be covered without a release.
+  - **The demo accounts share a fixed, documented TOTP secret**
+    (`DatabaseSeeder::DEMO_TOTP_SECRET`), and the seeder **throws** rather
+    than skipping if asked to write it outside `local`/`testing`/`staging`.
+    A bypass flag was rejected for the opposite reason: it would fail
+    silently in production, and a control that quietly stops asking is
+    worse than one that refuses to install.
 - **Resetting somebody else's password.** Deliberate, not an oversight: an
   administrator silently changing another account's password is the one act
   an audit trail cannot tell apart from impersonation. There is no
