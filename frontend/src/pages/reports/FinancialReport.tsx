@@ -7,6 +7,7 @@ import { formatUgx } from '../../lib/format'
 import type { ApiSuccess } from '../../types/api'
 import type { FinancialPeriod, FinancialReportMeta, PositionalReportRow } from '../../types/report'
 import { PositionalReportTable } from './PositionalReportTable'
+import { ReportScopeNotice } from './ReportScopeNotice'
 
 /**
  * Prefers the field-level explanation over the envelope's generic one.
@@ -103,6 +104,13 @@ export function FinancialReport({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+      {/*
+        Above the money, not below it. This is the report where a figure
+        read under the wrong client's name is most costly, and the reason
+        ADR-0007 refuses to produce a cross-client total at all.
+      */}
+      <ReportScopeNotice covers={meta?.covers} scope={meta?.scope} />
+
       {meta && (
         <div
           style={{

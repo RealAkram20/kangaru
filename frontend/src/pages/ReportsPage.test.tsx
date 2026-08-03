@@ -381,3 +381,96 @@ describe('ReportsPage client picker', () => {
     await waitFor(() => expect(screen.queryByLabelText('Client')).toBeNull())
   })
 })
+
+/**
+ * ADR-0007 rule 5's on-screen half: "a report that spans clients must say
+ * so on screen and in the exported file".
+ *
+ * The file header landed first, because that is the document that travels.
+ * This is the screen, and it matters because the picker communicates scope
+ * only implicitly — a reader arriving at a page somebody else left open has
+ * no other way to tell whose totals they are reading.
+ */
+describe('ReportsPage scope notice', () => {
+  const platformUser = {
+    tenant_id: null,
+    role: 'super_admin' as const,
+    email: 'sa@kangaruride.test',
+  }
+
+  function reportCovering(
+    scope: 'platform' | 'tenant',
+    covers: string,
+    summaryOverrides: Partial<TripReportSummary> = {},
+  ) {
+    get.mockImplementation((url: string) => {
+      if (url.startsWith('/vehicles') || url.startsWith('/drivers'))
+        return Promise.resolve(apiOk([]))
+      if (url.startsWith('/reports/exports')) return Promise.resolve(apiOk([]))
+
+      return Promise.resolve(
+        apiOk([row()], {
+          cursor: { next: null },
+          summary: summary(summaryOverrides),
+          scope,
+          covers,
+          filters: { clients: [{ value: 1, label: 'Centenary Bank' }] },
+        }),
+      )
+    })
+  }
+
+  it('says the figures span every client when they do', async () => {
+    reportCovering('platform', 'All clients')
+
+    renderAs(<ReportsPage />, makeUser(platformUser))
+
+    expect(await screen.findByText(/Figures cover/)).toBeVisible()
+    expect(screen.getByText('every client')).toBeVisible()
+  })
+
+  it('names the client when the report is narrowed to one', async () => {
+    reportCovering('platform', 'Centenary Bank')
+
+    renderAs(<ReportsPage />, makeUser(platformUser))
+
+    await screen.findByText(/Figures cover/)
+    expect(screen.getByText('Centenary Bank', { selector: 'strong' })).toBeVisible()
+  })
+
+  it('stays quiet for a client reading their own report', async () => {
+    // Naming their own company on every panel is noise, not information —
+    // they have one client and never had a choice.
+    reportCovering('tenant', 'Centenary Bank')
+
+    renderAs(<ReportsPage />)
+
+    await screen.findByText('#41')
+    expect(screen.queryByText(/Figures cover/)).toBeNull()
+  })
+
+  /**
+   * ADR-0007's Consequences, which the first implementation pass left
+   * undone: PROJECT.md's success metric is "all six data points on 100% of
+   * completed trips" **per client**. Spanning makes the figure a platform
+   * average, which is a different claim, and unlabelled it reads as the
+   * metric it is not.
+   */
+  it('labels completeness as an average when the report spans clients', async () => {
+    reportCovering('platform', 'All clients', { records_incomplete: 3 })
+
+    renderAs(<ReportsPage />, makeUser(platformUser))
+
+    expect(await screen.findByText(/averaged across every client/)).toBeVisible()
+  })
+
+  it("leaves completeness unqualified for one client's figures", async () => {
+    reportCovering('platform', 'Centenary Bank', { records_incomplete: 3 })
+
+    renderAs(<ReportsPage />, makeUser(platformUser))
+
+    await screen.findByText(/Figures cover/)
+    expect(screen.queryByText(/averaged across every client/)).toBeNull()
+    expect(screen.getByText(/3 missing a required data point/)).toBeVisible()
+  })
+})

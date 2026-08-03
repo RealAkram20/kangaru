@@ -19,6 +19,7 @@ import type { Vehicle } from '../types/vehicle'
 import { ExportPanel } from './reports/ExportPanel'
 import { FinancialReport } from './reports/FinancialReport'
 import { FleetReport } from './reports/FleetReport'
+import { ReportScopeNotice } from './reports/ReportScopeNotice'
 import { Badge } from '../components/core/Badge'
 import { Button } from '../components/core/Button'
 import { Card } from '../components/core/Card'
@@ -170,6 +171,7 @@ async function fetchReport(filters: TripReportFilters, client: string) {
     // offered with nothing behind it.
     scope: response.data.meta?.scope ?? 'tenant',
     clients: response.data.meta?.filters?.clients ?? [],
+    covers: response.data.meta?.covers,
   }
 }
 
@@ -229,6 +231,10 @@ export function ReportsPage() {
   // so the reports do not become a fourth place the predicate lives.
   const [scope, setScope] = useState<TenancyScope>('tenant')
   const [clients, setClients] = useState<FilterOption[]>([])
+  // Whose figures the rows on screen are of, in words — the same string the
+  // exported file header carries, so the two cannot describe one report
+  // differently (ADR-0007 rule 5).
+  const [covers, setCovers] = useState<string | undefined>(undefined)
   // '' is every client. Kept out of `filters` because it is not a filter
   // the way a vehicle is: it decides whose figures these are, and on the
   // financial report the server refuses to answer without it.
@@ -240,11 +246,13 @@ export function ReportsPage() {
       summary: TripReportSummary | null
       scope: TenancyScope
       clients: FilterOption[]
+      covers: string | undefined
     }) => {
       setRows(result.rows)
       setSummary(result.summary)
       setScope(result.scope)
       setClients(result.clients)
+      setCovers(result.covers)
       setError(null)
     },
     [],
@@ -446,48 +454,59 @@ export function ReportsPage() {
 
       {report === 'trips' && summary && (
         <PanelBoundary label="the trip summary">
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
-              gap: 'var(--space-4)',
-            }}
-          >
-            <KPIStat
-              label="Trips"
-              value={summary.trips.toLocaleString('en-US')}
-              icon="navigation"
-            />
-            <KPIStat
-              label="Completed"
-              value={summary.trips_completed.toLocaleString('en-US')}
-              icon="flag"
-            />
-            <KPIStat
-              label="Distance"
-              value={`${summary.distance_km.toLocaleString('en-US')} km`}
-              icon="route"
-            />
-            <KPIStat
-              label="Time on the road"
-              value={formatDuration(summary.duration_minutes)}
-              icon="clock"
-            />
-            <KPIStat
-              label="Records complete"
-              value={
-                summary.completeness_percent === null ? '—' : `${summary.completeness_percent}%`
-              }
-              icon={summary.records_incomplete === 0 ? 'circle-check' : 'triangle-alert'}
-              // KPIStat's tone is default|accent only, so the shortfall is
-              // carried by the icon and hint rather than a colour it has no
-              // token for.
-              hint={
-                summary.records_incomplete === 0
-                  ? 'All six required data points present'
-                  : `${summary.records_incomplete} missing a required data point`
-              }
-            />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+            <ReportScopeNotice covers={covers} scope={scope} />
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
+                gap: 'var(--space-4)',
+              }}
+            >
+              <KPIStat
+                label="Trips"
+                value={summary.trips.toLocaleString('en-US')}
+                icon="navigation"
+              />
+              <KPIStat
+                label="Completed"
+                value={summary.trips_completed.toLocaleString('en-US')}
+                icon="flag"
+              />
+              <KPIStat
+                label="Distance"
+                value={`${summary.distance_km.toLocaleString('en-US')} km`}
+                icon="route"
+              />
+              <KPIStat
+                label="Time on the road"
+                value={formatDuration(summary.duration_minutes)}
+                icon="clock"
+              />
+              <KPIStat
+                label="Records complete"
+                value={
+                  summary.completeness_percent === null ? '—' : `${summary.completeness_percent}%`
+                }
+                icon={summary.records_incomplete === 0 ? 'circle-check' : 'triangle-alert'}
+                // KPIStat's tone is default|accent only, so the shortfall is
+                // carried by the icon and hint rather than a colour it has no
+                // token for.
+                //
+                // The "across every client" suffix is ADR-0007's Consequences
+                // in one line. PROJECT.md's success metric is "all six data
+                // points on 100% of completed trips" *per client*; spanning
+                // makes this a platform average, which is a different claim
+                // and not the one the metric is measured against. Unlabelled
+                // it would be read as the former.
+                hint={
+                  (summary.records_incomplete === 0
+                    ? 'All six required data points present'
+                    : `${summary.records_incomplete} missing a required data point`) +
+                  (covers === 'All clients' ? ', averaged across every client' : '')
+                }
+              />
+            </div>
           </div>
         </PanelBoundary>
       )}
