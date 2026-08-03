@@ -14,6 +14,11 @@ use Illuminate\Support\Facades\Route;
 */
 
 Route::prefix('v1')->group(function () {
+    // Unauthenticated by design (ADR-0012): the walk-in order form. Each
+    // module's public.php carries its own throttle; nothing in it may
+    // assume a user or a tenant.
+    require base_path('Modules/Bookings/Routes/public.php');
+
     require base_path('Modules/Administration/Routes/api.php');
 
     // `tenant` binds the actor's own tenant before model binding;

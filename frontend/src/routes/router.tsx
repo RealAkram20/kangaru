@@ -12,6 +12,7 @@ import { InvoicesPage } from '../pages/InvoicesPage'
 import { LoginPage } from '../pages/LoginPage'
 import { MfaEnrolmentPage } from '../pages/MfaEnrolmentPage'
 import { NotificationsPage } from '../pages/NotificationsPage'
+import { OrderRequestsPage } from '../pages/OrderRequestsPage'
 import { RateCardsPage } from '../pages/RateCardsPage'
 import { ReportsPage } from '../pages/ReportsPage'
 import { RolesPage } from '../pages/RolesPage'
@@ -19,8 +20,20 @@ import { SettingsPage } from '../pages/SettingsPage'
 import { StaffPage } from '../pages/StaffPage'
 import { TripsPage } from '../pages/TripsPage'
 import { VehiclesPage } from '../pages/VehiclesPage'
+import { HomeGate } from '../pages/public/HomeGate'
+import { OrderPage } from '../pages/public/OrderPage'
 
 export const router = createBrowserRouter([
+  // Public, unauthenticated (ADR-0012 §5). `/` decides by auth state:
+  // visitors get the landing page, signed-in users go to /dashboard.
+  {
+    path: '/',
+    element: <HomeGate />,
+  },
+  {
+    path: '/order',
+    element: <OrderPage />,
+  },
   {
     path: '/login',
     element: <LoginPage />,
@@ -40,16 +53,23 @@ export const router = createBrowserRouter([
       </ProtectedRoute>
     ),
   },
+  // Pathless on purpose: `/` is taken by HomeGate above, and giving this
+  // branch the same path would shadow it. Children still resolve from the
+  // root, so every existing app URL (/bookings, /trips, …) is unchanged;
+  // only the dashboard moved, from `/` to /dashboard.
   {
-    path: '/',
     element: (
       <ProtectedRoute>
         <AppShell />
       </ProtectedRoute>
     ),
     children: [
-      { index: true, element: <DashboardPage /> },
+      { path: 'dashboard', element: <DashboardPage /> },
       { path: 'bookings', element: <BookingsPage /> },
+      // Deliberately not behind RequireNavAccess, like Roles: a custom role
+      // holding `order_requests.manage` is invisible to a slug list. The
+      // page gates on whether the API answers.
+      { path: 'order-requests', element: <OrderRequestsPage /> },
       {
         path: 'dispatch',
         element: (

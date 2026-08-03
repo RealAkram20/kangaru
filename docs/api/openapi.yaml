@@ -615,6 +615,149 @@ paths:
           $ref: '#/components/responses/Error'
 
   # ------------------------------------------------------------------
+  # Walk-in order requests (Modules/Bookings, ADR-0012)
+  # ------------------------------------------------------------------
+  /api/v1/public/order-requests:
+    post:
+      summary: >
+        The public landing page's request form — the platform's one
+        unauthenticated write (ADR-0012). Throttled 3/min/IP. Returns only
+        a human-readable reference; no id, no echo of the stored row.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [service_type, contact_name, contact_phone]
+              additionalProperties: false
+              properties:
+                service_type: { enum: [ride, delivery, self_drive] }
+                contact_name: { type: string, maxLength: 120 }
+                contact_phone:
+                  type: string
+                  minLength: 9
+                  maxLength: 32
+                  description: Loose on purpose — 07…, +2567… and 2567… all arrive; the dispatcher dials it either way.
+                contact_email: { type: ['string', 'null'], format: email }
+                pickup_location:
+                  type: ['string', 'null']
+                  maxLength: 255
+                  description: Required for ride and delivery.
+                dropoff_location:
+                  type: ['string', 'null']
+                  maxLength: 255
+                  description: Required for ride and delivery.
+                scheduled_for: { type: ['string', 'null'], description: Must be in the future. }
+                notes: { type: ['string', 'null'], maxLength: 1000 }
+                details:
+                  description: Service-specific fields; see the per-service required rules in StorePublicOrderRequest.
+                  type: ['object', 'null']
+                  additionalProperties: false
+                  properties:
+                    passengers: { type: ['integer', 'null'], minimum: 1, maximum: 14 }
+                    vehicle_class: { enum: [economy, standard, xl, boda, electric_boda, null] }
+                    item_type: { enum: [documents, food, parcel, electronics, furniture, appliances, other, null] }
+                    package_size: { enum: [small, medium, large, heavy, null] }
+                    recipient_name: { type: ['string', 'null'], maxLength: 120 }
+                    recipient_phone: { type: ['string', 'null'], maxLength: 32 }
+                    vehicle_category: { enum: [sedan, suv, van, pickup, null] }
+                    start_date: { type: ['string', 'null'], format: date, description: Required for self_drive. }
+                    end_date: { type: ['string', 'null'], format: date, description: Required for self_drive. }
+                website:
+                  type: string
+                  description: Anti-spam field. Must be left empty.
+      responses:
+        '201':
+          description: Received. A dispatcher calls back to confirm.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [reference]
+                    additionalProperties: false
+                    properties:
+                      reference: { type: string }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/order-requests:
+    get:
+      summary: The dispatch desk's walk-in queue, oldest first (ADR-0012).
+      parameters:
+        - { name: status, in: query, schema: { enum: [new, contacted, converted, closed] } }
+        - { name: service_type, in: query, schema: { enum: [ride, delivery, self_drive] } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200':
+          description: Order requests, page-paginated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [order_requests]
+                    additionalProperties: false
+                    properties:
+                      order_requests:
+                        type: array
+                        items: { $ref: '#/components/schemas/OrderRequest' }
+                  meta:
+                    type: object
+                    required: [page, per_page, total]
+                    additionalProperties: false
+                    properties:
+                      page: { type: integer }
+                      per_page: { type: integer }
+                      total: { type: integer }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/order-requests/{orderRequest}:
+    parameters:
+      - { name: orderRequest, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: One order request.
+      responses:
+        '200':
+          $ref: '#/components/responses/OrderRequestResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    patch:
+      summary: >
+        Moves a request through its queue lifecycle. Illegal moves are 409
+        INVALID_ORDER_REQUEST_TRANSITION.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              additionalProperties: false
+              properties:
+                status: { enum: [new, contacted, converted, closed] }
+                dispatcher_notes: { type: ['string', 'null'], maxLength: 2000 }
+      responses:
+        '200':
+          $ref: '#/components/responses/OrderRequestResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
   # Companies (Modules/Clients)
   # ------------------------------------------------------------------
   /api/v1/companies:
@@ -1957,6 +2100,24 @@ components:
               message: { type: string }
               data: { $ref: '#/components/schemas/RateCard' }
 
+    OrderRequestResponse:
+      description: One order request, in its keyed wrapper.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data:
+                type: object
+                required: [order_request]
+                additionalProperties: false
+                properties:
+                  order_request: { $ref: '#/components/schemas/OrderRequest' }
+
     VehicleAllocationResponse:
       description: One allocation contract.
       content:
@@ -2145,6 +2306,7 @@ components:
         - EXPORT_EXPIRED
         - ALLOCATION_CONFLICT
         - VEHICLE_EXCLUSIVELY_ALLOCATED
+        - INVALID_ORDER_REQUEST_TRANSITION
         - RATE_CARD_NOT_CONFIGURED
         - TRIP_NOT_INVOICEABLE
         - TRIP_ALREADY_INVOICED
@@ -2380,6 +2542,64 @@ components:
         status: { enum: [active, maintenance, inactive] }
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
         updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    OrderRequest:
+      description: >
+        A walk-in request from the public landing page (ADR-0012). The
+        dispatcher-queue shape — the public endpoint returns only a
+        reference, never this.
+      type: object
+      required:
+        - id
+        - reference
+        - service_type
+        - status
+        - allowed_transitions
+        - contact_name
+        - contact_phone
+        - contact_email
+        - pickup_location
+        - dropoff_location
+        - scheduled_for
+        - details
+        - notes
+        - dispatcher_notes
+        - created_at
+        - updated_at
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        reference:
+          type: string
+          description: KR- plus six characters readable down a phone line.
+        service_type: { enum: [ride, delivery, self_drive] }
+        status: { enum: [new, contacted, converted, closed] }
+        allowed_transitions:
+          type: array
+          items: { enum: [new, contacted, converted, closed] }
+        contact_name: { type: string }
+        contact_phone: { type: string }
+        contact_email: { type: ['string', 'null'] }
+        pickup_location: { type: ['string', 'null'] }
+        dropoff_location: { type: ['string', 'null'] }
+        scheduled_for: { $ref: '#/components/schemas/NullableTimestamp' }
+        details: { $ref: '#/components/schemas/FreeformMap' }
+        notes: { type: ['string', 'null'] }
+        dispatcher_notes: { type: ['string', 'null'] }
+        handled_by:
+          anyOf:
+            - { $ref: '#/components/schemas/ValueName' }
+            - { enum: [null] }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    ValueName:
+      type: object
+      required: [id, name]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
 
     VehicleAllocation:
       description: A period for which a vehicle is contracted to a client (ADR-0005/0009).

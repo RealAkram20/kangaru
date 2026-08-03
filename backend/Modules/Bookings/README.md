@@ -10,6 +10,12 @@ bookings, with an optional approval step.
 A Booking becomes a Trip only through `Modules/Dispatch`; this module never
 touches vehicles or drivers.
 
+Since ADR-0012 the module also holds the **walk-in order request** — the
+public, tenant-less lead a visitor raises from the landing page and a
+platform dispatcher works by phone. It is a booking-shaped lead, not a
+Booking: it belongs to no tenant, never enters the booking lifecycle, and
+converting it into real work is deliberately manual (see the ADR).
+
 ## Responsibilities
 
 - `Booking` — the request record. `status` is only ever written by
@@ -29,6 +35,16 @@ touches vehicles or drivers.
 - Immediate vs scheduled is the presence or absence of `scheduled_for`, not
   a second column or a type flag — one queue for the dispatcher, and no way
   for two fields to contradict each other.
+- `OrderRequest` (ADR-0012) — the walk-in lead. **No `BelongsToTenant`**:
+  per ADR-0005 the walk-in customer is the platform's own customer, so the
+  row follows vehicles and drivers, and `OrderRequestPolicy` requires both
+  `isPlatformLevel()` *and* `order_requests.manage` — a tenant user whose
+  custom role gained the permission still reads nothing. `status` is only
+  ever written by `OrderRequestService`
+  (`new → contacted → converted | closed`), and `converted` records that
+  the request became real-world work without linking to a Trip or Booking —
+  both are tenant-owned, and that linkage is the walk-in-fulfilment ADR's
+  to make.
 
 ## Dependencies
 
@@ -53,6 +69,27 @@ the transition check.
 | POST | `/api/v1/bookings/{id}/rejection` | `reject` — same roles; `reason` required |
 | POST | `/api/v1/bookings/{id}/cancellation` | `cancel` — desk roles, or the requester withdrawing their own; `reason` required |
 | POST | `/api/v1/bookings/{id}/assignment` | owned by `Modules/Dispatch` — see that README |
+
+### Walk-in order requests (ADR-0012)
+
+`POST /api/v1/public/order-requests` is **unauthenticated** — the one
+public write in the platform. It lives in `Routes/public.php`, separate
+from the module's authenticated routes so the difference is impossible to
+miss in review. Throttled at 3/min/IP (stricter than auth's 5), honeypotted
+(`website`, which fake-succeeds without persisting), and it returns nothing
+but the `KR-XXXXXX` reference. There is deliberately no public read — a
+status checker keyed by a guessable reference is an enumeration surface.
+
+| Method | Path | Policy |
+|---|---|---|
+| POST | `/api/v1/public/order-requests` | none — public, throttled, honeypotted |
+| GET | `/api/v1/order-requests` | `viewAny` — platform + `order_requests.manage`. Filters: `status`, `service_type` |
+| GET | `/api/v1/order-requests/{id}` | `view` — same |
+| PATCH | `/api/v1/order-requests/{id}` | `update` — same; `status` moves through the transition map or answers `409 INVALID_ORDER_REQUEST_TRANSITION` |
+
+New requests notify every active platform holder of
+`order_requests.manage` in-app (`order_request.received`, database channel
+only — a walk-in emailed to every dispatcher is inbox noise).
 
 Dispatchers are deliberately excluded from `approve`: approving your own
 workload is not a control, and PROJECT.md places approval with management.
@@ -101,12 +138,24 @@ decision reason stay an untouched audit record.
    original request intact for audit. Revisit if dispatchers find that
    tedious in practice.
 7. **A booking still requires a tenant and a requesting user.** Walk-in and
-   individual riders have neither, so they remain unexpressible — named in
-   ADR-0005 and again in ADR-0006, and unchanged by both.
+   individual riders have neither. ADR-0012 gives their *ask* a home —
+   `OrderRequest` — but the fulfilment is still phone-and-dispatcher:
+   `converted` does not create a Trip or Booking, because both are
+   tenant-owned and inventing a pseudo-tenant would decide rider-account
+   architecture inside a CRM column. The conversion foreign key lands with
+   the walk-in-fulfilment ADR, not before.
 8. **No date filter.** `?q=` searches text and `?status=` narrows state,
    but "everything raised last week" is not expressible — the audit log has
    `from`/`to` and this does not. The obvious next filter, and the one a
    monthly reconciliation actually needs.
+9. **Order-request gaps, named rather than implied:** no `?q=` search and
+   no date filter on the queue (it is small today); no public status
+   checker (enumeration risk until references carry real entropy); the
+   queue page has no component test — the flow is covered by 15 backend
+   tests and was driven end-to-end in a real browser, but Vitest coverage
+   of `OrderRequestsPage` is simply not written; and demo seed data for
+   walk-ins does not exist, so a fresh `migrate:fresh --seed` starts with
+   an empty queue.
 
 ## Frontend
 
@@ -114,6 +163,13 @@ decision reason stay an untouched audit record.
 and the approve/reject/cancel actions. Approver-only buttons are hidden
 based on role, but that is presentation only: the server still returns 403
 regardless (AGENTS.md — never rely solely on frontend permissions).
+
+ADR-0012's surfaces: `frontend/src/pages/public/` holds the landing page
+(`/`), the visitor order flow (`/order`, which submits to the public
+endpoint), and the auth gate that serves the landing to visitors while
+sending signed-in users to `/dashboard` — the one URL that moved.
+`frontend/src/pages/OrderRequestsPage.tsx` is the dispatcher queue at
+`/order-requests`, reachable from the sidebar as "Walk-ins".
 
 ## Notes
 

@@ -107,6 +107,9 @@ class RoleSeeder extends Seeder
                     // BookingPolicy::APPROVER_ROLES excludes Dispatcher —
                     // "approving your own workload is not a control".
                     P::BOOKINGS_CREATE, P::TRIPS_VIEW_ALL, P::REPORTS_VIEW,
+                    // ADR-0012: the walk-in queue is dispatch work — the
+                    // request that has waited longest is the next call.
+                    P::ORDER_REQUESTS_MANAGE,
                 ],
             ],
 

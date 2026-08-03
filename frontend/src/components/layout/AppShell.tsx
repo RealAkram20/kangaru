@@ -16,6 +16,8 @@ const SECTIONS: SidebarSection[] = [
     items: [
       { id: 'bookings', label: 'Bookings', icon: 'calendar-clock' },
       { id: 'dispatch', label: 'Dispatch', icon: 'route' },
+      // ADR-0012: the walk-in order queue, the phone-first half of dispatch.
+      { id: 'walk-ins', label: 'Walk-ins', icon: 'phone-call' },
       { id: 'trips', label: 'Trips', icon: 'navigation' },
       { id: 'companies', label: 'Companies', icon: 'building-2' },
     ],
@@ -56,9 +58,12 @@ const SECTIONS: SidebarSection[] = [
 
 /** Sidebar item ids mapped to their route. Every item now has one. */
 const NAV_PATHS: Partial<Record<string, string>> = {
-  dashboard: '/',
+  // `/` now belongs to the public landing page (ADR-0012 §5); the
+  // dashboard lives at its own path and `/` redirects signed-in users here.
+  dashboard: '/dashboard',
   bookings: '/bookings',
   dispatch: '/dispatch',
+  'walk-ins': '/order-requests',
   trips: '/trips',
   companies: '/companies',
   vehicles: '/vehicles',
@@ -73,9 +78,10 @@ const NAV_PATHS: Partial<Record<string, string>> = {
 }
 
 const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
-  '/': { id: 'dashboard', title: 'Dashboard' },
+  '/dashboard': { id: 'dashboard', title: 'Dashboard' },
   '/bookings': { id: 'bookings', title: 'Bookings' },
   '/dispatch': { id: 'dispatch', title: 'Dispatch board' },
+  '/order-requests': { id: 'walk-ins', title: 'Walk-in orders' },
   '/trips': { id: 'trips', title: 'Trips' },
   '/companies': { id: 'companies', title: 'Companies' },
   '/vehicles': { id: 'vehicles', title: 'Vehicles' },

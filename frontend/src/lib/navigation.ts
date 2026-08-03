@@ -61,6 +61,12 @@ const REPORT_READERS: Role[] = ALL.filter((r) => r !== 'driver' && r !== 'corpor
  * (dashboard, notifications) that every account has.
  */
 const VISIBLE_TO: Record<string, Role[]> = {
+  // RoleSeeder's `order_requests.manage` grant (ADR-0012): Dispatcher plus
+  // the Super Admin who holds everything. Menu visibility only; the
+  // /order-requests route is not behind RequireNavAccess, for the same
+  // reason Roles is not — a custom role holding the permission is invisible
+  // to a slug list, and the page gates on whether the API answers.
+  'walk-ins': ['super_admin', 'dispatcher'],
   // Bookings and Trips are open to all roles; the server narrows *what* is
   // in them (a Corporate Employee sees their own, a Driver sees theirs), so
   // hiding the entry would remove the one page they most need.

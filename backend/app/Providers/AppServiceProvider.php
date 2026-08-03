@@ -24,7 +24,9 @@ use Modules\Billing\Policies\RateCardPolicy;
 use Modules\Bookings\Events\BookingApproved;
 use Modules\Bookings\Events\BookingRejected;
 use Modules\Bookings\Models\Booking;
+use Modules\Bookings\Models\OrderRequest;
 use Modules\Bookings\Policies\BookingPolicy;
+use Modules\Bookings\Policies\OrderRequestPolicy;
 use Modules\Clients\Models\Company;
 use Modules\Clients\Policies\CompanyPolicy;
 use Modules\Drivers\Models\Driver;
@@ -63,6 +65,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Driver::class, DriverPolicy::class);
         Gate::policy(Trip::class, TripPolicy::class);
         Gate::policy(Booking::class, BookingPolicy::class);
+        Gate::policy(OrderRequest::class, OrderRequestPolicy::class);
         Gate::policy(RateCard::class, RateCardPolicy::class);
         Gate::policy(Invoice::class, InvoicePolicy::class);
         Gate::policy(User::class, UserPolicy::class);
@@ -134,6 +137,11 @@ class AppServiceProvider extends ServiceProvider
             // ownership. Audited because it is the record of what a client
             // was promised.
             'vehicle_allocation' => VehicleAllocation::class,
+            // ADR-0012's walk-in queue. Registered the moment the model
+            // became Auditable — AuditableModelsHaveMorphAliasTest fails
+            // the build for any Auditable model this map omits, because
+            // creating one would throw from AuditLog::record().
+            'order_request' => OrderRequest::class,
         ]);
     }
 }

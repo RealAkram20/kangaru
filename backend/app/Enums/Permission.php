@@ -36,6 +36,8 @@ enum Permission: string
     /** Absent = you may still cancel your own. */
     case BOOKINGS_CANCEL_ANY = 'bookings.cancel.any';
     case BOOKINGS_DISPATCH = 'bookings.dispatch';
+    /** ADR-0012: work the walk-in queue. Platform staff only — OrderRequestPolicy also requires isPlatformLevel(). */
+    case ORDER_REQUESTS_MANAGE = 'order_requests.manage';
 
     // ── Trips ─────────────────────────────────────────────────────────
     /** Absent = own trips only: assigned to you, or arising from your bookings. */
@@ -89,7 +91,7 @@ enum Permission: string
     {
         return match (explode('.', $this->value)[0]) {
             'audit', 'staff', 'roles' => 'Administration',
-            'bookings' => 'Bookings',
+            'bookings', 'order_requests' => 'Bookings',
             'trips' => 'Trips',
             'invoices', 'ratecards' => 'Billing',
             'companies' => 'Clients',
@@ -111,6 +113,12 @@ enum Permission: string
             self::BOOKINGS_APPROVE => 'Approve or reject a booking',
             self::BOOKINGS_CANCEL_ANY => "Cancel anyone's booking",
             self::BOOKINGS_DISPATCH => 'Assign a vehicle and driver',
+            // Without this arm the match throws for the case above it, and
+            // GET /roles — which renders the whole catalogue — 500s for
+            // everyone. Found by ADR-0011's contract hook, not by a test of
+            // this enum: the census of "every case has a label" is implicit
+            // in the role screen rendering at all.
+            self::ORDER_REQUESTS_MANAGE => 'Work the walk-in order queue',
             self::TRIPS_VIEW_ALL => 'See every trip',
             self::TRIPS_CREATE => 'Raise a trip directly',
             self::TRIPS_TRANSITION_ANY => 'Move any trip through its lifecycle',
