@@ -394,7 +394,7 @@ Use notifications only when meaningful: Booking Assigned, Trip Started, Trip Com
 
 ## Definition of Done
 
-A feature is done when: code and tests merged, authorization/policy covered, API docs updated, audit events emitted where applicable, feature flag state decided, and the module README updated. Not before.
+A feature is done when: code and tests merged, authorization/policy covered, the API contract updated (`docs/api/openapi.yaml` — a new or changed endpoint's spec entry ships in the same PR; the route census and response validation in CI enforce this, see ADR-0011), audit events emitted where applicable, feature flag state decided, and the module README updated. Not before.
 
 ---
 

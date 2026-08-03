@@ -1,0 +1,2991 @@
+# KangaruRide API contract (ADR-0011).
+#
+# HAND-WRITTEN, and the source of truth: the code is checked against this
+# document, never the reverse. A new endpoint's entry here is part of its
+# PR (Definition of Done). Every JSON response the backend test suite
+# produces is validated against this file, and a route census asserts every
+# api/v1 route is documented — see backend/tests/Feature/Ci/.
+#
+# House rules, enforced by backend/tests/Feature/Ci/OpenApiSpecLintTest.php:
+# - Every object schema declares `additionalProperties` — `false` unless it
+#   is genuinely a map. Without it a response can grow undeclared fields
+#   and still validate, which is the exact failure mode (role_label,
+#   TripResource) this contract exists to prevent.
+# - Failure responses reuse ErrorEnvelope; its `code` enumerates every
+#   ErrorCode case. Clients branch on `code`, never on message text.
+# - Binary responses (exports, odometer photos) are declared, not
+#   validated.
+#
+# Dialect notes (proved against the installed validator, see ADR-0011):
+# - Nullable is `type: [x, 'null']` (OpenAPI 3.1), not `nullable: true`.
+# - `[]`-vs-`{}` unions (PHP serialises an empty map as `[]`) use `anyOf`,
+#   not `oneOf` — an empty value matches both branches, and oneOf would
+#   reject exactly-one on it.
+# - 204 responses are declared explicitly with no content; undeclared
+#   statuses fall through to `default`, which expects a JSON error body.
+openapi: 3.1.0
+info:
+  title: KangaruRide API
+  version: 1.0.0
+  description: >
+    Enterprise transport management platform API (v1). All responses use the
+    envelope defined in AGENTS.md API Standards: successes carry
+    `{success: true, message, data}` (plus `meta` where documented), and
+    failures carry `{success: false, code, message, errors}` with a stable
+    machine-readable `code`.
+
+paths:
+  # ------------------------------------------------------------------
+  # Authentication and MFA (Modules/Administration, ADR-0008 / ADR-0010)
+  # ------------------------------------------------------------------
+  /api/v1/auth/login:
+    post:
+      summary: First step of login. Returns a token, or an MFA challenge.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              additionalProperties: false
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          $ref: '#/components/responses/AuthenticatedResponse'
+        '202':
+          description: >
+            Password accepted, login not finished — the account requires a
+            second factor (ADR-0008). No token is issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [challenge_id, method]
+                    additionalProperties: false
+                    properties:
+                      challenge_id: { type: string }
+                      method: { enum: [totp] }
+        '429':
+          $ref: '#/components/responses/Throttled'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/mfa/verify:
+    post:
+      summary: Second step of login — spends a challenge against a TOTP or recovery code.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challenge_id, code]
+              additionalProperties: false
+              properties:
+                challenge_id: { type: string }
+                code: { type: string, maxLength: 64 }
+      responses:
+        '200':
+          $ref: '#/components/responses/AuthenticatedResponse'
+        '429':
+          $ref: '#/components/responses/Throttled'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/logout:
+    post:
+      summary: Revokes the current token.
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOnly'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/me:
+    get:
+      summary: The authenticated account.
+      responses:
+        '200':
+          $ref: '#/components/responses/UserResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/password:
+    patch:
+      summary: Changes your own password and revokes every token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, password, password_confirmation]
+              additionalProperties: false
+              properties:
+                current_password: { type: string }
+                password: { type: string, minLength: 12 }
+                password_confirmation: { type: string }
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOnly'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/mfa/enrol:
+    post:
+      summary: Begins TOTP enrolment — a fresh secret and its QR code.
+      responses:
+        '200':
+          description: Secret issued, unconfirmed until the confirm step.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [secret, otpauth_uri, qr_svg]
+                    additionalProperties: false
+                    properties:
+                      secret: { type: string }
+                      otpauth_uri: { type: string }
+                      qr_svg: { type: string }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/mfa/enrol/confirm:
+    post:
+      summary: Confirms enrolment against a first code; returns the recovery codes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              additionalProperties: false
+              properties:
+                code: { type: string, maxLength: 16 }
+      responses:
+        '200':
+          $ref: '#/components/responses/RecoveryCodesResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/mfa/recovery-codes:
+    post:
+      summary: Regenerates recovery codes, invalidating the previous set.
+      responses:
+        '200':
+          $ref: '#/components/responses/RecoveryCodesResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/mfa:
+    delete:
+      summary: >
+        Removes your own second factor (ADR-0010). Only for a role that does
+        not require one — a privileged role gets 403. Proven with a current
+        code, like every other MFA mutation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              additionalProperties: false
+              properties:
+                code: { type: string, maxLength: 16 }
+      responses:
+        '200':
+          $ref: '#/components/responses/UserResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # Staff administration and roles (Modules/Administration, ADR-0004)
+  # ------------------------------------------------------------------
+  /api/v1/users:
+    get:
+      summary: Accounts this actor may administer.
+      parameters:
+        - { name: status, in: query, schema: { enum: [active, suspended] } }
+        - { name: role, in: query, schema: { type: string } }
+        - { name: q, in: query, schema: { type: string, maxLength: 120 } }
+      responses:
+        '200':
+          description: Accounts, plus the roles this actor may assign.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/User' }
+                  meta:
+                    type: object
+                    required: [assignable_roles]
+                    additionalProperties: false
+                    properties:
+                      assignable_roles:
+                        type: array
+                        items:
+                          type: object
+                          required: [value, label, description]
+                          additionalProperties: false
+                          properties:
+                            value: { type: string }
+                            label: { type: string }
+                            description: { type: ['string', 'null'] }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Creates an account.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, role, password]
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                email: { type: string, format: email }
+                role: { type: string }
+                password: { type: string, minLength: 12 }
+                tenant_id: { type: integer, description: Super Admin only. }
+      responses:
+        '201':
+          $ref: '#/components/responses/UserResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/users/{user}:
+    parameters:
+      - { name: user, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: One account.
+      responses:
+        '200':
+          $ref: '#/components/responses/UserResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    patch:
+      summary: Updates an account. Suspension revokes its tokens.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                email: { type: string, format: email }
+                role: { type: string }
+                status: { enum: [active, suspended] }
+      responses:
+        '200':
+          $ref: '#/components/responses/UserResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/roles:
+    get:
+      summary: The role catalogue (ADR-0004).
+      responses:
+        '200':
+          description: Roles, the permission catalogue, and what this actor may grant.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Role' }
+                  meta:
+                    type: object
+                    required: [catalogue, grantable, can_manage]
+                    additionalProperties: false
+                    properties:
+                      catalogue:
+                        description: Permission catalogue grouped for display, keyed by group name.
+                        type: object
+                        additionalProperties:
+                          type: array
+                          items: { $ref: '#/components/schemas/ValueLabel' }
+                      grantable:
+                        type: array
+                        items: { type: string }
+                      can_manage: { type: boolean }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Creates a custom role.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, permissions]
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 120 }
+                slug: { type: string, maxLength: 120, pattern: '^[a-z][a-z0-9_]*$' }
+                description: { type: ['string', 'null'], maxLength: 255 }
+                permissions:
+                  type: array
+                  minItems: 1
+                  items: { type: string }
+      responses:
+        '201':
+          $ref: '#/components/responses/RoleResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/roles/{role}:
+    parameters:
+      - { name: role, in: path, required: true, schema: { type: integer } }
+    patch:
+      summary: Updates a role's name, description or permissions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 120 }
+                description: { type: ['string', 'null'], maxLength: 255 }
+                permissions:
+                  type: array
+                  minItems: 1
+                  items: { type: string }
+      responses:
+        '200':
+          $ref: '#/components/responses/RoleResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Deletes a role nobody holds. Refused with ROLE_IN_USE otherwise.
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOnly'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/audit-logs:
+    get:
+      summary: The audit trail this reader may see (platform-wide or one tenant's).
+      parameters:
+        - { name: auditable_type, in: query, schema: { type: string } }
+        - { name: action, in: query, schema: { enum: [created, updated, deleted] } }
+        - { name: user_id, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          description: Audit entries, newest first, with the filter vocabulary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditLog' }
+                  meta:
+                    type: object
+                    required: [cursor, filters, scope]
+                    additionalProperties: false
+                    properties:
+                      cursor: { $ref: '#/components/schemas/Cursor' }
+                      filters:
+                        type: object
+                        required: [auditable_types, actions, actors]
+                        additionalProperties: false
+                        properties:
+                          auditable_types:
+                            type: array
+                            items: { type: string }
+                          actions:
+                            type: array
+                            items: { type: string }
+                          actors:
+                            type: array
+                            items: { $ref: '#/components/schemas/ValueLabelInt' }
+                      scope: { $ref: '#/components/schemas/Scope' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # Bookings and dispatch (Modules/Bookings, Modules/Dispatch)
+  # ------------------------------------------------------------------
+  /api/v1/bookings:
+    get:
+      summary: The booking queue — one client's, or every client's for platform staff.
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/BookingStatus' } }
+        - { name: dispatchable, in: query, schema: { type: boolean } }
+        - { name: q, in: query, schema: { type: string, maxLength: 120 } }
+        - { name: tenant_id, in: query, schema: { type: integer }, description: Platform staff only. }
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          description: Bookings, soonest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Booking' }
+                  meta: { $ref: '#/components/schemas/CrossClientListMeta' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Raises a booking.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [passenger_name, passenger_phone, origin, destination]
+              additionalProperties: false
+              properties:
+                passenger_name: { type: string, maxLength: 255 }
+                passenger_phone: { type: string, maxLength: 32 }
+                passenger_count: { type: ['integer', 'null'], minimum: 1, maximum: 60 }
+                origin: { type: string, maxLength: 255 }
+                destination: { type: string, maxLength: 255 }
+                scheduled_for:
+                  type: ['string', 'null']
+                  description: Omit or null for an immediate booking. Must be in the future.
+                notes: { type: ['string', 'null'], maxLength: 1000 }
+      responses:
+        '201':
+          $ref: '#/components/responses/BookingResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/bookings/{booking}:
+    parameters:
+      - { name: booking, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: One booking, with its trip when dispatched.
+      responses:
+        '200':
+          $ref: '#/components/responses/BookingResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/bookings/{booking}/approval:
+    post:
+      summary: Approves a pending booking.
+      parameters:
+        - { name: booking, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          $ref: '#/components/responses/BookingResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/bookings/{booking}/rejection:
+    post:
+      summary: Rejects a booking, with a reason.
+      parameters:
+        - { name: booking, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        $ref: '#/components/requestBodies/DecisionReason'
+      responses:
+        '200':
+          $ref: '#/components/responses/BookingResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/bookings/{booking}/cancellation:
+    post:
+      summary: Cancels a booking, with a reason.
+      parameters:
+        - { name: booking, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        $ref: '#/components/requestBodies/DecisionReason'
+      responses:
+        '200':
+          $ref: '#/components/responses/BookingResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/bookings/{booking}/candidate-vehicles:
+    get:
+      summary: >
+        Every vehicle plus what this booking's contracts say about it
+        (ADR-0009) — allocated vehicles rank first, exclusive ones
+        elsewhere are marked undispatchable, and requires_override_reason
+        tells a form to collect a reason before POSTing the assignment.
+      parameters:
+        - { name: booking, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Candidate vehicles, allocated first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/CandidateVehicle' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/bookings/{booking}/assignment:
+    post:
+      summary: >
+        Assigns a vehicle and driver to a booking, producing its trip.
+        Every failure is a 409 with a code the client branches on —
+        VEHICLE_UNAVAILABLE, DRIVER_UNAVAILABLE or INVALID_BOOKING_TRANSITION.
+      parameters:
+        - { name: booking, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vehicle_id, driver_id]
+              additionalProperties: false
+              properties:
+                vehicle_id: { type: integer }
+                driver_id: { type: integer }
+                allocation_override_reason:
+                  type: ['string', 'null']
+                  maxLength: 500
+                  description: >
+                    Required (422) when the vehicle bypasses another client's
+                    non-exclusive allocation — recorded on the trip and
+                    audited (ADR-0009).
+      responses:
+        '201':
+          $ref: '#/components/responses/TripResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # Companies (Modules/Clients)
+  # ------------------------------------------------------------------
+  /api/v1/companies:
+    get:
+      summary: Corporate client companies this actor may see.
+      responses:
+        '200':
+          description: Companies.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Company' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Creates a company under a tenant.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenant_id, legal_name, billing_email, city, country]
+              additionalProperties: false
+              properties:
+                tenant_id: { type: integer }
+                legal_name: { type: string, maxLength: 255 }
+                trading_name: { type: ['string', 'null'], maxLength: 255 }
+                registration_number: { type: ['string', 'null'], maxLength: 255 }
+                industry: { type: ['string', 'null'], maxLength: 255 }
+                billing_email: { type: string, format: email }
+                phone: { type: ['string', 'null'], maxLength: 50 }
+                address_line1: { type: ['string', 'null'], maxLength: 255 }
+                address_line2: { type: ['string', 'null'], maxLength: 255 }
+                city: { type: string, maxLength: 255 }
+                country: { type: string, maxLength: 255 }
+                credit_limit_minor: { type: ['integer', 'null'], minimum: 0 }
+      responses:
+        '201':
+          $ref: '#/components/responses/CompanyResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/companies/{company}:
+    parameters:
+      - { name: company, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: One company.
+      responses:
+        '200':
+          $ref: '#/components/responses/CompanyResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    patch:
+      summary: Updates a company.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                legal_name: { type: string, maxLength: 255 }
+                trading_name: { type: ['string', 'null'], maxLength: 255 }
+                registration_number: { type: ['string', 'null'], maxLength: 255 }
+                industry: { type: ['string', 'null'], maxLength: 255 }
+                billing_email: { type: string, format: email }
+                phone: { type: ['string', 'null'], maxLength: 50 }
+                address_line1: { type: ['string', 'null'], maxLength: 255 }
+                address_line2: { type: ['string', 'null'], maxLength: 255 }
+                city: { type: string, maxLength: 255 }
+                country: { type: string, maxLength: 255 }
+                credit_limit_minor: { type: integer, minimum: 0 }
+                status: { enum: [active, suspended] }
+      responses:
+        '200':
+          $ref: '#/components/responses/CompanyResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Deletes a company.
+      responses:
+        '204':
+          description: Deleted. No content.
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # Drivers (Modules/Drivers) — the platform's, not a tenant's (ADR-0005)
+  # ------------------------------------------------------------------
+  /api/v1/drivers:
+    get:
+      summary: The platform's drivers.
+      responses:
+        '200':
+          description: Drivers.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Driver' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Registers a driver.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, phone, license_number, license_expiry]
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                phone: { type: string, maxLength: 50 }
+                email: { type: ['string', 'null'], format: email }
+                license_number: { type: string, maxLength: 100 }
+                license_expiry: { type: string, format: date }
+                status: { enum: [active, suspended, inactive] }
+      responses:
+        '201':
+          $ref: '#/components/responses/DriverResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/drivers/{driver}:
+    parameters:
+      - { name: driver, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: One driver.
+      responses:
+        '200':
+          $ref: '#/components/responses/DriverResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    patch:
+      summary: Updates a driver.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                phone: { type: string, maxLength: 50 }
+                email: { type: ['string', 'null'], format: email }
+                license_number: { type: string, maxLength: 100 }
+                license_expiry: { type: string, format: date }
+                status: { enum: [active, suspended, inactive] }
+      responses:
+        '200':
+          $ref: '#/components/responses/DriverResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Removes a driver.
+      responses:
+        '204':
+          description: Deleted. No content.
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # Vehicles (Modules/Vehicles) — the platform's fleet (ADR-0005)
+  # ------------------------------------------------------------------
+  /api/v1/vehicles:
+    get:
+      summary: The platform's fleet.
+      responses:
+        '200':
+          description: Vehicles.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Vehicle' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Registers a vehicle.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [registration_number, make, model, year, category, seating_capacity]
+              additionalProperties: false
+              properties:
+                registration_number: { type: string, maxLength: 50 }
+                make: { type: string, maxLength: 100 }
+                model: { type: string, maxLength: 100 }
+                year: { type: integer, minimum: 1980 }
+                category: { $ref: '#/components/schemas/VehicleCategory' }
+                seating_capacity: { type: integer, minimum: 1, maximum: 100 }
+                color: { type: ['string', 'null'], maxLength: 50 }
+                vin: { type: ['string', 'null'], maxLength: 50 }
+                status: { enum: [active, maintenance, inactive] }
+      responses:
+        '201':
+          $ref: '#/components/responses/VehicleResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/vehicles/{vehicle}:
+    parameters:
+      - { name: vehicle, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: One vehicle.
+      responses:
+        '200':
+          $ref: '#/components/responses/VehicleResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    patch:
+      summary: Updates a vehicle.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                registration_number: { type: string, maxLength: 50 }
+                make: { type: string, maxLength: 100 }
+                model: { type: string, maxLength: 100 }
+                year: { type: integer, minimum: 1980 }
+                category: { $ref: '#/components/schemas/VehicleCategory' }
+                seating_capacity: { type: integer, minimum: 1, maximum: 100 }
+                color: { type: ['string', 'null'], maxLength: 50 }
+                vin: { type: ['string', 'null'], maxLength: 50 }
+                status: { enum: [active, maintenance, inactive] }
+      responses:
+        '200':
+          $ref: '#/components/responses/VehicleResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Removes a vehicle.
+      responses:
+        '204':
+          description: Deleted. No content.
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # Vehicle allocations (Modules/Fleet, ADR-0009)
+  # ------------------------------------------------------------------
+  /api/v1/allocations:
+    get:
+      summary: >
+        Vehicle allocation contracts — every client's for platform staff,
+        their own for a client.
+      responses:
+        '200':
+          description: Allocations, newest contract first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/VehicleAllocation' }
+                  meta:
+                    type: object
+                    required: [filters]
+                    additionalProperties: false
+                    properties:
+                      filters: { $ref: '#/components/schemas/ClientsFilter' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: >
+        Agrees an allocation. Overlap with an exclusive contract for the
+        same vehicle is refused with 409 ALLOCATION_CONFLICT — the check is
+        locked, not advisory (ADR-0009 decision 4).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenant_id, vehicle_id, starts_on]
+              additionalProperties: false
+              properties:
+                tenant_id: { type: integer }
+                vehicle_id: { type: integer }
+                starts_on: { type: string, format: date }
+                ends_on:
+                  type: ['string', 'null']
+                  format: date
+                  description: Null for an open-ended contract. The last day counts as in force.
+                exclusive: { type: boolean }
+                notes: { type: ['string', 'null'], maxLength: 1000 }
+      responses:
+        '201':
+          $ref: '#/components/responses/VehicleAllocationResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/allocations/{allocation}:
+    parameters:
+      - { name: allocation, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: One allocation.
+      responses:
+        '200':
+          $ref: '#/components/responses/VehicleAllocationResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    patch:
+      summary: >
+        Ends a contract — a PATCH with the final day, never a DELETE: the
+        row is a commercial record and stays visible with the day it
+        stopped.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ends_on]
+              additionalProperties: false
+              properties:
+                ends_on: { type: string, format: date }
+      responses:
+        '200':
+          $ref: '#/components/responses/VehicleAllocationResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # Trips (Modules/Trips)
+  # ------------------------------------------------------------------
+  /api/v1/trips:
+    get:
+      summary: Trips — one client's, or every client's for platform staff.
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/TripStatus' } }
+        - { name: vehicle_id, in: query, schema: { type: integer } }
+        - { name: driver_id, in: query, schema: { type: integer } }
+        - { name: q, in: query, schema: { type: string, maxLength: 120 } }
+        - { name: tenant_id, in: query, schema: { type: integer }, description: Platform staff only. }
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          description: Trips, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Trip' }
+                  meta: { $ref: '#/components/schemas/CrossClientListMeta' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Raises an ad-hoc trip without a booking.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vehicle_id, driver_id, origin, destination]
+              additionalProperties: false
+              properties:
+                vehicle_id: { type: integer }
+                driver_id: { type: integer }
+                origin: { type: string, maxLength: 255 }
+                destination: { type: string, maxLength: 255 }
+      responses:
+        '201':
+          $ref: '#/components/responses/TripResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}:
+    parameters:
+      - { name: trip, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: One trip.
+      responses:
+        '200':
+          $ref: '#/components/responses/TripResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}/transitions:
+    post:
+      summary: >
+        Requests a state-machine transition (AGENTS.md Trip State Machine).
+        Illegal transitions are refused with 409 INVALID_TRIP_TRANSITION.
+        Sent as JSON, or as multipart/form-data when a dashboard photo
+        accompanies an odometer reading.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TripTransitionRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TripTransitionRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/TripResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}/events:
+    get:
+      summary: The trip's timeline — append-only, oldest first.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          description: Timeline events.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/TripEvent' }
+                  meta:
+                    type: object
+                    required: [cursor]
+                    additionalProperties: false
+                    properties:
+                      cursor: { $ref: '#/components/schemas/Cursor' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}/locations:
+    post:
+      summary: Accepts a batch of GPS pings. Queued, not yet written (ADR-0003).
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pings]
+              additionalProperties: false
+              properties:
+                pings:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [latitude, longitude, recorded_at]
+                    additionalProperties: false
+                    properties:
+                      latitude: { type: number, minimum: -90, maximum: 90 }
+                      longitude: { type: number, minimum: -180, maximum: 180 }
+                      recorded_at: { type: string }
+                      speed_kph: { type: ['number', 'null'], minimum: 0, maximum: 400 }
+                      heading_degrees: { type: ['integer', 'null'], minimum: 0, maximum: 359 }
+                      accuracy_metres: { type: ['number', 'null'], minimum: 0, maximum: 10000 }
+      responses:
+        '202':
+          description: Accepted for asynchronous ingestion.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [accepted]
+                    additionalProperties: false
+                    properties:
+                      accepted: { type: integer }
+        default:
+          $ref: '#/components/responses/Error'
+    get:
+      summary: The recorded route, for replay.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+        - { name: per_page, in: query, schema: { type: integer, minimum: 1, maximum: 1000 } }
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          description: GPS points in recorded order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/TripLocation' }
+                  meta:
+                    type: object
+                    required: [cursor, gps_distance_km]
+                    additionalProperties: false
+                    properties:
+                      cursor: { $ref: '#/components/schemas/Cursor' }
+                      gps_distance_km: { type: number }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}/odometer-photo/{moment}:
+    get:
+      summary: >
+        The dashboard photo behind an odometer reading. Binary — declared,
+        not validated (ADR-0011 decision 6).
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+        - { name: moment, in: path, required: true, schema: { enum: [start, end] } }
+      responses:
+        '200':
+          description: The photo, streamed inline.
+          content:
+            image/*: {}
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # Billing (Modules/Billing)
+  # ------------------------------------------------------------------
+  /api/v1/invoices:
+    get:
+      summary: Invoices, cursor-paginated.
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: trip_id, in: query, schema: { type: integer } }
+        - { name: invoice_number, in: query, schema: { type: string, maxLength: 50 } }
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          description: Invoices.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Invoice' }
+                  meta:
+                    type: object
+                    required: [cursor]
+                    additionalProperties: false
+                    properties:
+                      cursor: { $ref: '#/components/schemas/Cursor' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/invoices/{invoice}:
+    get:
+      summary: One invoice, with lines and credit notes.
+      parameters:
+        - { name: invoice, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          $ref: '#/components/responses/InvoiceResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}/invoice:
+    post:
+      summary: >
+        Issues the invoice for a completed trip. Idempotent — a replay of
+        the same key returns 200 with the original invoice; a fresh issue
+        returns 201.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [idempotency_key]
+              additionalProperties: false
+              properties:
+                idempotency_key: { type: string, minLength: 8, maxLength: 128 }
+                rate_card_id:
+                  type: ['integer', 'null']
+                  description: Omit to price with the tenant's default card.
+      responses:
+        '200':
+          $ref: '#/components/responses/InvoiceResponse'
+        '201':
+          $ref: '#/components/responses/InvoiceResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/invoices/{invoice}/credit-notes:
+    parameters:
+      - { name: invoice, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: Credit notes issued against an invoice.
+      responses:
+        '200':
+          description: Credit notes, with lines.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/CreditNote' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: >
+        Issues a credit note — the only way an issued invoice is ever
+        corrected (AGENTS.md Money & Billing). Idempotent, like invoice
+        generation: replay returns 200, fresh issue 201.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [idempotency_key, reason, lines]
+              additionalProperties: false
+              properties:
+                idempotency_key: { type: string, minLength: 8, maxLength: 128 }
+                reason: { type: string, minLength: 3, maxLength: 1000 }
+                lines:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [description, amount_minor]
+                    additionalProperties: false
+                    properties:
+                      description: { type: string, maxLength: 255 }
+                      amount_minor: { type: integer, minimum: 1 }
+                      invoice_line_id: { type: ['integer', 'null'] }
+      responses:
+        '200':
+          $ref: '#/components/responses/CreditNoteResponse'
+        '201':
+          $ref: '#/components/responses/CreditNoteResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/rate-cards:
+    get:
+      summary: Rate cards, page-paginated (admin CRUD).
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200':
+          description: Rate cards with versions and rates.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/RateCard' }
+                  meta:
+                    type: object
+                    required: [page, per_page, total]
+                    additionalProperties: false
+                    properties:
+                      page: { type: integer }
+                      per_page: { type: integer }
+                      total: { type: integer }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Creates a rate card and its first version in one call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, version]
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 100 }
+                description: { type: ['string', 'null'], maxLength: 1000 }
+                is_default: { type: ['boolean', 'null'] }
+                version: { $ref: '#/components/schemas/RateCardVersionRequest' }
+      responses:
+        '201':
+          $ref: '#/components/responses/RateCardResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/rate-cards/{rate_card}:
+    get:
+      summary: One rate card, with versions and rates.
+      parameters:
+        - { name: rate_card, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          $ref: '#/components/responses/RateCardResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/rate-cards/{rateCard}/versions:
+    post:
+      summary: >
+        Supersedes the card's prices with a new immutable version. The one
+        way prices ever change — there is no update and no delete.
+      parameters:
+        - { name: rateCard, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RateCardVersionRequest'
+      responses:
+        '201':
+          description: The new version.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/RateCardVersion' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/rate-cards/{rateCard}/default:
+    put:
+      summary: >
+        Makes this the card that prices trips when none is named. PUT
+        because it is idempotent.
+      parameters:
+        - { name: rateCard, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          $ref: '#/components/responses/RateCardResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # Reports (Modules/Reports, ADR-0007)
+  # ------------------------------------------------------------------
+  /api/v1/reports/trips:
+    get:
+      summary: >
+        The trip report — the Bank's six acceptance criteria, row per trip,
+        cursor-paginated.
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: vehicle_id, in: query, schema: { type: integer } }
+        - { name: driver_id, in: query, schema: { type: integer } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/TripStatus' } }
+        - { name: tenant_id, in: query, schema: { type: integer }, description: 'Platform staff only; omitted, the report spans all clients.' }
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          description: Report rows plus a whole-set summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/TripReportRow' }
+                  meta:
+                    type: object
+                    required: [cursor, summary, scope, covers, filters]
+                    additionalProperties: false
+                    properties:
+                      cursor: { $ref: '#/components/schemas/Cursor' }
+                      summary:
+                        type: object
+                        required: [trips, trips_completed, distance_km, duration_minutes, records_incomplete, completeness_percent]
+                        additionalProperties: false
+                        properties:
+                          trips: { type: integer }
+                          trips_completed: { type: integer }
+                          distance_km: { type: number }
+                          duration_minutes: { type: integer }
+                          records_incomplete: { type: integer }
+                          completeness_percent: { type: ['number', 'null'] }
+                      scope: { $ref: '#/components/schemas/Scope' }
+                      covers: { type: string }
+                      filters: { $ref: '#/components/schemas/ClientsFilter' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/reports/drivers:
+    get:
+      summary: Driver activity aggregate — one row per driver (ADR-0007 rule 3).
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetReportResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/reports/vehicles:
+    get:
+      summary: Vehicle activity aggregate — one row per vehicle (ADR-0007 rule 3).
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses:
+        '200':
+          $ref: '#/components/responses/FleetReportResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/reports/financial:
+    get:
+      summary: >
+        The financial report, grouped by period. For platform staff
+        tenant_id is required — there is no cross-client revenue total
+        (ADR-0007 rule 2).
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: group_by, in: query, schema: { enum: [day, week, month, year] } }
+        - { name: tenant_id, in: query, schema: { type: integer }, description: 'Required for platform staff, refused for client users.' }
+      responses:
+        '200':
+          description: Period rows plus totals.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/ReportRows' }
+                  meta:
+                    type: object
+                    required: [report, title, headers, period, summary, scope, covers, filters]
+                    additionalProperties: false
+                    properties:
+                      report: { enum: [financial] }
+                      title: { type: string }
+                      headers:
+                        type: array
+                        items: { type: string }
+                      period: { type: string }
+                      summary:
+                        type: object
+                        required: [periods, invoices, invoiced_minor, credit_notes, credited_minor, outstanding_minor, currency, payments_recorded]
+                        additionalProperties: false
+                        properties:
+                          periods: { type: integer }
+                          invoices: { type: integer }
+                          invoiced_minor: { type: integer }
+                          credit_notes: { type: integer }
+                          credited_minor: { type: integer }
+                          outstanding_minor: { type: integer }
+                          currency: { type: string }
+                          payments_recorded: { type: boolean }
+                      scope: { $ref: '#/components/schemas/Scope' }
+                      covers: { type: string }
+                      filters: { $ref: '#/components/schemas/ClientsFilter' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/reports/exports:
+    get:
+      summary: Recent exports of reports this reader may see.
+      responses:
+        '200':
+          description: Export records, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ReportExport' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: >
+        Queues an export. 202 — the record exists, the file does not yet;
+        poll the show endpoint until is_terminal.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [format]
+              additionalProperties: false
+              properties:
+                format: { enum: [csv, xlsx, pdf] }
+                report: { enum: [trips, drivers, vehicles, financial, null] }
+                from: { type: ['string', 'null'], format: date }
+                to: { type: ['string', 'null'], format: date }
+                vehicle_id: { type: ['integer', 'null'] }
+                driver_id: { type: ['integer', 'null'] }
+                status: { $ref: '#/components/schemas/NullableTripStatus' }
+                group_by: { enum: [day, week, month, year, null] }
+                tenant_id: { type: ['integer', 'null'], description: Platform staff only; required for a financial export. }
+      responses:
+        '202':
+          $ref: '#/components/responses/ReportExportResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/reports/exports/{export}:
+    get:
+      summary: One export record — what the client polls.
+      parameters:
+        - { name: export, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          $ref: '#/components/responses/ReportExportResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/reports/exports/{export}/download:
+    get:
+      summary: >
+        The exported file. Binary — declared, not validated (ADR-0011
+        decision 6). 409 EXPORT_NOT_READY while preparing, 410
+        EXPORT_EXPIRED after the seven-day retention.
+      parameters:
+        - { name: export, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: The file, as an attachment.
+          content:
+            text/csv: {}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {}
+            application/pdf: {}
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # Notifications (Modules/Notifications) — a user's own inbox
+  # ------------------------------------------------------------------
+  /api/v1/notifications:
+    get:
+      summary: Your notifications, newest first, with the unread count.
+      parameters:
+        - { name: unread, in: query, schema: { type: boolean } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200':
+          description: Notifications plus the unread badge count.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Notification' }
+                  meta:
+                    type: object
+                    required: [unread]
+                    additionalProperties: false
+                    properties:
+                      unread: { type: integer }
+        default:
+          $ref: '#/components/responses/Error'
+    patch:
+      summary: Marks everything read in one call.
+      responses:
+        '200':
+          description: How many were marked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [marked]
+                    additionalProperties: false
+                    properties:
+                      marked: { type: integer }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/notifications/{notification}:
+    patch:
+      summary: Marks one notification read.
+      parameters:
+        - { name: notification, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: The notification, now read.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/Notification' }
+        '404':
+          description: >
+            Not found — scoped to your own inbox, so another user's id is
+            indistinguishable from a missing one. NOTE the shape: this
+            endpoint answers 404 in the success envelope with null data,
+            not the error envelope. Documented as built.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { enum: [null] }
+        default:
+          $ref: '#/components/responses/Error'
+
+components:
+  parameters:
+    cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from meta.cursor.next.
+      schema: { type: string }
+
+  requestBodies:
+    DecisionReason:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [reason]
+            additionalProperties: false
+            properties:
+              reason: { type: string, maxLength: 1000 }
+
+  responses:
+    Error:
+      description: >
+        Any failure. `code` is stable and machine-readable — clients branch
+        on it, never on message text (AGENTS.md API Standards).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+    Throttled:
+      description: >
+        Rate limited (auth endpoints, 5/min/IP). Rendered by the framework,
+        not the API envelope — documented in its production shape; the
+        test-suite hook does not validate 429s because debug rendering
+        differs.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [message]
+            additionalProperties: true
+            properties:
+              message: { type: string }
+
+    MessageOnly:
+      description: Success with no data payload.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { enum: [null] }
+
+    AuthenticatedResponse:
+      description: Login complete — the account and its Sanctum token.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data:
+                type: object
+                required: [user, token, must_enrol_mfa]
+                additionalProperties: false
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+                  token: { type: string }
+                  must_enrol_mfa: { type: boolean }
+
+    RecoveryCodesResponse:
+      description: >
+        Recovery codes, legible this once only — they are stored hashed and
+        can never be shown again.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data:
+                type: object
+                required: [recovery_codes]
+                additionalProperties: false
+                properties:
+                  recovery_codes:
+                    type: array
+                    items: { type: string }
+
+    UserResponse:
+      description: One account.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/User' }
+
+    RoleResponse:
+      description: One role.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/Role' }
+
+    BookingResponse:
+      description: One booking.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/Booking' }
+
+    TripResponse:
+      description: One trip.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/Trip' }
+
+    CompanyResponse:
+      description: One company.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/Company' }
+
+    DriverResponse:
+      description: One driver.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/Driver' }
+
+    VehicleResponse:
+      description: One vehicle.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/Vehicle' }
+
+    InvoiceResponse:
+      description: One invoice.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/Invoice' }
+
+    CreditNoteResponse:
+      description: One credit note.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/CreditNote' }
+
+    RateCardResponse:
+      description: One rate card, with versions and rates.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/RateCard' }
+
+    VehicleAllocationResponse:
+      description: One allocation contract.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/VehicleAllocation' }
+
+    ReportExportResponse:
+      description: One export record.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/ReportExport' }
+
+    FleetReportResponse:
+      description: Aggregate rows plus totals (driver/vehicle reports).
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data, meta]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/ReportRows' }
+              meta:
+                type: object
+                required: [report, title, headers, period, summary, scope, covers, filters]
+                additionalProperties: false
+                properties:
+                  report: { enum: [drivers, vehicles] }
+                  title: { type: string }
+                  headers:
+                    type: array
+                    items: { type: string }
+                  period: { type: string }
+                  summary:
+                    type: object
+                    required: [entities_active, trips, trips_completed, distance_km, duration_minutes, variance_flagged, average_distance_km]
+                    additionalProperties: false
+                    properties:
+                      entities_active: { type: integer }
+                      trips: { type: integer }
+                      trips_completed: { type: integer }
+                      distance_km: { type: number }
+                      duration_minutes: { type: integer }
+                      variance_flagged: { type: integer }
+                      average_distance_km: { type: number }
+                  scope: { $ref: '#/components/schemas/Scope' }
+                  covers: { type: string }
+                  filters: { $ref: '#/components/schemas/ClientsFilter' }
+
+  schemas:
+    # -------------------------- primitives ---------------------------
+    Timestamp:
+      description: ISO-8601 UTC timestamp as Laravel serialises Carbon.
+      type: string
+
+    NullableTimestamp:
+      type: ['string', 'null']
+
+    Scope:
+      description: Whether this reader sees the whole platform or one tenant (ADR-0006/0007).
+      enum: [platform, tenant]
+
+    ValueLabel:
+      type: object
+      required: [value, label]
+      additionalProperties: false
+      properties:
+        value: { type: string }
+        label: { type: string }
+
+    ValueLabelInt:
+      type: object
+      required: [value, label]
+      additionalProperties: false
+      properties:
+        value: { type: integer }
+        label: { type: string }
+
+    Cursor:
+      type: object
+      required: [next]
+      additionalProperties: false
+      properties:
+        next:
+          type: ['string', 'null']
+          description: Opaque cursor for the next page; null on the last page.
+
+    ClientsFilter:
+      type: object
+      required: [clients]
+      additionalProperties: false
+      properties:
+        clients:
+          description: Clients a cross-client reader may narrow to. Empty for a client's own user.
+          type: array
+          items: { $ref: '#/components/schemas/ValueLabelInt' }
+
+    CrossClientListMeta:
+      description: The meta block /bookings and /trips share (ADR-0006).
+      type: object
+      required: [cursor, scope, filters]
+      additionalProperties: false
+      properties:
+        cursor: { $ref: '#/components/schemas/Cursor' }
+        scope: { $ref: '#/components/schemas/Scope' }
+        filters: { $ref: '#/components/schemas/ClientsFilter' }
+
+    ClientRef:
+      description: Which client a row belongs to — platform readers only (ADR-0006).
+      type: ['object', 'null']
+      required: [id, name]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+
+    ReportRows:
+      description: >
+        Report rows as positional arrays matching meta.headers — read
+        across, like the exported spreadsheet.
+      type: array
+      items:
+        type: array
+        items:
+          type: ['string', 'number', 'null']
+
+    EmptyableStringListMap:
+      description: >
+        Validation errors — a map of field name to messages. PHP serialises
+        the empty map as [], hence the anyOf.
+      anyOf:
+        - type: array
+          maxItems: 0
+        - type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+
+    FreeformMap:
+      description: >
+        A JSON column with no fixed shape (audit diffs, notification
+        context, export filters). PHP serialises the empty map as [].
+      anyOf:
+        - type: array
+        - type: object
+          additionalProperties: true
+        - enum: [null]
+
+    # ---------------------------- enums ------------------------------
+    ErrorCode:
+      description: Every case of App\Enums\ErrorCode. Never removed, never repurposed.
+      enum:
+        - VALIDATION_FAILED
+        - INVALID_CREDENTIALS
+        - MFA_REQUIRED
+        - MFA_ENROLMENT_REQUIRED
+        - MFA_CHALLENGE_INVALID
+        - MFA_CODE_INVALID
+        - MFA_ALREADY_ENROLLED
+        - UNAUTHENTICATED
+        - FORBIDDEN
+        - NOT_FOUND
+        - SERVER_ERROR
+        - INVALID_TRIP_TRANSITION
+        - INVALID_BOOKING_TRANSITION
+        - VEHICLE_UNAVAILABLE
+        - DRIVER_UNAVAILABLE
+        - REPORT_TOO_LARGE
+        - EXPORT_NOT_READY
+        - EXPORT_EXPIRED
+        - ALLOCATION_CONFLICT
+        - VEHICLE_EXCLUSIVELY_ALLOCATED
+        - RATE_CARD_NOT_CONFIGURED
+        - TRIP_NOT_INVOICEABLE
+        - TRIP_ALREADY_INVOICED
+        - IDEMPOTENCY_KEY_REUSED
+        - CREDIT_NOTE_EXCEEDS_INVOICE
+        - ROLE_IN_USE
+
+    TripStatus:
+      enum:
+        - assigned
+        - rejected
+        - accepted
+        - driver_en_route
+        - driver_arrived
+        - no_show
+        - passenger_onboard
+        - trip_started
+        - waiting
+        - trip_resumed
+        - trip_completed
+        - invoice_generated
+        - disputed
+        - closed
+        - cancelled
+
+    NullableTripStatus:
+      enum:
+        - assigned
+        - rejected
+        - accepted
+        - driver_en_route
+        - driver_arrived
+        - no_show
+        - passenger_onboard
+        - trip_started
+        - waiting
+        - trip_resumed
+        - trip_completed
+        - invoice_generated
+        - disputed
+        - closed
+        - cancelled
+        - null
+
+    BookingStatus:
+      enum: [pending, approved, rejected, assigned, cancelled]
+
+    VehicleCategory:
+      enum: [sedan, suv, van, minibus, bus, pickup, truck]
+
+    # -------------------------- envelopes ----------------------------
+    ErrorEnvelope:
+      type: object
+      required: [success, code, message, errors]
+      additionalProperties: false
+      properties:
+        success: { enum: [false] }
+        code: { $ref: '#/components/schemas/ErrorCode' }
+        message: { type: string }
+        errors: { $ref: '#/components/schemas/EmptyableStringListMap' }
+
+    # -------------------------- resources ----------------------------
+    User:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - name
+        - email
+        - role
+        - role_label
+        - status
+        - status_label
+        - is_active
+        - deactivated_at
+        - created_at
+        - mfa_enabled
+        - must_enrol_mfa
+        - mfa_recovery_codes_low
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        tenant_id: { type: ['integer', 'null'] }
+        name: { type: string }
+        email: { type: string }
+        role: { type: string, description: Role slug — the external reference. }
+        role_label: { type: string }
+        status: { enum: [active, suspended] }
+        status_label: { type: string }
+        is_active: { type: boolean }
+        deactivated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        mfa_enabled: { type: boolean }
+        must_enrol_mfa: { type: boolean }
+        mfa_recovery_codes_remaining:
+          type: integer
+          description: Present only when a factor is enrolled (ADR-0010).
+        mfa_recovery_codes_low: { type: boolean }
+
+    Role:
+      type: object
+      required: [slug, name, description, is_system, permissions, created_at]
+      additionalProperties: false
+      properties:
+        slug: { type: string }
+        name: { type: string }
+        description: { type: ['string', 'null'] }
+        is_system: { type: boolean }
+        permissions:
+          type: array
+          items: { type: string }
+        users_count:
+          type: integer
+          description: Present on the listing only.
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    AuditLog:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - user_id
+        - auditable_type
+        - auditable_id
+        - action
+        - changes
+        - ip_address
+        - created_at
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        tenant_id: { type: ['integer', 'null'] }
+        user_id: { type: ['integer', 'null'] }
+        user:
+          anyOf:
+            - { $ref: '#/components/schemas/User' }
+            - { enum: [null] }
+        auditable_type: { type: string }
+        auditable_id: { type: ['integer', 'null'] }
+        action: { enum: [created, updated, deleted] }
+        changes: { $ref: '#/components/schemas/FreeformMap' }
+        ip_address: { type: ['string', 'null'] }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    Company:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - legal_name
+        - trading_name
+        - registration_number
+        - industry
+        - billing_email
+        - phone
+        - address_line1
+        - address_line2
+        - city
+        - country
+        - credit_limit_minor
+        - status
+        - created_at
+        - updated_at
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        tenant_id: { type: integer }
+        legal_name: { type: string }
+        trading_name: { type: ['string', 'null'] }
+        registration_number: { type: ['string', 'null'] }
+        industry: { type: ['string', 'null'] }
+        billing_email: { type: string }
+        phone: { type: ['string', 'null'] }
+        address_line1: { type: ['string', 'null'] }
+        address_line2: { type: ['string', 'null'] }
+        city: { type: ['string', 'null'] }
+        country: { type: ['string', 'null'] }
+        credit_limit_minor: { type: ['integer', 'null'] }
+        status: { enum: [active, suspended] }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    Driver:
+      type: object
+      required:
+        - id
+        - name
+        - phone
+        - email
+        - license_number
+        - license_expiry
+        - status
+        - created_at
+        - updated_at
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        phone: { type: string }
+        email: { type: ['string', 'null'] }
+        license_number: { type: string }
+        license_expiry: { $ref: '#/components/schemas/NullableTimestamp' }
+        status: { enum: [active, suspended, inactive] }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    Vehicle:
+      type: object
+      required:
+        - id
+        - registration_number
+        - make
+        - model
+        - year
+        - category
+        - seating_capacity
+        - color
+        - vin
+        - status
+        - created_at
+        - updated_at
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        registration_number: { type: string }
+        make: { type: string }
+        model: { type: string }
+        year: { type: integer }
+        category: { $ref: '#/components/schemas/VehicleCategory' }
+        seating_capacity: { type: integer }
+        color: { type: ['string', 'null'] }
+        vin: { type: ['string', 'null'] }
+        status: { enum: [active, maintenance, inactive] }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    VehicleAllocation:
+      description: A period for which a vehicle is contracted to a client (ADR-0005/0009).
+      type: object
+      required:
+        - id
+        - tenant_id
+        - vehicle_id
+        - starts_on
+        - ends_on
+        - exclusive
+        - in_force
+        - notes
+        - created_at
+        - updated_at
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        tenant_id: { type: integer }
+        client: { $ref: '#/components/schemas/ClientRef' }
+        vehicle_id: { type: integer }
+        vehicle:
+          anyOf:
+            - { $ref: '#/components/schemas/Vehicle' }
+            - { enum: [null] }
+        starts_on: { type: string, format: date }
+        ends_on:
+          type: ['string', 'null']
+          description: Null for an open-ended contract. The last day counts as in force.
+        exclusive:
+          type: boolean
+          description: >
+            False — the default, and the Bank's case — ranks the vehicle
+            first for this client's work while leaving it in the pool. True
+            refuses every other client's dispatch with 409, no override.
+        in_force: { type: boolean }
+        notes: { type: ['string', 'null'] }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    CandidateVehicle:
+      description: >
+        A vehicle plus what this booking's contracts say about it
+        (ADR-0009). The vehicle fields are VehicleResource's, restated
+        because additionalProperties: false rules out allOf composition —
+        the census-style guarantee is worth the duplication.
+      type: object
+      required:
+        - id
+        - registration_number
+        - make
+        - model
+        - year
+        - category
+        - seating_capacity
+        - color
+        - vin
+        - status
+        - created_at
+        - updated_at
+        - allocated
+        - dispatchable
+        - requires_override_reason
+        - note
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        registration_number: { type: string }
+        make: { type: string }
+        model: { type: string }
+        year: { type: integer }
+        category: { $ref: '#/components/schemas/VehicleCategory' }
+        seating_capacity: { type: integer }
+        color: { type: ['string', 'null'] }
+        vin: { type: ['string', 'null'] }
+        status: { enum: [active, maintenance, inactive] }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        allocated:
+          type: boolean
+          description: Ranks first for this client on this date.
+        dispatchable:
+          type: boolean
+          description: False means dispatch will refuse it with 409, whatever is sent.
+        requires_override_reason:
+          type: boolean
+          description: True means assignment without a reason gets a 422 naming allocation_override_reason.
+        note:
+          type: ['string', 'null']
+          description: Short human sentence. Never names the other client.
+
+    Booking:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - requested_by_user_id
+        - passenger_name
+        - passenger_phone
+        - passenger_count
+        - origin
+        - destination
+        - scheduled_for
+        - is_immediate
+        - status
+        - approved_by_user_id
+        - approved_at
+        - decision_reason
+        - notes
+        - created_at
+        - updated_at
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        tenant_id: { type: integer }
+        client: { $ref: '#/components/schemas/ClientRef' }
+        requested_by_user_id: { type: integer }
+        requested_by:
+          anyOf:
+            - { $ref: '#/components/schemas/User' }
+            - { enum: [null] }
+        passenger_name: { type: string }
+        passenger_phone: { type: string }
+        passenger_count: { type: ['integer', 'null'] }
+        origin: { type: string }
+        destination: { type: string }
+        scheduled_for: { $ref: '#/components/schemas/NullableTimestamp' }
+        is_immediate: { type: boolean }
+        status: { $ref: '#/components/schemas/BookingStatus' }
+        approved_by_user_id: { type: ['integer', 'null'] }
+        approved_by:
+          anyOf:
+            - { $ref: '#/components/schemas/User' }
+            - { enum: [null] }
+        approved_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        decision_reason: { type: ['string', 'null'] }
+        notes: { type: ['string', 'null'] }
+        trip:
+          anyOf:
+            - { $ref: '#/components/schemas/Trip' }
+            - { enum: [null] }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    Trip:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - booking_id
+        - vehicle_id
+        - driver_id
+        - origin
+        - destination
+        - status
+        - allowed_transitions
+        - odometer_start
+        - odometer_start_photo_path
+        - odometer_end
+        - odometer_end_photo_path
+        - odometer_start_photo_url
+        - odometer_end_photo_url
+        - distance_km
+        - gps_distance_km
+        - distance_variance_flagged
+        - cancellation_charge_applicable
+        - started_at
+        - completed_at
+        - duration_minutes
+        - created_at
+        - updated_at
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        tenant_id: { type: integer }
+        client: { $ref: '#/components/schemas/ClientRef' }
+        booking_id:
+          type: ['integer', 'null']
+          description: Null on an ad-hoc trip raised without a booking.
+        vehicle_id: { type: ['integer', 'null'] }
+        vehicle:
+          anyOf:
+            - { $ref: '#/components/schemas/Vehicle' }
+            - { enum: [null] }
+        driver_id: { type: ['integer', 'null'] }
+        driver:
+          anyOf:
+            - { $ref: '#/components/schemas/Driver' }
+            - { enum: [null] }
+        origin: { type: string }
+        destination: { type: string }
+        status: { $ref: '#/components/schemas/TripStatus' }
+        allowed_transitions:
+          description: What is legal from this state — not what this user may do.
+          type: array
+          items: { $ref: '#/components/schemas/TripStatus' }
+        odometer_start: { type: ['integer', 'null'] }
+        odometer_start_photo_path: { type: ['string', 'null'] }
+        odometer_end: { type: ['integer', 'null'] }
+        odometer_end_photo_path: { type: ['string', 'null'] }
+        odometer_start_photo_url: { type: ['string', 'null'] }
+        odometer_end_photo_url: { type: ['string', 'null'] }
+        distance_km:
+          type: ['string', 'null']
+          description: Decimal serialised as a string ("12.34") — a billing input, not a float.
+        gps_distance_km: { type: ['string', 'null'] }
+        distance_variance_flagged: { type: ['boolean', 'null'] }
+        cancellation_charge_applicable: { type: ['boolean', 'null'] }
+        started_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        completed_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        duration_minutes: { type: ['integer', 'null'] }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    TripEvent:
+      type: object
+      required: [id, trip_id, from_status, to_status, user_id, notes, created_at]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        trip_id: { type: integer }
+        from_status: { $ref: '#/components/schemas/NullableTripStatus' }
+        to_status: { $ref: '#/components/schemas/TripStatus' }
+        user_id: { type: ['integer', 'null'] }
+        user:
+          anyOf:
+            - { $ref: '#/components/schemas/User' }
+            - { enum: [null] }
+        notes: { type: ['string', 'null'] }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    TripLocation:
+      type: object
+      required: [latitude, longitude, speed_kph, heading_degrees, accuracy_metres, recorded_at]
+      additionalProperties: false
+      properties:
+        latitude: { type: number }
+        longitude: { type: number }
+        speed_kph: { type: ['number', 'null'] }
+        heading_degrees: { type: ['integer', 'null'] }
+        accuracy_metres: { type: ['number', 'null'] }
+        recorded_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    TripTransitionRequest:
+      type: object
+      required: [to]
+      additionalProperties: false
+      properties:
+        to:
+          description: Every status except invoice_generated, which only invoicing may apply.
+          enum:
+            - assigned
+            - rejected
+            - accepted
+            - driver_en_route
+            - driver_arrived
+            - no_show
+            - passenger_onboard
+            - trip_started
+            - waiting
+            - trip_resumed
+            - trip_completed
+            - disputed
+            - closed
+            - cancelled
+        notes:
+          type: ['string', 'null']
+          maxLength: 1000
+          description: Required for cancelled, rejected, no_show and disputed.
+        odometer_start:
+          type: integer
+          minimum: 0
+          description: Required for trip_started.
+        odometer_end:
+          type: integer
+          minimum: 0
+          description: Required for trip_completed.
+        odometer_photo:
+          description: Dashboard photo (multipart only). Optional — the reading is an acceptance criterion, the photo is not.
+        cancellation_charge_applicable: { type: ['boolean', 'null'] }
+        vehicle_id:
+          type: ['integer', 'null']
+          description: Rejected → Assigned reassignment only.
+        driver_id:
+          type: ['integer', 'null']
+          description: Rejected → Assigned reassignment only.
+
+    Invoice:
+      type: object
+      required:
+        - uuid
+        - invoice_number
+        - trip_id
+        - rate_card_version_id
+        - currency
+        - total_minor
+        - credited_minor
+        - balance_minor
+        - issued_at
+        - issued_by_user_id
+        - notes
+      additionalProperties: false
+      properties:
+        uuid: { type: string }
+        invoice_number: { type: string }
+        trip_id: { type: integer }
+        rate_card_version_id: { type: integer }
+        currency: { type: string }
+        total_minor: { type: integer }
+        credited_minor: { type: integer }
+        balance_minor: { type: integer }
+        issued_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        issued_by_user_id: { type: ['integer', 'null'] }
+        notes: { type: ['string', 'null'] }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/InvoiceLine' }
+        credit_notes:
+          type: array
+          items: { $ref: '#/components/schemas/CreditNote' }
+
+    InvoiceLine:
+      type: object
+      required:
+        - id
+        - line_number
+        - type
+        - type_label
+        - description
+        - quantity
+        - unit_amount_minor
+        - amount_minor
+        - currency
+        - inputs
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        line_number: { type: integer }
+        type:
+          enum: [base_fare, distance, waiting, minimum_charge_adjustment, maximum_charge_adjustment]
+        type_label: { type: string }
+        description: { type: string }
+        quantity:
+          type: ['string', 'null']
+          description: Decimal serialised as a string.
+        unit_amount_minor: { type: integer }
+        amount_minor: { type: integer }
+        currency: { type: string }
+        inputs:
+          description: Every value that went into amount_minor — the reproducibility contract (AGENTS.md).
+          type: object
+          required:
+            - rate_card_version_id
+            - vehicle_category
+            - zone
+            - distance_km
+            - waiting_minutes
+            - multiplier_bp
+            - rounding_mode
+          additionalProperties: false
+          properties:
+            rate_card_version_id: { type: integer }
+            vehicle_category: { type: ['string', 'null'] }
+            zone:
+              type: ['string', 'null']
+              description: Always null until the geofencing engine exists.
+            distance_km: { type: ['string', 'null'] }
+            waiting_minutes: { type: ['integer', 'null'] }
+            multiplier_bp: { type: ['integer', 'null'] }
+            rounding_mode: { enum: [half_up, half_down, up, down] }
+
+    CreditNote:
+      type: object
+      required:
+        - uuid
+        - credit_note_number
+        - invoice_id
+        - currency
+        - total_minor
+        - reason
+        - issued_at
+        - issued_by_user_id
+      additionalProperties: false
+      properties:
+        uuid: { type: string }
+        credit_note_number: { type: string }
+        invoice_id: { type: integer }
+        currency: { type: string }
+        total_minor:
+          type: integer
+          description: Positive — the amount taken off the invoice.
+        reason: { type: string }
+        issued_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        issued_by_user_id: { type: ['integer', 'null'] }
+        lines:
+          type: array
+          items:
+            type: object
+            required: [line_number, description, amount_minor, invoice_line_id]
+            additionalProperties: false
+            properties:
+              line_number: { type: integer }
+              description: { type: string }
+              amount_minor: { type: integer }
+              invoice_line_id:
+                type: ['integer', 'null']
+                description: Null on a goodwill or settlement credit correcting no single line.
+
+    RateCard:
+      type: object
+      required: [id, name, description, status, is_default, created_at, updated_at]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        description: { type: ['string', 'null'] }
+        status: { enum: [active, archived] }
+        is_default: { type: boolean }
+        versions:
+          type: array
+          items: { $ref: '#/components/schemas/RateCardVersion' }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    RateCardVersion:
+      type: object
+      required:
+        - id
+        - version
+        - effective_from
+        - currency
+        - rounding_mode
+        - rounding_mode_label
+        - free_waiting_minutes
+        - night_starts_at
+        - night_ends_at
+        - night_multiplier_bp
+        - is_locked
+        - locked_at
+        - notes
+        - created_at
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        version: { type: integer }
+        effective_from: { type: string, format: date }
+        currency: { type: string }
+        rounding_mode: { enum: [half_up, half_down, up, down] }
+        rounding_mode_label: { type: string }
+        free_waiting_minutes: { type: ['integer', 'null'] }
+        night_starts_at: { type: ['string', 'null'] }
+        night_ends_at: { type: ['string', 'null'] }
+        night_multiplier_bp: { type: ['integer', 'null'] }
+        is_locked:
+          type: boolean
+          description: A locked version has priced a real invoice and can never change.
+        locked_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        notes: { type: ['string', 'null'] }
+        rates:
+          type: array
+          items:
+            type: object
+            required:
+              - vehicle_category
+              - base_fare_minor
+              - per_km_minor
+              - per_waiting_minute_minor
+              - minimum_charge_minor
+              - maximum_charge_minor
+            additionalProperties: false
+            properties:
+              vehicle_category: { $ref: '#/components/schemas/VehicleCategory' }
+              base_fare_minor: { type: integer }
+              per_km_minor: { type: integer }
+              per_waiting_minute_minor: { type: integer }
+              minimum_charge_minor: { type: integer }
+              maximum_charge_minor:
+                type: ['integer', 'null']
+                description: Null means uncapped, never "capped at zero".
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    RateCardVersionRequest:
+      type: object
+      required: [effective_from, rates]
+      additionalProperties: false
+      properties:
+        effective_from: { type: string, format: date }
+        rounding_mode: { enum: [half_up, half_down, up, down, null] }
+        free_waiting_minutes: { type: ['integer', 'null'], minimum: 0, maximum: 1440 }
+        night_starts_at:
+          type: ['string', 'null']
+          description: H:i. Both night times or neither.
+        night_ends_at: { type: ['string', 'null'] }
+        night_multiplier_bp:
+          type: ['integer', 'null']
+          minimum: 10000
+          maximum: 50000
+          description: Basis points; 10000 = 1.0x. A "night rate" below 1.0x is a discount, and discounts are deferred.
+        notes: { type: ['string', 'null'], maxLength: 1000 }
+        rates:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [vehicle_category]
+            additionalProperties: false
+            properties:
+              vehicle_category: { $ref: '#/components/schemas/VehicleCategory' }
+              base_fare_minor: { type: ['integer', 'null'], minimum: 0 }
+              per_km_minor: { type: ['integer', 'null'], minimum: 0 }
+              per_waiting_minute_minor: { type: ['integer', 'null'], minimum: 0 }
+              minimum_charge_minor: { type: ['integer', 'null'], minimum: 0 }
+              maximum_charge_minor: { type: ['integer', 'null'], minimum: 0 }
+
+    Notification:
+      type: object
+      required: [id, type, type_label, subject, body, url, context, is_read, read_at, created_at]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        type: { enum: [booking.approved, booking.rejected, report.export.ready] }
+        type_label: { type: string }
+        subject: { type: string }
+        body: { type: string }
+        url:
+          type: ['string', 'null']
+          description: Relative, SPA-local route.
+        context: { $ref: '#/components/schemas/FreeformMap' }
+        is_read: { type: boolean }
+        read_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    ReportExport:
+      type: object
+      required:
+        - id
+        - report
+        - report_label
+        - format
+        - format_label
+        - status
+        - filters
+        - row_count
+        - row_noun
+        - file_size
+        - is_downloadable
+        - is_terminal
+        - error
+        - expires_at
+        - created_at
+        - finished_at
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        report: { enum: [trips, drivers, vehicles, financial] }
+        report_label: { type: string }
+        format: { enum: [csv, xlsx, pdf] }
+        format_label: { type: string }
+        status: { enum: [queued, processing, completed, failed] }
+        filters: { $ref: '#/components/schemas/FreeformMap' }
+        row_count: { type: ['integer', 'null'] }
+        row_noun: { type: string }
+        file_size: { type: ['integer', 'null'] }
+        is_downloadable: { type: boolean }
+        is_terminal: { type: boolean }
+        error: { type: ['string', 'null'] }
+        requested_by:
+          type: ['string', 'null']
+          description: The requester's name. Present when the relation is loaded.
+        expires_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        finished_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    TripReportRow:
+      description: One row of the trip report — the Bank's six criteria plus identifiers.
+      type: object
+      required:
+        - trip_id
+        - booking_id
+        - status
+        - commenced_at
+        - completed_at
+        - vehicle_registration
+        - vehicle_description
+        - driver_name
+        - origin
+        - destination
+        - odometer_start
+        - odometer_end
+        - distance_km
+        - duration_minutes
+        - is_complete
+      additionalProperties: false
+      properties:
+        trip_id: { type: integer }
+        booking_id: { type: ['integer', 'null'] }
+        status: { $ref: '#/components/schemas/TripStatus' }
+        commenced_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        completed_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        vehicle_registration: { type: ['string', 'null'] }
+        vehicle_description: { type: ['string', 'null'] }
+        driver_name: { type: ['string', 'null'] }
+        origin: { type: string }
+        destination: { type: string }
+        odometer_start: { type: ['integer', 'null'] }
+        odometer_end: { type: ['integer', 'null'] }
+        distance_km: { type: ['string', 'null'] }
+        duration_minutes: { type: ['integer', 'null'] }
+        is_complete: { type: boolean }
