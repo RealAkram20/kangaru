@@ -31,6 +31,7 @@ function renderLogin(overrides: {
             logout: () => Promise.resolve(),
             mustEnrolMfa: false,
             markMfaEnrolled: () => {},
+            refreshUser: () => Promise.resolve(),
           }}
         >
           <LoginPage />

@@ -56,6 +56,17 @@ class UserResource extends JsonResource
             'mfa_enabled' => $this->hasMfaEnabled(),
             'must_enrol_mfa' => $this->mustEnrolInMfa(),
 
+            // Whether the *role* demands a factor, as a fact of its own.
+            // `must_enrol_mfa` conflates it with enrolment state — once a
+            // user is enrolled it goes false for everyone, so a client
+            // cannot tell a voluntary factor (may be turned off, ADR-0010
+            // decision 2) from a required one (may not). The Settings
+            // screen decides whether to offer "turn off" on this field
+            // rather than holding its own copy of which roles need a
+            // factor — the same drift `must_enrol_mfa`'s comment already
+            // warns about.
+            'mfa_required' => $this->requiresMfa(),
+
             // ADR-0010 decision 3. `RECOVERY_CODE_LOW_WATER_MARK` was
             // defined by ADR-0008 and read by nothing, so a holder spent
             // codes one at a time and learned the count by running out —

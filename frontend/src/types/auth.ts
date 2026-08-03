@@ -28,4 +28,23 @@ export interface User {
    * would be deciding whether a control is enforced.
    */
   must_enrol_mfa?: boolean
+  /**
+   * Whether the role itself demands a factor (ADR-0010). Distinct from
+   * `must_enrol_mfa`, which goes false for everyone once enrolled: this is
+   * what says a factor is required — and therefore may not be turned off —
+   * versus voluntary, which may.
+   */
+  mfa_required?: boolean
+  /**
+   * How many recovery codes are left. Absent for an account with no
+   * factor — "you have run out" is a different statement from "you never
+   * had any".
+   */
+  mfa_recovery_codes_remaining?: number
+  /**
+   * The server's verdict on whether that count is worryingly low
+   * (ADR-0010 decision 3). Served rather than compared client-side so
+   * "low" cannot mean one number in the API and another on a screen.
+   */
+  mfa_recovery_codes_low?: boolean
 }

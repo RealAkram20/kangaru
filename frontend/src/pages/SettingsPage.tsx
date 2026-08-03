@@ -6,13 +6,14 @@ import { Card } from '../components/core/Card'
 import { Alert } from '../components/feedback/Alert'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { MfaEnrolmentFlow } from '../components/security/MfaEnrolmentFlow'
 import { RecoveryCodeList } from '../components/security/RecoveryCodeList'
 import { apiClient } from '../lib/apiClient'
 import { apiError, fieldErrors } from '../lib/apiError'
 import type { ApiSuccess } from '../types/api'
 
 /**
- * Your own account: password, and the second factor if you have one.
+ * Your own account: password, and the second factor.
  *
  * Built because three endpoints had no door. `PATCH /auth/password` has
  * existed since staff administration shipped and nothing ever called it —
@@ -20,6 +21,12 @@ import type { ApiSuccess } from '../types/api'
  * person had no way to take it out of the administrator's hands, which is
  * half a feature and the wrong half. ADR-0008 then added two more orphans:
  * regenerating recovery codes, and knowing whether a factor is even on.
+ * ADR-0010 added the last three: turning a factor on **voluntarily**,
+ * turning a voluntary one off, and the low-recovery-codes warning.
+ *
+ * Whether "turn off" appears is decided by `mfa_required` — the server's
+ * statement of whether the *role* demands a factor — never inferred from
+ * the role slug. A required factor cannot be removed here or anywhere.
  *
  * Deliberately *only* your own account. There is no user parameter here for
  * an administrator to supply, for the same reason `Modules/Administration`
@@ -28,7 +35,7 @@ import type { ApiSuccess } from '../types/api'
  * cannot tell apart from impersonation.
  */
 export function SettingsPage() {
-  const { user, logout } = useAuth()
+  const { user, logout, refreshUser } = useAuth()
 
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
@@ -41,6 +48,14 @@ export function SettingsPage() {
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null)
   const [mfaError, setMfaError] = useState<string | null>(null)
   const [regenerating, setRegenerating] = useState(false)
+
+  const [enrolling, setEnrolling] = useState(false)
+  const [enrolled, setEnrolled] = useState(false)
+
+  const [disabling, setDisabling] = useState(false)
+  const [disableCode, setDisableCode] = useState('')
+  const [removing, setRemoving] = useState(false)
+  const [disabled, setDisabled] = useState(false)
 
   async function handlePasswordChange(event: FormEvent) {
     event.preventDefault()
@@ -86,12 +101,35 @@ export function SettingsPage() {
         '/auth/mfa/recovery-codes',
       )
       setRecoveryCodes(response.data.data.recovery_codes)
+      // The count and the low flag both changed server-side.
+      await refreshUser()
     } catch (failure) {
       setMfaError(apiError(failure, 'Could not generate new recovery codes.').message)
     } finally {
       setRegenerating(false)
     }
   }
+
+  async function handleDisable(event: FormEvent) {
+    event.preventDefault()
+    setMfaError(null)
+    setRemoving(true)
+
+    try {
+      // Axios spells a DELETE body as `data` — there is no third argument.
+      await apiClient.delete('/auth/mfa', { data: { code: disableCode } })
+      await refreshUser()
+      setDisabling(false)
+      setDisableCode('')
+      setDisabled(true)
+    } catch (failure) {
+      setMfaError(apiError(failure, 'Could not turn off two-factor authentication.').message)
+    } finally {
+      setRemoving(false)
+    }
+  }
+
+  const remaining = user?.mfa_recovery_codes_remaining
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', maxWidth: 640 }}>
@@ -107,7 +145,7 @@ export function SettingsPage() {
           <dt style={{ color: 'var(--text-secondary)' }}>Name</dt>
           <dd style={{ margin: 0 }}>{user?.name}</dd>
           <dt style={{ color: 'var(--text-secondary)' }}>Role</dt>
-          <dd style={{ margin: 0 }}>{user?.role.replace(/_/g, ' ')}</dd>
+          <dd style={{ margin: 0 }}>{user?.role_label ?? user?.role.replace(/_/g, ' ')}</dd>
         </dl>
         <p
           style={{
@@ -221,17 +259,38 @@ export function SettingsPage() {
 
         {user?.mfa_enabled ? (
           <>
+            {enrolled && (
+              <Alert tone="success" title="Two-factor authentication is on">
+                From now on, signing in asks for a code from your authenticator app.
+              </Alert>
+            )}
             <p style={{ marginBottom: 'var(--space-4)' }}>
               <Badge tone="success" icon="shield-check">
                 On
               </Badge>
             </p>
 
+            {/*
+              The server's verdict, not a client-side comparison — ADR-0010
+              decision 3 exists because the low-water mark had no reader
+              and people learned the count by running out.
+            */}
+            {user.mfa_recovery_codes_low && recoveryCodes === null && (
+              <Alert tone="warning" title="Recovery codes running low">
+                {remaining === 0
+                  ? 'You have no recovery codes left. If you lose your phone, nobody can restore this account — generate a new set now.'
+                  : `Only ${remaining} recovery ${remaining === 1 ? 'code' : 'codes'} left. Generate a new set before you need them.`}
+              </Alert>
+            )}
+
             {recoveryCodes === null ? (
               <>
                 <p style={{ font: 'var(--type-body-dense)', color: 'var(--text-secondary)' }}>
-                  Running low on recovery codes, or think someone else has seen them? Generating a
-                  new set immediately invalidates the old one.
+                  {typeof remaining === 'number'
+                    ? `${remaining} recovery ${remaining === 1 ? 'code' : 'codes'} remaining. `
+                    : ''}
+                  Running low, or think someone else has seen them? Generating a new set immediately
+                  invalidates the old one.
                 </p>
                 <Button
                   variant="secondary"
@@ -246,32 +305,116 @@ export function SettingsPage() {
             ) : (
               <RecoveryCodeList codes={recoveryCodes} />
             )}
+
+            {user.mfa_required ? (
+              <p
+                style={{
+                  font: 'var(--type-body-dense)',
+                  color: 'var(--text-secondary)',
+                  marginTop: 'var(--space-4)',
+                }}
+              >
+                Two-factor authentication is required for your role and cannot be turned off.
+              </p>
+            ) : disabling ? (
+              <form
+                onSubmit={handleDisable}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 'var(--space-4)',
+                  marginTop: 'var(--space-4)',
+                }}
+              >
+                {/*
+                  Proven with a code even though the session is signed in —
+                  same reasoning as the password form above, and the server
+                  demands it anyway: a stolen token must not be enough to
+                  strip the factor.
+                */}
+                <FormField
+                  label="Enter a 6-digit code — or a recovery code — to turn it off"
+                  htmlFor="settings-disable-code"
+                  required
+                >
+                  <Input
+                    id="settings-disable-code"
+                    iconLeft="shield"
+                    value={disableCode}
+                    onChange={(e) => setDisableCode(e.target.value)}
+                    autoComplete="one-time-code"
+                    required
+                  />
+                </FormField>
+                <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+                  <Button type="submit" variant="destructive" disabled={removing}>
+                    {removing ? 'Turning off…' : 'Turn off two-factor authentication'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setDisabling(false)
+                      setDisableCode('')
+                    }}
+                  >
+                    Keep it on
+                  </Button>
+                </div>
+              </form>
+            ) : (
+              <Button
+                variant="ghost"
+                iconLeft="shield-off"
+                onClick={() => setDisabling(true)}
+                style={{ marginTop: 'var(--space-4)' }}
+              >
+                Turn off…
+              </Button>
+            )}
           </>
+        ) : enrolling ? (
+          <MfaEnrolmentFlow
+            onDone={() => {
+              setEnrolling(false)
+              setEnrolled(true)
+              void refreshUser()
+            }}
+          />
         ) : (
           <>
+            {disabled && (
+              <Alert
+                tone="success"
+                title="Two-factor authentication is off"
+                onDismiss={() => setDisabled(false)}
+              >
+                You can turn it back on at any time.
+              </Alert>
+            )}
             <p style={{ marginBottom: 'var(--space-4)' }}>
               <Badge tone="neutral" icon="shield">
                 Off
               </Badge>
             </p>
             {/*
-              No "turn it on" button, and this is a real limitation rather
-              than an omission.
-
-              `POST /auth/mfa/enrol` would accept the request — it is gated
-              on being signed in, not on the role. But `AuthService::login`
-              only issues a challenge when the role *requires* a factor, so
-              a user in an unprivileged role who enrolled would end up with
-              an authenticator nothing ever asks them for. Offering the
-              button would be shipping a control that does nothing.
-
-              PROJECT.md puts MFA for other roles out of Phase 1, so the
-              honest state is to say so rather than to half-open it.
+              Voluntary since ADR-0010: login challenges anyone with a
+              confirmed factor, not just the roles that must hold one. The
+              earlier version of this page refused to offer the button
+              because enrolling used to produce an authenticator nothing
+              ever asked for — that premise is gone.
             */}
             <p style={{ font: 'var(--type-body-dense)', color: 'var(--text-secondary)' }}>
-              Two-factor authentication is required for the Super Admin and Finance roles, which can
-              issue invoices and change rates. It is not yet offered for other roles.
+              Optional for your role, and recommended: with it, a stolen password is not enough to
+              sign in as you.
             </p>
+            <Button
+              iconLeft="shield-check"
+              onClick={() => setEnrolling(true)}
+              style={{ marginTop: 'var(--space-4)' }}
+            >
+              Turn on two-factor authentication
+            </Button>
           </>
         )}
       </Card>

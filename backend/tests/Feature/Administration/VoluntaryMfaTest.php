@@ -245,3 +245,42 @@ describe('decision 3 — the low-water mark finally has a reader', function () {
         expect($response->json('data.mfa_recovery_codes_low'))->toBeFalse();
     });
 });
+
+describe('mfa_required — the fact the Settings screen decides "turn off" on', function () {
+    /**
+     * `must_enrol_mfa` goes false for everyone once enrolled, so by itself a
+     * client cannot tell a voluntary factor (may be turned off) from a
+     * required one (may not). `mfa_required` is the role's demand as a fact
+     * of its own, served so the client never holds a copy of which roles
+     * need a factor.
+     */
+    it('stays true for a privileged role even after enrolment', function () {
+        $user = User::factory()->notEnrolledInMfa()->create([
+            'tenant_id' => null,
+            'role' => UserRole::SUPER_ADMIN,
+        ]);
+        enrolFully($user);
+
+        actingAs($user->refresh())->getJson('/api/v1/auth/me')
+            ->assertOk()
+            ->assertJsonPath('data.mfa_required', true)
+            // The pair a client would conflate without the new field: the
+            // account is enrolled, so nothing about enrolment state says
+            // "required" any more.
+            ->assertJsonPath('data.mfa_enabled', true)
+            ->assertJsonPath('data.must_enrol_mfa', false);
+    });
+
+    it('is false for a voluntary factor, which is what makes it voluntary', function () {
+        $user = User::factory()->create([
+            'tenant_id' => $this->tenant->id,
+            'role' => UserRole::CORPORATE_ADMIN,
+        ]);
+        enrolFully($user);
+
+        actingAs($user->refresh())->getJson('/api/v1/auth/me')
+            ->assertOk()
+            ->assertJsonPath('data.mfa_required', false)
+            ->assertJsonPath('data.mfa_enabled', true);
+    });
+});

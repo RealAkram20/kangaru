@@ -2223,6 +2223,7 @@ components:
         - created_at
         - mfa_enabled
         - must_enrol_mfa
+        - mfa_required
         - mfa_recovery_codes_low
       additionalProperties: false
       properties:
@@ -2239,6 +2240,13 @@ components:
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
         mfa_enabled: { type: boolean }
         must_enrol_mfa: { type: boolean }
+        mfa_required:
+          type: boolean
+          description: >
+            Whether this account's role demands a second factor. Distinct
+            from must_enrol_mfa (which also requires being unenrolled) so a
+            client can tell a voluntary factor — which may be turned off —
+            from a required one, which may not (ADR-0010).
         mfa_recovery_codes_remaining:
           type: integer
           description: Present only when a factor is enrolled (ADR-0010).

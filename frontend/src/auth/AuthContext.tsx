@@ -39,6 +39,13 @@ interface AuthContextValue {
   mustEnrolMfa: boolean
   /** Called by the enrolment screen once a factor is confirmed. */
   markMfaEnrolled: () => void
+  /**
+   * Re-reads `/auth/me` and replaces `user`. For screens that change the
+   * account they are showing — enrolling or removing a second factor — so
+   * `mfa_enabled` and friends come back as the server's answer rather than
+   * a local guess patched over stale state.
+   */
+  refreshUser: () => Promise<void>
 }
 
 // eslint-disable-next-line react-refresh/only-export-components -- context object, not a component
@@ -142,9 +149,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const markMfaEnrolled = useCallback(() => setMustEnrolMfa(false), [])
 
+  const refreshUser = useCallback(async () => {
+    const response = await apiClient.get<ApiSuccess<User>>('/auth/me')
+    setUser(response.data.data)
+    setMustEnrolMfa(Boolean(response.data.data.must_enrol_mfa))
+  }, [])
+
   return (
     <AuthContext.Provider
-      value={{ user, loading, login, verifyMfa, logout, mustEnrolMfa, markMfaEnrolled }}
+      value={{ user, loading, login, verifyMfa, logout, mustEnrolMfa, markMfaEnrolled, refreshUser }}
     >
       {children}
     </AuthContext.Provider>

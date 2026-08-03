@@ -4,6 +4,8 @@ import { StrictMode, type ReactElement } from 'react'
 import { AuthContext } from '../auth/AuthContext'
 import type { User } from '../types/auth'
 
+type AuthContextValue = NonNullable<React.ContextType<typeof AuthContext>>
+
 /**
  * Shared test harness.
  *
@@ -45,7 +47,11 @@ export function makeUser(overrides: Partial<User> = {}): User {
  * A component that cannot survive being mounted twice is a component with a
  * bug, and this is where it should surface.
  */
-export function renderAs(ui: ReactElement, user: User | null = makeUser()) {
+export function renderAs(
+  ui: ReactElement,
+  user: User | null = makeUser(),
+  overrides: Partial<AuthContextValue> = {},
+) {
   return render(
     <StrictMode>
       <AuthContext.Provider
@@ -62,6 +68,11 @@ export function renderAs(ui: ReactElement, user: User | null = makeUser()) {
           // subject under test. `MfaEnrolmentPage`'s own tests set it.
           mustEnrolMfa: Boolean(user?.must_enrol_mfa),
           markMfaEnrolled: () => {},
+          refreshUser: () => Promise.resolve(),
+          // Last, so a test can watch or replace any of the above — the
+          // Settings tests hand in a refreshUser spy to prove the page
+          // re-reads the account after changing it.
+          ...overrides,
         }}
       >
         {ui}
