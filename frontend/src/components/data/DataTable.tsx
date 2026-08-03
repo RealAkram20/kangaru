@@ -2,7 +2,40 @@ import { useMemo, useState, type HTMLAttributes, type ReactNode } from 'react'
 import { Icon } from '../core/Icon'
 
 export interface DataColumn<T> {
+  /** Which field of the row this column reads, and its default identity. */
   key: Extract<keyof T, string>
+  /**
+   * Identity, when `key` cannot be it.
+   *
+   * `key` normally does both jobs — it names the field *and* distinguishes
+   * the column — and for a table with one column per field that is fine.
+   * It breaks for a table whose columns all read the **same** field and
+   * differ only by position: `PositionalReportTable` builds its columns
+   * from server-supplied headers over a `cells` array, so every column was
+   * `key: 'cells'`, every `<th>` and `<td>` shared a React key, and the
+   * financial report logged ten duplicate-key errors per render.
+   *
+   * It was cosmetic — React still drew the right table — but two things
+   * made it worth separating rather than tolerating. Duplicate sibling keys
+   * defeat reconciliation, so the correctness was luck that a later change
+   * could remove; and `sortable` was unusable on such a table, because the
+   * sort lookup below matched the first column every time.
+   *
+   * Defaults to `key`, so every existing caller is unaffected.
+   */
+  id?: string
+  /**
+   * What this column sorts on, when `row[key]` is not it.
+   *
+   * The other half of the same problem. Giving the columns distinct `id`s
+   * fixes which one is *marked* as sorted, but the comparison still read
+   * `row[sort.key]` — `cells` for every column of a positional table — so
+   * every header sorted by the stringified whole row. Identity and value
+   * both have to come off `key` for shared-field columns to work.
+   *
+   * Defaults to `row[key]`.
+   */
+  sortValue?: (row: T) => string | number
   header: string
   /** Right-aligns and applies tabular-nums — use for distance, duration, money. */
   numeric?: boolean
@@ -24,7 +57,12 @@ export interface DataTableProps<T extends { id?: string | number }> extends HTML
   emptyMessage?: string
 }
 
-type SortState<T> = { key: Extract<keyof T, string>; dir: 'asc' | 'desc' } | null
+/**
+ * Tracks the sorted column by `id` and the field to sort on by `key`. They
+ * are usually the same string; they are not when several columns read one
+ * field, which is exactly the case that made matching on `key` wrong.
+ */
+type SortState<T> = { id: string; key: Extract<keyof T, string>; dir: 'asc' | 'desc' } | null
 
 export function DataTable<T extends { id?: string | number }>({
   columns = [],
@@ -41,10 +79,23 @@ export function DataTable<T extends { id?: string | number }>({
 
   const sorted = useMemo(() => {
     if (!sort) return rows
-    const col = columns.find((c) => c.key === sort.key)
+    const col = columns.find((c) => (c.id ?? c.key) === sort.id)
     if (!col) return rows
     const dir = sort.dir === 'asc' ? 1 : -1
-    return [...rows].sort((a, b) => (String(a[sort.key]) > String(b[sort.key]) ? dir : -dir))
+    const value = (row: T) => col.sortValue?.(row) ?? row[sort.key]
+
+    return [...rows].sort((a, b) => {
+      const [left, right] = [value(a), value(b)]
+
+      // Numbers compared as numbers. Stringifying them sorts 10 before 9,
+      // which on a report of distances or money is the kind of wrong that
+      // looks deliberate.
+      if (typeof left === 'number' && typeof right === 'number') {
+        return (left - right) * dir
+      }
+
+      return String(left).localeCompare(String(right)) * dir
+    })
   }, [rows, sort, columns])
 
   return (
@@ -54,10 +105,14 @@ export function DataTable<T extends { id?: string | number }>({
           <tr style={{ background: 'var(--surface-sunken)' }}>
             {columns.map((c) => (
               <th
-                key={c.key}
+                key={c.id ?? c.key}
                 onClick={() =>
                   c.sortable &&
-                  setSort((s) => ({ key: c.key, dir: s && s.key === c.key && s.dir === 'asc' ? 'desc' : 'asc' }))
+                  setSort((s) => ({
+                    id: c.id ?? c.key,
+                    key: c.key,
+                    dir: s && s.id === (c.id ?? c.key) && s.dir === 'asc' ? 'desc' : 'asc',
+                  }))
                 }
                 style={{
                   textAlign: c.align || 'left',
@@ -77,9 +132,9 @@ export function DataTable<T extends { id?: string | number }>({
                   {c.header}
                   {c.sortable && (
                     <Icon
-                      name={sort && sort.key === c.key ? (sort.dir === 'asc' ? 'arrow-up' : 'arrow-down') : 'chevrons-up-down'}
+                      name={sort && sort.id === (c.id ?? c.key) ? (sort.dir === 'asc' ? 'arrow-up' : 'arrow-down') : 'chevrons-up-down'}
                       size={12}
-                      style={{ color: sort && sort.key === c.key ? 'var(--text-accent)' : 'var(--text-placeholder)' }}
+                      style={{ color: sort && sort.id === (c.id ?? c.key) ? 'var(--text-accent)' : 'var(--text-placeholder)' }}
                     />
                   )}
                 </span>
@@ -112,7 +167,7 @@ export function DataTable<T extends { id?: string | number }>({
             >
               {columns.map((c) => (
                 <td
-                  key={c.key}
+                  key={c.id ?? c.key}
                   className={c.numeric ? 'kr-tabular' : undefined}
                   style={{
                     padding: pad,

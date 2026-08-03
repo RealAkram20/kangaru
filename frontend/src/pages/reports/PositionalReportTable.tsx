@@ -37,7 +37,19 @@ export function PositionalReportTable({
 
   const columns: DataColumn<{ id: number; cells: PositionalReportRow }>[] = headers.map(
     (header, index) => ({
+      // Every column reads the same field, so `key` cannot also be the
+      // column's identity — `id` is. Without it all of these shared one
+      // React key and the financial report logged a duplicate-key error per
+      // column, per render.
+      //
+      // The index rather than the header text: two reports could legitimately
+      // repeat a heading, and a position is what a positional row actually
+      // has.
+      id: `cell-${index}`,
       key: 'cells',
+      // Identity above, value here. Both are needed: without this every
+      // column would sort by the stringified whole row.
+      sortValue: (row) => row.cells[index] ?? '',
       header,
       // Right-align the figures, left-align the names. Decided from the
       // value rather than a hardcoded column index, so adding a column
