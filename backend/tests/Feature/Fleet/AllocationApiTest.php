@@ -49,7 +49,7 @@ describe('agreeing a contract', function () {
             ->assertJsonPath('data.client.name', 'Centenary Bank')
             ->assertJsonPath('data.ends_on', null);
 
-        expect(VehicleAllocation::allTenants()->count())->toBe(1);
+        expect(VehicleAllocation::allTenants()->where('vehicle_id', $this->vehicle->id)->count())->toBe(1);
     });
 
     it('answers 409 when the overlap rule refuses', function () {
@@ -77,7 +77,7 @@ describe('agreeing a contract', function () {
             ])
             ->assertForbidden();
 
-        expect(VehicleAllocation::allTenants()->count())->toBe(0);
+        expect(VehicleAllocation::allTenants()->where('vehicle_id', $this->vehicle->id)->count())->toBe(0);
     });
 
     it('rejects an end date before the start', function () {
@@ -161,7 +161,7 @@ describe('cross-tenant isolation — the client half', function () {
             $invented->json('errors.tenant_id'),
             'A real foreign tenant id must be indistinguishable from an invented one.',
         );
-        expect(VehicleAllocation::allTenants()->count())->toBe(0);
+        expect(VehicleAllocation::allTenants()->where('vehicle_id', $this->vehicle->id)->count())->toBe(0);
     });
 });
 

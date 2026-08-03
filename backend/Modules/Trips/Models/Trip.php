@@ -68,6 +68,9 @@ class Trip extends Model
         'booking_id',
         'vehicle_id',
         'driver_id',
+        // Why an allocated vehicle was not used (ADR-0009). Null means
+        // nothing was overridden, not that nobody explained.
+        'allocation_override_reason',
         'origin',
         'destination',
         'status',

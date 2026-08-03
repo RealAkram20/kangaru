@@ -10,6 +10,8 @@ use Illuminate\Http\JsonResponse;
 use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Services\InvalidBookingTransitionException;
 use Modules\Dispatch\Requests\AssignBookingRequest;
+use Modules\Dispatch\Services\AllocationExclusiveException;
+use Modules\Dispatch\Services\AllocationOverrideRequiredException;
 use Modules\Dispatch\Services\DispatchService;
 use Modules\Trips\Resources\TripResource;
 use Modules\Trips\Services\DriverUnavailableException;
@@ -39,7 +41,23 @@ class DispatchController extends Controller
                 $request->integer('vehicle_id'),
                 $request->integer('driver_id'),
                 $user,
+                $request->string('allocation_override_reason')->value() ?: null,
             );
+        } catch (AllocationOverrideRequiredException $e) {
+            // A 422 against the field, not a 409: nothing conflicts, the
+            // request is missing something this particular choice requires.
+            // Returned in the standard validation shape so the client reads
+            // it the way it reads every other field error (ADR-0007's
+            // lesson — a considered refusal that renders as a generic
+            // failure looks like a broken page).
+            return ApiResponse::error(
+                ErrorCode::VALIDATION_FAILED,
+                'The given data was invalid.',
+                ['allocation_override_reason' => [$e->getMessage()]],
+                422,
+            );
+        } catch (AllocationExclusiveException $e) {
+            return ApiResponse::error(ErrorCode::VEHICLE_EXCLUSIVELY_ALLOCATED, $e->getMessage(), [], 409);
         } catch (VehicleUnavailableException $e) {
             return ApiResponse::error(ErrorCode::VEHICLE_UNAVAILABLE, $e->getMessage(), [], 409);
         } catch (DriverUnavailableException $e) {

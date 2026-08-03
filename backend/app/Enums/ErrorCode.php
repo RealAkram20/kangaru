@@ -40,6 +40,13 @@ enum ErrorCode: string
      */
     case ALLOCATION_CONFLICT = 'ALLOCATION_CONFLICT';
 
+    /**
+     * The vehicle is contracted exclusively to another client for the trip's
+     * date (ADR-0009). No override exists — that is what exclusivity was
+     * bought — so this is a conflict rather than a missing field.
+     */
+    case VEHICLE_EXCLUSIVELY_ALLOCATED = 'VEHICLE_EXCLUSIVELY_ALLOCATED';
+
     // Modules/Billing.
     case RATE_CARD_NOT_CONFIGURED = 'RATE_CARD_NOT_CONFIGURED';
     case TRIP_NOT_INVOICEABLE = 'TRIP_NOT_INVOICEABLE';
