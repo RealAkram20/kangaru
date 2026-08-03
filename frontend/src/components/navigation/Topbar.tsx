@@ -1,8 +1,11 @@
 import type { HTMLAttributes, ReactNode } from 'react'
 import { Icon } from '../core/Icon'
 import { NotificationBell } from '../notifications/NotificationBell'
+import { UserMenu } from './UserMenu'
 
 export interface TopbarUser {
+  /** Rendered by `UserMenu` when both handlers are supplied. */
+  email?: string
   name: string
   /** One of the ten platform roles, e.g. "Dispatcher", "Finance". */
   role?: string
@@ -21,6 +24,16 @@ export interface TopbarProps extends HTMLAttributes<HTMLElement> {
   actions?: ReactNode
   /** Left-most slot, before the title — the sidebar collapse trigger lives here. */
   leading?: ReactNode
+  /**
+   * Supply both to turn the avatar into an account menu.
+   *
+   * Optional together rather than always-on, because `Topbar` is used by
+   * the design-system previews with no router and no auth behind it; a menu
+   * whose Settings item navigates nowhere would be worse than the plain
+   * identity it replaces.
+   */
+  onOpenSettings?: () => void
+  onSignOut?: () => void
   /** Supply to render the global search field. */
   onSearch?: (query: string) => void
 }
@@ -32,6 +45,8 @@ export function Topbar({
   user,
   actions,
   leading,
+  onOpenSettings,
+  onSignOut,
   onSearch,
   style,
   ...rest
@@ -138,53 +153,67 @@ export function Topbar({
           stays a single line (Modules/Notifications/README.md).
         */}
         <NotificationBell />
-        {user && (
-          <span
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 'var(--space-2)',
-              paddingLeft: 'var(--space-2)',
-            }}
-          >
+        {user &&
+          (onOpenSettings && onSignOut ? (
+            <UserMenu
+              name={user.name}
+              role={user.role}
+              email={user.email}
+              initials={user.initials}
+              onSettings={onOpenSettings}
+              onSignOut={onSignOut}
+            />
+          ) : (
+            // No handlers — the design-system previews and any caller
+            // without a router. Identity only, and deliberately not styled
+            // to look pressable.
             <span
               style={{
-                width: 32,
-                height: 32,
-                borderRadius: 'var(--radius-pill)',
-                background: 'var(--action-primary)',
-                color: 'var(--text-on-brand)',
-                display: 'inline-flex',
+                display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'center',
-                font: 'var(--type-label)',
-                fontWeight: 'var(--weight-semibold)',
+                gap: 'var(--space-2)',
+                paddingLeft: 'var(--space-2)',
               }}
             >
-              {user.initials || (user.name || '?').slice(0, 2).toUpperCase()}
-            </span>
-            <span style={{ lineHeight: 1.2 }}>
               <span
+                aria-hidden="true"
                 style={{
-                  display: 'block',
+                  width: 32,
+                  height: 32,
+                  borderRadius: 'var(--radius-pill)',
+                  background: 'var(--action-primary)',
+                  color: 'var(--text-on-brand)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                   font: 'var(--type-label)',
-                  color: 'var(--text-on-chrome)',
+                  fontWeight: 'var(--weight-semibold)',
                 }}
               >
-                {user.name}
+                {user.initials || (user.name || '?').slice(0, 2).toUpperCase()}
               </span>
-              <span
-                style={{
-                  display: 'block',
-                  font: 'var(--type-caption)',
-                  color: 'var(--text-on-chrome-secondary)',
-                }}
-              >
-                {user.role}
+              <span style={{ lineHeight: 1.2 }}>
+                <span
+                  style={{
+                    display: 'block',
+                    font: 'var(--type-label)',
+                    color: 'var(--text-on-chrome)',
+                  }}
+                >
+                  {user.name}
+                </span>
+                <span
+                  style={{
+                    display: 'block',
+                    font: 'var(--type-caption)',
+                    color: 'var(--text-on-chrome-secondary)',
+                  }}
+                >
+                  {user.role}
+                </span>
               </span>
             </span>
-          </span>
-        )}
+          ))}
       </div>
     </header>
   )

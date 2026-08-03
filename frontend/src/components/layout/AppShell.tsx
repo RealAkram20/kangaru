@@ -92,8 +92,8 @@ const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
 /**
  * Shared chrome (SidebarNav + Topbar) for every page behind auth. Extracted
  * once two pages need it, so the active-highlight and sign-out wiring can't
- * drift between them. Identity, sign-out and the theme switch live in the
- * sidebar, so the topbar carries only the page title and tenant.
+ * drift between them. Identity, Settings and sign-out live in the topbar's
+ * account menu; the theme switch stays in the sidebar.
  */
 export function AppShell() {
   const { user, logout } = useAuth()
@@ -114,13 +114,18 @@ export function AppShell() {
     // Pinned to the viewport, not to the content: a long page (the dashboard's
     // activity feed) must scroll inside <main>, never stretch the sidebar.
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+      {/*
+        `bottomItems` no longer carries Logout: signing out moved into the
+        Topbar account menu, where it sits under the name it signs out of.
+        Two of them would be one too many, and the sidebar one was the
+        harder to find.
+      */}
       <SidebarNav
         id="app-sidebar"
         sections={sections}
         active={page.id}
         user={user ? { name: user.name, role: user.role } : undefined}
         bottomItems={[
-          { id: 'logout', label: 'Logout', icon: 'log-out' },
           {
             id: 'theme',
             label: 'Dark Mode',
@@ -133,10 +138,6 @@ export function AppShell() {
         open={sidebar.mobileOpen}
         onClose={sidebar.closeMobile}
         onNavigate={(id) => {
-          if (id === 'logout') {
-            void logout()
-            return
-          }
           if (id === 'theme') {
             theme.toggle()
             return
@@ -150,7 +151,10 @@ export function AppShell() {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         <Topbar
           title={page.title}
+          onOpenSettings={() => navigate('/settings')}
+          onSignOut={() => void logout()}
           tenant={user ? `Tenant ${user.tenant_id ?? '—'}` : undefined}
+          user={user ? { name: user.name, role: user.role, email: user.email } : undefined}
           leading={
             <IconButton
               icon={sidebar.isMobile || sidebar.collapsed ? 'panel-left' : 'panel-left-close'}
