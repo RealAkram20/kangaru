@@ -57,7 +57,19 @@ class AuthService
         // Checked after the status check, so the ordering of the three
         // refusals above is unchanged and none of them is distinguishable
         // by timing.
-        if ($user->requiresMfa() && $user->hasMfaEnabled()) {
+        //
+        // ADR-0010 decision 1: the **factor**, not the role. This read
+        // `requiresMfa() && hasMfaEnabled()`, which meant a user whose role
+        // does not demand a second factor could enrol — the endpoint is
+        // gated on authentication, not role — see `mfa_enabled: true` on
+        // their own account, file ten recovery codes, and never once be
+        // asked for a code. The platform was not failing to protect them; it
+        // was reporting protection it did not provide.
+        //
+        // `requiresMfa()` still decides who *must* enrol, through
+        // `mustEnrolInMfa()` and the EnsureMfaEnrolled middleware. It no
+        // longer decides who gets asked.
+        if ($user->hasMfaEnabled()) {
             return [
                 'user' => $user,
                 'token' => null,

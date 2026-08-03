@@ -6,6 +6,7 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Modules\Administration\Models\Role;
+use Modules\Administration\Services\MfaService;
 
 /**
  * @mixin User
@@ -54,6 +55,24 @@ class UserResource extends JsonResource
             // serialisation, and these are booleans derived from it.
             'mfa_enabled' => $this->hasMfaEnabled(),
             'must_enrol_mfa' => $this->mustEnrolInMfa(),
+
+            // ADR-0010 decision 3. `RECOVERY_CODE_LOW_WATER_MARK` was
+            // defined by ADR-0008 and read by nothing, so a holder spent
+            // codes one at a time and learned the count by running out —
+            // with a lost phone, no code left, and no administrator able to
+            // help, because ADR-0008 builds no reset on purpose.
+            //
+            // The *verdict* comes from MfaService rather than a comparison
+            // written here, so "low" cannot come to mean one number in the
+            // API and another on a screen. Null and false for an account
+            // with no factor: zero remaining would read as "you have run
+            // out" to somebody who never had any.
+            'mfa_recovery_codes_remaining' => $this->when(
+                $this->hasMfaEnabled(),
+                fn () => app(MfaService::class)->remainingRecoveryCodes($this->resource),
+            ),
+            'mfa_recovery_codes_low' => $this->hasMfaEnabled()
+                && app(MfaService::class)->recoveryCodesAreLow($this->resource),
         ];
     }
 }

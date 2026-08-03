@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Modules\Administration\Requests\ChangePasswordRequest;
 use Modules\Administration\Requests\ConfirmMfaEnrolmentRequest;
+use Modules\Administration\Requests\DisableMfaRequest;
 use Modules\Administration\Requests\LoginRequest;
 use Modules\Administration\Requests\VerifyMfaRequest;
 use Modules\Administration\Resources\UserResource;
@@ -176,6 +177,45 @@ class AuthController extends Controller
         return ApiResponse::success(
             ['recovery_codes' => $this->mfa->generateRecoveryCodes($user)],
             'New recovery codes generated. The previous set no longer works.',
+        );
+    }
+
+    /**
+     * Removes your own second factor (ADR-0010 decision 2).
+     *
+     * Only for a role that does not require one. Without this, honouring a
+     * voluntary enrolment would set a trap: a user could switch a factor on
+     * and then neither switch it off nor find an administrator able to,
+     * because ADR-0008 builds no reset on purpose. An opt-in the person who
+     * opted in cannot reverse is not voluntary.
+     *
+     * A `403` for a privileged role rather than a `422`: the request is
+     * perfectly well-formed, the account simply may not do this.
+     */
+    public function disableMfa(DisableMfaRequest $request): JsonResponse
+    {
+        /** @var User $user */
+        $user = $request->user();
+
+        if ($user->requiresMfa()) {
+            return ApiResponse::error(
+                ErrorCode::FORBIDDEN,
+                'Your role requires two-factor authentication, so it cannot be turned off. '
+                .'Ask a Super Admin to change the role if this is wrong.',
+                [],
+                403,
+            );
+        }
+
+        try {
+            $this->mfa->disable($user, $request->validated('code'));
+        } catch (InvalidMfaCodeException $e) {
+            return ApiResponse::error(ErrorCode::MFA_CODE_INVALID, $e->getMessage(), [], 422);
+        }
+
+        return ApiResponse::success(
+            new UserResource($user->fresh()),
+            'Two-factor authentication is off. You can turn it back on at any time.',
         );
     }
 
