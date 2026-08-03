@@ -141,6 +141,10 @@ class FleetActivitySource implements ReportSource
     public function summaryCells(array $summary): array
     {
         return [
+            // First, deliberately: rule 5 of ADR-0007. These two span every
+            // client for platform staff, which makes saying so on the
+            // document more important here than anywhere else.
+            ['label' => 'Scope', 'value' => $this->scope->describe()],
             [
                 'label' => $this->type === ReportType::DRIVERS ? 'Drivers active' : 'Vehicles active',
                 'value' => number_format((int) $summary['entities_active']),

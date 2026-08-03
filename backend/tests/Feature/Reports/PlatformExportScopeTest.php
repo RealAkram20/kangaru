@@ -5,7 +5,10 @@ use App\Models\User;
 use App\Support\Tenancy\TenantContext;
 use Illuminate\Support\Facades\Storage;
 use Modules\Notifications\Models\Notification;
+use Modules\Reports\Enums\ReportType;
+use Modules\Reports\Exports\ReportSourceFactory;
 use Modules\Reports\Models\ReportExport;
+use Modules\Reports\Support\ReportScope;
 use Tests\Support\BillingFixtures;
 
 /**
@@ -139,6 +142,46 @@ it('still files a client\'s own export in their tenant, unchanged', function () 
 
     expect($export->tenant_id)->toBe($tenant->id);
     expect($export->path)->toStartWith("tenants/{$tenant->id}/reports/");
+});
+
+// ── Rule 5: the file says whose figures it holds ─────────────────────────
+
+/**
+ * "An exported PDF that does not name whose figures it contains is the
+ * document that ends up in the wrong meeting" — ADR-0007 rule 5, and the
+ * same reasoning that makes rule 2 refuse a cross-client total outright.
+ *
+ * Asserted through the source's own header cells rather than by parsing a
+ * rendered PDF: `summaryCells()` is the single definition both the XLSX and
+ * the PDF writer render, so a scope present here is present in both.
+ */
+it('names the client in the header of an export scoped to one', function () {
+    ['tenant' => $tenant] = clientAndPlatformExporters();
+
+    $cells = app(ReportSourceFactory::class)
+        ->for(ReportType::FINANCIAL, ReportScope::tenant($tenant->id))
+        ->summaryCells(['invoices' => 0, 'invoiced_minor' => 0, 'credit_notes' => 0,
+            'credited_minor' => 0, 'outstanding_minor' => 0, 'payments_recorded' => false]);
+
+    $scope = collect($cells)->firstWhere('label', 'Scope');
+
+    // The client's name, not "Client #3" — an id is not something a reader
+    // in that meeting can check.
+    expect($scope)->not->toBeNull();
+    expect($scope['value'])->toBe($tenant->name);
+});
+
+it('says so on the header of an export that spans every client', function () {
+    clientAndPlatformExporters();
+
+    foreach ([ReportType::DRIVERS, ReportType::TRIPS] as $type) {
+        $source = app(ReportSourceFactory::class)
+            ->for($type, ReportScope::allClients());
+
+        $cells = $source->summaryCells($source->summary([]));
+
+        expect(collect($cells)->firstWhere('label', 'Scope')['value'])->toBe('All clients');
+    }
 });
 
 // ── The notification that follows ────────────────────────────────────────

@@ -68,6 +68,9 @@ class TripReportSource implements ReportSource
     public function summaryCells(array $summary): array
     {
         return [
+            // First, deliberately: rule 5 of ADR-0007. A reader has to know
+            // whose figures these are before they read any of them.
+            ['label' => 'Scope', 'value' => $this->scope->describe()],
             ['label' => 'Trips', 'value' => number_format((int) $summary['trips'])],
             ['label' => 'Completed', 'value' => number_format((int) $summary['trips_completed'])],
             ['label' => 'Distance', 'value' => number_format((float) $summary['distance_km'], 2).' km'],

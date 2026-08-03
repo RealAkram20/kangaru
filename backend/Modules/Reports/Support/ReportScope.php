@@ -2,6 +2,7 @@
 
 namespace Modules\Reports\Support;
 
+use App\Models\Tenant;
 use App\Support\Tenancy\TenantScope;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -48,6 +49,8 @@ use Illuminate\Database\Eloquent\Model;
  */
 final class ReportScope
 {
+    private ?string $describedAs = null;
+
     private function __construct(
         public readonly ?int $tenantId,
         public readonly bool $spansAllClients,
@@ -124,6 +127,40 @@ final class ReportScope
     public function label(): string
     {
         return $this->spansAllClients ? 'all_clients' : 'tenant';
+    }
+
+    /**
+     * Whose figures these are, in words, for the header of an exported
+     * document (ADR-0007 rule 5).
+     *
+     * Names the client rather than printing its id, because the whole
+     * argument for the label is that "an exported PDF that does not name
+     * whose figures it contains is the document that ends up in the wrong
+     * meeting" — and "Client #3" is not a name anybody in that meeting can
+     * check.
+     *
+     * Memoized: the XLSX and PDF writers ask for the summary cells once per
+     * file, but `summaryCells()` is cheap enough to be called more than once
+     * and a document header should not be a query per call. `Tenant` is not
+     * itself tenant-scoped, so this needs no scope handling of its own.
+     */
+    public function describe(): string
+    {
+        if ($this->spansAllClients) {
+            return 'All clients';
+        }
+
+        // `value()` rather than `find()`: a document header needs one
+        // string, and hydrating a model to read one column of it is work
+        // this does per export for no gain.
+        $name = Tenant::query()->whereKey($this->tenantId)->value('name');
+
+        // A deleted tenant must not make an export throw. The figures are
+        // still that tenant's and the file still has to say so, even if all
+        // it can say is the id.
+        return $this->describedAs ??= is_string($name) && $name !== ''
+            ? $name
+            : "Client #{$this->tenantId}";
     }
 
     /**
