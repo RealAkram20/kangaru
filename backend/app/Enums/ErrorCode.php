@@ -32,6 +32,14 @@ enum ErrorCode: string
     case EXPORT_NOT_READY = 'EXPORT_NOT_READY';
     case EXPORT_EXPIRED = 'EXPORT_EXPIRED';
 
+    /**
+     * An exclusive allocation cannot share a vehicle with another contract
+     * over the same days (ADR-0009). A conflict rather than a validation
+     * failure: the request was well-formed, the world already holds
+     * something incompatible with it.
+     */
+    case ALLOCATION_CONFLICT = 'ALLOCATION_CONFLICT';
+
     // Modules/Billing.
     case RATE_CARD_NOT_CONFIGURED = 'RATE_CARD_NOT_CONFIGURED';
     case TRIP_NOT_INVOICEABLE = 'TRIP_NOT_INVOICEABLE';
