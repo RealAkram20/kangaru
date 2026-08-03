@@ -124,7 +124,7 @@ export function AppShell() {
         id="app-sidebar"
         sections={sections}
         active={page.id}
-        user={user ? { name: user.name, role: user.role } : undefined}
+        user={user ? { name: user.name, role: user.role_label ?? user.role } : undefined}
         bottomItems={[
           {
             id: 'theme',
@@ -154,7 +154,7 @@ export function AppShell() {
           onOpenSettings={() => navigate('/settings')}
           onSignOut={() => void logout()}
           tenant={user ? `Tenant ${user.tenant_id ?? '—'}` : undefined}
-          user={user ? { name: user.name, role: user.role, email: user.email } : undefined}
+          user={user ? { name: user.name, role: user.role_label ?? user.role, email: user.email } : undefined}
           leading={
             <IconButton
               icon={sidebar.isMobile || sidebar.collapsed ? 'panel-left' : 'panel-left-close'}

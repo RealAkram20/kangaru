@@ -4,6 +4,15 @@ export interface User {
   name: string
   email: string
   role: string
+  /**
+   * The role's display name — "Corporate Admin", not "corporate_admin".
+   *
+   * `UserResource` has always sent it and this type never declared it, so
+   * every surface showing a role rendered the raw slug. Optional because a
+   * user whose `users.role` matches no row resolves to none (ADR-0004 fails
+   * closed), and callers fall back to `role`.
+   */
+  role_label?: string
   created_at: string
   /**
    * Whether this account has a second factor set up (ADR-0008).
