@@ -68,6 +68,39 @@ permission catalogue, and the audit log.
 | DELETE | `/api/v1/roles/{slug}` | Sanctum + tenant | `RolePolicy::delete` — custom roles only, and 409 `ROLE_IN_USE` while anyone holds it |
 | GET | `/api/v1/audit-logs` | Sanctum + tenant | `AuditLogPolicy::viewAny` — `audit.view`. Whitelisted filters: `auditable_type` (any alias in the enforced morph map), `action`, `user_id`, `from`/`to` (`Y-m-d`; `to` includes its whole day). Unknown params → 422. Cursor-paginated. `meta.filters` carries the accepted values plus the actors present in this reader's slice; `meta.scope` is `platform` or `tenant` |
 
+## Frontend
+
+`frontend/src/pages/SettingsPage.tsx` — `/settings`. Your own account:
+password, and the second factor if you have one.
+
+It exists because three endpoints had no caller. `PATCH /auth/password`
+shipped with staff administration and nothing ever called it, so an
+administrator could hand somebody an initial password and that person had
+no way to take it out of the administrator's hands — half a feature, and
+the wrong half. ADR-0008 added two more orphans on top: regenerating
+recovery codes, and knowing whether a factor is even on.
+
+Only ever the signed-in user. No user parameter for an administrator to
+supply, for the same reason this module offers no password reset for
+anyone else.
+
+**The route is registered and there is no navigation entry for it.** It is
+reachable by typing `/settings`. Adding the sidebar row means editing
+`SidebarNav.tsx` and `AppShell.tsx`, which were uncommitted work in
+progress when this shipped.
+
+Two things the page states rather than hides:
+
+- Changing a password revokes **every** token including the caller's, so
+  the form is replaced by a sign-out rather than left looking usable. The
+  next request would otherwise 401 and bounce to `/login` with no
+  explanation.
+- A role that does not require a factor gets **no "turn it on" button**.
+  `POST /auth/mfa/enrol` would accept the request — it is gated on being
+  signed in, not on the role — but `AuthService::login` only issues a
+  challenge when the role *requires* one, so such a user would end up with
+  an authenticator nothing ever asks for. See the deferred list.
+
 ## Notes
 
 **Tenant scoping on `/users` is manual and must stay that way.** `User`
@@ -135,6 +168,20 @@ Named here so a half-built thing is not mistaken for a finished one.
   **no token at all** before the factor is proved, forced enrolment with no
   grace period, ten single-use hashed recovery codes, an app-encrypted
   secret, and a 24-hour Sanctum expiry with a scheduled prune.
+
+  **Voluntary MFA for roles that do not require it is reachable and
+  pointless.** `POST /auth/mfa/enrol` is gated on authentication, not on
+  the role, so any user can enrol — but `AuthService::login` issues a
+  challenge only when `requiresMfa()` is true, so the factor is never
+  asked for. Nothing in the UI offers it, and the Settings page says the
+  option is not available rather than pretending otherwise.
+
+  Two ways out, and it wants a decision rather than a patch: honour
+  `hasMfaEnabled()` at login regardless of the role (more secure, and makes
+  the endpoint honest, but it is a change to when a factor is demanded that
+  ADR-0008 did not decide), or refuse enrolment from roles that do not
+  require one. PROJECT.md puts MFA for other roles out of Phase 1, which
+  argues for the second and against inventing the first here.
 
   Still deferred inside it, per the ADR's own Scope: WebAuthn/passkeys,
   trusted devices ("remember this browser"), step-up authentication for

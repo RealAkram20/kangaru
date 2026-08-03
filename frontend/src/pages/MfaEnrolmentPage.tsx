@@ -6,6 +6,7 @@ import { Card } from '../components/core/Card'
 import { Alert } from '../components/feedback/Alert'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { RecoveryCodeList } from '../components/security/RecoveryCodeList'
 import { apiClient } from '../lib/apiClient'
 import { apiError } from '../lib/apiError'
 import type { ApiSuccess } from '../types/api'
@@ -76,39 +77,7 @@ export function MfaEnrolmentPage() {
     return (
       <div style={{ maxWidth: 560, margin: '0 auto', padding: 'var(--space-8)' }}>
         <Card title="Save your recovery codes">
-          <Alert tone="warning" title="These are shown once">
-            They are stored hashed, so nobody — including support — can show them to you again. If
-            you lose your phone and have no code, no administrator can restore this account.
-          </Alert>
-
-          <ul
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-              gap: 'var(--space-2)',
-              margin: 'var(--space-4) 0',
-              padding: 0,
-              listStyle: 'none',
-              fontFamily: 'var(--font-mono, monospace)',
-            }}
-          >
-            {recoveryCodes.map((recoveryCode) => (
-              <li
-                key={recoveryCode}
-                style={{
-                  padding: 'var(--space-2)',
-                  background: 'var(--surface-sunken, transparent)',
-                }}
-              >
-                {recoveryCode}
-              </li>
-            ))}
-          </ul>
-
-          <p style={{ font: 'var(--type-body-dense)', color: 'var(--text-secondary)' }}>
-            Each code works once. Print them or put them somewhere physical — a drawer beats a
-            screenshot on the phone you might lose.
-          </p>
+          <RecoveryCodeList codes={recoveryCodes} />
 
           <Button
             size="lg"

@@ -15,6 +15,7 @@ import { NotificationsPage } from '../pages/NotificationsPage'
 import { RateCardsPage } from '../pages/RateCardsPage'
 import { ReportsPage } from '../pages/ReportsPage'
 import { RolesPage } from '../pages/RolesPage'
+import { SettingsPage } from '../pages/SettingsPage'
 import { StaffPage } from '../pages/StaffPage'
 import { TripsPage } from '../pages/TripsPage'
 import { VehiclesPage } from '../pages/VehiclesPage'
@@ -85,6 +86,11 @@ export const router = createBrowserRouter([
       // Unguarded, like Dashboard, Bookings and Trips: every account has
       // an inbox, and the server scopes each of these to the caller.
       { path: 'notifications', element: <NotificationsPage /> },
+      // Unguarded for the strongest version of that reason: this page is
+      // *only ever* about the signed-in user. Every endpoint it calls acts
+      // on the caller and takes no user parameter, so there is no role that
+      // should be turned away from their own password.
+      { path: 'settings', element: <SettingsPage /> },
       {
         path: 'staff',
         element: (
