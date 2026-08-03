@@ -81,3 +81,54 @@
   --map-geofence:rgba(1,144,61,.14);
   --map-vehicle:var(--kr-navy);
 }
+
+/* Dark theme — set by the sidebar's Dark Mode switch via <html data-theme>.
+   Chrome is already navy in both themes, so what flips is the content canvas.
+   Status hues and their tints are re-tuned rather than reused: the light-mode
+   pairs (e.g. #B42318 on #FEE4E2) invert into unreadable mud on a dark card. */
+:root[data-theme='dark']{
+  /* ---- Brand, lifted for dark surfaces ---- */
+  --kr-green:#02A94A;
+  --kr-green-hover:#03C257;
+  --kr-green-dark:#3DD07A;
+  --kr-green-tint:#0C2C1C;
+
+  /* ---- Status hues ---- */
+  --kr-success:#3DD07A;
+  --kr-success-tint:#0C2C1C;
+  --kr-warning:#F5B544;
+  --kr-warning-tint:#3A2A08;
+  --kr-error:#F97066;
+  --kr-error-hover:#FDA29B;
+  --kr-error-tint:#3A1614;
+  --kr-info:#61A0FA;
+  --kr-info-tint:#12243F;
+  --kr-neutral:#9AA3B2;
+  --kr-neutral-tint:#1B2434;
+
+  /* ---- Semantic surfaces ---- */
+  --surface-page:#0A1524;
+  --surface-card:#0F1D31;
+  --surface-sunken:#0C1828;
+  --surface-subtle:#152540;
+  --surface-accent:var(--kr-green-tint);
+  --surface-chrome:#050E1C;
+  --surface-chrome-elevated:#122544;
+
+  /* ---- Semantic text ---- */
+  --text-heading:#EEF2F8;
+  --text-body:#DFE6F0;
+  --text-secondary:#A7B0BF;
+  --text-placeholder:#6C7788;
+  --text-disabled:#5A6474;
+
+  /* ---- Semantic lines ---- */
+  --border-default:#1E2C42;
+  --border-strong:#2C3B54;
+  --border-input:#26364F;
+  --border-chrome:#1B2A45;
+
+  /* ---- Interactive ---- */
+  --action-ghost-hover-bg:#152540;
+  --action-ghost-hover-bg-chrome:#122544;
+}

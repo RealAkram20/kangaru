@@ -1,7 +1,11 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../auth/useAuth'
+import { IconButton } from '../core/IconButton'
+import { filterSections } from '../../lib/navigation'
 import { SidebarNav, type SidebarSection } from '../navigation/SidebarNav'
+import { useSidebarState } from '../navigation/useSidebarState'
 import { Topbar } from '../navigation/Topbar'
+import { useTheme } from '../../theme/useTheme'
 
 const SECTIONS: SidebarSection[] = [
   {
@@ -34,6 +38,20 @@ const SECTIONS: SidebarSection[] = [
     label: 'Insight',
     items: [{ id: 'reports', label: 'Reports', icon: 'file-chart-column' }],
   },
+  {
+    label: 'Administration',
+    items: [
+      { id: 'staff', label: 'Staff', icon: 'user-cog' },
+      { id: 'roles', label: 'Roles', icon: 'shield-check' },
+      { id: 'audit-log', label: 'Audit log', icon: 'file-clock' },
+    ],
+  },
+  {
+    // Its own section rather than an Operations item: a notification is
+    // addressed to you personally, not to a part of the business, so it
+    // does not belong under the same heading as the fleet's work.
+    items: [{ id: 'notifications', label: 'Notifications', icon: 'bell' }],
+  },
 ]
 
 /** Sidebar item ids mapped to their route. Every item now has one. */
@@ -48,6 +66,10 @@ const NAV_PATHS: Partial<Record<string, string>> = {
   invoices: '/invoices',
   'rate-cards': '/rate-cards',
   reports: '/reports',
+  notifications: '/notifications',
+  staff: '/staff',
+  roles: '/roles',
+  'audit-log': '/audit-log',
 }
 
 const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
@@ -61,51 +83,100 @@ const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
   '/invoices': { id: 'invoices', title: 'Invoices' },
   '/rate-cards': { id: 'rate-cards', title: 'Rate cards' },
   '/reports': { id: 'reports', title: 'Reports' },
+  '/notifications': { id: 'notifications', title: 'Notifications' },
+  '/staff': { id: 'staff', title: 'Staff' },
+  '/roles': { id: 'roles', title: 'Roles' },
+  '/audit-log': { id: 'audit-log', title: 'Audit log' },
 }
 
 /**
- * Shared chrome (SidebarNav + Topbar + sign-out) for every page behind
- * auth. Extracted once two pages need it, so the active-highlight and
- * sign-out wiring can't drift between them.
+ * Shared chrome (SidebarNav + Topbar) for every page behind auth. Extracted
+ * once two pages need it, so the active-highlight and sign-out wiring can't
+ * drift between them. Identity, sign-out and the theme switch live in the
+ * sidebar, so the topbar carries only the page title and tenant.
  */
 export function AppShell() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const sidebar = useSidebarState()
+  const theme = useTheme()
 
   const page = PAGE_BY_PATH[location.pathname] ?? { id: '', title: '' }
 
+  // Convenience, not authorization — every endpoint behind these entries
+  // answers 403 on its own (AGENTS.md). It exists because a menu offering
+  // eleven destinations to somebody who can open four is a maze, and one of
+  // the eleven rendered a working dispatch board to a Corporate Employee.
+  const sections = filterSections(SECTIONS, user)
+
   return (
-    <div style={{ display: 'flex', minHeight: '100vh' }}>
+    // Pinned to the viewport, not to the content: a long page (the dashboard's
+    // activity feed) must scroll inside <main>, never stretch the sidebar.
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
       <SidebarNav
-        sections={SECTIONS}
+        id="app-sidebar"
+        sections={sections}
         active={page.id}
+        user={user ? { name: user.name, role: user.role } : undefined}
+        bottomItems={[
+          { id: 'logout', label: 'Logout', icon: 'log-out' },
+          {
+            id: 'theme',
+            label: 'Dark Mode',
+            icon: theme.isDark ? 'moon' : 'sun',
+            checked: theme.isDark,
+          },
+        ]}
+        collapsed={sidebar.collapsed}
+        mobile={sidebar.isMobile}
+        open={sidebar.mobileOpen}
+        onClose={sidebar.closeMobile}
         onNavigate={(id) => {
+          if (id === 'logout') {
+            void logout()
+            return
+          }
+          if (id === 'theme') {
+            theme.toggle()
+            return
+          }
           const path = NAV_PATHS[id]
           if (path) navigate(path)
+          // The drawer sits over the page it just navigated to.
+          sidebar.closeMobile()
         }}
       />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         <Topbar
           title={page.title}
           tenant={user ? `Tenant ${user.tenant_id ?? '—'}` : undefined}
-          user={user ? { name: user.name, role: user.role } : undefined}
-          actions={
-            <button
-              onClick={() => void logout()}
-              style={{
-                font: 'var(--type-label)',
-                color: 'var(--text-on-chrome-secondary)',
-                background: 'transparent',
-                border: 'none',
-                cursor: 'pointer',
-              }}
-            >
-              Sign out
-            </button>
+          leading={
+            <IconButton
+              icon={sidebar.isMobile || sidebar.collapsed ? 'panel-left' : 'panel-left-close'}
+              label={
+                sidebar.collapsed || (sidebar.isMobile && !sidebar.mobileOpen)
+                  ? 'Expand sidebar'
+                  : 'Collapse sidebar'
+              }
+              size="sm"
+              onChrome
+              onClick={sidebar.toggle}
+              aria-controls="app-sidebar"
+              aria-expanded={sidebar.isMobile ? sidebar.mobileOpen : !sidebar.collapsed}
+              style={{ marginLeft: 'calc(var(--space-2) * -1)' }}
+            />
           }
         />
-        <main style={{ flex: 1, background: 'var(--surface-page)', padding: 'var(--space-6)' }}>
+        <main
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: 'auto',
+            background: 'var(--surface-page)',
+            padding: 'var(--space-6)',
+          }}
+        >
           <Outlet />
         </main>
       </div>

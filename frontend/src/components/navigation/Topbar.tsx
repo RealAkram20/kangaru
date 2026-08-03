@@ -1,6 +1,6 @@
 import type { HTMLAttributes, ReactNode } from 'react'
 import { Icon } from '../core/Icon'
-import { IconButton } from '../core/IconButton'
+import { NotificationBell } from '../notifications/NotificationBell'
 
 export interface TopbarUser {
   name: string
@@ -19,11 +19,23 @@ export interface TopbarProps extends HTMLAttributes<HTMLElement> {
   user?: TopbarUser
   /** Extra controls left of the notification bell. */
   actions?: ReactNode
+  /** Left-most slot, before the title — the sidebar collapse trigger lives here. */
+  leading?: ReactNode
   /** Supply to render the global search field. */
   onSearch?: (query: string) => void
 }
 
-export function Topbar({ title, breadcrumbs, tenant, user, actions, onSearch, style, ...rest }: TopbarProps) {
+export function Topbar({
+  title,
+  breadcrumbs,
+  tenant,
+  user,
+  actions,
+  leading,
+  onSearch,
+  style,
+  ...rest
+}: TopbarProps) {
   return (
     <header
       style={{
@@ -39,6 +51,7 @@ export function Topbar({ title, breadcrumbs, tenant, user, actions, onSearch, st
       }}
       {...rest}
     >
+      {leading}
       <div style={{ minWidth: 0 }}>
         {breadcrumbs && <div style={{ marginBottom: 1 }}>{breadcrumbs}</div>}
         {title && (
@@ -87,7 +100,14 @@ export function Topbar({ title, breadcrumbs, tenant, user, actions, onSearch, st
           />
         </label>
       )}
-      <div style={{ marginLeft: onSearch ? 0 : 'auto', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+      <div
+        style={{
+          marginLeft: onSearch ? 0 : 'auto',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 'var(--space-2)',
+        }}
+      >
         {tenant && (
           <span
             style={{
@@ -104,13 +124,29 @@ export function Topbar({ title, breadcrumbs, tenant, user, actions, onSearch, st
           >
             <Icon name="building-2" size={14} style={{ color: 'var(--action-primary)' }} />
             {tenant}
-            <Icon name="chevron-down" size={14} style={{ color: 'var(--text-on-chrome-secondary)' }} />
+            <Icon
+              name="chevron-down"
+              size={14}
+              style={{ color: 'var(--text-on-chrome-secondary)' }}
+            />
           </span>
         )}
         {actions}
-        <IconButton icon="bell" label="Notifications" onChrome />
+        {/*
+          Was a bare IconButton with no badge, panel or data behind it.
+          NotificationBell takes no props and fetches its own inbox, so this
+          stays a single line (Modules/Notifications/README.md).
+        */}
+        <NotificationBell />
         {user && (
-          <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', paddingLeft: 'var(--space-2)' }}>
+          <span
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 'var(--space-2)',
+              paddingLeft: 'var(--space-2)',
+            }}
+          >
             <span
               style={{
                 width: 32,
@@ -128,10 +164,22 @@ export function Topbar({ title, breadcrumbs, tenant, user, actions, onSearch, st
               {user.initials || (user.name || '?').slice(0, 2).toUpperCase()}
             </span>
             <span style={{ lineHeight: 1.2 }}>
-              <span style={{ display: 'block', font: 'var(--type-label)', color: 'var(--text-on-chrome)' }}>
+              <span
+                style={{
+                  display: 'block',
+                  font: 'var(--type-label)',
+                  color: 'var(--text-on-chrome)',
+                }}
+              >
                 {user.name}
               </span>
-              <span style={{ display: 'block', font: 'var(--type-caption)', color: 'var(--text-on-chrome-secondary)' }}>
+              <span
+                style={{
+                  display: 'block',
+                  font: 'var(--type-caption)',
+                  color: 'var(--text-on-chrome-secondary)',
+                }}
+              >
                 {user.role}
               </span>
             </span>
