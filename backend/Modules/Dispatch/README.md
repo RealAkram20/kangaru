@@ -69,10 +69,46 @@ Nothing depends on this module — it is the top of the dependency chain.
 | Method | Path | Policy |
 |---|---|---|
 | POST | `/api/v1/bookings/{id}/assignment` | `dispatch` on `BookingPolicy` — Super Admin, Operations Manager, Dispatcher, Fleet Owner, Branch Manager, Depot Manager |
+| GET | `/api/v1/bookings/{id}/candidate-vehicles` | the same `dispatch` ability — a candidate list is a preview of the act |
 
 Returns `201` with the created Trip. A Corporate Admin may raise and approve
 bookings but never dispatch the fleet, so `dispatch` mirrors
 `TripPolicy::create` rather than the Bookings desk roles.
+
+### What an allocation does to a dispatch (ADR-0009)
+
+Since ADR-0009 the pool is no longer flat. For a booking belonging to
+client T, on the trip's date:
+
+- A vehicle **contracted to T** ranks first and needs no explanation.
+- A vehicle contracted to T that is **passed over** requires
+  `allocation_override_reason`; without it the assignment is `422` against
+  that field. The reason is stored on `trips.allocation_override_reason`
+  and logged as `vehicle.dispatched_off_allocation`.
+- A vehicle contracted **exclusively to somebody else** is refused with
+  `409 VEHICLE_EXCLUSIVELY_ALLOCATED`. There is no override.
+- A client with nothing contracted that day owes no reason for anything —
+  otherwise a required field appears on every dispatch and becomes one
+  everybody types "n/a" into.
+
+`GET /bookings/{id}/candidate-vehicles` answers all of that up front:
+active vehicles, contracted first, each carrying `allocated`,
+`dispatchable`, `requires_override_reason` and a short `note`. Blocked
+vehicles are listed and flagged rather than hidden, and no note names the
+other client.
+
+Both surfaces resolve their verdicts through `Modules\Fleet`'s
+`AllocationLookup`, and a test dispatches **every** vehicle in the pool to
+assert the list's promise matches the assignment's behaviour. Two
+implementations of one rule drift silently, and the symptom would be a
+board offering a vehicle that dispatch then refuses.
+
+**The allocation reads sit after the vehicle and driver locks, deliberately.**
+InnoDB fixes a transaction's consistent-read snapshot at its first plain
+SELECT; running these lookups before `TripAssignmentGuard` acquired its
+locks let a losing dispatcher judge availability from a pre-lock snapshot,
+and both assignments won. `DispatchRaceTest` caught it. Anything added to
+`applyAllocationRules` must stay on the far side of those locks.
 
 `AssignBookingRequest` proves the vehicle and driver exist, are active, and
 belong to the caller's tenant. Whether they are *free right now* is

@@ -350,6 +350,34 @@ class DemoHistorySeeder extends Seeder
                     // One open-ended, two with an end date, so the demo shows
                     // both shapes of contract.
                     'ends_on' => $index === 0 ? null : now()->addMonths(9)->endOfMonth()->toDateString(),
+                    // Explicit since ADR-0009 rather than left to the column
+                    // default. These three were non-exclusive by implication
+                    // when nothing consulted them; now that dispatch does,
+                    // saying so is the difference between a deliberate
+                    // arrangement and an unexamined one — and this is the
+                    // Bank's case, which the ADR settles as non-exclusive.
+                    'exclusive' => false,
+                ],
+            );
+        }
+
+        // One exclusive contract, so a demo can show both branches: the
+        // ranked-but-overridable case above, and a vehicle that dispatch
+        // simply refuses to put on anybody else's trip. Taken from further
+        // down the fleet so it does not collide with the three above — an
+        // exclusive allocation may not overlap another for the same vehicle,
+        // and the seeder would be refused if it tried.
+        $dedicated = Vehicle::query()->orderBy('id')->skip(3)->first();
+
+        if ($dedicated !== null) {
+            VehicleAllocation::firstOrCreate(
+                ['tenant_id' => $anchor->id, 'vehicle_id' => $dedicated->id],
+                [
+                    'created_by_user_id' => $admin->id,
+                    'starts_on' => now()->subMonths(3)->startOfMonth()->toDateString(),
+                    'ends_on' => null,
+                    'exclusive' => true,
+                    'notes' => 'Dedicated executive vehicle — not to be dispatched for other clients.',
                 ],
             );
         }

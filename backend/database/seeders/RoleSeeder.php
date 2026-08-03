@@ -65,7 +65,14 @@ class RoleSeeder extends Seeder
         // provenance survives. Written once here rather than twice, which
         // is itself one of the drifts ADR-0004 cites.
         $desk = [P::BOOKINGS_VIEW_ALL, P::BOOKINGS_CANCEL_ANY];
-        $dispatch = [P::BOOKINGS_DISPATCH, P::TRIPS_CREATE, P::TRIPS_TRANSITION_ANY, P::TRIPS_LOCATIONS_RECORD];
+        // ALLOCATIONS_VIEW rides with dispatch since ADR-0009: allocated
+        // vehicles rank first for their client's bookings, and a dispatcher
+        // who cannot see the contract cannot tell a considered ranking from
+        // an arbitrary one — nor answer for overriding it.
+        $dispatch = [
+            P::BOOKINGS_DISPATCH, P::TRIPS_CREATE, P::TRIPS_TRANSITION_ANY,
+            P::TRIPS_LOCATIONS_RECORD, P::ALLOCATIONS_VIEW,
+        ];
         $fleetManage = [P::VEHICLES_MANAGE, P::DRIVERS_MANAGE];
         // CompanyPolicy/VehiclePolicy/DriverPolicy viewAny all `return true`.
         $everyoneReads = [P::COMPANIES_VIEW, P::VEHICLES_VIEW, P::DRIVERS_VIEW];
@@ -149,6 +156,10 @@ class RoleSeeder extends Seeder
                     P::AUDIT_VIEW, P::STAFF_VIEW, P::STAFF_MANAGE,
                     P::BOOKINGS_CREATE, P::BOOKINGS_APPROVE, P::TRIPS_VIEW_ALL,
                     P::COMPANIES_UPDATE, P::REPORTS_VIEW,
+                    // A party to the contract may read it. Agreeing one is
+                    // Shanitah's side of the deal, so no ALLOCATIONS_MANAGE
+                    // here — that stays with the Super Admin.
+                    P::ALLOCATIONS_VIEW,
                 ],
             ],
 

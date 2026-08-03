@@ -41,6 +41,13 @@ class AssignBookingRequest extends FormRequest
                         ->whereNull('deleted_at')
                 ),
             ],
+            // ADR-0009. Optional here and *conditionally* required in
+            // DispatchService, for the same reason availability is checked
+            // there: whether a reason is owed depends on which vehicles are
+            // contracted to this client on the trip's date, and answering
+            // that here would mean asking the same question twice and
+            // letting the two answers drift.
+            'allocation_override_reason' => ['nullable', 'string', 'max:500'],
         ];
     }
 }
