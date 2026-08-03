@@ -36,7 +36,7 @@ describe('FinancialReport', () => {
       }),
     )
 
-    renderAs(<FinancialReport from="" to="" groupBy="month" reloadToken={0} />)
+    renderAs(<FinancialReport from="" to="" groupBy="month" client="" reloadToken={0} />)
 
     expect(await screen.findByText(/Choose the client this financial report is for/)).toBeVisible()
     expect(screen.queryByText('The given data was invalid.')).toBeNull()
@@ -50,7 +50,7 @@ describe('FinancialReport', () => {
   it('falls back to the envelope message when there is no field error', async () => {
     get.mockRejectedValue(apiFailure(500, 'SERVER_ERROR', 'Something went wrong on our end.', {}))
 
-    renderAs(<FinancialReport from="" to="" groupBy="month" reloadToken={0} />)
+    renderAs(<FinancialReport from="" to="" groupBy="month" client="" reloadToken={0} />)
 
     expect(await screen.findByText('Something went wrong on our end.')).toBeVisible()
   })
@@ -70,7 +70,7 @@ describe('FinancialReport', () => {
       }),
     )
 
-    renderAs(<FinancialReport from="" to="" groupBy="month" reloadToken={0} />)
+    renderAs(<FinancialReport from="" to="" groupBy="month" client="" reloadToken={0} />)
 
     // Not the error card — the point is that the new message handling did
     // not turn every successful load into a failure.

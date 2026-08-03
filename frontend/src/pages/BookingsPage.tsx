@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../auth/useAuth'
+import { ClientFilterSelect } from '../components/filters/ClientFilterSelect'
 import { apiClient } from '../lib/apiClient'
 import { apiError, fieldErrors } from '../lib/apiError'
 import { useDebouncedValue } from '../lib/useDebouncedValue'
-import { bookingStatusIcon, bookingStatusLabel, bookingStatusTone, pickupLabel } from '../lib/bookingStatus'
+import {
+  bookingStatusIcon,
+  bookingStatusLabel,
+  bookingStatusTone,
+  pickupLabel,
+} from '../lib/bookingStatus'
 import type { ApiSuccess, FilterOption, ScopedCursorMeta, TenancyScope } from '../types/api'
 import type { Booking } from '../types/booking'
 import { Badge } from '../components/core/Badge'
@@ -15,7 +21,6 @@ import { DataTable, type DataColumn } from '../components/data/DataTable'
 import { LoadMore } from '../components/data/LoadMore'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
-import { Select } from '../components/forms/Select'
 
 /**
  * Roles the backend's BookingPolicy lets approve or reject. Mirrored here
@@ -98,7 +103,10 @@ export function BookingsPage() {
   // order — "E" resolving after "Entebbe" leaves the wrong rows on screen.
   const search = useDebouncedValue(query.trim())
   const [creating, setCreating] = useState(false)
-  const [decision, setDecision] = useState<{ booking: Booking; kind: 'rejection' | 'cancellation' } | null>(null)
+  const [decision, setDecision] = useState<{
+    booking: Booking
+    kind: 'rejection' | 'cancellation'
+  } | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
   // Kept free of setState so the effect below only ever sets state from a
@@ -126,7 +134,11 @@ export function BookingsPage() {
    * same booking twice.
    */
   const load = useCallback(
-    () => fetchBookings(client, search, null).then((list) => apply(list, false), onLoadFailure(setLoadError)),
+    () =>
+      fetchBookings(client, search, null).then(
+        (list) => apply(list, false),
+        onLoadFailure(setLoadError),
+      ),
     [apply, client, search],
   )
 
@@ -265,7 +277,11 @@ export function BookingsPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-      {loadError && <Alert tone="error" title="Bookings unavailable">{loadError}</Alert>}
+      {loadError && (
+        <Alert tone="error" title="Bookings unavailable">
+          {loadError}
+        </Alert>
+      )}
       {actionError && (
         <Alert tone="warning" title="Action refused" onDismiss={() => setActionError(null)}>
           {actionError}
@@ -285,18 +301,12 @@ export function BookingsPage() {
               client's name to do the same job — it does not, and cannot,
               past the first page.
             */}
-            {scope === 'platform' && clients.length > 0 && (
-              <Select
-                aria-label="Client"
-                value={client}
-                onChange={(e) => setClient(e.target.value)}
-                options={[
-                  { value: '', label: 'All clients' },
-                  ...clients.map((c) => ({ value: String(c.value), label: c.label })),
-                ]}
-                style={{ width: 200 }}
-              />
-            )}
+            <ClientFilterSelect
+              scope={scope}
+              clients={clients}
+              value={client}
+              onChange={setClient}
+            />
             <Input
               iconLeft="search"
               placeholder={
@@ -319,7 +329,11 @@ export function BookingsPage() {
           rows={rows}
           dense
           emptyMessage={
-            bookings === null ? 'Loading…' : query ? 'No bookings match your filter' : 'No bookings yet'
+            bookings === null
+              ? 'Loading…'
+              : query
+                ? 'No bookings match your filter'
+                : 'No bookings yet'
           }
         />
 
@@ -330,7 +344,11 @@ export function BookingsPage() {
           would have loaded the next 25 unfiltered rows into a filtered
           list.
         */}
-        <LoadMore hasMore={next !== null} loading={loadingMore} onLoadMore={() => void loadMore()} />
+        <LoadMore
+          hasMore={next !== null}
+          loading={loadingMore}
+          onLoadMore={() => void loadMore()}
+        />
       </Card>
 
       {creating && (
@@ -358,7 +376,13 @@ export function BookingsPage() {
   )
 }
 
-function NewBookingDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => Promise<void> }) {
+function NewBookingDialog({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void
+  onCreated: () => Promise<void>
+}) {
   const [form, setForm] = useState({
     passenger_name: '',
     passenger_phone: '',
@@ -389,7 +413,8 @@ function NewBookingDialog({ onClose, onCreated }: { onClose: () => void; onCreat
         destination: form.destination,
         // Empty means immediate. The backend treats a missing
         // `scheduled_for` as "now", so send null rather than "".
-        scheduled_for: form.scheduled_for === '' ? null : new Date(form.scheduled_for).toISOString(),
+        scheduled_for:
+          form.scheduled_for === '' ? null : new Date(form.scheduled_for).toISOString(),
         notes: form.notes === '' ? null : form.notes,
       })
 
@@ -432,7 +457,12 @@ function NewBookingDialog({ onClose, onCreated }: { onClose: () => void; onCreat
           <FormField label="Passenger" htmlFor="b-name" required error={errors.passenger_name}>
             <Input id="b-name" value={form.passenger_name} onChange={set('passenger_name')} />
           </FormField>
-          <FormField label="Contact number" htmlFor="b-phone" required error={errors.passenger_phone}>
+          <FormField
+            label="Contact number"
+            htmlFor="b-phone"
+            required
+            error={errors.passenger_phone}
+          >
             <Input
               id="b-phone"
               value={form.passenger_phone}
@@ -443,11 +473,22 @@ function NewBookingDialog({ onClose, onCreated }: { onClose: () => void; onCreat
           <FormField label="Pick-up" htmlFor="b-origin" required error={errors.origin}>
             <Input id="b-origin" value={form.origin} onChange={set('origin')} />
           </FormField>
-          <FormField label="Destination" htmlFor="b-destination" required error={errors.destination}>
+          <FormField
+            label="Destination"
+            htmlFor="b-destination"
+            required
+            error={errors.destination}
+          >
             <Input id="b-destination" value={form.destination} onChange={set('destination')} />
           </FormField>
           <FormField label="Passengers" htmlFor="b-count" error={errors.passenger_count}>
-            <Input id="b-count" type="number" min={1} value={form.passenger_count} onChange={set('passenger_count')} />
+            <Input
+              id="b-count"
+              type="number"
+              min={1}
+              value={form.passenger_count}
+              onChange={set('passenger_count')}
+            />
           </FormField>
           <FormField
             label="Pickup time"
@@ -464,7 +505,12 @@ function NewBookingDialog({ onClose, onCreated }: { onClose: () => void; onCreat
           </FormField>
         </div>
 
-        <FormField label="Notes" htmlFor="b-notes" hint="Anything the dispatcher should know" error={errors.notes}>
+        <FormField
+          label="Notes"
+          htmlFor="b-notes"
+          hint="Anything the dispatcher should know"
+          error={errors.notes}
+        >
           <Input id="b-notes" value={form.notes} onChange={set('notes')} />
         </FormField>
       </div>

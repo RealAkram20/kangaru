@@ -3,6 +3,7 @@
 namespace Modules\Reports\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Models\User;
 use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Modules\Reports\Enums\ReportType;
@@ -46,6 +47,9 @@ class FinancialReportController extends Controller
         // one — 422, not a figure nobody agreed the meaning of.
         $scope = $request->reportScope();
 
+        /** @var User $actor */
+        $actor = $request->user();
+
         $source = $this->sources->for(ReportType::FINANCIAL, $scope);
         $filters = $request->filters();
 
@@ -57,7 +61,7 @@ class FinancialReportController extends Controller
                 'headers' => $source->headers(),
                 'period' => $source->period($filters),
                 'summary' => $source->summary($filters),
-                'scope' => $scope->toArray(),
+                ...$scope->metaFor($actor),
             ],
         );
     }

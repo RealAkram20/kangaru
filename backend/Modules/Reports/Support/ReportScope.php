@@ -3,6 +3,8 @@
 namespace Modules\Reports\Support;
 
 use App\Models\Tenant;
+use App\Models\User;
+use App\Support\Tenancy\ClientOptions;
 use App\Support\Tenancy\TenantScope;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -164,21 +166,42 @@ final class ReportScope
     }
 
     /**
-     * The `meta.scope` block every report response carries (ADR-0007 rule
-     * 5), following the shape `/audit-logs` already established.
+     * The scope block every report response carries (ADR-0007 rule 5).
      *
-     * Lives here rather than in each controller for the ordinary reason:
-     * three copies would be three chances for one report to describe itself
-     * differently from the others, and the whole purpose of the block is
-     * that a reader can trust it.
+     * Two fields, because two different questions are being asked and this
+     * module needs both:
      *
-     * @return array{type: string, tenant_id: int|null}
+     * - **`scope`** answers *is the reader a platform reader* — actor-based,
+     *   `'platform' | 'tenant'`, exactly as `/bookings`, `/trips` and
+     *   `/audit-logs` already answer it. It is what tells a UI to offer a
+     *   client picker at all. Reports must not invent a fourth vocabulary
+     *   for a question three endpoints already answer.
+     * - **`covers`** answers *whose figures are these* — the thing rule 5 is
+     *   actually about, and not derivable from `scope`, because a platform
+     *   reader filtered to one client is a platform reader looking at one
+     *   client's numbers.
+     *
+     * `covers` is the **same string the exported XLSX and PDF header
+     * carries**, deliberately. This module's governing rule is that the
+     * screen and the spreadsheet cannot disagree about a figure; whose
+     * figures they are is the one that matters most.
+     *
+     * `filters.clients` follows `/bookings` and `/trips` so a picker holds
+     * no list of its own, and is empty for a client's own user — who has
+     * exactly one client and never had a choice to make.
+     *
+     * @return array{
+     *     scope: string,
+     *     covers: string,
+     *     filters: array{clients: array<int, array{value: int, label: string}>}
+     * }
      */
-    public function toArray(): array
+    public function metaFor(User $actor): array
     {
         return [
-            'type' => $this->label(),
-            'tenant_id' => $this->tenantId,
+            'scope' => $actor->isPlatformLevel() ? 'platform' : 'tenant',
+            'covers' => $this->describe(),
+            'filters' => ['clients' => ClientOptions::forActor($actor)],
         ];
     }
 }

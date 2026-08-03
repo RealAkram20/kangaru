@@ -39,11 +39,21 @@ export function FinancialReport({
   from,
   to,
   groupBy,
+  client,
   reloadToken,
 }: {
   from: string
   to: string
   groupBy: FinancialPeriod
+  /**
+   * The client whose figures these are, as a tenant id, or '' for none
+   * chosen (ADR-0007).
+   *
+   * Only platform staff can set it; for a client's own user it is always
+   * '' and the server scopes them to their own tenant regardless. Empty
+   * from a platform user is a deliberate 422 — see `reportFailureMessage`.
+   */
+  client: string
   /** Bumped by the parent when Run report is pressed. */
   reloadToken: number
 }) {
@@ -58,6 +68,7 @@ export function FinancialReport({
     if (from) params.set('from', from)
     if (to) params.set('to', to)
     params.set('group_by', groupBy)
+    if (client) params.set('tenant_id', client)
 
     apiClient
       .get<ApiSuccess<PositionalReportRow[], FinancialReportMeta>>(
@@ -76,7 +87,11 @@ export function FinancialReport({
     return () => {
       cancelled = true
     }
-  }, [from, to, groupBy, reloadToken])
+    // `client` re-fetches immediately rather than waiting for Run report:
+    // changing whose figures these are invalidates every number on screen,
+    // and leaving one client's totals under another's name is the exact
+    // confusion ADR-0007 exists to prevent.
+  }, [from, to, groupBy, client, reloadToken])
 
   if (error) {
     return (

@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { apiFailure, apiOk, renderAs } from '../test/harness'
+import { apiFailure, apiOk, makeUser, renderAs } from '../test/harness'
 import type { TripReportRow, TripReportSummary } from '../types/report'
 import { ReportsPage } from './ReportsPage'
 
@@ -272,5 +272,112 @@ describe('ReportsPage', () => {
     // Scoped to this alert: ExportPanel raises its own banner for its own
     // failures, and the two must not be read as one.
     expect(within(alert).getByText('The report timed out.')).toBeInTheDocument()
+  })
+})
+
+/**
+ * ADR-0007's client picker.
+ *
+ * The backend accepted `?tenant_id=` before this existed, which left a
+ * platform Super Admin reading "Choose the client this financial report is
+ * for" on a page with nothing that let them choose. These cover the control
+ * that closed that gap.
+ */
+describe('ReportsPage client picker', () => {
+  const platformUser = {
+    tenant_id: null,
+    role: 'super_admin' as const,
+    email: 'sa@kangaruride.test',
+  }
+
+  /** Serves the scope block ADR-0007 added to every report response. */
+  function reportAs(scope: 'platform' | 'tenant', clients: { value: number; label: string }[]) {
+    get.mockImplementation((url: string) => {
+      if (url.startsWith('/vehicles')) return Promise.resolve(apiOk([]))
+      if (url.startsWith('/drivers')) return Promise.resolve(apiOk([]))
+      if (url.startsWith('/reports/exports')) return Promise.resolve(apiOk([]))
+
+      return Promise.resolve(
+        apiOk([row()], {
+          cursor: { next: null },
+          summary: summary(),
+          scope,
+          covers: scope === 'platform' ? 'All clients' : 'Centenary Bank',
+          filters: { clients },
+        }),
+      )
+    })
+  }
+
+  it('offers a platform reader the clients the endpoint served', async () => {
+    reportAs('platform', [
+      { value: 2, label: 'Acme NGO' },
+      { value: 1, label: 'Centenary Bank' },
+    ])
+
+    renderAs(<ReportsPage />, makeUser(platformUser))
+
+    const picker = await screen.findByLabelText('Client')
+
+    // The options come from the response, not from a list this page keeps —
+    // a picker holding its own copy is one that falls behind the list the
+    // endpoint will actually accept.
+    expect(within(picker).getByRole('option', { name: 'Centenary Bank' })).toBeInTheDocument()
+    expect(within(picker).getByRole('option', { name: 'Acme NGO' })).toBeInTheDocument()
+    expect(within(picker).getByRole('option', { name: 'All clients' })).toBeInTheDocument()
+  })
+
+  it("shows a client's own user no picker at all", async () => {
+    // The endpoint serves them an empty option list, because they have
+    // exactly one client and it was never a choice.
+    reportAs('tenant', [])
+
+    renderAs(<ReportsPage />)
+
+    await screen.findByText('#41')
+    expect(screen.queryByLabelText('Client')).toBeNull()
+  })
+
+  it('narrows the trip report to the chosen client, server-side', async () => {
+    reportAs('platform', [{ value: 1, label: 'Centenary Bank' }])
+
+    renderAs(<ReportsPage />, makeUser(platformUser))
+
+    await userEvent.selectOptions(await screen.findByLabelText('Client'), '1')
+    await userEvent.click(screen.getByRole('button', { name: /Run report/i }))
+
+    // Server-side: the rows for another client were never fetched. A
+    // client-side filter would be a wrong answer rather than a slow one,
+    // and on an aggregate it would be a wrong *number*.
+    await waitFor(() =>
+      expect(get.mock.calls.some(([url]) => String(url).includes('tenant_id=1'))).toBe(true),
+    )
+  })
+
+  it('prompts rather than offering "all clients" on the financial report', async () => {
+    reportAs('platform', [{ value: 1, label: 'Centenary Bank' }])
+
+    renderAs(<ReportsPage />, makeUser(platformUser))
+
+    await userEvent.selectOptions(await screen.findByLabelText('Report'), 'financial')
+
+    // ADR-0007 refuses a cross-client total, so there is no all-clients
+    // answer to offer here. Labelling the empty option "All clients" would
+    // advertise something the server declines with a 422.
+    const picker = await screen.findByLabelText('Client')
+    expect(within(picker).getByRole('option', { name: 'Choose a client…' })).toBeInTheDocument()
+    expect(within(picker).queryByRole('option', { name: 'All clients' })).toBeNull()
+  })
+
+  it('offers no client picker on the driver and vehicle reports', async () => {
+    reportAs('platform', [{ value: 1, label: 'Centenary Bank' }])
+
+    renderAs(<ReportsPage />, makeUser(platformUser))
+
+    await userEvent.selectOptions(await screen.findByLabelText('Report'), 'drivers')
+
+    // These aggregate a fleet that is Shanitah's (ADR-0005) and take no
+    // tenant_id. A control that answers 422 is a dead end, not a feature.
+    await waitFor(() => expect(screen.queryByLabelText('Client')).toBeNull())
   })
 })

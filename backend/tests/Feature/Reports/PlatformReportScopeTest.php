@@ -198,10 +198,18 @@ it('gives a platform reader one client\'s trips when filtered to them', function
 
     // The totals matter more than the rows: this is where a leak hides.
     expect((float) $response->json('meta.summary.distance_km'))->toBe(42.0);
-    expect($response->json('meta.scope'))->toBe([
-        'type' => 'tenant',
-        'tenant_id' => $a['tenant']->id,
-    ]);
+
+    // `scope` is actor-based, the way /bookings, /trips and /audit-logs
+    // already answer it — this reader is platform staff whichever client
+    // they narrowed to, and that is what tells a UI to offer the picker.
+    // `covers` is the rule 5 question, which `scope` cannot answer.
+    expect($response->json('meta.scope'))->toBe('platform');
+    expect($response->json('meta.covers'))->toBe($a['tenant']->name);
+
+    // And the picker's options come from the endpoint, so it cannot fall
+    // behind the list the endpoint will accept.
+    expect(collect($response->json('meta.filters.clients'))->pluck('value'))
+        ->toContain($a['tenant']->id, $b['tenant']->id);
 });
 
 it('gives a platform reader every client\'s trips when unfiltered', function () {
@@ -221,8 +229,8 @@ it('gives a platform reader every client\'s trips when unfiltered', function () 
     // say it is now a platform average rather than leave that to be
     // inferred.
     expect((float) $response->json('meta.summary.distance_km'))->toBe(742.0);
-    expect($response->json('meta.scope.type'))->toBe('all_clients');
-    expect($response->json('meta.scope.tenant_id'))->toBeNull();
+    expect($response->json('meta.scope'))->toBe('platform');
+    expect($response->json('meta.covers'))->toBe('All clients');
 });
 
 // ── The financial report refuses rather than totals across clients ───────
@@ -254,10 +262,10 @@ it('gives a platform finance officer one client\'s money when they name the clie
         ->getJson('/api/v1/reports/financial?tenant_id='.$a['tenant']->id)
         ->assertOk();
 
-    expect($response->json('meta.scope'))->toBe([
-        'type' => 'tenant',
-        'tenant_id' => $a['tenant']->id,
-    ]);
+    // The client is named, not numbered — this is the string the exported
+    // PDF header carries too, so the screen and the file cannot disagree
+    // about whose revenue this is.
+    expect($response->json('meta.covers'))->toBe($a['tenant']->name);
 
     $invoiced = (int) $response->json('meta.summary.invoiced_minor');
     $aTotal = $a['invoice']->total()->getMinorAmount()->toInt();
@@ -289,7 +297,7 @@ it('spans every client on the driver and vehicle reports for platform staff', fu
         // both rows rather than either.
         expect($response->json('data'))->toHaveCount(2);
         expect((float) $response->json('meta.summary.distance_km'))->toBe(742.0);
-        expect($response->json('meta.scope.type'))->toBe('all_clients');
+        expect($response->json('meta.covers'))->toBe('All clients');
     }
 });
 
@@ -321,12 +329,14 @@ it('leaves a client\'s own reports exactly as they were', function () {
     expect((float) $response->json('meta.summary.distance_km'))->toBe(42.0);
 
     // Their scope is stated too, and names their own tenant — a client
-    // reading `meta.scope` must not find it absent just because they had no
-    // choice in it.
-    expect($response->json('meta.scope'))->toBe([
-        'type' => 'tenant',
-        'tenant_id' => $a['tenant']->id,
-    ]);
+    // reading it must not find it absent just because they had no choice
+    // in it.
+    expect($response->json('meta.scope'))->toBe('tenant');
+    expect($response->json('meta.covers'))->toBe($a['tenant']->name);
+
+    // And no picker options, because there is no choice to offer. This is
+    // the same emptiness /bookings and /trips serve a client's user.
+    expect($response->json('meta.filters.clients'))->toBe([]);
 });
 
 it('does not require a client to name a tenant on the financial report', function () {
@@ -337,7 +347,7 @@ it('does not require a client to name a tenant on the financial report', functio
     $this->actingAs($a['finance'], 'sanctum')
         ->getJson('/api/v1/reports/financial')
         ->assertOk()
-        ->assertJsonPath('meta.scope.tenant_id', $a['tenant']->id);
+        ->assertJsonPath('meta.covers', $a['tenant']->name);
 });
 
 // ── ReportScope itself ───────────────────────────────────────────────────

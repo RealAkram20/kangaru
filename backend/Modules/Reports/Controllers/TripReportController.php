@@ -3,6 +3,7 @@
 namespace Modules\Reports\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Models\User;
 use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Modules\Reports\Repositories\TripReportRepository;
@@ -21,6 +22,9 @@ class TripReportController extends Controller
     public function index(TripReportRequest $request): JsonResponse
     {
         $this->authorize('viewReports');
+
+        /** @var User $actor */
+        $actor = $request->user();
 
         $filters = $request->filters();
 
@@ -44,7 +48,7 @@ class TripReportController extends Controller
                 // carries `records_incomplete`, which PROJECT.md defines
                 // per client — spanning turns it into a platform average,
                 // and the label is what stops it being read as the former.
-                'scope' => $scope->toArray(),
+                ...$scope->metaFor($actor),
             ],
         );
     }

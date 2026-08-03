@@ -245,11 +245,30 @@ question is real and is a **platform P&L**, which deserves its own endpoint
 because since ADR-0005 they aggregate a fleet that is genuinely Shanitah's;
 per-client utilisation of a pooled vehicle answers a worse question.
 
-Every report response carries `meta.scope` — `{"type": "tenant"|"all_clients",
-"tenant_id": int|null}` — following `/audit-logs`. A report that spans
-clients must say so on screen and in the exported file, because an exported
-PDF that does not name whose figures it contains is the document that ends
-up in the wrong meeting.
+Every report response carries two fields about scope, because two different
+questions are being asked:
+
+- **`meta.scope`** — `"platform"` or `"tenant"`, actor-based, exactly as
+  `/bookings`, `/trips` and `/audit-logs` already answer it. It is what
+  tells the UI to offer a client picker. Reports do not invent a fourth
+  vocabulary for a question three endpoints already answer.
+- **`meta.covers`** — whose figures these actually are, as a human string
+  (`"All clients"` or the client's name). Not derivable from `scope`: a
+  platform reader filtered to one client is still a platform reader.
+
+`meta.covers` is **the same string the exported XLSX and PDF header
+carries**. This module's governing rule is that the screen and the
+spreadsheet cannot disagree about a figure, and whose figures they are is
+the one that matters most — an exported PDF that does not name whose
+figures it contains is the document that ends up in the wrong meeting.
+
+CSV carries no scope line, deliberately: it has no header block at all,
+because preamble rows above the column names are what make an import fail.
+
+`meta.filters.clients` serves the picker's options, from the same
+`ClientOptions` helper `/bookings` and `/trips` use, so no picker holds a
+list of its own. Empty for a client's own user — the frontend's shared
+`ClientFilterSelect` renders nothing at all in that case.
 
 The mechanism is one value object and one resolver:
 `Modules\Reports\Support\ReportScope` writes the tenant predicate (the only
@@ -440,6 +459,38 @@ Re-run that check if you touch this repository.
 `frontend/src/pages/ReportsPage.tsx` (report picker, filters, trip KPIs and
 rows) and `frontend/src/pages/reports/ExportPanel.tsx` (format buttons,
 export list, download).
+
+### The client picker (ADR-0007)
+
+`frontend/src/components/filters/ClientFilterSelect.tsx`, shared with the
+bookings and trips queues. It was extracted rather than written a third
+time — AGENTS.md is explicit that a component appearing more than once
+becomes a reusable one, and the two queue copies were already identical
+down to the placeholder.
+
+It renders **nothing** when there is no choice to make, and that check lives
+in the component rather than at each call site so a future caller cannot
+show a corporate admin a picker full of other people's companies.
+
+Two report-specific details:
+
+- It is not offered on the driver and vehicle reports. Those take no
+  `tenant_id` (rule 3), and a control that answers `422` is a dead end
+  rather than a feature — the same reasoning that already hides the
+  financial report from a Dispatcher.
+- On the financial report the empty option reads **"Choose a client…"**,
+  not "All clients". ADR-0007 refuses to total across clients, so offering
+  an all-clients option would advertise something the server declines.
+
+Changing the client re-fetches the financial report immediately rather than
+waiting for **Run report**: it invalidates every number on screen, and one
+client's totals sitting under another's name is the precise confusion this
+ADR exists to prevent.
+
+`FinancialReport` surfaces the **field-level** validation message rather
+than the envelope's generic one. The 422 is a considered refusal and has to
+read like one; "The given data was invalid." reads like a broken page, and
+is a worse Super Admin demo than the blank table this replaced.
 
 **Each panel is wrapped in its own `PanelBoundary`.** A React render error
 unmounts the whole tree above it, so one panel dereferencing something the

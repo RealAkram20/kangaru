@@ -75,7 +75,7 @@ class FleetReportController extends Controller
                 'headers' => $source->headers(),
                 'period' => $source->period($filters),
                 'summary' => $source->summary($filters),
-                'scope' => $scope->toArray(),
+                ...$scope->metaFor($actor),
             ],
         );
     }
