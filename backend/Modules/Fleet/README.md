@@ -95,6 +95,14 @@ Admin's alone.
   tenant's trips for the period. Anything else is refused with
   `409 VEHICLE_EXCLUSIVELY_ALLOCATED`, and no reason buys a way past it.
 
+Both are visible before the act, not only on being stopped by it:
+`GET /bookings/{booking}/candidate-vehicles` (`Modules/Dispatch`) returns
+the pool ranked with contracted vehicles first, each marked `allocated`,
+`dispatchable` and `requires_override_reason`. A vehicle contracted
+exclusively elsewhere is listed and flagged rather than dropped, because
+ADR-0009 asks for a clear error rather than an empty list — and no note
+anywhere names the other client.
+
 ### The overlap rule is code, not schema
 
 MySQL 8 cannot express "no two rows for this vehicle with overlapping date
@@ -137,54 +145,44 @@ the pair for every audited model.
 
 Named here so a half-built thing is not mistaken for a finished one.
 
-1. **No ranked candidate-vehicle endpoint.** ADR-0009 §1 says allocated
-   vehicles "rank above" the rest for that client's bookings. The *rule* is
-   enforced — passing over a contracted vehicle requires a recorded reason,
-   and an exclusive one is refused outright — but nothing yet returns the
-   pool **in ranked order** with each vehicle marked as contracted or not.
-   The dispatch board still loads `/vehicles` and sorts by nothing, so a
-   dispatcher discovers the ranking by being refused rather than by seeing
-   it. This is the largest remaining piece of ADR-0009 and the natural next
-   commit; it needs no further decision.
-
-2. **No UI.** ADR-0009 puts this out of scope explicitly — the API first,
+1. **No UI.** ADR-0009 puts this out of scope explicitly — the API first,
    the screen after, as ADR-0006 did with the dispatch queue. A Super Admin
    agreeing a contract has an endpoint and still no screen, and the override
    reason has no field to be typed into.
 
-3. **`AllocationService::end()` takes no lock, on purpose.** Ending only
+2. **`AllocationService::end()` takes no lock, on purpose.** Ending only
    shrinks a period, and a shorter period cannot overlap anything the longer
    one did not. If a future change lets a contract be *extended*, that
    reasoning stops holding and the lock becomes necessary.
 
-4. **The "must run inside a transaction" tripwire is untested.**
+3. **The "must run inside a transaction" tripwire is untested.**
    `RefreshDatabase` wraps every test in a transaction, so
    `DB::transactionLevel()` is never 0 in the suite and the guard cannot be
    provoked. It is a developer-facing assertion, recorded as untested rather
    than left looking covered.
 
-5. **Allocation of drivers.** Only vehicles are allocable. Whether a client
+4. **Allocation of drivers.** Only vehicles are allocable. Whether a client
    can contract a named driver is a real question — the Bank may well ask —
    and ADR-0009 puts it out of scope with employment implications it has no
    view on.
 
-6. **Rate implications of an allocation.** Whether a contracted vehicle
+5. **Rate implications of an allocation.** Whether a contracted vehicle
    prices differently belongs to `Modules/Billing` and the rate card.
    Nothing in ADR-0009 touches money, and nothing here does either.
 
-7. **Fleet ownership beyond Shanitah.** There is no `fleet_owners` table;
+6. **Fleet ownership beyond Shanitah.** There is no `fleet_owners` table;
    every vehicle is implicitly Shanitah's, and PROJECT.md's **Fleet Owner**
    role still has nothing to point at.
 
-8. **Branches, depots and depot boundaries.** PROJECT.md's Fleet Management
+7. **Branches, depots and depot boundaries.** PROJECT.md's Fleet Management
    module names all three and `Modules/Dispatch` lists them among the inputs
    it does not consult. None are modelled.
 
-9. **Automatic dispatch is not this.** ADR-0009 supplies a ranking *input*;
+8. **Automatic dispatch is not this.** ADR-0009 supplies a ranking *input*;
    it is not the matcher. Distance still blocks that, and distance needs
    ADR-0003's live positions, which are unbuilt.
 
-10. **An exclusive allocation can strand a booking.** A client whose only
+9. **An exclusive allocation can strand a booking.** A client whose only
     exclusive vehicle is in maintenance has no fallback dispatch will accept.
     That is correct — it is what exclusivity was bought — and the 409
     explains it, but nothing routes around it or warns anyone in advance.
