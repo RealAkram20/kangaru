@@ -304,3 +304,66 @@ ignore it longest are the ones with the most access.
 second factor that yields a permanent credential secures one moment and
 nothing after it, so shipping MFA alone would let the project claim a
 control it does not really have.
+
+---
+
+## Implementation notes (3 August 2026)
+
+**Partially implemented. Decision 5 only — token expiry, its prune, and the
+tests. MFA itself is not built.**
+
+Recorded here so a reader of this ADR does not mistake an Accepted status
+for a delivered control. The answer to "is MFA enforced for privileged
+users?" is still **no**.
+
+### Why the halves shipped in this order
+
+This ADR argues that the two belong together, and rejects "doing token
+expiry separately, later". That rejection is specifically about shipping
+**MFA without expiry** — a second factor that mints a permanent credential
+secures one moment and nothing after it, and would let the project claim a
+control it does not have.
+
+The reverse ordering carries no such problem. Expiry without MFA is
+strictly less than this ADR asks for, but everything it does deliver is
+real: it closes a standing AGENTS.md violation ("Sanctum tokens with
+expiry") that predates this decision, and it does so without touching the
+login flow. MFA changes what `POST /auth/login` returns, so the backend and
+the SPA have to move together or the demo accounts cannot sign in at all.
+Expiry is the part that could land on its own without leaving a broken
+screen behind it.
+
+### What is built
+
+- `config/sanctum.php` — `expiration` is 1440 minutes, env-overridable via
+  `SANCTUM_TOKEN_EXPIRATION_MINUTES`, documented in `.env.example`.
+- `routes/console.php` — `sanctum:prune-expired` scheduled daily.
+- `tests/Feature/Administration/TokenExpiryTest.php` — six tests, including
+  that the window is retroactive and that it applies to privileged roles
+  identically.
+
+The expiry tests were proved by reverting `expiration` to `null`: three go
+red. That matters more here than usual, because **nothing else in the suite
+would notice the revert** — every other test authenticates with
+`actingAs()`, which bypasses token validation entirely. This is the only
+file that exercises a token's lifetime at all, which is the same blind spot
+the Consequences already flag for the login path.
+
+### The frontend was already done
+
+The Scope lists "the frontend's 401-on-expiry handling" as in scope. It
+already exists: `frontend/src/lib/apiClient.ts` has a response interceptor
+that clears the stored token and redirects to `/login` on any 401, and it
+predates this ADR. Nothing was needed. Naming it here because the Scope
+section implies work that does not exist.
+
+### Still to build — the whole of the MFA half
+
+Decisions 1, 2, 3, 4, 6 and 7: TOTP enrolment and verification, the
+two-step login and its `challenge_id`, forced enrolment for Super Admin and
+Finance, recovery codes, secret encryption, and the audit events. Plus the
+seeder handling in Consequences, and the login-path tests — which the
+Consequences already identify as the risk, since `actingAs()` means the
+suite will keep passing while the login flow changes underneath it.
+
+`spomky-labs/otphp` and `bacon/bacon-qr-code` are **not** installed yet.
