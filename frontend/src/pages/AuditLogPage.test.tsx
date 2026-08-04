@@ -169,6 +169,76 @@ describe('AuditLogPage', () => {
   })
 
   /**
+   * The field that changed is inside the diff, not in a column, so "who
+   * touched the credit limit" is only askable as free text.
+   */
+  it('sends the search term to the server', async () => {
+    const user = userEvent.setup()
+    renderAs(<AuditLogPage />)
+
+    await screen.findByText('196.43.150.2')
+
+    await user.type(screen.getByLabelText(/^Search/), 'credit_limit_minor')
+    await user.click(screen.getByRole('button', { name: /apply filters/i }))
+
+    await waitFor(() =>
+      expect(get).toHaveBeenCalledWith(expect.stringContaining('q=credit_limit_minor')),
+    )
+  })
+
+  it('applies the search on Enter, the key everybody tries first', async () => {
+    const user = userEvent.setup()
+    renderAs(<AuditLogPage />)
+
+    await screen.findByText('196.43.150.2')
+
+    await user.type(screen.getByLabelText(/^Search/), 'Nabbosa{Enter}')
+
+    await waitFor(() => expect(get).toHaveBeenCalledWith(expect.stringContaining('q=Nabbosa')))
+  })
+
+  it('will not offer a record id until a record type is chosen', async () => {
+    const user = userEvent.setup()
+    renderAs(<AuditLogPage />)
+
+    await screen.findByText('196.43.150.2')
+
+    // A bare id is a 422 by design — ids repeat across types. A field that
+    // could only produce an error is not one to leave enabled.
+    expect(screen.getByLabelText(/^Record id/)).toBeDisabled()
+
+    await user.selectOptions(screen.getByLabelText(/^Record type/), 'company')
+    expect(screen.getByLabelText(/^Record id/)).toBeEnabled()
+  })
+
+  it('sends a record id only alongside its type', async () => {
+    const user = userEvent.setup()
+    renderAs(<AuditLogPage />)
+
+    await screen.findByText('196.43.150.2')
+
+    await user.selectOptions(screen.getByLabelText(/^Record type/), 'company')
+    await user.type(screen.getByLabelText(/^Record id/), '3')
+    await user.click(screen.getByRole('button', { name: /apply filters/i }))
+
+    await waitFor(() => {
+      const url = get.mock.calls[get.mock.calls.length - 1][0] as string
+      expect(url).toContain('auditable_type=company')
+      expect(url).toContain('auditable_id=3')
+    })
+
+    // Clearing the type drops the id with it, rather than leaving a value
+    // behind in a disabled box that silently stops being sent.
+    await user.selectOptions(screen.getByLabelText(/^Record type/), '')
+    await user.click(screen.getByRole('button', { name: /apply filters/i }))
+
+    await waitFor(() => {
+      const url = get.mock.calls[get.mock.calls.length - 1][0] as string
+      expect(url).not.toContain('auditable_id')
+    })
+  })
+
+  /**
    * "Show me every credit-limit change in March" is the question this
    * screen exists to answer, and it was unanswerable until these landed.
    */

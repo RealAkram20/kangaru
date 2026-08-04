@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
 use App\Models\User;
 use App\Support\Api\ApiResponse;
+use App\Support\Database\SearchTerm;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Modules\Administration\Requests\AuditLogIndexRequest;
@@ -37,9 +38,46 @@ class AuditLogController extends Controller
                 fn ($q) => $q->where('action', $request->string('action')),
             )
             ->when(
+                $request->filled('auditable_id'),
+                fn ($q) => $q->where('auditable_id', $request->integer('auditable_id')),
+            )
+            ->when(
                 $request->filled('user_id'),
                 fn ($q) => $q->where('user_id', $request->integer('user_id')),
             )
+            // Free text over the trail. Grouped in its own closure — without
+            // the nesting these ORs escape the surrounding AND, and
+            // `?q=limit&action=updated` would return every row on the
+            // platform (the same bug BookingController's search comment
+            // describes).
+            //
+            // `changes` is included deliberately: it is the only place the
+            // *field* that changed is recorded, so "credit_limit_minor" is
+            // unanswerable without it. It is a JSON column matched as text,
+            // which is a blunt instrument — it matches keys and values
+            // alike, and a search for "1000" finds a row whose id contains
+            // it. Blunt and honest beats absent: the alternative on MariaDB
+            // and MySQL 8 both is a generated column per audited field,
+            // which cannot exist for a diff whose shape is every model in
+            // the system.
+            ->when($request->filled('q'), function ($query) use ($request) {
+                $raw = (string) $request->string('q');
+                $term = SearchTerm::contains($raw);
+
+                $query->where(function ($match) use ($term, $raw) {
+                    $match->where('auditable_type', 'like', $term)
+                        // Stored snake_case, read with spaces — the actions
+                        // render as "Created"/"Updated", and somebody
+                        // reading the screen types what they see.
+                        ->orWhere('action', 'like', SearchTerm::containsStatus($raw))
+                        ->orWhere('changes', 'like', $term)
+                        // The actor by name, which is how a person is known
+                        // to whoever is reading the trail — nobody searches
+                        // for user 41. whereHas rather than a join, so a
+                        // match cannot duplicate rows.
+                        ->orWhereHas('user', fn ($u) => $u->where('name', 'like', $term));
+                });
+            })
             ->when(
                 $request->filled('from'),
                 fn ($q) => $q->where('created_at', '>=', Carbon::parse($request->string('from'))->startOfDay()),

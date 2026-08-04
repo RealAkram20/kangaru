@@ -407,8 +407,21 @@ paths:
       summary: The audit trail this reader may see (platform-wide or one tenant's).
       parameters:
         - { name: auditable_type, in: query, schema: { type: string } }
+        - name: auditable_id
+          in: query
+          schema: { type: integer, minimum: 1 }
+          description: >-
+            One record's history. Requires auditable_type — ids are only
+            unique within a type, so sending it alone is a 422.
         - { name: action, in: query, schema: { enum: [created, updated, deleted] } }
         - { name: user_id, in: query, schema: { type: integer, minimum: 1 } }
+        - name: q
+          in: query
+          schema: { type: string, maxLength: 120 }
+          description: >-
+            Free text over record type, action, the actor's name and the
+            recorded diff. The diff is matched as text, so it matches the
+            names of changed fields as well as their values.
         - { name: from, in: query, schema: { type: string, format: date } }
         - { name: to, in: query, schema: { type: string, format: date } }
         - { $ref: '#/components/parameters/cursor' }

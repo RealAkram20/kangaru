@@ -67,7 +67,7 @@ permission catalogue, and the audit log.
 | POST | `/api/v1/roles` | Sanctum + tenant | `RolePolicy::create` — `roles.manage`. Slug derived from the name when omitted |
 | PATCH | `/api/v1/roles/{slug}` | Sanctum + tenant | `RolePolicy::update`. A system role's permissions may change; its name may not |
 | DELETE | `/api/v1/roles/{slug}` | Sanctum + tenant | `RolePolicy::delete` — custom roles only, and 409 `ROLE_IN_USE` while anyone holds it |
-| GET | `/api/v1/audit-logs` | Sanctum + tenant | `AuditLogPolicy::viewAny` — `audit.view`. Whitelisted filters: `auditable_type` (any alias in the enforced morph map), `action`, `user_id`, `from`/`to` (`Y-m-d`; `to` includes its whole day). Unknown params → 422. Cursor-paginated. `meta.filters` carries the accepted values plus the actors present in this reader's slice; `meta.scope` is `platform` or `tenant` |
+| GET | `/api/v1/audit-logs` | Sanctum + tenant | `AuditLogPolicy::viewAny` — `audit.view`. Whitelisted filters: `auditable_type` (any alias in the enforced morph map), `auditable_id` (requires `auditable_type`), `action`, `user_id`, `q` (free text, incl. the recorded diff), `from`/`to` (`Y-m-d`; `to` includes its whole day). Unknown params → 422. Cursor-paginated. `meta.filters` carries the accepted values plus the actors present in this reader's slice; `meta.scope` is `platform` or `tenant` |
 
 ## Frontend
 
@@ -139,6 +139,32 @@ reports `platform` or `tenant` so the UI can say which trail is on screen.
 This is what makes role changes readable at all: role rows carry a null
 `tenant_id` because the catalogue is platform-wide (ADR-0004), so no
 tenant-scoped reader would ever show them.
+
+**`?q=` searches the recorded diff, and that is the point.** The other
+filters ask *which record* and *who*; the question a bank actually opens
+with is *which field* — "who touched the credit limit" — and the field
+that changed lives inside `changes`, not in a column. So the search
+matches `auditable_type`, `action`, the actor's name, and the `changes`
+JSON as text.
+
+Matching JSON as text is blunt and deliberately so: it matches field
+names and values alike, and a search for `updated` also finds creation
+rows, because a creation snapshot is the whole record and carries an
+`updated_at` key. `?action=updated` remains the exact question, and the
+search is the broad one. The alternative — a generated column per audited
+field — cannot exist for a diff whose shape is every model in the system.
+`AuditLogSearchTest` covers the field-name case, the actor case, the
+escaped-wildcard case (`%` is text, not a pattern), and that the search
+narrows a filtered set rather than widening it: the ORs are wrapped in
+their own closure, and flattening them was verified to turn that test
+red.
+
+**`?auditable_id=` needs `auditable_type` beside it**, and the refusal is
+correctness rather than fussiness. Ids are per-table, so a bare
+`auditable_id=3` would return Company 3, Vehicle 3 and User 3 interleaved
+and present it as one record's history — a wrong answer that looks like a
+right one. `AuditLogSearchTest` builds a vehicle sharing a company's id
+to assert the pair does not mix them.
 
 **A client sees us in their own log.** A platform dispatcher acting on a
 client's trip is recorded against *that client's* tenant (ADR-0006
@@ -220,15 +246,12 @@ Named here so a half-built thing is not mistaken for a finished one.
   an audit trail cannot tell apart from impersonation. There is no
   endpoint, and adding one needs a decision about how it is evidenced —
   e.g. a forced reset on next login rather than a chosen password.
-- **Audit log: no export and no free-text search.** The reader
-  (`frontend/src/pages/AuditLogPage.tsx`) filters by record type, action,
-  actor and date range, shows before/after diffs and pages by cursor — so
-  "every credit-limit change in March" is answerable. What it still has
-  not got: any way to **export** (a bank will ask for the PDF or the
-  spreadsheet, and `Modules/Reports`' export machinery is not wired to
-  this endpoint), free-text search across the diff itself, and filtering
-  to a single record — you can ask for every Company change but not for
-  Company #3's history.
+- **Audit log: no export.** The reader
+  (`frontend/src/pages/AuditLogPage.tsx`) now filters by record type,
+  record id, action, actor, date range and free text, shows before/after
+  diffs and pages by cursor. What it still has not got is any way to
+  **export**: a bank will ask for the PDF or the spreadsheet, and
+  `Modules/Reports`' export machinery is not wired to this endpoint.
 - **`meta.filters.actors` runs a `DISTINCT user_id` over the reader's
   slice on every request.** Fine at Phase 1 volumes and indexed, but it is
   an unbounded scan on a table PROJECT.md expects to grow indefinitely.

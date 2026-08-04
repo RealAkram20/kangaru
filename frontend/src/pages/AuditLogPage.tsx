@@ -37,14 +37,30 @@ type Row = AuditLogEntry
 
 interface Filters {
   auditable_type: string
+  /**
+   * One record's history. Only sent alongside `auditable_type` — ids are
+   * per-table, and the server answers 422 for a bare id rather than
+   * interleaving Company 3 with Vehicle 3.
+   */
+  auditable_id: string
   action: string
   user_id: string
+  /** Free text, including over the recorded diff. */
+  q: string
   /** YYYY-MM-DD. `to` is inclusive of its whole day, server-side. */
   from: string
   to: string
 }
 
-const EMPTY_FILTERS: Filters = { auditable_type: '', action: '', user_id: '', from: '', to: '' }
+const EMPTY_FILTERS: Filters = {
+  auditable_type: '',
+  auditable_id: '',
+  action: '',
+  user_id: '',
+  q: '',
+  from: '',
+  to: '',
+}
 
 function hasAnyFilter(filters: Filters): boolean {
   return Object.values(filters).some((value) => value !== '')
@@ -251,12 +267,43 @@ export function AuditLogPage() {
             alignItems: 'end',
           }}
         >
+          {/* Spans the row: it is the widest question on this panel and the
+              one a bank actually asks — "show me everything about the
+              credit limit" — and the structured filters below narrow it. */}
+          <FormField
+            label="Search"
+            htmlFor="a-q"
+            hint="Also searches the recorded change itself, including field names."
+            style={{ gridColumn: '1 / -1' }}
+          >
+            <Input
+              id="a-q"
+              iconLeft="search"
+              placeholder="Field, record type, action or person — e.g. credit_limit_minor"
+              value={draft.q}
+              onChange={(e) => setDraft({ ...draft, q: e.target.value })}
+              // Enter applies, matching the button beside it. A search box
+              // that ignores Enter is the one control everybody tries first.
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') apply(draft)
+              }}
+            />
+          </FormField>
           <FormField label="Record type" htmlFor="a-type">
             <Select
               id="a-type"
               placeholder="Everything"
               value={draft.auditable_type}
-              onChange={(e) => setDraft({ ...draft, auditable_type: e.target.value })}
+              // Clearing the type clears the id with it: an id left behind
+              // in a disabled box would silently stop being sent, and the
+              // next Apply would quietly widen the results.
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  auditable_type: e.target.value,
+                  auditable_id: e.target.value === '' ? '' : draft.auditable_id,
+                })
+              }
               // Straight from the server: this page holds no list of what
               // is auditable, so a newly audited model appears here without
               // a frontend release.
@@ -264,6 +311,28 @@ export function AuditLogPage() {
                 value: type,
                 label: humaniseType(type),
               }))}
+            />
+          </FormField>
+          <FormField
+            label="Record id"
+            htmlFor="a-id"
+            hint={
+              draft.auditable_type
+                ? 'One record’s history.'
+                : 'Choose a record type first — ids repeat across types.'
+            }
+          >
+            <Input
+              id="a-id"
+              type="number"
+              min={1}
+              placeholder="Any"
+              value={draft.auditable_id}
+              // Disabled rather than hidden: the reason it is unavailable
+              // is the hint beside it, and a control that appears only
+              // after an unrelated choice is a control nobody finds.
+              disabled={draft.auditable_type === ''}
+              onChange={(e) => setDraft({ ...draft, auditable_id: e.target.value })}
             />
           </FormField>
           <FormField label="Action" htmlFor="a-action">
@@ -368,8 +437,20 @@ async function fetchEntries(
   // Empty values are omitted rather than sent blank: `from=` fails the
   // server's Y-m-d format rule, so an untouched field would 422.
   if (filters.auditable_type) params.set('auditable_type', filters.auditable_type)
+  // Only ever alongside the type: a bare id is a 422 by design, because
+  // ids repeat across record types.
+  //
+  // Belt and braces, and knowingly so — the control is disabled without a
+  // type and clearing the type clears the id, so no sequence of clicks
+  // reaches here with one and not the other. Deleting this pairing does
+  // not turn any test red, which is precisely why it is worth a sentence:
+  // it exists for the next edit to the draft-state logic, not for today.
+  if (filters.auditable_type && filters.auditable_id) {
+    params.set('auditable_id', filters.auditable_id)
+  }
   if (filters.action) params.set('action', filters.action)
   if (filters.user_id) params.set('user_id', filters.user_id)
+  if (filters.q) params.set('q', filters.q)
   if (filters.from) params.set('from', filters.from)
   if (filters.to) params.set('to', filters.to)
   if (cursor) params.set('cursor', cursor)
