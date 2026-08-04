@@ -17,18 +17,23 @@ import { RateCardsPage } from '../pages/RateCardsPage'
 import { ReportsPage } from '../pages/ReportsPage'
 import { RolesPage } from '../pages/RolesPage'
 import { SettingsPage } from '../pages/SettingsPage'
+import { SystemSettingsPage } from '../pages/SystemSettingsPage'
 import { StaffPage } from '../pages/StaffPage'
 import { TripsPage } from '../pages/TripsPage'
 import { VehiclesPage } from '../pages/VehiclesPage'
-import { HomeGate } from '../pages/public/HomeGate'
+import { LandingPage } from '../pages/public/LandingPage'
 import { OrderPage } from '../pages/public/OrderPage'
 
 export const router = createBrowserRouter([
-  // Public, unauthenticated (ADR-0012 §5). `/` decides by auth state:
-  // visitors get the landing page, signed-in users go to /dashboard.
+  // Public, unauthenticated (ADR-0012 §5). `/` is the landing page for
+  // everyone, signed in or not: it is a product surface now, not a
+  // doormat. Bouncing authenticated users to /dashboard meant staff could
+  // never see what customers see, and a shared device would answer the
+  // walk-in customer with someone else's dashboard. Staff reach theirs
+  // from the nav, which says "Dashboard" once they are signed in.
   {
     path: '/',
-    element: <HomeGate />,
+    element: <LandingPage />,
   },
   {
     path: '/order',
@@ -111,6 +116,10 @@ export const router = createBrowserRouter([
       // on the caller and takes no user parameter, so there is no role that
       // should be turned away from their own password.
       { path: 'settings', element: <SettingsPage /> },
+      // Platform settings (ADR-0014). Not behind RequireNavAccess, like
+      // Roles: a custom role holding `settings.manage` is invisible to a
+      // slug list, so the page gates on whether the API answers.
+      { path: 'system-settings', element: <SystemSettingsPage /> },
       {
         path: 'staff',
         element: (

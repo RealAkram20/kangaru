@@ -27,6 +27,12 @@ enum Permission: string
     case STAFF_MANAGE = 'staff.manage';
     /** Creating and editing roles themselves. The keys to the building. */
     case ROLES_MANAGE = 'roles.manage';
+    /**
+     * ADR-0014: read and write platform settings. One permission for
+     * both directions on purpose — settings include operational levers,
+     * so even the read is not for every role.
+     */
+    case SETTINGS_MANAGE = 'settings.manage';
 
     // ── Bookings ──────────────────────────────────────────────────────
     /** Absent = you see only the bookings you raised. */
@@ -90,7 +96,7 @@ enum Permission: string
     public function group(): string
     {
         return match (explode('.', $this->value)[0]) {
-            'audit', 'staff', 'roles' => 'Administration',
+            'audit', 'staff', 'roles', 'settings' => 'Administration',
             'bookings', 'order_requests' => 'Bookings',
             'trips' => 'Trips',
             'invoices', 'ratecards' => 'Billing',
@@ -108,6 +114,7 @@ enum Permission: string
             self::STAFF_VIEW => 'See the staff list',
             self::STAFF_MANAGE => 'Add, edit and suspend staff',
             self::ROLES_MANAGE => 'Create and edit roles',
+            self::SETTINGS_MANAGE => 'Change platform settings',
             self::BOOKINGS_VIEW_ALL => "See everyone's bookings",
             self::BOOKINGS_CREATE => 'Raise a booking',
             self::BOOKINGS_APPROVE => 'Approve or reject a booking',

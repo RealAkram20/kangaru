@@ -88,6 +88,11 @@ const VISIBLE_TO: Record<string, Role[]> = {
   // /audit-log route is not behind RequireNavAccess, for the same reason
   // Roles is not.
   'audit-log': USER_ADMINISTRATORS,
+  // SettingPolicy::viewAny — `settings.manage`, held only by Super Admin
+  // as seeded (ADR-0014). Menu visibility only; the /system-settings
+  // route is not behind RequireNavAccess, for the same reason Roles is
+  // not — the page gates on whether the API answers.
+  'system-settings': ['super_admin'],
   invoices: BILLING_READERS,
   'rate-cards': BILLING_READERS,
   reports: REPORT_READERS,

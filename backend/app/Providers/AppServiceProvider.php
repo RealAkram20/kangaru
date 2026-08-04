@@ -12,8 +12,10 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use Modules\Administration\Models\Role;
+use Modules\Administration\Models\Setting;
 use Modules\Administration\Policies\AuditLogPolicy;
 use Modules\Administration\Policies\RolePolicy;
+use Modules\Administration\Policies\SettingPolicy;
 use Modules\Administration\Policies\UserPolicy;
 use Modules\Billing\Models\CreditNote;
 use Modules\Billing\Models\Invoice;
@@ -71,6 +73,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Invoice::class, InvoicePolicy::class);
         Gate::policy(User::class, UserPolicy::class);
         Gate::policy(Role::class, RolePolicy::class);
+        Gate::policy(Setting::class, SettingPolicy::class);
         Gate::policy(VehicleAllocation::class, VehicleAllocationPolicy::class);
 
         // A Gate rather than a Policy: reports are not a model, and
@@ -148,6 +151,10 @@ class AppServiceProvider extends ServiceProvider
             // morph, and an enforced map with no entry throws the moment a
             // customer token is minted.
             'customer' => Customer::class,
+            // ADR-0014: settings changes are audited like rate cards and
+            // roles — an operational lever silently flipped is the audit
+            // trail's business.
+            'setting' => Setting::class,
         ]);
     }
 }

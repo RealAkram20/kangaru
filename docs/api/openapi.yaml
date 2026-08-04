@@ -311,6 +311,96 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  # ------------------------------------------------------------------
+  # Platform settings (Modules/Administration, ADR-0014)
+  # ------------------------------------------------------------------
+  /api/v1/public/settings:
+    get:
+      summary: >
+        The branding subset, unauthenticated (ADR-0014 §5). Only
+        catalogue keys flagged public; asset paths arrive as absolute
+        URLs. Throttled 30/min/IP.
+      responses:
+        '200':
+          description: The public branding subset.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [settings]
+                    additionalProperties: false
+                    properties:
+                      settings: { $ref: '#/components/schemas/PublicSettings' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/settings:
+    get:
+      summary: >
+        Every settings group, resolved against catalogue defaults
+        (ADR-0014). Requires settings.manage — the read shows
+        operational levers, so it is gated like the write.
+      responses:
+        '200':
+          $ref: '#/components/responses/SettingsResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/settings/{group}:
+    patch:
+      summary: >
+        Saves one group. Only submitted keys are validated and written;
+        unknown keys are refused rather than skipped. Every write is
+        audited.
+      parameters:
+        - { name: group, in: path, required: true, schema: { enum: [branding, regional] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Any subset of the group's keys.
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/SettingsResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/settings/assets/{asset}:
+    post:
+      summary: >
+        Logo or favicon upload (ADR-0014 §6). Multipart; the stored path
+        is written through the same audited path as any other setting.
+      parameters:
+        - { name: asset, in: path, required: true, schema: { enum: [logo, favicon] } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              additionalProperties: false
+              properties:
+                file:
+                  type: string
+                  contentMediaType: application/octet-stream
+                  description: png/jpg/svg/webp up to 2MB for the logo; png/ico/svg up to 512KB for the favicon.
+      responses:
+        '200':
+          $ref: '#/components/responses/SettingsResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/roles:
     get:
       summary: The role catalogue (ADR-0004).
@@ -2102,6 +2192,24 @@ components:
                   token: { type: string }
                   must_enrol_mfa: { type: boolean }
 
+    SettingsResponse:
+      description: Every settings group, secrets replaced by configured flags.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data:
+                type: object
+                required: [settings]
+                additionalProperties: false
+                properties:
+                  settings: { $ref: '#/components/schemas/Settings' }
+
     CustomerAuthenticatedResponse:
       description: >
         Customer sign-up or sign-in complete (ADR-0013 §3) — the account
@@ -2718,6 +2826,55 @@ components:
         status: { enum: [active, maintenance, inactive] }
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
         updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    Settings:
+      description: >
+        The full settings map (ADR-0014), every catalogue key resolved:
+        stored value where one exists, default where none does. Secret
+        keys (none in phase 1) appear as {configured: bool}, never as
+        values.
+      type: object
+      required: [branding, regional]
+      additionalProperties: false
+      properties:
+        branding: { $ref: '#/components/schemas/BrandingSettings' }
+        regional:
+          type: object
+          required: [currency, timezone, date_format]
+          additionalProperties: false
+          properties:
+            currency: { type: string }
+            timezone: { type: string }
+            date_format: { type: string }
+
+    BrandingSettings:
+      type: object
+      required: [app_name, tagline, meta_description, contact_email, contact_phone, logo_path, favicon_path]
+      additionalProperties: false
+      properties:
+        app_name: { type: string }
+        tagline: { type: ['string', 'null'] }
+        meta_description: { type: ['string', 'null'] }
+        contact_email: { type: string }
+        contact_phone: { type: ['string', 'null'] }
+        logo_path: { type: ['string', 'null'] }
+        favicon_path: { type: ['string', 'null'] }
+
+    PublicSettings:
+      description: >
+        The unauthenticated branding subset: catalogue keys flagged
+        public only, asset paths as absolute URLs.
+      type: object
+      required: [branding, regional]
+      additionalProperties: false
+      properties:
+        branding: { $ref: '#/components/schemas/BrandingSettings' }
+        regional:
+          type: object
+          required: [currency]
+          additionalProperties: false
+          properties:
+            currency: { type: string }
 
     Customer:
       description: A customer's own account, as shown to them (ADR-0013).

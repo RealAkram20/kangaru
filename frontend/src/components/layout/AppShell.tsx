@@ -46,6 +46,9 @@ const SECTIONS: SidebarSection[] = [
       { id: 'staff', label: 'Staff', icon: 'user-cog' },
       { id: 'roles', label: 'Roles', icon: 'shield-check' },
       { id: 'audit-log', label: 'Audit log', icon: 'file-clock' },
+      // ADR-0014: the platform's own configuration. "System" to keep it
+      // apart from the personal Settings entry below.
+      { id: 'system-settings', label: 'System settings', icon: 'sliders-horizontal' },
     ],
   },
   {
@@ -85,6 +88,7 @@ const NAV_PATHS: Partial<Record<string, string>> = {
   roles: '/roles',
   'audit-log': '/audit-log',
   settings: '/settings',
+  'system-settings': '/system-settings',
 }
 
 const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
@@ -106,6 +110,7 @@ const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
   // Was missing: navigating to /settings left the topbar title blank and
   // no sidebar item active, which is half of how the page got lost.
   '/settings': { id: 'settings', title: 'Settings' },
+  '/system-settings': { id: 'system-settings', title: 'System settings' },
 }
 
 /**
