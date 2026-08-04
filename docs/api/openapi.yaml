@@ -360,7 +360,7 @@ paths:
         unknown keys are refused rather than skipped. Every write is
         audited.
       parameters:
-        - { name: group, in: path, required: true, schema: { enum: [branding, regional, ordering, booking] } }
+        - { name: group, in: path, required: true, schema: { enum: [branding, regional, ordering, booking, mail, sms, payments] } }
       requestBody:
         required: true
         content:
@@ -372,6 +372,31 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/SettingsResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/settings/mail/test:
+    post:
+      summary: >
+        Sends a test email through the stored SMTP settings (ADR-0014
+        phase 3). Fails 422 until mail is enabled with a host and from
+        address; a transport refusal answers 502 MAIL_DELIVERY_FAILED
+        carrying the server's own words. Throttled 5/min.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                to:
+                  type: ['string', 'null']
+                  format: email
+                  description: Defaults to the branding contact email.
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOnly'
         default:
           $ref: '#/components/responses/Error'
 
@@ -2598,6 +2623,7 @@ components:
         - CREDIT_NOTE_EXCEEDS_INVOICE
         - ROLE_IN_USE
         - ORDERING_PAUSED
+        - MAIL_DELIVERY_FAILED
 
     TripStatus:
       enum:
@@ -2835,7 +2861,7 @@ components:
         keys (none in phase 1) appear as {configured: bool}, never as
         values.
       type: object
-      required: [branding, regional, ordering, booking]
+      required: [branding, regional, ordering, booking, mail, sms, payments]
       additionalProperties: false
       properties:
         branding: { $ref: '#/components/schemas/BrandingSettings' }
@@ -2861,6 +2887,48 @@ components:
           properties:
             approval_required: { type: boolean }
             max_advance_days: { type: integer }
+        mail:
+          type: object
+          required: [enabled, host, port, username, password, encryption, from_address, from_name]
+          additionalProperties: false
+          properties:
+            enabled: { type: boolean }
+            host: { type: ['string', 'null'] }
+            port: { type: integer }
+            username: { type: ['string', 'null'] }
+            password: { $ref: '#/components/schemas/SecretValue' }
+            encryption: { enum: [tls, none] }
+            from_address: { type: ['string', 'null'] }
+            from_name: { type: ['string', 'null'] }
+        sms:
+          type: object
+          required: [provider, sender_id, api_key, api_secret]
+          additionalProperties: false
+          properties:
+            provider: { enum: ['', africastalking, twilio, null] }
+            sender_id: { type: ['string', 'null'] }
+            api_key: { $ref: '#/components/schemas/SecretValue' }
+            api_secret: { $ref: '#/components/schemas/SecretValue' }
+        payments:
+          type: object
+          required: [mtn_momo_api_user, mtn_momo_api_key, airtel_money_client_id, airtel_money_client_secret]
+          additionalProperties: false
+          properties:
+            mtn_momo_api_user: { type: ['string', 'null'] }
+            mtn_momo_api_key: { $ref: '#/components/schemas/SecretValue' }
+            airtel_money_client_id: { type: ['string', 'null'] }
+            airtel_money_client_secret: { $ref: '#/components/schemas/SecretValue' }
+
+    SecretValue:
+      description: >
+        A write-only credential (ADR-0014 §3). The value never appears in
+        any response — only whether one is stored. Write a new value via
+        PATCH like any other key; there is no way to read one back.
+      type: object
+      required: [configured]
+      additionalProperties: false
+      properties:
+        configured: { type: boolean }
 
     BrandingSettings:
       type: object

@@ -26,6 +26,28 @@ const SETTINGS = {
   regional: { currency: 'UGX', timezone: 'Africa/Kampala', date_format: 'DD MMM YYYY' },
   ordering: { walk_in_enabled: true, rate_limit_per_minute: 3 },
   booking: { approval_required: true, max_advance_days: 90 },
+  mail: {
+    enabled: false,
+    host: null,
+    port: 587,
+    username: null,
+    password: { configured: false },
+    encryption: 'tls',
+    from_address: null,
+    from_name: null,
+  },
+  sms: {
+    provider: '',
+    sender_id: null,
+    api_key: { configured: false },
+    api_secret: { configured: false },
+  },
+  payments: {
+    mtn_momo_api_user: null,
+    mtn_momo_api_key: { configured: true },
+    airtel_money_client_id: null,
+    airtel_money_client_secret: { configured: false },
+  },
 }
 
 beforeEach(() => {
@@ -87,6 +109,29 @@ describe('SystemSettingsPage', () => {
     }))
     // The save feedback: the button itself says so, quietly.
     expect(await screen.findByRole('button', { name: /saved/i })).toBeInTheDocument()
+  })
+
+  it('never sends an untouched secret, and never displays a stored one', async () => {
+    const user = userEvent.setup()
+    get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+    patch.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+
+    render(<SystemSettingsPage />)
+    await screen.findByLabelText(/app name/i)
+
+    // A stored credential shows only that it exists.
+    expect(screen.getByText(/configured\. stored values are never shown/i)).toBeInTheDocument()
+
+    // Saving the payments card with untouched secret boxes must omit the
+    // secret keys entirely — "leave it" is absence, not an empty write.
+    await user.type(screen.getByLabelText(/mtn momo api user/i), 'momo-user')
+    const paymentsSave = screen.getAllByRole('button', { name: /save changes/i }).at(-1)!
+    await user.click(paymentsSave)
+
+    await waitFor(() => expect(patch).toHaveBeenCalledWith('/settings/payments', {
+      mtn_momo_api_user: 'momo-user',
+      airtel_money_client_id: null,
+    }))
   })
 
   it('shows the server message against the failing field', async () => {

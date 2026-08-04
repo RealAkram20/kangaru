@@ -104,6 +104,11 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::patch('/settings/{group}', [SettingsController::class, 'update'])->name('settings.update');
     Route::post('/settings/assets/{asset}', [SettingsController::class, 'uploadAsset'])
         ->name('settings.assets.upload');
+    // Throttled: each call opens a real SMTP connection to whatever host
+    // is stored, which must not become an outbound-probe primitive.
+    Route::post('/settings/mail/test', [SettingsController::class, 'sendTestMail'])
+        ->middleware('throttle:5,1')
+        ->name('settings.mail.test');
 
     // The role catalogue (ADR-0004). Platform-wide and curated by whoever
     // holds `roles.manage` — Super Admin alone, as seeded. Route key is the

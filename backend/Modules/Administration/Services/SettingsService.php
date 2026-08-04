@@ -56,6 +56,43 @@ class SettingsService
             'approval_required' => ['default' => true, 'rules' => ['required', 'boolean']],
             'max_advance_days' => ['default' => 90, 'rules' => ['required', 'integer', 'min:1', 'max:365']],
         ],
+        // Phase 3 (ADR-0014 §7): SMTP. The first real user of the
+        // write-only secret rule. Consumed at send time (the test
+        // endpoint today, password reset when ADR-0013's deferral lifts),
+        // never applied at boot — a boot-time read would make `php
+        // artisan migrate` on a fresh database depend on the table it is
+        // about to create.
+        'mail' => [
+            'enabled' => ['default' => false, 'rules' => ['required', 'boolean']],
+            'host' => ['default' => '', 'rules' => ['nullable', 'string', 'max:255']],
+            'port' => ['default' => 587, 'rules' => ['required', 'integer', 'min:1', 'max:65535']],
+            'username' => ['default' => '', 'rules' => ['nullable', 'string', 'max:255']],
+            'password' => ['default' => null, 'rules' => ['nullable', 'string', 'max:255'], 'secret' => true],
+            'encryption' => ['default' => 'tls', 'rules' => ['required', 'in:tls,none']],
+            'from_address' => ['default' => '', 'rules' => ['nullable', 'email', 'max:190']],
+            'from_name' => ['default' => '', 'rules' => ['nullable', 'string', 'max:120']],
+        ],
+        // Phase 4 (ADR-0014 §7): SMS gateway credentials — STORED ONLY.
+        // No SMS flow exists and none may ship without its own decision
+        // record (AGENTS.md: SMS-pumping fraud posture). There is no
+        // `enabled` key here on purpose: a switch that switches nothing
+        // teaches people to stop reading switches.
+        'sms' => [
+            'provider' => ['default' => '', 'rules' => ['nullable', 'in:,africastalking,twilio']],
+            'sender_id' => ['default' => '', 'rules' => ['nullable', 'string', 'max:20']],
+            'api_key' => ['default' => null, 'rules' => ['nullable', 'string', 'max:255'], 'secret' => true],
+            'api_secret' => ['default' => null, 'rules' => ['nullable', 'string', 'max:255'], 'secret' => true],
+        ],
+        // Phase 5 (ADR-0014 §7): payment gateway credentials — STORED
+        // ONLY, same reasoning. Enabling payments needs the payments ADR
+        // that ADR-0005 and ADR-0012 both point at; these slots exist so
+        // that launch is a code change, not a credentials scramble.
+        'payments' => [
+            'mtn_momo_api_user' => ['default' => '', 'rules' => ['nullable', 'string', 'max:255']],
+            'mtn_momo_api_key' => ['default' => null, 'rules' => ['nullable', 'string', 'max:255'], 'secret' => true],
+            'airtel_money_client_id' => ['default' => '', 'rules' => ['nullable', 'string', 'max:255']],
+            'airtel_money_client_secret' => ['default' => null, 'rules' => ['nullable', 'string', 'max:255'], 'secret' => true],
+        ],
     ];
 
     /**

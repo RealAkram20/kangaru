@@ -69,4 +69,11 @@ enum ErrorCode: string
      * "something went wrong".
      */
     case ORDERING_PAUSED = 'ORDERING_PAUSED';
+
+    /**
+     * The SMTP server refused or never answered (ADR-0014 phase 3). The
+     * message carries the transport's own words — a settings screen that
+     * says "failed" without saying why is a support call, not a feature.
+     */
+    case MAIL_DELIVERY_FAILED = 'MAIL_DELIVERY_FAILED';
 }

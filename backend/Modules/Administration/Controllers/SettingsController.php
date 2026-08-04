@@ -7,9 +7,11 @@ use App\Http\Controllers\Controller;
 use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Validator;
 use Modules\Administration\Models\Setting;
 use Modules\Administration\Services\SettingsService;
+use Throwable;
 
 /**
  * Platform settings (ADR-0014). GET and PATCH are both behind
@@ -63,6 +65,60 @@ class SettingsController extends Controller
             ['settings' => $this->settings->all()],
             'Settings saved.',
         );
+    }
+
+    /**
+     * Proves the stored SMTP settings actually deliver (ADR-0014 phase
+     * 3). Builds a one-off mailer from settings at send time — never
+     * from boot-time config — and surfaces the transport's own error
+     * words on failure, because "failed" without why is a support call.
+     */
+    public function sendTestMail(Request $request): JsonResponse
+    {
+        $this->authorize('update', Setting::class);
+
+        $validated = $request->validate(['to' => ['nullable', 'email']]);
+
+        $mail = $this->settings->all()['mail'];
+
+        if ($mail['enabled'] !== true || blank($mail['host']) || blank($mail['from_address'])) {
+            return ApiResponse::error(
+                ErrorCode::VALIDATION_FAILED,
+                'Fill in and save the mail settings first: at least host and from address, with mail enabled.',
+                [],
+                422,
+            );
+        }
+
+        $to = $validated['to'] ?? $this->settings->get('branding', 'contact_email');
+
+        try {
+            Mail::build([
+                'transport' => 'smtp',
+                'host' => $mail['host'],
+                'port' => $mail['port'],
+                'username' => $mail['username'] ?: null,
+                'password' => $this->settings->secret('mail', 'password'),
+                'encryption' => $mail['encryption'] === 'tls' ? 'tls' : null,
+                'timeout' => 10,
+            ])->raw(
+                'This is a test email from your KangaruRide platform settings. If you are reading it, SMTP is configured correctly.',
+                function ($message) use ($mail, $to) {
+                    $message->to($to)
+                        ->from($mail['from_address'], $mail['from_name'] ?: null)
+                        ->subject('KangaruRide test email');
+                },
+            );
+        } catch (Throwable $e) {
+            return ApiResponse::error(
+                ErrorCode::MAIL_DELIVERY_FAILED,
+                'The mail server refused the test: '.$e->getMessage(),
+                [],
+                502,
+            );
+        }
+
+        return ApiResponse::success(message: "Test email sent to {$to}. Check the inbox (and spam).");
     }
 
     /**
