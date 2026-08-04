@@ -4,6 +4,7 @@ namespace Modules\Bookings\Services;
 
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Modules\Administration\Services\SettingsService;
 use Modules\Bookings\Enums\BookingStatus;
 use Modules\Bookings\Events\BookingApproved;
 use Modules\Bookings\Events\BookingRejected;
@@ -17,16 +18,33 @@ use Modules\Bookings\Models\Booking;
  */
 class BookingService
 {
+    public function __construct(private readonly SettingsService $settings) {}
+
     /**
      * @param  array<string, mixed>  $attributes  already validated by the caller
      */
     public function create(array $attributes, User $requester): Booking
     {
-        return Booking::create([
+        $booking = Booking::create([
             ...$attributes,
             'requested_by_user_id' => $requester->id,
             'status' => BookingStatus::PENDING,
         ]);
+
+        // ADR-0014 phase 2: the owner may switch the approval step off.
+        // Auto-approval reuses the same transition as a human approver —
+        // same lock, same audit rows, same BookingApproved event — so
+        // nothing downstream can tell the difference except approved_by
+        // being the requester. That is normally the "approving your own
+        // workload" conflict the seeded roles forbid; switching this
+        // setting off is the owner explicitly waiving that control, and
+        // the audit trail records both the waiver (the settings change)
+        // and every booking it waved through.
+        if ($this->settings->get('booking', 'approval_required') !== true) {
+            return $this->approve($booking, $requester);
+        }
+
+        return $booking;
     }
 
     public function approve(Booking $booking, User $actor): Booking

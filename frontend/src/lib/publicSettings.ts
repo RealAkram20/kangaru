@@ -19,6 +19,10 @@ export interface PublicSettings {
   regional: {
     currency: string
   }
+  ordering: {
+    /** False while the owner has paused online intake — explain, don't fail at submit. */
+    walk_in_enabled: boolean
+  }
 }
 
 export const DEFAULT_PUBLIC_SETTINGS: PublicSettings = {
@@ -32,6 +36,7 @@ export const DEFAULT_PUBLIC_SETTINGS: PublicSettings = {
     favicon_path: null,
   },
   regional: { currency: 'UGX' },
+  ordering: { walk_in_enabled: true },
 }
 
 let cached: PublicSettings | null = null

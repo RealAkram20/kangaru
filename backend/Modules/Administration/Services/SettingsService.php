@@ -42,6 +42,20 @@ class SettingsService
             'timezone' => ['default' => 'Africa/Kampala', 'rules' => ['required', 'string', 'timezone:all', 'max:64']],
             'date_format' => ['default' => 'DD MMM YYYY', 'rules' => ['required', 'string', 'max:20']],
         ],
+        // Phase 2 (ADR-0014 §7). `walk_in_enabled` is public so the order
+        // form can explain a pause instead of failing at submit; the rate
+        // limit is the number ADR-0012 promised would "move by config".
+        'ordering' => [
+            'walk_in_enabled' => ['default' => true, 'rules' => ['required', 'boolean'], 'public' => true],
+            'rate_limit_per_minute' => ['default' => 3, 'rules' => ['required', 'integer', 'min:1', 'max:60']],
+        ],
+        'booking' => [
+            // On by default: approval is a control, and controls default
+            // on. Switching it off makes BookingService auto-approve on
+            // creation — the owner's call, recorded here and in audit.
+            'approval_required' => ['default' => true, 'rules' => ['required', 'boolean']],
+            'max_advance_days' => ['default' => 90, 'rules' => ['required', 'integer', 'min:1', 'max:365']],
+        ],
     ];
 
     /**

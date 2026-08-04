@@ -2,9 +2,11 @@
 
 namespace Modules\Bookings\Controllers;
 
+use App\Enums\ErrorCode;
 use App\Http\Controllers\Controller;
 use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
+use Modules\Administration\Services\SettingsService;
 use Modules\Bookings\Models\OrderRequest;
 use Modules\Bookings\Requests\StorePublicOrderRequest;
 use Modules\Bookings\Services\OrderRequestService;
@@ -16,10 +18,25 @@ use Modules\Bookings\Services\OrderRequestService;
  */
 class PublicOrderRequestController extends Controller
 {
-    public function __construct(private readonly OrderRequestService $orderRequests) {}
+    public function __construct(
+        private readonly OrderRequestService $orderRequests,
+        private readonly SettingsService $settings,
+    ) {}
 
     public function store(StorePublicOrderRequest $request): JsonResponse
     {
+        // ADR-0014 phase 2: the owner's intake switch. Checked before the
+        // honeypot on purpose — a paused desk answers honestly to
+        // everyone; there is nothing here worth teaching a bot about.
+        if ($this->settings->get('ordering', 'walk_in_enabled') !== true) {
+            return ApiResponse::error(
+                ErrorCode::ORDERING_PAUSED,
+                'We are not taking online orders right now. Please call the dispatch desk directly.',
+                [],
+                503,
+            );
+        }
+
         // The honeypot: a field no human sees. A bot that filled it gets a
         // convincing success and a real-looking reference, and we store
         // nothing — a bot that believes it succeeded stops probing, where a

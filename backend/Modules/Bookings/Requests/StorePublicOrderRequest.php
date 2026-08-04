@@ -4,6 +4,7 @@ namespace Modules\Bookings\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Modules\Administration\Services\SettingsService;
 use Modules\Bookings\Enums\OrderRequestServiceType;
 
 /**
@@ -47,7 +48,12 @@ class StorePublicOrderRequest extends FormRequest
                 Rule::requiredIf(in_array($service, ['ride', 'delivery'], true)),
                 'nullable', 'string', 'max:255',
             ],
-            'scheduled_for' => ['nullable', 'date', 'after:now'],
+            // Same advance cap as staff bookings (ADR-0014 phase 2): the
+            // dispatcher who calls back should not be promising next year.
+            'scheduled_for' => [
+                'nullable', 'date', 'after:now',
+                'before:+'.((int) app(SettingsService::class)->get('booking', 'max_advance_days')).' days',
+            ],
             'notes' => ['nullable', 'string', 'max:1000'],
 
             'details' => ['nullable', 'array'],

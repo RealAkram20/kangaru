@@ -7,9 +7,12 @@ use App\Models\AuditLog;
 use App\Models\Customer;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Eloquent\Relations\Relation;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Modules\Administration\Models\Role;
 use Modules\Administration\Models\Setting;
@@ -17,6 +20,7 @@ use Modules\Administration\Policies\AuditLogPolicy;
 use Modules\Administration\Policies\RolePolicy;
 use Modules\Administration\Policies\SettingPolicy;
 use Modules\Administration\Policies\UserPolicy;
+use Modules\Administration\Services\SettingsService;
 use Modules\Billing\Models\CreditNote;
 use Modules\Billing\Models\Invoice;
 use Modules\Billing\Models\RateCard;
@@ -60,6 +64,17 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // ADR-0012 promised the public order throttle would "move by
+        // config, not by removing the throttle"; ADR-0014 phase 2 is that
+        // config. Resolved per request through the settings cache, so a
+        // saved change applies to the very next request — floored at 1 so
+        // no stored value can accidentally disable the limiter outright.
+        RateLimiter::for('public-orders', function (Request $request) {
+            $perMinute = (int) app(SettingsService::class)->get('ordering', 'rate_limit_per_minute');
+
+            return Limit::perMinute(max(1, $perMinute))->by($request->ip());
+        });
+
         // Explicit registration rather than relying on Laravel's naming-
         // convention policy guesser across the Modules\ namespace.
         Gate::policy(Company::class, CompanyPolicy::class);

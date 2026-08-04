@@ -3,6 +3,7 @@
 namespace Modules\Bookings\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Modules\Administration\Services\SettingsService;
 
 class StoreBookingRequest extends FormRequest
 {
@@ -25,7 +26,13 @@ class StoreBookingRequest extends FormRequest
             // Omit for an immediate booking. `after:now` rather than
             // `after_or_equal` so "scheduled for the past" is a validation
             // error rather than a booking the dispatcher can never honour.
-            'scheduled_for' => ['nullable', 'date', 'after:now'],
+            // The advance cap comes from platform settings (ADR-0014
+            // phase 2): a booking a year out is a promise nobody has
+            // priced, and the window is the owner's to set.
+            'scheduled_for' => [
+                'nullable', 'date', 'after:now',
+                'before:+'.$this->maxAdvanceDays().' days',
+            ],
             'notes' => ['nullable', 'string', 'max:1000'],
         ];
     }
@@ -37,6 +44,12 @@ class StoreBookingRequest extends FormRequest
     {
         return [
             'scheduled_for.after' => 'A scheduled pickup must be in the future. Leave it empty to request transport now.',
+            'scheduled_for.before' => "Bookings can be made up to {$this->maxAdvanceDays()} days ahead.",
         ];
+    }
+
+    private function maxAdvanceDays(): int
+    {
+        return (int) app(SettingsService::class)->get('booking', 'max_advance_days');
     }
 }

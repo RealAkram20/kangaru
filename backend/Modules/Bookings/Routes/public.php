@@ -19,7 +19,11 @@ use Modules\Bookings\Controllers\PublicOrderRequestController;
 |
 */
 
-Route::middleware('throttle:3,1')->group(function () {
+// Named limiter, not a literal: the number lives in platform settings
+// (ordering.rate_limit_per_minute, default 3) per ADR-0012's own
+// consequence — "the number moves by config, not by removing the
+// throttle". AppServiceProvider::boot defines it.
+Route::middleware('throttle:public-orders')->group(function () {
     Route::post('public/order-requests', [PublicOrderRequestController::class, 'store'])
         ->name('public.order-requests.store');
 });

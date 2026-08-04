@@ -24,6 +24,8 @@ const SETTINGS = {
     favicon_path: null,
   },
   regional: { currency: 'UGX', timezone: 'Africa/Kampala', date_format: 'DD MMM YYYY' },
+  ordering: { walk_in_enabled: true, rate_limit_per_minute: 3 },
+  booking: { approval_required: true, max_advance_days: 90 },
 }
 
 beforeEach(() => {

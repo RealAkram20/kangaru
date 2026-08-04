@@ -3,6 +3,7 @@ import { Button } from '../components/core/Button'
 import { Card } from '../components/core/Card'
 import { Alert } from '../components/feedback/Alert'
 import { EmptyState } from '../components/feedback/EmptyState'
+import { Checkbox } from '../components/forms/Checkbox'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
 import { apiClient } from '../lib/apiClient'
@@ -37,6 +38,14 @@ interface Settings {
     currency: string
     timezone: string
     date_format: string
+  }
+  ordering: {
+    walk_in_enabled: boolean
+    rate_limit_per_minute: number
+  }
+  booking: {
+    approval_required: boolean
+    max_advance_days: number
   }
 }
 
@@ -98,6 +107,8 @@ export function SystemSettingsPage() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', maxWidth: 720 }}>
       <BrandingCard branding={settings.branding} onSaved={setSettings} />
+      <OrderingCard ordering={settings.ordering} onSaved={setSettings} />
+      <BookingCard booking={settings.booking} onSaved={setSettings} />
       <RegionalCard regional={settings.regional} onSaved={setSettings} />
     </div>
   )
@@ -353,6 +364,131 @@ function AssetUploader({
         {problem ?? hint}
       </span>
     </div>
+  )
+}
+
+function OrderingCard({
+  ordering,
+  onSaved,
+}: {
+  ordering: Settings['ordering']
+  onSaved: (s: Settings) => void
+}) {
+  const [enabled, setEnabled] = useState(ordering.walk_in_enabled)
+  const [rateLimit, setRateLimit] = useState(String(ordering.rate_limit_per_minute))
+  const { state, errors, message, setMessage, save } = useSave('ordering', onSaved)
+
+  return (
+    <Card
+      title="Public ordering"
+      subtitle="The walk-in order form on the public site — the intake switch and its abuse limit."
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          void save({ walk_in_enabled: enabled, rate_limit_per_minute: Number(rateLimit) })
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
+      >
+        {message !== null && (
+          <Alert tone="error" title="Public ordering" onDismiss={() => setMessage(null)}>
+            {message}
+          </Alert>
+        )}
+
+        <Checkbox
+          label="Accept online orders"
+          hint="Off pauses the public order form immediately — visitors are told to call the dispatch desk instead. Nothing already in the queue is affected."
+          checked={enabled}
+          onChange={(e) => setEnabled(e.target.checked)}
+        />
+
+        <FormField
+          label="Orders per minute, per visitor"
+          htmlFor="settings-rate-limit"
+          hint="The public form's abuse limit per IP address. Raise it if a shared office network genuinely hits the ceiling."
+          error={errors.rate_limit_per_minute}
+          required
+        >
+          <Input
+            id="settings-rate-limit"
+            type="number"
+            min={1}
+            max={60}
+            value={rateLimit}
+            onChange={(e) => setRateLimit(e.target.value)}
+            required
+            style={{ maxWidth: 120 }}
+          />
+        </FormField>
+
+        <SaveButton state={state} />
+      </form>
+    </Card>
+  )
+}
+
+function BookingCard({
+  booking,
+  onSaved,
+}: {
+  booking: Settings['booking']
+  onSaved: (s: Settings) => void
+}) {
+  const [approvalRequired, setApprovalRequired] = useState(booking.approval_required)
+  const [maxAdvanceDays, setMaxAdvanceDays] = useState(String(booking.max_advance_days))
+  const { state, errors, message, setMessage, save } = useSave('booking', onSaved)
+
+  return (
+    <Card
+      title="Booking rules"
+      subtitle="How corporate bookings move from request to dispatch."
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          void save({
+            approval_required: approvalRequired,
+            max_advance_days: Number(maxAdvanceDays),
+          })
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
+      >
+        {message !== null && (
+          <Alert tone="error" title="Booking rules" onDismiss={() => setMessage(null)}>
+            {message}
+          </Alert>
+        )}
+
+        <Checkbox
+          label="Require approval before dispatch"
+          hint="Off means new bookings are approved automatically at creation — the requester's own booking, with no second pair of eyes. Every auto-approval is still audited."
+          checked={approvalRequired}
+          onChange={(e) => setApprovalRequired(e.target.checked)}
+        />
+
+        <FormField
+          label="Maximum days in advance"
+          htmlFor="settings-max-advance"
+          hint="How far ahead a pickup may be scheduled, on bookings and the public order form alike."
+          error={errors.max_advance_days}
+          required
+        >
+          <Input
+            id="settings-max-advance"
+            type="number"
+            min={1}
+            max={365}
+            value={maxAdvanceDays}
+            onChange={(e) => setMaxAdvanceDays(e.target.value)}
+            required
+            style={{ maxWidth: 120 }}
+          />
+        </FormField>
+
+        <SaveButton state={state} />
+      </form>
+    </Card>
   )
 }
 

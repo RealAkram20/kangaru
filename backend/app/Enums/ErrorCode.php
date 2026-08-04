@@ -61,4 +61,12 @@ enum ErrorCode: string
      * a silent, total loss of access rather than an error anyone can read.
      */
     case ROLE_IN_USE = 'ROLE_IN_USE';
+
+    /**
+     * The owner switched public order intake off (ADR-0014 phase 2). A
+     * deliberate pause, not a fault — 503 with this code so the order
+     * form can say "not taking online orders right now" instead of
+     * "something went wrong".
+     */
+    case ORDERING_PAUSED = 'ORDERING_PAUSED';
 }

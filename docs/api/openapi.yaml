@@ -360,7 +360,7 @@ paths:
         unknown keys are refused rather than skipped. Every write is
         audited.
       parameters:
-        - { name: group, in: path, required: true, schema: { enum: [branding, regional] } }
+        - { name: group, in: path, required: true, schema: { enum: [branding, regional, ordering, booking] } }
       requestBody:
         required: true
         content:
@@ -2597,6 +2597,7 @@ components:
         - IDEMPOTENCY_KEY_REUSED
         - CREDIT_NOTE_EXCEEDS_INVOICE
         - ROLE_IN_USE
+        - ORDERING_PAUSED
 
     TripStatus:
       enum:
@@ -2834,7 +2835,7 @@ components:
         keys (none in phase 1) appear as {configured: bool}, never as
         values.
       type: object
-      required: [branding, regional]
+      required: [branding, regional, ordering, booking]
       additionalProperties: false
       properties:
         branding: { $ref: '#/components/schemas/BrandingSettings' }
@@ -2846,6 +2847,20 @@ components:
             currency: { type: string }
             timezone: { type: string }
             date_format: { type: string }
+        ordering:
+          type: object
+          required: [walk_in_enabled, rate_limit_per_minute]
+          additionalProperties: false
+          properties:
+            walk_in_enabled: { type: boolean }
+            rate_limit_per_minute: { type: integer }
+        booking:
+          type: object
+          required: [approval_required, max_advance_days]
+          additionalProperties: false
+          properties:
+            approval_required: { type: boolean }
+            max_advance_days: { type: integer }
 
     BrandingSettings:
       type: object
@@ -2865,7 +2880,7 @@ components:
         The unauthenticated branding subset: catalogue keys flagged
         public only, asset paths as absolute URLs.
       type: object
-      required: [branding, regional]
+      required: [branding, regional, ordering]
       additionalProperties: false
       properties:
         branding: { $ref: '#/components/schemas/BrandingSettings' }
@@ -2875,6 +2890,14 @@ components:
           additionalProperties: false
           properties:
             currency: { type: string }
+        ordering:
+          type: object
+          required: [walk_in_enabled]
+          additionalProperties: false
+          properties:
+            walk_in_enabled:
+              type: boolean
+              description: False while the owner has paused online intake — the order form explains instead of failing at submit.
 
     Customer:
       description: A customer's own account, as shown to them (ADR-0013).
