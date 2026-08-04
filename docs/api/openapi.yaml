@@ -688,6 +688,160 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  # ------------------------------------------------------------------
+  # Customer accounts (Modules/Customers, ADR-0013)
+  #
+  # The second principal's surface. Everything under /customer answers
+  # to the `customer` guard, never `auth:sanctum` — a staff token here
+  # is a 401, and a customer token anywhere else is a 401 (ADR-0013 §2).
+  # ------------------------------------------------------------------
+  /api/v1/customer/auth/register:
+    post:
+      summary: >
+        Creates a customer account and returns its token (ADR-0013 §3).
+        Unauthenticated write, throttled 5/min/IP.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, phone, email, password]
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 120 }
+                phone:
+                  type: string
+                  minLength: 9
+                  maxLength: 32
+                  description: A contact field the dispatcher dials — never a verification channel (no SMS).
+                email: { type: string, format: email, maxLength: 190 }
+                password: { type: string, minLength: 8, maxLength: 255 }
+      responses:
+        '201':
+          $ref: '#/components/responses/CustomerAuthenticatedResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/customer/auth/login:
+    post:
+      summary: >
+        Customer login (ADR-0013 §3). One 401 message for wrong password
+        and unknown email alike; a Google-only account's absent password
+        reads the same way.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              additionalProperties: false
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          $ref: '#/components/responses/CustomerAuthenticatedResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/customer/auth/logout:
+    post:
+      summary: Revokes the current customer token.
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOnly'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/customer/auth/me:
+    get:
+      summary: The signed-in customer's own account.
+      responses:
+        '200':
+          description: The customer.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/Customer' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/customer/order-requests:
+    get:
+      summary: >
+        The signed-in customer's own order requests, newest first
+        (ADR-0013 §4) — the status checker ADR-0012 deferred, scoped by
+        the token so no reference or id is enumerable.
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200':
+          description: The customer's order requests, page-paginated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [order_requests]
+                    additionalProperties: false
+                    properties:
+                      order_requests:
+                        type: array
+                        items: { $ref: '#/components/schemas/CustomerOrderRequest' }
+                  meta:
+                    type: object
+                    required: [page, per_page, total]
+                    additionalProperties: false
+                    properties:
+                      page: { type: integer }
+                      per_page: { type: integer }
+                      total: { type: integer }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/customer/order-requests/{orderRequest}:
+    get:
+      summary: >
+        One of the customer's own order requests. An id outside their own
+        rows answers 404, not 403 — that a row exists is itself
+        information.
+      parameters:
+        - { name: orderRequest, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: The order request.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [order_request]
+                    additionalProperties: false
+                    properties:
+                      order_request: { $ref: '#/components/schemas/CustomerOrderRequest' }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/order-requests:
     get:
       summary: The dispatch desk's walk-in queue, oldest first (ADR-0012).
@@ -1948,6 +2102,28 @@ components:
                   token: { type: string }
                   must_enrol_mfa: { type: boolean }
 
+    CustomerAuthenticatedResponse:
+      description: >
+        Customer sign-up or sign-in complete (ADR-0013 §3) — the account
+        and its token. No MFA fields on purpose: MFA is tied to staff
+        roles that move money, and a customer cannot.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data:
+                type: object
+                required: [customer, token]
+                additionalProperties: false
+                properties:
+                  customer: { $ref: '#/components/schemas/Customer' }
+                  token: { type: string }
+
     RecoveryCodesResponse:
       description: >
         Recovery codes, legible this once only — they are stored hashed and
@@ -2542,6 +2718,50 @@ components:
         status: { enum: [active, maintenance, inactive] }
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
         updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    Customer:
+      description: A customer's own account, as shown to them (ADR-0013).
+      type: object
+      required: [id, name, phone, email, created_at]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        phone: { type: string }
+        email: { type: string }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    CustomerOrderRequest:
+      description: >
+        An order request as its own customer sees it (ADR-0013 §4).
+        Deliberately narrower than OrderRequest: no dispatcher_notes (the
+        desk's working notes are the desk's), no handled_by (staff
+        assignment is internal), no allowed_transitions (a customer moves
+        nothing), and no contact echo.
+      type: object
+      required:
+        - id
+        - reference
+        - service_type
+        - status
+        - pickup_location
+        - dropoff_location
+        - scheduled_for
+        - details
+        - notes
+        - created_at
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        reference: { type: string }
+        service_type: { enum: [ride, delivery, self_drive] }
+        status: { enum: [new, contacted, converted, closed] }
+        pickup_location: { type: ['string', 'null'] }
+        dropoff_location: { type: ['string', 'null'] }
+        scheduled_for: { $ref: '#/components/schemas/NullableTimestamp' }
+        details: { $ref: '#/components/schemas/FreeformMap' }
+        notes: { type: ['string', 'null'] }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
 
     OrderRequest:
       description: >

@@ -19,6 +19,12 @@ Route::prefix('v1')->group(function () {
     // assume a user or a tenant.
     require base_path('Modules/Bookings/Routes/public.php');
 
+    // The customer surface (ADR-0013). Deliberately outside the staff
+    // middleware group below: customers have no tenant, and their guard
+    // (`auth:customer`) is applied inside the module's own route file so
+    // the register/login pair can stay unauthenticated.
+    require base_path('Modules/Customers/Routes/api.php');
+
     require base_path('Modules/Administration/Routes/api.php');
 
     // `tenant` binds the actor's own tenant before model binding;

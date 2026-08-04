@@ -32,7 +32,16 @@ class PublicOrderRequestController extends Controller
             );
         }
 
-        $orderRequest = $this->orderRequests->receive($request->validated());
+        // ADR-0013 §4: the route stays unauthenticated, but a customer
+        // token *may* accompany the request, and then the order links to
+        // the account. Resolved through the customer guard specifically —
+        // a staff token here resolves to nothing and stamps nothing.
+        $customer = $request->user('customer');
+
+        $orderRequest = $this->orderRequests->receive([
+            ...$request->validated(),
+            'customer_id' => $customer?->id,
+        ]);
 
         return ApiResponse::success(
             ['reference' => $orderRequest->reference],

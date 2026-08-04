@@ -3,6 +3,7 @@
 namespace Modules\Bookings\Models;
 
 use App\Concerns\Auditable;
+use App\Models\Customer;
 use App\Models\User;
 use Database\Factories\OrderRequestFactory;
 use Illuminate\Database\Eloquent\Factories\Factory;
@@ -42,6 +43,9 @@ use Modules\Bookings\Enums\OrderRequestStatus;
  * @property string|null $notes
  * @property string|null $dispatcher_notes
  * @property int|null $handled_by_user_id
+ * @property int|null $customer_id Null for an anonymous walk-in (ADR-0013
+ *                                 §4). Stamped by the public endpoint when a customer token
+ *                                 accompanies the request; never required.
  */
 class OrderRequest extends Model
 {
@@ -72,6 +76,7 @@ class OrderRequest extends Model
         'notes',
         'dispatcher_notes',
         'handled_by_user_id',
+        'customer_id',
     ];
 
     protected function casts(): array
@@ -103,5 +108,11 @@ class OrderRequest extends Model
     public function handledBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'handled_by_user_id');
+    }
+
+    /** @return BelongsTo<Customer, $this> */
+    public function customer(): BelongsTo
+    {
+        return $this->belongsTo(Customer::class);
     }
 }
