@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use App\Enums\Permission;
 use App\Models\AuditLog;
+use App\Models\Customer;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
 use Illuminate\Database\Eloquent\Relations\Relation;
@@ -142,6 +143,11 @@ class AppServiceProvider extends ServiceProvider
             // the build for any Auditable model this map omits, because
             // creating one would throw from AuditLog::record().
             'order_request' => OrderRequest::class,
+            // ADR-0013's customer principal. Not Auditable — it is here
+            // because Sanctum's personal_access_tokens.tokenable_type is a
+            // morph, and an enforced map with no entry throws the moment a
+            // customer token is minted.
+            'customer' => Customer::class,
         ]);
     }
 }
