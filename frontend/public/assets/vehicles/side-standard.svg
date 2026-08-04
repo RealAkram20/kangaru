@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 320">
+  <!-- KangaruRide fleet · standard SUV · side view -->
+  <defs>
+    <radialGradient id="shadow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0B1220" stop-opacity="0.20"/>
+      <stop offset="70%" stop-color="#0B1220" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#0B1220" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.7" stop-color="#F2F4F6"/>
+      <stop offset="1" stop-color="#DDE2E7"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3A4047"/>
+      <stop offset="1" stop-color="#16181D"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1CB964"/>
+      <stop offset="1" stop-color="#118A48"/>
+    </linearGradient>
+  </defs>
+
+  <ellipse cx="256" cy="262" rx="200" ry="15" fill="url(#shadow)"/>
+
+  <!-- body: taller cabin, squarer tail -->
+  <path fill="url(#body)" d="M40 218 C32 198 34 180 52 172 C68 164 100 158 140 152 C158 108 196 88 250 86 L316 88 C352 92 376 108 396 140 C428 146 448 154 456 166 C468 180 466 202 458 218 Z"/>
+
+  <!-- roof rail -->
+  <rect x="176" y="82" width="196" height="7" rx="3.5" fill="#2A2E33"/>
+
+  <!-- cabin glass -->
+  <path fill="url(#glass)" d="M184 142 C198 108 226 98 254 96 L310 98 C338 102 360 116 378 140 C330 146 232 147 184 142 Z"/>
+  <!-- pillars -->
+  <rect x="252" y="96" width="9" height="48" fill="#F2F4F6"/>
+  <rect x="322" y="98" width="9" height="46" fill="#F2F4F6"/>
+
+  <!-- door seams -->
+  <g stroke="#D7DCE1" stroke-width="3" fill="none" stroke-linecap="round">
+    <path d="M256 150 L256 210"/>
+    <path d="M186 148 L182 210"/>
+    <path d="M328 148 L334 208"/>
+  </g>
+
+  <!-- brand panel -->
+  <rect x="196" y="160" width="140" height="38" rx="12" fill="url(#green)"/>
+  <rect x="202" y="165" width="128" height="13" rx="6.5" fill="#FFFFFF" opacity="0.16"/>
+
+  <!-- door handles -->
+  <rect x="222" y="153" width="22" height="5" rx="2.5" fill="#B6BDC4"/>
+  <rect x="290" y="153" width="22" height="5" rx="2.5" fill="#B6BDC4"/>
+
+  <!-- lights -->
+  <path fill="#E8ECEF" d="M44 178 C54 174 68 172 80 172 L76 188 C64 188 50 186 44 182 Z"/>
+  <path fill="#C9505A" d="M450 170 C458 176 462 184 461 192 L444 189 L446 172 Z"/>
+
+  <!-- wheels: larger for the SUV stance -->
+  <g>
+    <circle cx="140" cy="216" r="45" fill="#17191C"/>
+    <circle cx="140" cy="216" r="26" fill="#C9CFD5"/>
+    <circle cx="140" cy="216" r="10" fill="#8E969E"/>
+    <circle cx="378" cy="216" r="45" fill="#17191C"/>
+    <circle cx="378" cy="216" r="26" fill="#C9CFD5"/>
+    <circle cx="378" cy="216" r="10" fill="#8E969E"/>
+  </g>
+</svg>

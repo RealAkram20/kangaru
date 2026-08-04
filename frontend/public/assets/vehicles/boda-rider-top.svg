@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- KangaruRide fleet · boda boda with rider · true top-down · unified scale with sedan-top.svg -->
+  <defs>
+    <radialGradient id="shadow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0B1220" stop-opacity="0.20"/>
+      <stop offset="65%" stop-color="#0B1220" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#0B1220" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#128A48"/>
+      <stop offset="0.5" stop-color="#1CB964"/>
+      <stop offset="1" stop-color="#128A48"/>
+    </linearGradient>
+    <linearGradient id="jacket" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1CB964"/>
+      <stop offset="1" stop-color="#0F7A40"/>
+    </linearGradient>
+    <linearGradient id="steel" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#9AA1A8"/>
+      <stop offset="0.5" stop-color="#C7CDD3"/>
+      <stop offset="1" stop-color="#9AA1A8"/>
+    </linearGradient>
+    <radialGradient id="helmet" cx="38%" cy="32%" r="75%">
+      <stop offset="0" stop-color="#3A3F45"/>
+      <stop offset="0.55" stop-color="#22252A"/>
+      <stop offset="1" stop-color="#141619"/>
+    </radialGradient>
+  </defs>
+
+  <ellipse cx="256" cy="258" rx="70" ry="132" fill="url(#shadow)"/>
+
+  <!-- wheels -->
+  <rect x="248" y="138" width="16" height="60" rx="8" fill="#17191C"/>
+  <rect x="248" y="336" width="16" height="42" rx="8" fill="#17191C"/>
+
+  <!-- forks -->
+  <rect x="244" y="166" width="5" height="44" rx="2.5" fill="url(#steel)"/>
+  <rect x="263" y="166" width="5" height="44" rx="2.5" fill="url(#steel)"/>
+
+  <!-- front fender -->
+  <rect x="245" y="136" width="22" height="34" rx="11" fill="url(#green)"/>
+
+  <!-- rear carrier rack -->
+  <rect x="236" y="342" width="40" height="32" rx="8" fill="#26292E"/>
+  <g stroke="#3B4046" stroke-width="4" stroke-linecap="round">
+    <line x1="244" y1="352" x2="268" y2="352"/>
+    <line x1="244" y1="362" x2="268" y2="362"/>
+  </g>
+
+  <!-- engine block -->
+  <rect x="235" y="256" width="42" height="42" rx="9" fill="url(#steel)"/>
+
+  <!-- fuel tank -->
+  <path fill="url(#green)" d="M256 206 C274 206 282 216 282 232 C282 248 274 258 256 258 C238 258 230 248 230 232 C230 216 238 206 256 206 Z"/>
+  <ellipse cx="250" cy="220" rx="12" ry="7" fill="#FFFFFF" opacity="0.18"/>
+
+  <!-- seat (tail visible behind the rider) -->
+  <rect x="233" y="296" width="46" height="48" rx="15" fill="#1D2024"/>
+
+  <!-- handlebar, grips, mirrors -->
+  <g stroke="#4A5057" stroke-width="4" stroke-linecap="round">
+    <line x1="212" y1="200" x2="200" y2="182"/>
+    <line x1="300" y1="200" x2="312" y2="182"/>
+  </g>
+  <circle cx="198" cy="178" r="8" fill="#26292E"/>
+  <circle cx="314" cy="178" r="8" fill="#26292E"/>
+  <rect x="201" y="197" width="110" height="11" rx="5.5" fill="#26292E"/>
+
+  <!-- rider legs: black trousers, knees out, boots on the pegs -->
+  <rect x="207" y="272" width="17" height="58" rx="8.5" transform="rotate(14 215 301)" fill="#17191C"/>
+  <rect x="288" y="272" width="17" height="58" rx="8.5" transform="rotate(-14 296 301)" fill="#17191C"/>
+  <rect x="197" y="320" width="22" height="15" rx="7" transform="rotate(10 208 327)" fill="#0E1013"/>
+  <rect x="293" y="320" width="22" height="15" rx="7" transform="rotate(-10 304 327)" fill="#0E1013"/>
+
+  <!-- rider arms reaching the grips, black gloves -->
+  <rect x="214" y="210" width="16" height="82" rx="8" transform="rotate(18 222 251)" fill="url(#jacket)"/>
+  <rect x="282" y="210" width="16" height="82" rx="8" transform="rotate(-18 290 251)" fill="url(#jacket)"/>
+  <circle cx="213" cy="204" r="9" fill="#0E1013"/>
+  <circle cx="299" cy="204" r="9" fill="#0E1013"/>
+
+  <!-- rider torso: green jacket, seated behind the tank so it stays visible -->
+  <path fill="url(#jacket)" d="M256 256 C280 256 293 268 293 288 L289 334 C287 350 273 356 256 356 C239 356 225 350 223 334 L219 288 C219 268 232 256 256 256 Z"/>
+  <path fill="#FFFFFF" opacity="0.10" d="M233 266 C244 260 268 260 279 266 C282 272 280 278 275 280 C262 274 250 274 237 280 C232 278 230 272 233 266 Z"/>
+
+  <!-- helmet -->
+  <circle cx="256" cy="286" r="24" fill="url(#helmet)"/>
+  <path fill="#FFFFFF" opacity="0.10" d="M241 274 C247 266 265 266 271 274 C267 270 245 270 241 274 Z"/>
+</svg>

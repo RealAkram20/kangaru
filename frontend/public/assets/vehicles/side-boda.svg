@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 320">
+  <!-- KangaruRide fleet · boda boda commuter · side view -->
+  <defs>
+    <radialGradient id="shadow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0B1220" stop-opacity="0.20"/>
+      <stop offset="70%" stop-color="#0B1220" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#0B1220" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1CB964"/>
+      <stop offset="1" stop-color="#118A48"/>
+    </linearGradient>
+    <linearGradient id="steel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#C7CDD3"/>
+      <stop offset="1" stop-color="#9AA1A8"/>
+    </linearGradient>
+  </defs>
+
+  <ellipse cx="256" cy="272" rx="190" ry="14" fill="url(#shadow)"/>
+
+  <!-- rear swingarm + fork behind everything -->
+  <g stroke="#5A6167" stroke-width="9" stroke-linecap="round">
+    <line x1="384" y1="228" x2="312" y2="188"/>
+    <line x1="130" y1="228" x2="196" y2="112"/>
+  </g>
+
+  <!-- exhaust -->
+  <path fill="url(#steel)" d="M280 206 L382 214 C392 215 392 227 382 228 L286 222 C278 221 274 214 280 206 Z"/>
+
+  <!-- frame spine -->
+  <g stroke="#31363C" stroke-width="10" stroke-linecap="round">
+    <line x1="206" y1="120" x2="252" y2="176"/>
+    <line x1="252" y1="176" x2="320" y2="130"/>
+    <line x1="252" y1="176" x2="278" y2="206"/>
+  </g>
+
+  <!-- engine -->
+  <rect x="236" y="162" width="66" height="48" rx="10" fill="#2A2E33"/>
+  <g stroke="#4A5057" stroke-width="4" stroke-linecap="round">
+    <line x1="246" y1="174" x2="292" y2="174"/>
+    <line x1="246" y1="186" x2="292" y2="186"/>
+    <line x1="246" y1="198" x2="292" y2="198"/>
+  </g>
+
+  <!-- fuel tank -->
+  <path fill="url(#green)" d="M210 116 C230 104 268 102 288 112 C296 120 296 132 288 140 C264 148 234 146 216 138 C206 132 204 124 210 116 Z"/>
+  <ellipse cx="242" cy="115" rx="20" ry="6" fill="#FFFFFF" opacity="0.20"/>
+
+  <!-- seat + carrier rack -->
+  <path fill="#1D2024" d="M288 112 C316 106 344 104 362 108 C370 110 370 120 362 122 C336 128 308 130 292 128 Z"/>
+  <g stroke="#31363C" stroke-width="6" stroke-linecap="round">
+    <line x1="362" y1="108" x2="396" y2="104"/>
+    <line x1="368" y1="118" x2="396" y2="114"/>
+    <line x1="396" y1="104" x2="396" y2="116"/>
+  </g>
+
+  <!-- front fender + headlamp -->
+  <path fill="url(#green)" d="M92 200 C100 176 118 162 142 158 L150 172 C130 176 116 188 108 206 Z"/>
+  <circle cx="186" cy="118" r="12" fill="#E8ECEF"/>
+
+  <!-- handlebar + mirror -->
+  <g stroke="#31363C" stroke-width="7" stroke-linecap="round">
+    <line x1="196" y1="112" x2="176" y2="86"/>
+    <line x1="176" y1="86" x2="160" y2="82"/>
+  </g>
+  <line x1="176" y1="86" x2="188" y2="62" stroke="#4A5057" stroke-width="4" stroke-linecap="round"/>
+  <ellipse cx="191" cy="58" rx="8" ry="6" fill="#26292E"/>
+
+  <!-- wheels -->
+  <g>
+    <circle cx="130" cy="228" r="44" fill="#17191C"/>
+    <circle cx="130" cy="228" r="30" fill="#EDF0F3"/>
+    <g stroke="#B6BDC4" stroke-width="3">
+      <line x1="130" y1="200" x2="130" y2="256"/>
+      <line x1="102" y1="228" x2="158" y2="228"/>
+      <line x1="110" y1="208" x2="150" y2="248"/>
+      <line x1="150" y1="208" x2="110" y2="248"/>
+    </g>
+    <circle cx="130" cy="228" r="8" fill="#5A6167"/>
+    <circle cx="384" cy="228" r="44" fill="#17191C"/>
+    <circle cx="384" cy="228" r="30" fill="#EDF0F3"/>
+    <g stroke="#B6BDC4" stroke-width="3">
+      <line x1="384" y1="200" x2="384" y2="256"/>
+      <line x1="356" y1="228" x2="412" y2="228"/>
+      <line x1="364" y1="208" x2="404" y2="248"/>
+      <line x1="404" y1="208" x2="364" y2="248"/>
+    </g>
+    <circle cx="384" cy="228" r="8" fill="#5A6167"/>
+  </g>
+</svg>

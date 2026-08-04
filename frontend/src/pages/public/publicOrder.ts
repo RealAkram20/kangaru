@@ -25,17 +25,23 @@ export async function submitPublicOrder(payload: PublicOrderPayload): Promise<st
   return response.data.data.reference as string
 }
 
-export const SERVICE_META: Record<PublicService, { label: string; description: string }> = {
+export const SERVICE_META: Record<
+  PublicService,
+  { label: string; description: string; short: string }
+> = {
   ride: {
     label: 'Ride',
     description: 'Book taxis and boda bodas across Kampala.',
+    short: 'Book taxis and boda bodas',
   },
   delivery: {
     label: 'Deliver',
     description: 'Send parcels, documents or cargo, boda to 10-tonne.',
+    short: 'Send parcels, documents or cargo',
   },
   self_drive: {
     label: 'Self Drive',
     description: 'Rent a vehicle by the day and drive yourself.',
+    short: 'Rent a vehicle and drive',
   },
 }

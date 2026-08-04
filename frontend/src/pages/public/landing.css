@@ -1,4 +1,56 @@
 /*
+ * The order page map's "you are here" motif and decorative fleet. Static on
+ * purpose: they set the scene, they are not live data.
+ */
+.kr-loc {
+  position: relative;
+  width: 190px;
+  height: 190px;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.kr-loc::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    rgba(45, 116, 246, 0.16) 0%,
+    rgba(45, 116, 246, 0.08) 55%,
+    rgba(45, 116, 246, 0) 72%
+  );
+}
+
+.kr-loc::after {
+  content: '';
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #2d74f6;
+  border: 3px solid #ffffff;
+  box-shadow: 0 1px 6px rgba(0, 16, 40, 0.35);
+}
+
+/* The sprites carry their own soft ground shadow; no CSS filter on top. */
+.kr-vehicle {
+  pointer-events: none;
+  line-height: 0;
+}
+
+/* Below lg the floating header card owns the top edge; push the map's
+   zoom controls out from under it. The `aside` prefix outweighs the SDK's
+   own `.maplibregl-ctrl-top-right { top: 0 }`, which loads after this file. */
+@media (max-width: 1023px) {
+  aside .maplibregl-ctrl-top-right,
+  aside .mapboxgl-ctrl-top-right {
+    top: 4.5rem;
+  }
+}
+
+/*
  * Entry motion for the public pages only. CSS-only on purpose: the app has
  * no animation library and a landing page does not justify adding one.
  * Everything here collapses to static under prefers-reduced-motion.
@@ -26,6 +78,35 @@
     to {
       opacity: 1;
       transform: translateY(0);
+    }
+  }
+
+  /* The order page's mobile bottom sheet slides up once on mount. Enter
+     only: leaving the page unmounts it, so no exit pair is needed. */
+  .kr-sheet {
+    transform: translateY(24px);
+    animation: kr-sheet 0.5s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+  }
+
+  @keyframes kr-sheet {
+    to {
+      transform: translateY(0);
+    }
+  }
+
+  /* Month changes in the rental calendar glide rather than snap. */
+  .kr-month {
+    animation: kr-month 0.18s ease-out;
+  }
+
+  @keyframes kr-month {
+    from {
+      opacity: 0;
+      transform: translateX(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
     }
   }
 }

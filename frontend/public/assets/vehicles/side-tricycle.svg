@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 320">
+  <!-- KangaruRide fleet · cargo tricycle · side view · compact green three-wheeler -->
+  <defs>
+    <radialGradient id="shadow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0B1220" stop-opacity="0.20"/>
+      <stop offset="70%" stop-color="#0B1220" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#0B1220" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1CB964"/>
+      <stop offset="1" stop-color="#118A48"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3A4047"/>
+      <stop offset="1" stop-color="#16181D"/>
+    </linearGradient>
+  </defs>
+
+  <ellipse cx="256" cy="258" rx="150" ry="13" fill="url(#shadow)"/>
+
+  <!-- cargo box: short and tall, clearly a trike bed not a truck -->
+  <path fill="url(#green)" d="M234 122 L370 118 C380 120 386 128 386 138 L388 200 C388 210 382 216 372 216 L238 216 Z"/>
+  <g stroke="#0F7A40" stroke-width="4" stroke-linecap="round">
+    <line x1="278" y1="130" x2="278" y2="208"/>
+    <line x1="322" y1="128" x2="322" y2="208"/>
+  </g>
+  <path fill="#FFFFFF" opacity="0.16" d="M236 124 L368 120 L368 130 L236 134 Z"/>
+
+  <!-- open cab: seat post, canopy and windshield -->
+  <path fill="url(#green)" d="M234 122 L234 216 L196 216 C186 216 180 210 180 200 L180 170 C180 142 200 124 226 122 Z"/>
+  <!-- canopy roof reaching forward -->
+  <path fill="url(#green)" d="M148 116 L236 112 L236 124 L152 128 C146 128 144 120 148 116 Z"/>
+  <!-- windshield under the canopy -->
+  <path fill="url(#glass)" d="M158 132 L196 130 L192 168 C178 168 166 156 158 132 Z"/>
+
+  <!-- handlebar + headlamp -->
+  <g stroke="#31363C" stroke-width="6" stroke-linecap="round">
+    <line x1="150" y1="160" x2="140" y2="140"/>
+    <line x1="140" y1="140" x2="128" y2="136"/>
+  </g>
+  <circle cx="134" cy="176" r="8" fill="#E8ECEF"/>
+
+  <!-- front fork to the single wheel -->
+  <line x1="140" y1="146" x2="140" y2="222" stroke="#5A6167" stroke-width="7" stroke-linecap="round"/>
+
+  <!-- wheels: small front, cargo rear -->
+  <g>
+    <circle cx="140" cy="228" r="30" fill="#17191C"/>
+    <circle cx="140" cy="228" r="17" fill="#EDF0F3"/>
+    <circle cx="140" cy="228" r="6" fill="#5A6167"/>
+    <circle cx="330" cy="228" r="30" fill="#17191C"/>
+    <circle cx="330" cy="228" r="17" fill="#EDF0F3"/>
+    <circle cx="330" cy="228" r="6" fill="#5A6167"/>
+  </g>
+</svg>
