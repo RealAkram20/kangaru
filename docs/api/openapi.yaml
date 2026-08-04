@@ -2810,6 +2810,14 @@ components:
           anyOf:
             - { $ref: '#/components/schemas/ValueName' }
             - { enum: [null] }
+        customer:
+          description: >
+            The linked account holder (ADR-0013 §5); null for an anonymous
+            walk-in. Id and name only — the customer's contact details on
+            this row are already the ones they typed into the form.
+          anyOf:
+            - { $ref: '#/components/schemas/ValueName' }
+            - { enum: [null] }
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
         updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
 

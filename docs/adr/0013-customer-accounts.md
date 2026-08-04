@@ -1,8 +1,16 @@
 # ADR-0013: Customer Accounts for Walk-In Orders
 
-**Status:** Proposed (draft — needs owner approval; customer accounts sit
-on PROJECT.md's deferred list, and moving an item off that list is the
-owner's call, as ADR-0012's own approval established)
+**Status:** Accepted (4 August 2026 — owner directed implementation,
+moving customer accounts off PROJECT.md's deferred list as ADR-0012's
+own approval established the owner may)
+
+**Implemented:** §1 (customers table and model), §2 (guard split, proven
+by mutation), §3 email+password only, §4 (order linking and the
+customer's own-orders read), §5 (queue shows the account holder), §6
+(contract entries). **Still deferred within §3:** Google server-side
+verification — `google_id` and the factory's `googleOnly()` state are
+ready, the JWKS endpoint is not built; and password reset, blocked on a
+mail-delivery decision. Both are named in Modules/Customers/README.md.
 
 **Depends on:** ADR-0012 (walk-in order requests are platform data),
 ADR-0005 (walk-in customers are the platform's customers, not a tenant's),

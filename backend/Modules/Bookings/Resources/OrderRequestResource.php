@@ -44,6 +44,16 @@ class OrderRequestResource extends JsonResource
 
                 return $handler === null ? null : ['id' => $handler->id, 'name' => $handler->name];
             }),
+            // ADR-0013 §5: the desk sees who the account holder is — "3rd
+            // order from this customer" beats re-recognising a phone
+            // number. Null for the anonymous walk-in, which stays the
+            // default. Name and id only: the queue links to nothing more,
+            // and the customer's email is not the dispatcher's to browse.
+            'customer' => $this->whenLoaded('customer', function () {
+                $customer = $this->customer;
+
+                return $customer === null ? null : ['id' => $customer->id, 'name' => $customer->name];
+            }),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

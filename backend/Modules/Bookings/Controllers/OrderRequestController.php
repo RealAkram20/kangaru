@@ -27,7 +27,7 @@ class OrderRequestController extends Controller
     {
         $this->authorize('viewAny', OrderRequest::class);
 
-        $query = OrderRequest::query()->with('handledBy');
+        $query = OrderRequest::query()->with(['handledBy', 'customer']);
 
         if ($request->filled('status')) {
             $query->where('status', $request->string('status'));
@@ -58,7 +58,7 @@ class OrderRequestController extends Controller
         $this->authorize('view', $orderRequest);
 
         return ApiResponse::success(
-            ['order_request' => new OrderRequestResource($orderRequest->load('handledBy'))],
+            ['order_request' => new OrderRequestResource($orderRequest->load(['handledBy', 'customer']))],
             'Order request retrieved.',
         );
     }
@@ -82,7 +82,7 @@ class OrderRequestController extends Controller
         }
 
         return ApiResponse::success(
-            ['order_request' => new OrderRequestResource($moved->load('handledBy'))],
+            ['order_request' => new OrderRequestResource($moved->load(['handledBy', 'customer']))],
             'Order request updated.',
         );
     }

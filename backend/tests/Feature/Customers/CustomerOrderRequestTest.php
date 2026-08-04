@@ -104,14 +104,26 @@ it('shows the customer their own request by id', function () {
         ->assertJsonPath('data.order_request.reference', $request->reference);
 });
 
-it('keeps the linked order visible to the dispatch queue unchanged', function () {
-    $customer = Customer::factory()->create();
+it('shows the dispatch queue who the account holder is, and null for walk-ins', function () {
+    $customer = Customer::factory()->create(['name' => 'Nakato Grace']);
     OrderRequest::factory()->create(['customer_id' => $customer->id]);
+    OrderRequest::factory()->create(['customer_id' => null]);
 
     $dispatcher = User::factory()->create(['role' => UserRole::DISPATCHER]);
 
-    $this->actingAs($dispatcher, 'sanctum')
+    $response = $this->actingAs($dispatcher, 'sanctum')
         ->getJson('/api/v1/order-requests')
         ->assertStatus(200)
-        ->assertJsonCount(1, 'data.order_requests');
+        ->assertJsonCount(2, 'data.order_requests');
+
+    // ADR-0013 §5: the desk sees the linked account's name — and only
+    // its name and id, not the account's email or anything to browse.
+    $linked = collect($response->json('data.order_requests'))
+        ->firstWhere('customer.name', 'Nakato Grace');
+    $anonymous = collect($response->json('data.order_requests'))
+        ->firstWhere('customer', null);
+
+    expect($linked)->not->toBeNull()
+        ->and($linked['customer'])->toBe(['id' => $customer->id, 'name' => 'Nakato Grace'])
+        ->and($anonymous)->not->toBeNull();
 });
