@@ -52,7 +52,16 @@ const SECTIONS: SidebarSection[] = [
     // Its own section rather than an Operations item: a notification is
     // addressed to you personally, not to a part of the business, so it
     // does not belong under the same heading as the fleet's work.
-    items: [{ id: 'notifications', label: 'Notifications', icon: 'bell' }],
+    //
+    // Settings sits here for the same personal-not-business reason. It was
+    // reachable only through the topbar's avatar menu, and "reachable" is
+    // not "findable": a Super Admin reported the page missing. The avatar
+    // menu entry stays — two doors to your own account is fine; zero
+    // visible ones is what got reported as a missing page.
+    items: [
+      { id: 'notifications', label: 'Notifications', icon: 'bell' },
+      { id: 'settings', label: 'Settings', icon: 'settings' },
+    ],
   },
 ]
 
@@ -75,6 +84,7 @@ const NAV_PATHS: Partial<Record<string, string>> = {
   staff: '/staff',
   roles: '/roles',
   'audit-log': '/audit-log',
+  settings: '/settings',
 }
 
 const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
@@ -93,6 +103,9 @@ const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
   '/staff': { id: 'staff', title: 'Staff' },
   '/roles': { id: 'roles', title: 'Roles' },
   '/audit-log': { id: 'audit-log', title: 'Audit log' },
+  // Was missing: navigating to /settings left the topbar title blank and
+  // no sidebar item active, which is half of how the page got lost.
+  '/settings': { id: 'settings', title: 'Settings' },
 }
 
 /**
