@@ -188,8 +188,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # `tsc -b`, not `tsc --noEmit`. frontend/tsconfig.json is a solution
+      # file — `"files": []` plus references to tsconfig.app/node — so
+      # `--noEmit` type-checks the empty root project, exits 0, and reports
+      # nothing however broken the code is. This step passed unconditionally
+      # until it was changed; only the `npm run build` step below (which
+      # already runs `tsc -b`) was catching type errors at all.
       - name: Type check
-        run: npx tsc --noEmit
+        run: npx tsc -b --force
 
       - name: Lint
         run: npm run lint
