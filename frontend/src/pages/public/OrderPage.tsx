@@ -1,13 +1,20 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
+  Armchair,
   ArrowLeft,
   ArrowRight,
   Car,
+  CircleEllipsis,
+  FileText,
+  Smartphone,
+  UtensilsCrossed,
+  WashingMachine,
   CheckCircle2,
   ChevronDown,
   CircleDot,
-  Clock,
+  Eye,
+  EyeOff,
   History,
   KeyRound,
   LocateFixed,
@@ -22,6 +29,16 @@ import {
   Weight,
 } from 'lucide-react'
 import { isAxiosError } from 'axios'
+import { useCustomer } from '../../auth/useCustomer'
+import { passwordStrength, MIN_PASSWORD_LENGTH } from '../../auth/passwordStrength'
+import {
+  CustomerValidationError,
+  GENDER_OPTIONS,
+  loginCustomer,
+  registerCustomer,
+  type Customer as CustomerAccount,
+  type CustomerGender as CustomerGenderValue,
+} from '../../auth/customerAuth'
 import {
   SERVICE_META,
   submitPublicOrder,
@@ -29,6 +46,8 @@ import {
   type PublicService,
 } from './publicOrder'
 import {
+  currentLocationPlace,
+  geolocationRefused,
   placeLabel,
   recentDestinations,
   rememberDestination,
@@ -37,19 +56,38 @@ import {
   type PlaceHit,
 } from './places'
 import { DateRangePicker } from './DateRangePicker'
+import { MapPanel } from './MapPanel'
+import { RideScreen } from './RideScreen'
+import { OrderNav } from './OrderNav'
 import './landing.css'
 
-type Step = 'service' | 'details' | 'vehicle' | 'contact' | 'review'
+type Step = 'service' | 'details' | 'vehicle' | 'account' | 'review'
 
 /**
  * The vehicle IS the product. Delivery leads with it (the size defaults and
  * is changeable right there); rides and rentals need the trip or the dates
  * first, so their vehicle step follows the details.
+ *
+ * `account` disappears entirely for a customer who is already signed in
+ * (ADR-0015 §3). Their name, phone and email are on the account; asking
+ * again would be the form admitting it does not remember them.
  */
-function stepsFor(service: PublicService): Step[] {
-  return service === 'delivery'
-    ? ['service', 'vehicle', 'details', 'contact', 'review']
-    : ['service', 'details', 'vehicle', 'contact', 'review']
+function stepsFor(service: PublicService, signedIn: boolean): Step[] {
+  const upToVehicle: Step[] =
+    service === 'delivery' ? ['service', 'vehicle', 'details'] : ['service', 'details', 'vehicle']
+
+  /*
+   * A ride has no confirm screen. Picking the car IS the confirmation —
+   * the trip and the vehicle are both on the screen you tapped it from,
+   * and a summary that repeats them is a page standing between somebody
+   * and a taxi they have already described.
+   *
+   * Delivery and self-drive keep theirs: a parcel's size and contents, or
+   * a rental's dates, are worth reading back before they are committed to.
+   */
+  const confirm: Step[] = service === 'ride' ? [] : ['review']
+
+  return signedIn ? [...upToVehicle, ...confirm] : [...upToVehicle, 'account', ...confirm]
 }
 
 /**
@@ -123,6 +161,25 @@ const DELIVERY_FLEET: {
     sprite: 'side-truck',
     forSize: '',
   },
+]
+
+/** "What are you sending?" — the API's item_type values, given faces. */
+const ITEM_TYPES: { value: string; label: string; icon: React.ReactNode }[] = [
+  { value: 'documents', label: 'Documents', icon: <FileText className="h-6 w-6" aria-hidden /> },
+  { value: 'food', label: 'Food', icon: <UtensilsCrossed className="h-6 w-6" aria-hidden /> },
+  { value: 'parcel', label: 'Parcel', icon: <Package className="h-6 w-6" aria-hidden /> },
+  {
+    value: 'electronics',
+    label: 'Electronics',
+    icon: <Smartphone className="h-6 w-6" aria-hidden />,
+  },
+  { value: 'furniture', label: 'Furniture', icon: <Armchair className="h-6 w-6" aria-hidden /> },
+  {
+    value: 'appliances',
+    label: 'Appliances',
+    icon: <WashingMachine className="h-6 w-6" aria-hidden />,
+  },
+  { value: 'other', label: 'Other', icon: <CircleEllipsis className="h-6 w-6" aria-hidden /> },
 ]
 
 const PACKAGE_SIZES = [
@@ -228,13 +285,20 @@ const RENTAL_FILTERS: { value: RentalCategory | 'all'; label: string }[] = [
  */
 export function OrderPage() {
   const [params] = useSearchParams()
+  /*
+   * The customer account, not the staff session (ADR-0015 §1). A
+   * dispatcher signed into the back office is not the person being driven
+   * anywhere; if they want a walk-in order the tray at /order-requests is
+   * theirs. This page answers to the `customer` guard alone.
+   */
+  const { customer, loading: sessionLoading, adopt } = useCustomer()
 
   const initialService = ((): PublicService => {
     const fromUrl = params.get('service')
     return fromUrl === 'delivery' || fromUrl === 'self_drive' ? fromUrl : 'ride'
   })()
 
-  const [step, setStep] = useState<Step>(() => {
+  const [requestedStep, setStep] = useState<Step>(() => {
     const fromUrl = params.get('service')
     if (fromUrl === 'delivery') return 'vehicle'
     return fromUrl ? 'details' : 'service'
@@ -242,12 +306,24 @@ export function OrderPage() {
   const [service, setService] = useState<PublicService>(initialService)
   const [pickup, setPickup] = useState(params.get('pickup') ?? '')
   const [dropoff, setDropoff] = useState(params.get('dropoff') ?? '')
+  // The geocoder's two-line form of the same place ("Acacia Mall" /
+  // "14-18 Cooper Rd, Kampala"), kept alongside the plain string the
+  // payload sends. Null when the visitor typed free text.
+  const [pickupPlace, setPickupPlace] = useState<PlaceHit | null>(null)
+  const [dropoffPlace, setDropoffPlace] = useState<PlaceHit | null>(null)
+  /** Where the device says we are, so the map can show those surroundings. */
+  const [myPosition, setMyPosition] = useState<[number, number] | null>(null)
+  /** Both ends geocoded: the map is drawing the trip, so make room for it. */
+  const tripFrom = pickupPlace?.lngLat ?? null
+  const tripTo = dropoffPlace?.lngLat ?? null
+  // Self drive has no trip to draw: it is a rental, not a journey.
+  const tripVisualised = service !== 'self_drive' && tripFrom !== null && tripTo !== null
   const [rideFor, setRideFor] = useState<'myself' | 'other'>('myself')
   const [riderName, setRiderName] = useState('')
   const [riderPhone, setRiderPhone] = useState('')
-  const [scheduledFor, setScheduledFor] = useState('')
   const [vehicleClass, setVehicleClass] = useState('economy')
   const [packageSize, setPackageSize] = useState('medium')
+  const [itemType, setItemType] = useState('parcel')
   const [sizeOpen, setSizeOpen] = useState(false)
   const [deliveryVehicle, setDeliveryVehicle] = useState<string | null>(null)
   // The recommendation IS the selection until the sender overrides it, so
@@ -258,9 +334,6 @@ export function OrderPage() {
   const [rentalFilter, setRentalFilter] = useState<RentalCategory | 'all'>('all')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
-  const [contactName, setContactName] = useState('')
-  const [contactPhone, setContactPhone] = useState('')
-  const [contactEmail, setContactEmail] = useState('')
   const [notes, setNotes] = useState('')
   const [honeypot, setHoneypot] = useState('')
 
@@ -269,11 +342,93 @@ export function OrderPage() {
   const [serverErrors, setServerErrors] = useState<Record<string, string>>({})
   const [failure, setFailure] = useState<string | null>(null)
 
-  const steps = stepsFor(service)
+  /*
+   * Derived, not corrected in an effect. A stored session resolves after
+   * first paint, so somebody can be standing on `account` at the moment
+   * their account arrives — and `steps` has already dropped that step by
+   * then, which blanks the progress rail as well. Deriving moves them in
+   * the same render the session lands in; an effect would do it one
+   * render later, and that render is a visible flash of a sign-up form
+   * the customer does not need.
+   */
+  /*
+   * ...and it doubles as the failure landing for a ride. A hail submits
+   * straight from sign-up, so if the write is rejected there is no screen
+   * left to be on — the sign-up already succeeded and re-showing it would
+   * ask somebody to create the account they just created. Falling through
+   * to the summary shows the error over everything they chose, with one
+   * button to try again.
+   *
+   * `!submitting` is what keeps that fallback from firing *during* a
+   * successful hail. Without it the confirm screen flashes up for the
+   * length of the POST — the account lands, the step derives to `review`,
+   * and the customer sees for half a second the exact screen a ride is
+   * supposed not to have.
+   */
+  const step: Step =
+    customer !== null && requestedStep === 'account' && !submitting ? 'review' : requestedStep
+
+  const steps = stepsFor(service, customer !== null)
   const stepIndex = steps.indexOf(step)
+
+  /** What follows the vehicle/details pair: sign up, or straight to review. */
+  const afterChoices: Step = customer === null ? 'account' : 'review'
+
+  /**
+   * What the last choice step does. Signed out, everything goes to sign-up
+   * first. Signed in, a ride places itself and everything else confirms.
+   */
+  const finishChoices = () => {
+    if (customer === null) {
+      setStep('account')
+      return
+    }
+    if (service === 'ride') {
+      void submit(customer)
+      return
+    }
+    setStep('review')
+  }
+
+  /**
+   * Most orders start where the person is standing, so an empty pickup
+   * fills itself in from the device once per visit. Deliberately narrow:
+   * it never overwrites a pickup that came from the URL or a previous
+   * screen, it skips entirely when the browser has already refused, and a
+   * refusal or timeout just leaves the field empty to type into.
+   */
+  const askedForLocation = useRef(false)
+  useEffect(() => {
+    if (askedForLocation.current || pickup.trim() !== '') return
+    askedForLocation.current = true
+    void geolocationRefused().then((refused) => {
+      if (refused) return
+      void currentLocationPlace().then((place) => {
+        if (place === null) return
+        // The payload carries the address; "Current location" is the label.
+        setPickup(place.detail)
+        setPickupPlace(place)
+        if (place.lngLat !== undefined) setMyPosition(place.lngLat)
+      })
+    })
+  }, [pickup])
 
   // Picking a vehicle happens mid-list, with Continue often below the fold;
   // bring it into view so the next tap is obvious.
+  /*
+   * The sheet is one scrolling element reused by every step, so its scroll
+   * offset survives a step change — and `revealContinue` below deliberately
+   * scrolls it. A tall step arriving after that opened part-scrolled, with
+   * its heading sliced by the sheet's own top edge and the progress rail
+   * out of sight above it. Every step starts at its own beginning.
+   */
+  const sheetRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    const sheet = sheetRef.current
+    // jsdom implements no scrolling at all, same as scrollIntoView below.
+    if (sheet !== null && typeof sheet.scrollTo === 'function') sheet.scrollTo({ top: 0 })
+  }, [step])
+
   const continueRef = useRef<HTMLDivElement>(null)
   const revealContinue = () => {
     requestAnimationFrame(() => {
@@ -297,15 +452,21 @@ export function OrderPage() {
     return trip
   }, [service, pickup, dropoff, startDate, endDate, rideFor, riderName, riderPhone])
 
-  // No account, no password (ADR-0012 §3): this flow collects only what
-  // the dispatcher needs to make the phone call. Customer accounts are a
-  // deferred decision — collecting a credential before the endpoint that
-  // could honour it exists would be pretending, and a stored-nowhere
-  // password is a secret people reuse. Email is optional, as the server
-  // says it is.
-  const contactValid = contactName.trim() !== '' && contactPhone.trim().length >= 9
+  /*
+   * Ordering requires an account (ADR-0015 §1), so the contact details on
+   * the order are the account's — read straight off it rather than copied
+   * into form state, which is what keeps them from drifting apart after a
+   * profile edit.
+   */
 
-  const buildPayload = (): PublicOrderPayload => {
+  /*
+   * The account is passed in rather than read from `customer` state. A ride
+   * submits the instant sign-up succeeds, and at that moment `adopt()` has
+   * been called but React has not re-rendered — reading state here would
+   * send an order with an empty name and phone, which the server would
+   * reject with a 422 the customer cannot act on.
+   */
+  const buildPayload = (account: CustomerAccount): PublicOrderPayload => {
     const details: Record<string, string | number> = {}
     if (service === 'ride') {
       // The dispatcher settles the headcount on the phone.
@@ -320,6 +481,7 @@ export function OrderPage() {
     }
     if (service === 'delivery') {
       details.package_size = packageSize
+      details.item_type = itemType
       const vehicle = DELIVERY_FLEET.find((v) => v.id === effectiveDeliveryVehicle)
       if (vehicle !== undefined) details.delivery_vehicle = vehicle.name
     }
@@ -335,24 +497,26 @@ export function OrderPage() {
 
     return {
       service_type: service,
-      contact_name: contactName.trim(),
-      contact_phone: contactPhone.trim(),
-      contact_email: contactEmail.trim() || undefined,
+      contact_name: account.name,
+      contact_phone: account.phone,
+      contact_email: account.email,
       pickup_location: service === 'self_drive' ? undefined : pickup.trim(),
       dropoff_location: service === 'self_drive' ? undefined : dropoff.trim(),
-      scheduled_for: scheduledFor ? new Date(scheduledFor).toISOString() : undefined,
+      // Every walk-in order is immediate; the dispatcher schedules on the
+      // call if the customer wants something later.
+      scheduled_for: undefined,
       notes: notes.trim() || undefined,
       details,
       website: honeypot || undefined,
     }
   }
 
-  const submit = async () => {
+  const submit = async (account: CustomerAccount) => {
     setSubmitting(true)
     setFailure(null)
     setServerErrors({})
     try {
-      setReference(await submitPublicOrder(buildPayload()))
+      setReference(await submitPublicOrder(buildPayload(account)))
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 422) {
         const raw: Record<string, string[]> = error.response.data.errors ?? {}
@@ -360,7 +524,19 @@ export function OrderPage() {
           Object.fromEntries(Object.entries(raw).map(([key, messages]) => [key, messages[0]])),
         )
         // The offending field lives on an earlier step; go back to it.
-        setStep(Object.keys(raw).some((k) => k.startsWith('contact')) ? 'contact' : 'details')
+        /*
+         * The contact fields come off the account now, not off this form,
+         * so a `contact_*` rejection is not something the customer can fix
+         * on an earlier step — sending them back to one would be a loop.
+         * Say so instead, and leave them on review.
+         */
+        if (Object.keys(raw).some((k) => k.startsWith('contact'))) {
+          setFailure(
+            'Your account details were rejected. Please check your name, phone and email, then try again.',
+          )
+        } else {
+          setStep('details')
+        }
       } else if (isAxiosError(error) && error.response?.status === 429) {
         setFailure('Too many orders from this connection. Please wait a minute and try again.')
       } else {
@@ -372,7 +548,27 @@ export function OrderPage() {
   }
 
   if (reference !== null) {
-    return <SuccessScreen reference={reference} />
+    /*
+     * A rental has nobody to match — the customer collects the vehicle and
+     * drives it themselves — so it keeps the dispatcher-callback receipt.
+     * Rides and deliveries both send a person, and that person arriving is
+     * what the matching screen is about.
+     */
+    return service === 'self_drive' ? (
+      <SuccessScreen reference={reference} />
+    ) : (
+      <RideScreen
+        reference={reference}
+        pickup={pickup}
+        dropoff={dropoff}
+        // The pickup is the subject of the matching screen, not the phone —
+        // they differ whenever someone ordered for a point they are not
+        // standing at. The device fix is only the fallback.
+        near={tripFrom ?? myPosition}
+        from={tripFrom}
+        to={tripTo}
+      />
+    )
   }
 
   return (
@@ -383,7 +579,16 @@ export function OrderPage() {
           sheet. From lg up it becomes the Uber split: form column on the
           left, map owning the rest of the viewport. */}
       <div className="lg:grid lg:grid-cols-[minmax(0,34rem)_1fr]">
-        <main className="kr-sheet fixed inset-x-0 bottom-0 z-30 max-h-[78dvh] w-full overflow-y-auto rounded-t-3xl border-t border-border bg-surface-card px-5 pb-[max(2rem,env(safe-area-inset-bottom))] shadow-[0_-12px_40px_rgba(0,16,40,0.16)] lg:static lg:z-auto lg:max-h-none lg:max-w-none lg:animate-none lg:overflow-visible lg:rounded-none lg:border-0 lg:bg-transparent lg:px-10 lg:pb-20 lg:pt-8 lg:shadow-none lg:[transform:none]">
+        {/* The sheet yields half the screen once there is a trip to look
+            at: the route is drawn behind it, and at 78dvh the map strip
+            left over was too thin to read it in. Matches the bottom
+            padding the map reserves when it fits the route. */}
+        <main
+          ref={sheetRef}
+          className={`kr-sheet fixed inset-x-0 bottom-0 z-30 w-full overflow-y-auto rounded-t-3xl border-t border-border bg-surface-card px-5 pb-[max(2rem,env(safe-area-inset-bottom))] shadow-[0_-12px_40px_rgba(0,16,40,0.16)] transition-[max-height] duration-300 ease-[var(--kr-ease-out)] lg:static lg:z-auto lg:max-h-none lg:max-w-none lg:animate-none lg:overflow-visible lg:rounded-none lg:border-0 lg:bg-transparent lg:px-10 lg:pb-20 lg:pt-8 lg:shadow-none lg:transition-none lg:[transform:none] ${
+            tripVisualised ? 'max-h-[52dvh]' : 'max-h-[78dvh]'
+          }`}
+        >
           {/* The sheet's grab handle, purely visual on the web. */}
           <div
             className="mx-auto mb-4 mt-3 h-1 w-10 rounded-full bg-border lg:hidden"
@@ -439,7 +644,7 @@ export function OrderPage() {
                         setService(key)
                         setStep(key === 'delivery' ? 'vehicle' : 'details')
                       }}
-                      className={`flex flex-col items-center gap-3 rounded-2xl border border-transparent px-3 py-6 text-center transition-[transform,box-shadow,border-color,background-color] duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm active:scale-[0.98] ${tints[key]}`}
+                      className={`flex flex-col items-center gap-3 rounded-2xl border border-transparent px-3 py-6 text-center transition-[transform,box-shadow,border-color,background-color] duration-150 ease-[var(--kr-ease-out)] hover:-translate-y-0.5 hover:shadow-sm active:scale-[0.98] ${tints[key]}`}
                     >
                       <span className="flex h-14 w-14 items-center justify-center rounded-full bg-surface-card text-brand-green shadow-sm">
                         {icons[key]}
@@ -487,7 +692,10 @@ export function OrderPage() {
                     />
                     <DestinationSearch
                       value={dropoff}
-                      onChange={setDropoff}
+                      onChange={(next, place) => {
+                        setDropoff(next)
+                        setDropoffPlace(place ?? null)
+                      }}
                       error={serverErrors.dropoff_location}
                       onHistoryPick={() => {
                         // A history pick is a known destination - jump ahead,
@@ -503,36 +711,74 @@ export function OrderPage() {
 
                 {service === 'delivery' && (
                   <>
-                    <IconField
-                      icon={<CircleDot className="h-4 w-4 text-brand-green" />}
-                      label="Pickup location"
-                      value={pickup}
-                      onChange={setPickup}
-                      error={serverErrors.pickup_location}
-                      placeholder="Pickup location"
-                    />
-                    <IconField
-                      icon={<MapPin className="h-4 w-4 text-text-secondary" />}
-                      label="Drop-off location"
-                      value={dropoff}
-                      onChange={setDropoff}
-                      error={serverErrors.dropoff_location}
-                      placeholder="Drop-off location"
-                    />
-                  </>
-                )}
+                    {/* The route reads as one journey: two numbered stops on
+                        a single rail, green out and red in. */}
+                    <div className="rounded-2xl border border-border bg-surface-card p-4">
+                      <RouteStop
+                        index={1}
+                        title="Pickup location"
+                        tone="pickup"
+                        value={pickup}
+                        place={pickupPlace}
+                        placeholder="Where are we collecting?"
+                        error={serverErrors.pickup_location}
+                        onChange={(next, place) => {
+                          setPickup(next)
+                          setPickupPlace(place)
+                          if (place?.lngLat !== undefined) setMyPosition(place.lngLat)
+                        }}
+                      />
+                      <div className="mb-4 border-t border-border" />
+                      <RouteStop
+                        index={2}
+                        title="Drop-off location"
+                        tone="dropoff"
+                        value={dropoff}
+                        place={dropoffPlace}
+                        placeholder="Where is it going?"
+                        error={serverErrors.dropoff_location}
+                        onChange={(next, place) => {
+                          setDropoff(next)
+                          setDropoffPlace(place)
+                        }}
+                      />
 
-                {service === 'delivery' && (
-                  <>
-                    <IconField
-                      icon={<Clock className="h-4 w-4 text-text-secondary" />}
-                      label="When"
-                      value={scheduledFor}
-                      onChange={setScheduledFor}
-                      type="datetime-local"
-                      error={serverErrors.scheduled_for}
-                      hint="Leave empty to send it as soon as possible."
-                    />
+                      <div className="border-t border-border pt-4">
+                        <p className="font-display font-semibold text-text-heading">
+                          What are you sending?
+                        </p>
+                        <div
+                          role="radiogroup"
+                          aria-label="What are you sending?"
+                          className="mt-3 grid grid-cols-4 gap-2"
+                        >
+                          {ITEM_TYPES.map((item) => {
+                            const selected = itemType === item.value
+                            return (
+                              <button
+                                key={item.value}
+                                type="button"
+                                role="radio"
+                                aria-checked={selected}
+                                onClick={() => setItemType(item.value)}
+                                className={`flex flex-col items-center gap-2 rounded-xl border px-1 py-3 transition-[border-color,background-color,transform] duration-150 ease-[var(--kr-ease-out)] active:scale-[0.97] ${
+                                  selected
+                                    ? 'border-brand-green bg-surface-accent text-brand-green'
+                                    : 'border-border bg-surface-page text-text-secondary hover:text-text-heading'
+                                }`}
+                              >
+                                {item.icon}
+                                <span
+                                  className={`text-xs ${selected ? 'font-semibold' : 'font-medium'}`}
+                                >
+                                  {item.label}
+                                </span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    </div>
                   </>
                 )}
 
@@ -557,7 +803,7 @@ export function OrderPage() {
               </div>
               <NextButton
                 disabled={!detailsValid}
-                onClick={() => setStep(service === 'delivery' ? 'contact' : 'vehicle')}
+                onClick={() => setStep(service === 'delivery' ? afterChoices : 'vehicle')}
               />
             </StepShell>
           )}
@@ -618,7 +864,7 @@ export function OrderPage() {
                         setDeliveryVehicle(vehicle.id)
                         revealContinue()
                       }}
-                      className={`flex w-full items-center gap-4 rounded-2xl border p-4 text-left transition-[border-color,background-color,transform] duration-150 ease-out active:scale-[0.99] ${
+                      className={`flex w-full items-center gap-4 rounded-2xl border p-4 text-left transition-[border-color,background-color,transform] duration-150 ease-[var(--kr-ease-out)] active:scale-[0.99] ${
                         selected
                           ? 'border-brand-green bg-surface-accent'
                           : 'border-border bg-surface-card'
@@ -671,7 +917,7 @@ export function OrderPage() {
                     type="button"
                     aria-pressed={rentalFilter === filter.value}
                     onClick={() => setRentalFilter(filter.value)}
-                    className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium transition-colors duration-150 ease-out ${
+                    className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium transition-colors duration-150 ease-[var(--kr-ease-out)] ${
                       rentalFilter === filter.value
                         ? 'bg-brand-green text-text-on-brand'
                         : 'bg-surface-sunken text-text-secondary hover:text-text-heading'
@@ -697,7 +943,7 @@ export function OrderPage() {
                         setRentalModel(model.id)
                         revealContinue()
                       }}
-                      className={`flex w-full items-center gap-4 rounded-2xl border p-4 text-left transition-[border-color,background-color,transform] duration-150 ease-out active:scale-[0.99] ${
+                      className={`flex w-full items-center gap-4 rounded-2xl border p-4 text-left transition-[border-color,background-color,transform] duration-150 ease-[var(--kr-ease-out)] active:scale-[0.99] ${
                         selected
                           ? 'border-brand-green bg-surface-accent'
                           : 'border-border bg-surface-card'
@@ -732,7 +978,7 @@ export function OrderPage() {
                 Day rates are indicative. The dispatcher confirms availability and the final rate.
               </p>
               <div ref={continueRef}>
-                <NextButton disabled={rentalModel === null} onClick={() => setStep('contact')} />
+                <NextButton disabled={rentalModel === null} onClick={() => setStep(afterChoices)} />
               </div>
             </StepShell>
           )}
@@ -752,7 +998,7 @@ export function OrderPage() {
                         setVehicleClass(klass.value)
                         revealContinue()
                       }}
-                      className={`flex w-full items-center gap-4 rounded-2xl border p-4 text-left transition-[border-color,background-color,transform] duration-150 ease-out active:scale-[0.99] ${
+                      className={`flex w-full items-center gap-4 rounded-2xl border p-4 text-left transition-[border-color,background-color,transform] duration-150 ease-[var(--kr-ease-out)] active:scale-[0.99] ${
                         selected
                           ? 'border-brand-green bg-surface-accent'
                           : 'border-border bg-surface-card'
@@ -790,100 +1036,66 @@ export function OrderPage() {
                 })}
               </div>
               <p className="mt-3 text-xs text-text-secondary">
-                Fares are starting prices. The dispatcher confirms the exact price on the call.
+                Fares are starting prices. The final fare follows the distance and time of the trip.
               </p>
               <div ref={continueRef}>
-                <NextButton disabled={false} onClick={() => setStep('contact')} />
-              </div>
-            </StepShell>
-          )}
-
-          {step === 'contact' && (
-            <StepShell
-              title="How do we reach you?"
-              onBack={() => setStep(service === 'delivery' ? 'details' : 'vehicle')}
-            >
-              {/* Deliberately not a signup (ADR-0012 §3): there is no
-                  customer-account endpoint, so this step asks for exactly
-                  what the dispatcher's phone call needs and nothing that
-                  pretends to be a credential. */}
-              <div className="kr-rise">
-                <div className="space-y-3">
-                  <IconField
-                    icon={<User className="h-4 w-4 text-text-secondary" />}
-                    label="Full name"
-                    value={contactName}
-                    onChange={setContactName}
-                    error={serverErrors.contact_name}
-                    placeholder="Full name"
-                  />
-                  <IconField
-                    icon={<Phone className="h-4 w-4 text-text-secondary" />}
-                    label="Phone number"
-                    value={contactPhone}
-                    onChange={setContactPhone}
-                    error={serverErrors.contact_phone}
-                    placeholder="Phone number"
-                    hint="A dispatcher calls this number to confirm your order and the price."
-                  />
-                  <IconField
-                    icon={<Mail className="h-4 w-4 text-text-secondary" />}
-                    label="Email address (optional)"
-                    value={contactEmail}
-                    onChange={setContactEmail}
-                    error={serverErrors.contact_email}
-                    placeholder="Email address (optional)"
-                    type="email"
-                  />
-                  {/* Honeypot: humans never see it, bots autofill it. */}
-                  <div className="absolute left-[-9999px] top-auto" aria-hidden="true">
-                    <label>
-                      Website
-                      <input
-                        tabIndex={-1}
-                        autoComplete="off"
-                        value={honeypot}
-                        onChange={(e) => setHoneypot(e.target.value)}
-                      />
-                    </label>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setStep('review')}
-                  disabled={!contactValid}
-                  className="mt-6 w-full rounded-lg bg-brand-green px-6 py-3 font-semibold text-text-on-brand transition-[background-color,transform,opacity] duration-150 ease-out hover:bg-brand-green-hover active:scale-[0.98] disabled:opacity-50"
-                >
-                  Continue
-                </button>
-
-                <SocialPrefill
-                  onIdentity={({ name, email }) => {
-                    if (name !== '') setContactName(name)
-                    if (email !== '') setContactEmail(email)
-                  }}
+                {/* The last tap of a ride: no confirm screen follows it. */}
+                <NextButton
+                  disabled={false}
+                  busy={submitting}
+                  label={customer === null ? 'Continue' : 'Request ride'}
+                  onClick={finishChoices}
                 />
               </div>
             </StepShell>
           )}
 
+          {step === 'account' && sessionLoading && (
+            <StepShell
+              title="One moment"
+              onBack={() => setStep(service === 'delivery' ? 'details' : 'vehicle')}
+            >
+              {/* A stored token is still being resolved. Showing the
+                  sign-up form here would ask a returning customer to
+                  create the account they already have. */}
+              <p className="text-text-secondary">Checking whether you are already signed in…</p>
+            </StepShell>
+          )}
+
+          {step === 'account' && !sessionLoading && (
+            <AccountStep
+              onBack={() => setStep(service === 'delivery' ? 'details' : 'vehicle')}
+              onAuthenticated={(next) => {
+                adopt(next)
+                // A ride goes out on the same tap that created the account.
+                // `next` is passed to submit rather than read back from
+                // state, which `adopt` has not flushed yet.
+                if (service === 'ride') void submit(next)
+                else setStep('review')
+              }}
+              submitLabel={service === 'ride' ? 'Create account & request ride' : undefined}
+              honeypot={honeypot}
+              onHoneypot={setHoneypot}
+            />
+          )}
+
           {step === 'review' && (
-            <StepShell title="Confirm your order" onBack={() => setStep('contact')}>
+            <StepShell
+              title="Confirm your order"
+              onBack={() =>
+                // Signed in, the sign-up step does not exist to go back to.
+                setStep(
+                  customer !== null ? (service === 'delivery' ? 'details' : 'vehicle') : 'account',
+                )
+              }
+            >
               <dl className="divide-y divide-border rounded-xl border border-border bg-surface-card">
                 <ReviewRow label="Service" value={SERVICE_META[service].label} />
                 {service !== 'self_drive' && (
                   <>
                     <ReviewRow label="Pickup" value={pickup} />
                     <ReviewRow label="Drop-off" value={dropoff} />
-                    <ReviewRow
-                      label="When"
-                      value={
-                        scheduledFor
-                          ? new Date(scheduledFor).toLocaleString()
-                          : 'As soon as possible'
-                      }
-                    />
+                    <ReviewRow label="When" value="As soon as possible" />
                   </>
                 )}
                 {service === 'self_drive' && (
@@ -912,8 +1124,8 @@ export function OrderPage() {
                 {service === 'ride' && rideFor === 'other' && riderName.trim() !== '' && (
                   <ReviewRow label="Rider" value={`${riderName} · ${riderPhone}`} />
                 )}
-                <ReviewRow label="Name" value={contactName} />
-                <ReviewRow label="Phone" value={contactPhone} />
+                <ReviewRow label="Name" value={customer?.name ?? ''} />
+                <ReviewRow label="Phone" value={customer?.phone ?? ''} />
               </dl>
               <div className="mt-4">
                 <label className="mb-1 block text-sm font-medium text-text-heading">
@@ -924,14 +1136,18 @@ export function OrderPage() {
                   onChange={(e) => setNotes(e.target.value)}
                   rows={3}
                   maxLength={1000}
-                  className="w-full rounded-lg border border-border-input bg-surface-page px-4 py-3 text-text-body outline-none transition-[border-color] duration-150 ease-out focus:border-brand-green"
+                  className="w-full rounded-lg border border-border-input bg-surface-page px-4 py-3 text-text-body outline-none transition-[border-color] duration-150 ease-[var(--kr-ease-out)] focus:border-brand-green"
                 />
               </div>
               <button
                 type="button"
-                onClick={() => void submit()}
+                onClick={() => {
+                  // Non-null by construction: review is unreachable without
+                  // an account. The guard is for the compiler, not the user.
+                  if (customer !== null) void submit(customer)
+                }}
                 disabled={submitting}
-                className="mt-6 w-full rounded-lg bg-brand-green px-6 py-3 font-semibold text-text-on-brand transition-[background-color,transform,opacity] duration-150 ease-out hover:bg-brand-green-hover active:scale-[0.98] disabled:opacity-60"
+                className="mt-6 w-full rounded-lg bg-brand-green px-6 py-3 font-semibold text-text-on-brand transition-[background-color,transform,opacity] duration-150 ease-[var(--kr-ease-out)] hover:bg-brand-green-hover active:scale-[0.98] disabled:opacity-60"
               >
                 {submitting ? 'Sending…' : 'Place order'}
               </button>
@@ -941,230 +1157,12 @@ export function OrderPage() {
         <MapPanel
           pickup={service === 'self_drive' ? '' : pickup}
           dropoff={service === 'self_drive' ? '' : dropoff}
+          center={myPosition}
+          from={service === 'self_drive' ? null : tripFrom}
+          to={service === 'self_drive' ? null : tripTo}
         />
       </div>
     </div>
-  )
-}
-
-/** Kampala city centre; the map opens on the service area, not the world. */
-const KAMPALA: [number, number] = [32.5825, 0.3476]
-
-/**
- * The GL surface both engines share. The SDKs are dynamically imported so
- * they stay out of the main bundle and out of jsdom; if GL init fails the
- * panel falls back to OpenStreetMap's keyless embed rather than a blank pane.
- */
-type MapEngine = Pick<
-  typeof import('maplibre-gl'),
-  'Map' | 'Marker' | 'AttributionControl' | 'NavigationControl'
->
-
-/**
- * Mapbox GL with the clean light/dark styles once a token is configured;
- * MapLibre GL over CARTO's keyless Positron styles (the same pale, minimal
- * look) until then. Both expose the same Map/Marker surface, so the single
- * cast below is safe for everything this panel touches.
- */
-async function loadMapEngine(token: string | undefined): Promise<{ gl: MapEngine; style: string }> {
-  const dark = window.matchMedia('(prefers-color-scheme: dark)').matches
-  if (token) {
-    const [mod] = await Promise.all([import('mapbox-gl'), import('mapbox-gl/dist/mapbox-gl.css')])
-    mod.default.accessToken = token
-    return {
-      gl: mod.default as unknown as MapEngine,
-      style: dark ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11',
-    }
-  }
-  const [mod] = await Promise.all([
-    import('maplibre-gl'),
-    import('maplibre-gl/dist/maplibre-gl.css'),
-  ])
-  return {
-    gl: mod,
-    style: dark
-      ? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
-      : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
-  }
-}
-
-/**
- * The decorative fleet around the city centre, as in the app mockup. Static
- * on purpose: these are ambience, not live positions (the public API exposes
- * no vehicle locations), and idle motion on every visit would be noise.
- */
-type VehicleKind = 'sedan' | 'suv' | 'pickup' | 'boda'
-
-const NEARBY_VEHICLES: { at: [number, number]; heading: number; kind: VehicleKind }[] = [
-  { at: [32.5856, 0.3496], heading: 40, kind: 'sedan' },
-  { at: [32.5795, 0.3506], heading: 205, kind: 'suv' },
-  { at: [32.5851, 0.3446], heading: 120, kind: 'sedan' },
-  { at: [32.579, 0.345], heading: 320, kind: 'boda' },
-  { at: [32.5857, 0.347], heading: 85, kind: 'pickup' },
-  { at: [32.5809, 0.3518], heading: 10, kind: 'boda' },
-]
-
-/** The fleet sprite set (see public/assets/vehicles/): one unified top-down
- * family, all on the same 512 canvas scale so relative sizes stay honest. */
-const VEHICLE_SPRITES: Record<VehicleKind, string> = {
-  sedan: '/assets/vehicles/sedan-top.svg',
-  suv: '/assets/vehicles/suv-top.svg',
-  pickup: '/assets/vehicles/pickup-top.svg',
-  boda: '/assets/vehicles/boda-rider-top.svg',
-}
-
-/**
- * Style layers that fight the mockup's calm: neighbourhood names, POIs,
- * water names, house numbers, and the dense residential/building texture
- * that greys out the ground. Road names and parks stay. Covers both
- * engines' id conventions (Positron's place_* / poi_*, Mapbox's *-label).
- */
-const NOISY_LAYERS =
-  /^(place_|poi_|watername_|housenumber|landuse_residential|building)|settlement-|poi-label|airport-label|natural-.*label|water-.*label/
-
-/** The blue "you are here" dot inside its soft accuracy halo (styled in landing.css). */
-function userLocationElement(): HTMLDivElement {
-  const el = document.createElement('div')
-  el.className = 'kr-loc'
-  el.setAttribute('aria-hidden', 'true')
-  return el
-}
-
-function vehicleElement(kind: VehicleKind): HTMLImageElement {
-  const img = document.createElement('img')
-  img.src = VEHICLE_SPRITES[kind]
-  // One shared canvas size: the sprites carry honest relative scale, so a
-  // boda naturally renders smaller than a pickup.
-  img.width = 58
-  img.height = 58
-  img.className = 'kr-vehicle'
-  img.alt = ''
-  return img
-}
-
-function MapPanel({ pickup, dropoff }: { pickup: string; dropoff: string }) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [failed, setFailed] = useState(false)
-
-  const useGl = import.meta.env.MODE !== 'test' && !failed
-
-  useEffect(() => {
-    if (!useGl || containerRef.current === null) return
-
-    let map: import('maplibre-gl').Map | undefined
-    let cancelled = false
-
-    void (async () => {
-      try {
-        const { gl, style } = await loadMapEngine(import.meta.env.VITE_MAPBOX_TOKEN)
-        if (cancelled || containerRef.current === null) return
-
-        const desktop = window.matchMedia('(min-width: 1024px)').matches
-        const m = new gl.Map({
-          container: containerRef.current,
-          style,
-          center: KAMPALA,
-          zoom: 14.1,
-          attributionControl: false,
-          // Zoom without hijacking the page: Ctrl + wheel on desktop,
-          // two-finger pinch on touch.
-          cooperativeGestures: true,
-        })
-        map = m
-        m.on('load', () => {
-          for (const layer of m.getStyle().layers ?? []) {
-            if (NOISY_LAYERS.test(layer.id)) m.removeLayer(layer.id)
-          }
-        })
-        m.addControl(new gl.AttributionControl({ compact: true }))
-        m.addControl(new gl.NavigationControl({ showCompass: false }), 'top-right')
-        if (!desktop) {
-          // The sheet covers the lower half on mobile; bias the centre up
-          // into the visible window.
-          m.jumpTo({
-            center: KAMPALA,
-            padding: { top: 0, bottom: Math.round(window.innerHeight * 0.45), left: 0, right: 0 },
-          })
-        }
-
-        new gl.Marker({ element: userLocationElement() }).setLngLat(KAMPALA).addTo(m)
-        for (const vehicle of NEARBY_VEHICLES) {
-          new gl.Marker({
-            element: vehicleElement(vehicle.kind),
-            rotation: vehicle.heading,
-            rotationAlignment: 'map',
-          })
-            .setLngLat(vehicle.at)
-            .addTo(m)
-        }
-      } catch {
-        // No WebGL or blocked tile hosts — show the flat embed, never a blank pane.
-        if (!cancelled) setFailed(true)
-      }
-    })()
-
-    return () => {
-      cancelled = true
-      map?.remove()
-    }
-  }, [useGl])
-
-  return (
-    <aside className="fixed inset-0 lg:relative lg:inset-auto" aria-label="Map of the service area">
-      <div className="h-full lg:sticky lg:top-16 lg:h-[calc(100dvh-4rem)]">
-        {useGl ? (
-          <div ref={containerRef} className="h-full w-full" />
-        ) : (
-          <iframe
-            title="Map of the Kampala service area"
-            src="https://www.openstreetmap.org/export/embed.html?bbox=32.44%2C0.18%2C32.78%2C0.47&layer=mapnik&marker=0.3476%2C32.5825"
-            className="h-full w-full border-0 dark:brightness-90 dark:contrast-[0.9] dark:hue-rotate-180 dark:invert"
-            loading="lazy"
-          />
-        )}
-        {(pickup.trim() !== '' || dropoff.trim() !== '') && (
-          <div className="pointer-events-none absolute left-4 top-20 max-w-xs rounded-xl border border-border bg-surface-card/95 px-4 py-3 shadow-md backdrop-blur lg:left-6 lg:top-6">
-            {pickup.trim() !== '' && (
-              <p className="flex items-center gap-2 text-sm font-medium text-text-heading">
-                <CircleDot className="h-4 w-4 shrink-0 text-brand-green" aria-hidden />
-                From {pickup.trim()}
-              </p>
-            )}
-            {dropoff.trim() !== '' && (
-              <p className="mt-1 flex items-center gap-2 text-sm font-medium text-text-heading">
-                <MapPin className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden />
-                To {dropoff.trim()}
-              </p>
-            )}
-          </div>
-        )}
-      </div>
-    </aside>
-  )
-}
-
-/**
- * Mobile: the mockup's floating rounded header card over the map.
- * Desktop: the ordinary full-width sticky bar.
- */
-function OrderNav() {
-  return (
-    <header className="fixed inset-x-4 top-4 z-40 rounded-2xl border border-border bg-surface-card shadow-md lg:sticky lg:inset-x-0 lg:top-0 lg:rounded-none lg:border-x-0 lg:border-t-0 lg:border-b lg:bg-surface-page/90 lg:shadow-none lg:backdrop-blur">
-      <div className="flex h-14 items-center justify-between px-4 lg:h-16 lg:px-10">
-        <Link to="/" className="flex items-center gap-2">
-          <img src="/assets/logo-mark.png" alt="" className="h-7 w-7" />
-          <span className="font-display font-bold text-text-heading">
-            Kangaru<span className="text-brand-green">Ride</span>
-          </span>
-        </Link>
-        <Link
-          to="/"
-          className="text-sm text-text-secondary transition-colors hover:text-text-heading"
-        >
-          Cancel
-        </Link>
-      </div>
-    </header>
   )
 }
 
@@ -1295,7 +1293,7 @@ function SocialPrefill({
     const init = () => {
       if (cancelled) return
       try {
-        const google = (window as { google?: GsiNamespace }).google
+        const google = (window as unknown as { google?: GsiNamespace }).google
         google?.accounts.id.initialize({
           client_id: clientId,
           callback: (response) => {
@@ -1326,7 +1324,7 @@ function SocialPrefill({
   }, [clientId])
 
   const clickGoogle = () => {
-    const google = (window as { google?: GsiNamespace }).google
+    const google = (window as unknown as { google?: GsiNamespace }).google
     if (!clientId || google === undefined) {
       setNote("Google prefill isn't set up yet - the form above works without it.")
       return
@@ -1349,7 +1347,7 @@ function SocialPrefill({
         <button
           type="button"
           onClick={clickGoogle}
-          className="flex items-center justify-center gap-2 rounded-lg border border-border bg-surface-card px-4 py-2.5 text-sm font-semibold text-text-heading transition-colors duration-150 hover:bg-surface-sunken active:scale-[0.98]"
+          className="flex items-center justify-center gap-2 rounded-lg border border-border bg-surface-card px-4 py-2.5 text-sm font-semibold text-text-heading transition-[background-color,transform] duration-150 ease-[var(--kr-ease-out)] hover:bg-surface-sunken active:scale-[0.98]"
         >
           <GoogleLogo />
           Google
@@ -1357,13 +1355,253 @@ function SocialPrefill({
         <button
           type="button"
           onClick={clickFacebook}
-          className="flex items-center justify-center gap-2 rounded-lg border border-border bg-surface-card px-4 py-2.5 text-sm font-semibold text-text-heading transition-colors duration-150 hover:bg-surface-sunken active:scale-[0.98]"
+          className="flex items-center justify-center gap-2 rounded-lg border border-border bg-surface-card px-4 py-2.5 text-sm font-semibold text-text-heading transition-[background-color,transform] duration-150 ease-[var(--kr-ease-out)] hover:bg-surface-sunken active:scale-[0.98]"
         >
           <FacebookLogo />
           Facebook
         </button>
       </div>
       {note !== null && <p className="mt-2 text-center text-xs text-text-secondary">{note}</p>}
+    </div>
+  )
+}
+
+/**
+ * A location box with debounced geocoder suggestions. Free text always
+ * stands on its own — picking a suggestion is an accelerator that also
+ * yields the two-line form (name over address) the route card shows.
+ */
+function PlaceSearch({
+  label,
+  value,
+  placeholder,
+  error,
+  onChange,
+  onPick,
+  offerCurrentLocation = false,
+}: {
+  label: string
+  value: string
+  placeholder: string
+  error?: string
+  onChange: (value: string) => void
+  onPick: (hit: PlaceHit) => void
+  /** Pins "Use my current location" above the suggestions. */
+  offerCurrentLocation?: boolean
+}) {
+  const id = useId()
+  const [hits, setHits] = useState<PlaceHit[]>([])
+  const [dirty, setDirty] = useState(false)
+  const [locating, setLocating] = useState(false)
+  const [locateFailed, setLocateFailed] = useState(false)
+
+  const useHere = () => {
+    setLocating(true)
+    setLocateFailed(false)
+    void currentLocationPlace().then((place) => {
+      setLocating(false)
+      if (place === null) {
+        setLocateFailed(true)
+        return
+      }
+      setHits([])
+      setDirty(false)
+      onPick(place)
+    })
+  }
+
+  useEffect(() => {
+    const query = value.trim()
+    const controller = new AbortController()
+    const timer = setTimeout(() => {
+      if (query.length < 3 || !dirty) {
+        setHits([])
+        return
+      }
+      void searchPlaces(query, controller.signal).then(setHits)
+    }, 300)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [value, dirty])
+
+  return (
+    <div>
+      <label
+        htmlFor={id}
+        className={`flex items-center gap-3 rounded-lg border bg-surface-page px-4 py-3 transition-[border-color] duration-150 ease-[var(--kr-ease-out)] focus-within:border-brand-green ${
+          error !== undefined ? 'border-red-400' : 'border-border-input'
+        }`}
+      >
+        <Search className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden />
+        <span className="sr-only">{label}</span>
+        <input
+          id={id}
+          type="text"
+          value={value}
+          autoComplete="off"
+          placeholder={placeholder}
+          aria-invalid={error !== undefined || undefined}
+          onChange={(e) => {
+            setDirty(true)
+            onChange(e.target.value)
+          }}
+          className="w-full min-w-0 bg-transparent text-text-body outline-none placeholder:text-text-placeholder"
+        />
+      </label>
+      {error !== undefined && (
+        <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">{error}</p>
+      )}
+      {locateFailed && (
+        <p className="mt-1.5 text-sm text-text-secondary">
+          We couldn&apos;t read your location — type the address instead.
+        </p>
+      )}
+      {(offerCurrentLocation || hits.length > 0) && (
+        <ul className="mt-2 overflow-hidden rounded-xl border border-border bg-surface-card">
+          {offerCurrentLocation && (
+            <li>
+              <button
+                type="button"
+                onClick={useHere}
+                disabled={locating}
+                className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors duration-150 hover:bg-surface-sunken disabled:opacity-60"
+              >
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand-green-tint text-brand-green">
+                  <LocateFixed
+                    className={`h-4 w-4 ${locating ? 'animate-pulse' : ''}`}
+                    aria-hidden
+                  />
+                </span>
+                <span className="font-medium text-brand-green">
+                  {locating ? 'Finding you…' : 'Use my current location'}
+                </span>
+              </button>
+            </li>
+          )}
+          {hits.map((hit) => (
+            <li key={`${hit.name}|${hit.detail}`}>
+              <button
+                type="button"
+                onClick={() => {
+                  setHits([])
+                  setDirty(false)
+                  onPick(hit)
+                }}
+                className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors duration-150 hover:bg-surface-sunken"
+              >
+                <MapPin className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden />
+                <span className="min-w-0">
+                  <span className="block truncate font-medium text-text-heading">{hit.name}</span>
+                  {hit.detail !== '' && (
+                    <span className="block truncate text-sm text-text-secondary">{hit.detail}</span>
+                  )}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/**
+ * One stop on the delivery route: a numbered badge, the place in two lines
+ * (name over address, as the geocoder returns it), and a pencil that swaps
+ * the row for a search box. Green for the pickup, red for the drop-off, so
+ * the two ends stay distinguishable at a glance.
+ */
+function RouteStop({
+  index,
+  title,
+  tone,
+  value,
+  place,
+  onChange,
+  placeholder,
+  error,
+}: {
+  index: number
+  title: string
+  tone: 'pickup' | 'dropoff'
+  value: string
+  place: PlaceHit | null
+  onChange: (value: string, place: PlaceHit | null) => void
+  placeholder: string
+  error?: string
+}) {
+  // Settled means a *place* was chosen or located — not merely that the
+  // box has text in it. Keying off the text collapsed the row on the first
+  // keystroke, which unmounted the input mid-word and meant the search
+  // never ran. A located pickup still collapses on its own, because
+  // geolocation supplies a place.
+  const [editRequested, setEditRequested] = useState(false)
+  const editing = editRequested || place === null
+  const dot = tone === 'pickup' ? 'bg-brand-green' : 'bg-red-500'
+  const text = tone === 'pickup' ? 'text-brand-green' : 'text-red-500'
+
+  return (
+    // Two rows sharing one rail: the badge sits with the label, the stop
+    // dot with the place itself, and the dashed line joins them.
+    <div className="grid grid-cols-[1.75rem_1fr] gap-x-3">
+      <span
+        className={`grid h-7 w-7 place-items-center rounded-full text-sm font-semibold text-white ${dot}`}
+        aria-hidden
+      >
+        {index}
+      </span>
+      <p className={`self-center text-sm font-semibold ${text}`}>{title}</p>
+
+      <div className="relative flex justify-center" aria-hidden>
+        <span className="absolute inset-y-0 w-px border-l border-dashed border-border-strong" />
+        <span className={`relative mt-2 h-3 w-3 rounded-full ring-4 ring-surface-card ${dot}`} />
+      </div>
+
+      <div className="min-w-0 pb-5 pt-1">
+        {editing ? (
+          <PlaceSearch
+            label={title}
+            value={value}
+            placeholder={placeholder}
+            error={error}
+            offerCurrentLocation={tone === 'pickup'}
+            onChange={(next) => onChange(next, null)}
+            onPick={(hit) => {
+              // A located place already carries the drivable address.
+              onChange(hit.name === 'Current location' ? hit.detail : placeLabel(hit), hit)
+              setEditRequested(false)
+            }}
+          />
+        ) : (
+          <>
+            <div className="flex items-start gap-3">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-semibold text-text-heading">
+                  {place?.name ?? value}
+                </span>
+                {(place?.detail ?? '') !== '' && (
+                  <span className="mt-0.5 block truncate text-sm text-text-secondary">
+                    {place?.detail}
+                  </span>
+                )}
+              </span>
+              <button
+                type="button"
+                onClick={() => setEditRequested(true)}
+                aria-label={`Edit ${title.toLowerCase()}`}
+                className="shrink-0 text-brand-green transition-colors hover:text-brand-green-hover"
+              >
+                <Pencil className="h-4 w-4" aria-hidden />
+              </button>
+            </div>
+            {error !== undefined && (
+              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error}</p>
+            )}
+          </>
+        )}
+      </div>
     </div>
   )
 }
@@ -1461,7 +1699,7 @@ function RidePickupCard({
                 role="radio"
                 aria-checked={rideFor === value}
                 onClick={() => onRideForChange(value)}
-                className={`rounded-full px-4 py-2 text-sm font-medium transition-colors duration-150 ease-out ${
+                className={`rounded-full px-4 py-2 text-sm font-medium transition-colors duration-150 ease-[var(--kr-ease-out)] ${
                   rideFor === value
                     ? 'bg-brand-green text-text-on-brand'
                     : 'bg-surface-sunken text-text-secondary hover:text-text-heading'
@@ -1531,7 +1769,7 @@ function DestinationSearch({
   onHistoryPick,
 }: {
   value: string
-  onChange: (value: string) => void
+  onChange: (value: string, place?: PlaceHit) => void
   error?: string
   /** Fired when the visitor picks a saved destination rather than a search hit. */
   onHistoryPick?: () => void
@@ -1557,7 +1795,7 @@ function DestinationSearch({
   }, [value])
 
   const choose = (hit: PlaceHit, fromHistory: boolean) => {
-    onChange(placeLabel(hit))
+    onChange(placeLabel(hit), hit)
     rememberDestination(hit)
     setRecent(recentDestinations())
     if (fromHistory) onHistoryPick?.()
@@ -1570,7 +1808,7 @@ function DestinationSearch({
     <div>
       <label
         htmlFor={id}
-        className={`flex items-center gap-3 rounded-lg border bg-surface-page px-4 py-3 transition-[border-color] duration-150 ease-out focus-within:border-brand-green ${
+        className={`flex items-center gap-3 rounded-lg border bg-surface-page px-4 py-3 transition-[border-color] duration-150 ease-[var(--kr-ease-out)] focus-within:border-brand-green ${
           error !== undefined ? 'border-red-400' : 'border-border-input'
         }`}
       >
@@ -1640,6 +1878,7 @@ function IconField({
   hint,
   type = 'text',
   inlineLabel = false,
+  autoComplete,
 }: {
   icon: React.ReactNode
   label: string
@@ -1650,14 +1889,24 @@ function IconField({
   hint?: string
   type?: string
   inlineLabel?: boolean
+  autoComplete?: string
 }) {
   const id = useId()
+  /*
+   * Typing a password you cannot see, on a phone, with a strength meter
+   * telling you it is not good enough, is how people give up and pick
+   * something short. The toggle starts hidden — shoulders exist — but it
+   * is one tap away.
+   */
+  const [revealed, setRevealed] = useState(false)
+  const isPassword = type === 'password'
+  const effectiveType = isPassword && revealed ? 'text' : type
 
   return (
     <div>
       <label
         htmlFor={id}
-        className={`flex items-center gap-3 rounded-lg border bg-surface-page px-4 py-3 transition-[border-color] duration-150 ease-out focus-within:border-brand-green ${
+        className={`flex items-center gap-3 rounded-lg border bg-surface-page px-4 py-3 transition-[border-color] duration-150 ease-[var(--kr-ease-out)] focus-within:border-brand-green ${
           error !== undefined ? 'border-red-400' : 'border-border-input'
         }`}
       >
@@ -1669,13 +1918,34 @@ function IconField({
         </span>
         <input
           id={id}
-          type={type}
+          type={effectiveType}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
+          autoComplete={autoComplete}
           aria-invalid={error !== undefined || undefined}
           className="w-full min-w-0 bg-transparent text-text-body outline-none placeholder:text-text-placeholder"
         />
+        {isPassword && (
+          <button
+            type="button"
+            // Outside the label's implicit activation, or tapping it would
+            // also focus the input and fight the toggle.
+            onClick={(e) => {
+              e.preventDefault()
+              setRevealed((shown) => !shown)
+            }}
+            aria-label={revealed ? 'Hide password' : 'Show password'}
+            aria-pressed={revealed}
+            className="-my-1 shrink-0 rounded p-1 text-text-secondary transition-colors hover:text-text-heading"
+          >
+            {revealed ? (
+              <EyeOff className="h-4 w-4" aria-hidden />
+            ) : (
+              <Eye className="h-4 w-4" aria-hidden />
+            )}
+          </button>
+        )}
       </label>
       {hint !== undefined && error === undefined && (
         <p className="mt-1.5 text-xs text-text-secondary">{hint}</p>
@@ -1705,7 +1975,7 @@ function IconSelect({
   return (
     <label
       htmlFor={id}
-      className="flex items-center gap-3 rounded-lg border border-border-input bg-surface-page px-4 py-3 transition-[border-color] duration-150 ease-out focus-within:border-brand-green"
+      className="flex items-center gap-3 rounded-lg border border-border-input bg-surface-page px-4 py-3 transition-[border-color] duration-150 ease-[var(--kr-ease-out)] focus-within:border-brand-green"
     >
       <span className="shrink-0" aria-hidden>
         {icon}
@@ -1728,6 +1998,302 @@ function IconSelect({
   )
 }
 
+/**
+ * Sign up, or sign in — the step that turns a visitor into an account
+ * holder before their first order (ADR-0015 §1).
+ *
+ * Both modes live in one component because they are one decision to the
+ * person in front of them ("do you already have one of these?"), and
+ * because the duplicate-email rejection has to move them between the two
+ * without losing the email they just typed.
+ */
+function AccountStep({
+  onBack,
+  onAuthenticated,
+  honeypot,
+  onHoneypot,
+  submitLabel,
+}: {
+  onBack: () => void
+  onAuthenticated: (customer: CustomerAccount) => void
+  honeypot: string
+  onHoneypot: (value: string) => void
+  /** Overrides "Create account" when this tap also places the order. */
+  submitLabel?: string
+}) {
+  const [mode, setMode] = useState<'signup' | 'login'>('signup')
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
+  const [gender, setGender] = useState('')
+  const [phone, setPhone] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [failure, setFailure] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  /** The server recognised this email, so we moved them to the log-in. */
+  const [knownEmail, setKnownEmail] = useState(false)
+
+  const signupValid =
+    firstName.trim() !== '' &&
+    lastName.trim() !== '' &&
+    phone.trim().length >= 9 &&
+    email.trim() !== '' &&
+    password.length >= MIN_PASSWORD_LENGTH
+  const loginValid = email.trim() !== '' && password !== ''
+
+  const run = async (action: () => Promise<CustomerAccount>) => {
+    setBusy(true)
+    setErrors({})
+    setFailure(null)
+    try {
+      onAuthenticated(await action())
+    } catch (error) {
+      if (error instanceof CustomerValidationError) {
+        setErrors(error.errors)
+        // The one rejection with an obvious next move: they already have
+        // an account, so put them in front of the log-in with the email
+        // they typed still filled in.
+        if (error.errors.email !== undefined && mode === 'signup') {
+          setMode('login')
+          setPassword('')
+          setKnownEmail(true)
+          // The field error would render under an input on a form they are
+          // no longer looking at; the banner carries it instead.
+          setErrors({})
+        }
+      } else if (isAxiosError(error) && error.response?.status === 401) {
+        setFailure('That email and password do not match an account.')
+      } else if (isAxiosError(error) && error.response?.status === 429) {
+        setFailure('Too many attempts from this connection. Please wait a minute and try again.')
+      } else {
+        setFailure('Something went wrong. Please try again.')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <StepShell
+      title={mode === 'signup' ? 'Create your account' : 'Welcome back'}
+      onBack={onBack}
+    >
+      <div className="kr-rise">
+        <p className="-mt-2 mb-4 text-sm text-text-secondary">
+          {mode === 'signup'
+            ? 'Your account keeps your trips, addresses and receipts in one place.'
+            : 'Sign in and we will place this order on your account.'}
+        </p>
+
+        {knownEmail && mode === 'login' && (
+          <p
+            role="status"
+            className="mb-4 flex items-start gap-2 rounded-lg border border-brand-green bg-surface-accent px-4 py-3 text-sm text-text-heading"
+          >
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-brand-green" aria-hidden />
+            <span>
+              You already have an account with <strong>{email}</strong>. Enter your password to
+              carry on with this order.
+            </span>
+          </p>
+        )}
+
+        {failure !== null && (
+          <p
+            role="alert"
+            className="mb-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
+          >
+            {failure}
+          </p>
+        )}
+
+        <div className="kr-stagger space-y-3">
+          {mode === 'signup' && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <IconField
+                  icon={<User className="h-4 w-4 text-text-secondary" />}
+                  label="First name"
+                  value={firstName}
+                  onChange={setFirstName}
+                  error={errors.first_name}
+                  placeholder="First name"
+                />
+                <IconField
+                  icon={<User className="h-4 w-4 text-text-secondary" />}
+                  label="Last name"
+                  value={lastName}
+                  onChange={setLastName}
+                  error={errors.last_name}
+                  placeholder="Last name"
+                />
+              </div>
+              <IconSelect
+                icon={<Users className="h-4 w-4 text-text-secondary" />}
+                label="Gender (optional)"
+                value={gender}
+                onChange={setGender}
+                options={[
+                  { value: '', label: 'Gender (optional)' },
+                  ...GENDER_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+                ]}
+              />
+              <IconField
+                icon={<Phone className="h-4 w-4 text-text-secondary" />}
+                label="Phone number"
+                value={phone}
+                onChange={setPhone}
+                error={errors.phone}
+                placeholder="Phone number"
+                hint="A dispatcher calls this number to confirm your order and the price."
+              />
+            </>
+          )}
+
+          <IconField
+            icon={<Mail className="h-4 w-4 text-text-secondary" />}
+            label="Email address"
+            value={email}
+            onChange={setEmail}
+            error={errors.email}
+            placeholder="Email address"
+            type="email"
+          />
+          <IconField
+            icon={<KeyRound className="h-4 w-4 text-text-secondary" />}
+            label="Password"
+            value={password}
+            onChange={setPassword}
+            error={errors.password}
+            placeholder={mode === 'signup' ? 'Password (8 characters or more)' : 'Password'}
+            type="password"
+            autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+          />
+          {mode === 'signup' && password !== '' && <PasswordMeter password={password} />}
+
+          {/* Honeypot: humans never see it, bots autofill it. */}
+          <div className="absolute left-[-9999px] top-auto" aria-hidden="true">
+            <label>
+              Website
+              <input
+                tabIndex={-1}
+                autoComplete="off"
+                value={honeypot}
+                onChange={(e) => onHoneypot(e.target.value)}
+              />
+            </label>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          disabled={busy || (mode === 'signup' ? !signupValid : !loginValid)}
+          onClick={() =>
+            void run(() =>
+              mode === 'signup'
+                ? registerCustomer({
+                    first_name: firstName.trim(),
+                    last_name: lastName.trim(),
+                    gender: gender === '' ? null : (gender as CustomerGenderValue),
+                    phone: phone.trim(),
+                    email: email.trim(),
+                    password,
+                  })
+                : loginCustomer(email.trim(), password),
+            )
+          }
+          className="mt-6 w-full rounded-lg bg-brand-green px-6 py-3 font-semibold text-text-on-brand transition-[background-color,transform,opacity] duration-150 ease-[var(--kr-ease-out)] hover:bg-brand-green-hover active:scale-[0.98] disabled:opacity-50"
+        >
+          {busy
+            ? 'Please wait…'
+            : mode === 'signup'
+              ? (submitLabel ?? 'Create account')
+              : 'Sign in'}
+        </button>
+
+        <p className="mt-4 text-center text-sm text-text-secondary">
+          {mode === 'signup' ? 'Already have an account?' : 'New to KangaruRide?'}{' '}
+          <button
+            type="button"
+            onClick={() => {
+              setMode(mode === 'signup' ? 'login' : 'signup')
+              setErrors({})
+              setFailure(null)
+              setKnownEmail(false)
+            }}
+            className="font-semibold text-brand-green transition-colors hover:text-brand-green-hover"
+          >
+            {mode === 'signup' ? 'Log in' : 'Create one'}
+          </button>
+        </p>
+
+        {/* On both modes. Signing in still benefits from having the email
+            filled for you — it is the half of the form you are most likely
+            to mistype — even though this is a prefill and not yet an
+            identity (ADR-0015: real Google sign-in needs server-side token
+            verification, which does not exist). */}
+        <SocialPrefill
+          onIdentity={({ name, email: socialEmail }) => {
+            if (mode === 'signup') {
+              // Google hands back one display name; split it the same way
+              // the server's backfill did, so the two agree.
+              const parts = name.trim().split(/\s+/)
+              if (parts[0] !== undefined && parts[0] !== '') setFirstName(parts[0])
+              if (parts.length > 1) setLastName(parts.slice(1).join(' '))
+            }
+            if (socialEmail !== '') setEmail(socialEmail)
+          }}
+        />
+      </div>
+    </StepShell>
+  )
+}
+
+/**
+ * The strength meter. Four segments and a word, never a blocker — the
+ * only thing that actually stops a sign-up is the server's eight-character
+ * floor, and a meter that refuses passwords teaches people to append "1!".
+ */
+function PasswordMeter({ password }: { password: string }) {
+  const { score, label, hint, level } = passwordStrength(password)
+
+  const fill =
+    level === 'strong'
+      ? 'bg-brand-green'
+      : level === 'good'
+        ? 'bg-green-500'
+        : level === 'fair'
+          ? 'bg-amber-500'
+          : 'bg-red-500'
+
+  return (
+    <div className="mt-2">
+      <div className="flex items-center gap-2">
+        <div className="flex flex-1 gap-1" aria-hidden>
+          {[0, 1, 2, 3].map((i) => (
+            <span
+              key={i}
+              className={`h-1 flex-1 rounded-full transition-colors duration-200 ${
+                i < score ? fill : 'bg-surface-sunken'
+              }`}
+            />
+          ))}
+        </div>
+        {/* Announced politely: it changes on every keystroke, and an
+            assertive region would interrupt the typing it describes. */}
+        <span className="w-16 shrink-0 text-right text-xs font-medium text-text-secondary">
+          <span className="sr-only">Password strength: </span>
+          {label}
+        </span>
+      </div>
+      <p className="mt-1.5 min-h-[1rem] text-xs text-text-secondary" aria-live="polite">
+        {hint}
+      </p>
+    </div>
+  )
+}
+
 function ReviewRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between gap-4 px-4 py-3">
@@ -1737,16 +2303,31 @@ function ReviewRow({ label, value }: { label: string; value: string }) {
   )
 }
 
-function NextButton({ disabled, onClick }: { disabled: boolean; onClick: () => void }) {
+/**
+ * `label` exists because this button is sometimes the last one: a ride is
+ * placed from the vehicle step, and a button that says "Continue" while it
+ * hails a taxi is lying about what the tap does.
+ */
+function NextButton({
+  disabled,
+  onClick,
+  label = 'Continue',
+  busy = false,
+}: {
+  disabled: boolean
+  onClick: () => void
+  label?: string
+  busy?: boolean
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
-      disabled={disabled}
-      className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-brand-navy px-6 py-3 font-semibold text-text-on-chrome transition-[background-color,transform,opacity] duration-150 ease-out hover:bg-brand-navy-soft active:scale-[0.98] disabled:opacity-50 dark:bg-brand-green dark:hover:bg-brand-green-hover"
+      disabled={disabled || busy}
+      className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-brand-navy px-6 py-3 font-semibold text-text-on-chrome transition-[background-color,transform,opacity] duration-150 ease-[var(--kr-ease-out)] hover:bg-brand-navy-soft active:scale-[0.98] disabled:opacity-50 dark:bg-brand-green dark:hover:bg-brand-green-hover"
     >
-      Continue
-      <ArrowRight className="h-4 w-4" aria-hidden />
+      {busy ? 'Requesting…' : label}
+      {!busy && <ArrowRight className="h-4 w-4" aria-hidden />}
     </button>
   )
 }

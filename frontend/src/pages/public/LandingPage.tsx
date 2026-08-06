@@ -11,6 +11,7 @@ import {
   PhoneCall,
   ShieldCheck,
 } from 'lucide-react'
+import { useAuth } from '../../auth/useAuth'
 import { SERVICE_META, type PublicService } from './publicOrder'
 import './landing.css'
 
@@ -37,6 +38,10 @@ export function LandingPage() {
 }
 
 function PublicNav() {
+  // Signed-in staff still get the landing page; the nav is how they leave
+  // it, so it points at the dashboard rather than a login they've done.
+  const { user } = useAuth()
+
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-surface-page/90 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
@@ -48,14 +53,14 @@ function PublicNav() {
         </Link>
         <nav className="flex items-center gap-2 sm:gap-4">
           <Link
-            to="/login"
+            to={user ? '/dashboard' : '/login'}
             className="rounded-lg px-3 py-2 text-sm font-medium text-text-secondary transition-colors hover:text-text-heading"
           >
-            Log in
+            {user ? 'Dashboard' : 'Log in'}
           </Link>
           <Link
             to="/order"
-            className="rounded-lg bg-brand-green px-4 py-2 text-sm font-semibold text-text-on-brand transition-all hover:bg-brand-green-hover active:scale-[0.98]"
+            className="rounded-lg bg-brand-green px-4 py-2 text-sm font-semibold text-text-on-brand transition-[background-color,transform,color] duration-150 ease-[var(--kr-ease-out)] hover:bg-brand-green-hover active:scale-[0.98]"
           >
             Order now
           </Link>
@@ -80,7 +85,7 @@ function Hero() {
         <div className="mt-8 flex flex-wrap items-center gap-4">
           <Link
             to="/order"
-            className="inline-flex items-center gap-2 rounded-lg bg-brand-green px-6 py-3 font-semibold text-text-on-brand transition-all hover:bg-brand-green-hover active:scale-[0.98]"
+            className="inline-flex items-center gap-2 rounded-lg bg-brand-green px-6 py-3 font-semibold text-text-on-brand transition-[background-color,transform,color] duration-150 ease-[var(--kr-ease-out)] hover:bg-brand-green-hover active:scale-[0.98]"
           >
             Order now
             <ArrowRight className="h-4 w-4" aria-hidden />
@@ -170,7 +175,7 @@ function HeroQuickForm() {
 
       <button
         type="submit"
-        className="mt-5 w-full rounded-lg bg-brand-navy px-6 py-3 font-semibold text-text-on-chrome transition-all hover:bg-brand-navy-soft active:scale-[0.98] dark:bg-brand-green dark:hover:bg-brand-green-hover"
+        className="mt-5 w-full rounded-lg bg-brand-navy px-6 py-3 font-semibold text-text-on-chrome transition-[background-color,transform,color] duration-150 ease-[var(--kr-ease-out)] hover:bg-brand-navy-soft active:scale-[0.98] dark:bg-brand-green dark:hover:bg-brand-green-hover"
       >
         Continue
       </button>
@@ -269,7 +274,7 @@ function ServiceCard({
   return (
     <Link
       to={`/order?service=${service}`}
-      className={`group flex flex-col justify-between gap-8 rounded-2xl border border-border p-6 transition-all hover:-translate-y-0.5 hover:shadow-md lg:p-8 ${className ?? ''}`}
+      className={`group flex flex-col justify-between gap-8 rounded-2xl border border-border p-6 transition-[background-color,transform,color] duration-150 ease-[var(--kr-ease-out)] hover:-translate-y-0.5 hover:shadow-md lg:p-8 ${className ?? ''}`}
     >
       {background}
       <div
@@ -371,7 +376,7 @@ function CorporateBand() {
           <div>
             <a
               href="mailto:operations@kangaruride.com?subject=Corporate%20account"
-              className="inline-flex items-center gap-2 rounded-lg bg-white px-6 py-3 font-semibold text-brand-navy transition-all hover:bg-white/90 active:scale-[0.98]"
+              className="inline-flex items-center gap-2 rounded-lg bg-white px-6 py-3 font-semibold text-brand-navy transition-[background-color,transform,color] duration-150 ease-[var(--kr-ease-out)] hover:bg-white/90 active:scale-[0.98]"
             >
               <Building2 className="h-4 w-4" aria-hidden />
               Talk to our team

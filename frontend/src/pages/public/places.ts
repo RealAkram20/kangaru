@@ -9,6 +9,8 @@
 export interface PlaceHit {
   name: string
   detail: string
+  /** Where it is, when known. Set for a device fix so the map can centre there. */
+  lngLat?: [number, number]
 }
 
 const KAMPALA = { lat: 0.3476, lng: 32.5825 }
@@ -50,6 +52,50 @@ export async function reverseGeocode(lat: number, lng: number): Promise<string |
   }
 }
 
+/**
+ * The device's position, resolved to a place. `name` is the label a person
+ * reads ("Current location"); `detail` is the street address a dispatcher
+ * can actually drive to, which is what the order payload carries.
+ *
+ * Never throws and never rejects: a refused prompt, a timeout or a
+ * geocoder outage all resolve to null, and the caller falls back to typing.
+ */
+export async function currentLocationPlace(): Promise<PlaceHit | null> {
+  if (typeof navigator === 'undefined' || !('geolocation' in navigator)) return null
+
+  const position = await new Promise<GeolocationPosition | null>((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (result) => resolve(result),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
+    )
+  })
+  if (position === null) return null
+
+  const { latitude, longitude } = position.coords
+  const address = await reverseGeocode(latitude, longitude)
+  return {
+    name: 'Current location',
+    detail: address ?? `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`,
+    lngLat: [longitude, latitude],
+  }
+}
+
+/**
+ * True when the browser has already refused geolocation, so the pickup
+ * default can skip asking rather than throwing a prompt at someone who
+ * said no once. Unknown support answers false: asking is the fallback.
+ */
+export async function geolocationRefused(): Promise<boolean> {
+  try {
+    if (typeof navigator === 'undefined' || navigator.permissions === undefined) return false
+    const status = await navigator.permissions.query({ name: 'geolocation' as PermissionName })
+    return status.state === 'denied'
+  } catch {
+    return false
+  }
+}
+
 /** "Acacia Mall, Kampala" — the display/payload form of a hit. */
 export function placeLabel(hit: PlaceHit): string {
   const locality = hit.detail.split(',')[0]?.trim()
@@ -57,6 +103,7 @@ export function placeLabel(hit: PlaceHit): string {
 }
 
 interface PhotonFeature {
+  geometry?: { coordinates?: [number, number] }
   properties?: {
     name?: string
     street?: string
@@ -78,7 +125,7 @@ function fromPhoton(data: unknown): PlaceHit[] {
     const detail = [p.district, p.city, p.country === 'Uganda' ? undefined : p.country]
       .filter((part): part is string => Boolean(part) && part !== name)
       .join(', ')
-    hits.push({ name, detail })
+    hits.push({ name, detail, lngLat: feature.geometry?.coordinates })
   }
   return dedupe(hits)
 }
@@ -86,6 +133,7 @@ function fromPhoton(data: unknown): PlaceHit[] {
 interface MapboxFeature {
   text?: string
   place_name?: string
+  center?: [number, number]
 }
 
 function fromMapbox(data: unknown): PlaceHit[] {
@@ -100,9 +148,37 @@ function fromMapbox(data: unknown): PlaceHit[] {
       .map((s) => s.trim())
       .filter((s) => s !== 'Uganda')
       .join(', ')
-    hits.push({ name, detail })
+    hits.push({ name, detail, lngLat: feature.center })
   }
   return dedupe(hits)
+}
+
+/**
+ * The driving line between two points, as the road network actually runs.
+ * OSRM's public server is keyless and matches the keyless basemap; with a
+ * Mapbox token the Directions API answers instead. Returns null on any
+ * failure — the map then simply shows no route rather than a wrong one.
+ */
+export async function fetchRoute(
+  from: [number, number],
+  to: [number, number],
+): Promise<[number, number][] | null> {
+  if (import.meta.env.MODE === 'test') return null
+  const token = mapboxToken()
+  const url = token
+    ? `https://api.mapbox.com/directions/v5/mapbox/driving/${from[0]},${from[1]};${to[0]},${to[1]}?geometries=geojson&overview=full&access_token=${token}`
+    : `https://router.project-osrm.org/route/v1/driving/${from[0]},${from[1]};${to[0]},${to[1]}?geometries=geojson&overview=full`
+  try {
+    const response = await fetch(url)
+    if (!response.ok) return null
+    const data = (await response.json()) as {
+      routes?: { geometry?: { coordinates?: [number, number][] } }[]
+    }
+    const line = data.routes?.[0]?.geometry?.coordinates
+    return line !== undefined && line.length > 1 ? line : null
+  } catch {
+    return null
+  }
 }
 
 function dedupe(hits: PlaceHit[]): PlaceHit[] {

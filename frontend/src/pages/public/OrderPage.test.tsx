@@ -5,44 +5,109 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 vi.mock('../../lib/apiClient', () => ({
   apiClient: { get: vi.fn(), post: vi.fn() },
+  // AuthProvider reads these; with no stored token it never calls the API,
+  // which is exactly the signed-out visitor most of these cases describe.
+  getStoredToken: vi.fn(() => null),
+  storeToken: vi.fn(),
+  clearStoredToken: vi.fn(),
+  // The customer session (ADR-0015) keeps its own key, so it gets its own
+  // trio. Returning null by default is the first-time visitor.
+  getStoredCustomerToken: vi.fn(() => null),
+  storeCustomerToken: vi.fn(),
+  clearStoredCustomerToken: vi.fn(),
 }))
 
-const { apiClient } = await import('../../lib/apiClient')
+const { apiClient, getStoredCustomerToken } = await import('../../lib/apiClient')
 const post = vi.mocked(apiClient.post)
+const get = vi.mocked(apiClient.get)
+const storedCustomerToken = vi.mocked(getStoredCustomerToken)
+
+/** The account the register/login endpoints hand back in these tests. */
+const CUSTOMER = {
+  id: 1,
+  first_name: 'Nakato',
+  last_name: 'Grace',
+  name: 'Nakato Grace',
+  gender: 'female',
+  phone: '0700123456',
+  email: 'nakato@example.com',
+  created_at: null,
+}
+
+/**
+ * One `post` mock serves two endpoints now — customer auth and the order
+ * write — so it dispatches on the URL rather than on call order, which
+ * would break the moment a step is inserted.
+ */
+function mockApi(reference = 'KR-7XKPQ2') {
+  post.mockImplementation(async (url: string) =>
+    url.startsWith('/customer/auth/')
+      ? { data: { data: { customer: CUSTOMER, token: 'customer-token' } } }
+      : { data: { data: { reference } } },
+  )
+}
+
+/** Put an already-signed-in customer in the tree, as /customer/auth/me would. */
+function signedInCustomer() {
+  storedCustomerToken.mockReturnValue('a-customer-token')
+  get.mockResolvedValue({ data: { data: CUSTOMER } })
+}
+
+/**
+ * jsdom has neither geolocation nor a geocoder, so the device lookup is
+ * stubbed at the module boundary — otherwise the pickup default would be
+ * silently skipped rather than tested.
+ */
+vi.mock('./places', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./places')>()),
+  currentLocationPlace: vi.fn(),
+  geolocationRefused: vi.fn(async () => false),
+}))
+
+const { currentLocationPlace } = await import('./places')
+const locate = vi.mocked(currentLocationPlace)
 
 const { OrderPage } = await import('./OrderPage')
+const { AuthProvider } = await import('../../auth/AuthContext')
 
 function renderOrderPage(url = '/order') {
   return render(
-    <MemoryRouter initialEntries={[url]}>
-      <OrderPage />
-    </MemoryRouter>,
+    <AuthProvider>
+      <MemoryRouter initialEntries={[url]}>
+        <OrderPage />
+      </MemoryRouter>
+    </AuthProvider>,
   )
 }
 
 beforeEach(() => {
   post.mockReset()
+  get.mockReset()
+  storedCustomerToken.mockReturnValue(null)
   localStorage.clear()
+  locate.mockResolvedValue({ name: 'Current location', detail: 'Plot 9, Bukoto Street, Kampala' })
+  mockApi()
 })
 
-/** Fill the contact step (name, phone, optional email) and continue. */
-async function completeContact(user: ReturnType<typeof userEvent.setup>, phone = '0700123456') {
-  await user.type(screen.getByLabelText(/full name/i), 'Nakato Grace')
-  await user.type(screen.getByLabelText(/phone number/i), phone)
+/** Fill the sign-up step and create the account (ADR-0015 §1). */
+async function completeSignup(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(screen.getByLabelText(/first name/i), 'Nakato')
+  await user.type(screen.getByLabelText(/last name/i), 'Grace')
+  await user.type(screen.getByLabelText(/phone number/i), '0700123456')
   await user.type(screen.getByLabelText(/email address/i), 'nakato@example.com')
-  await user.click(screen.getByRole('button', { name: /continue/i }))
+  await user.type(screen.getByLabelText(/^password$/i), 'kampala-rides-1')
+  await user.click(screen.getByRole('button', { name: /create account/i }))
 }
 
 describe('OrderPage', () => {
-  it('walks a ride order from service to reference', async () => {
+  it('walks a ride order from service through sign-up to a reference', async () => {
     const user = userEvent.setup()
-    post.mockResolvedValue({ data: { data: { reference: 'KR-7XKPQ2' } } })
-
     renderOrderPage()
 
     await user.click(screen.getByRole('button', { name: /ride/i }))
 
-    await user.type(screen.getByLabelText(/pickup location/i), 'Bukerere Rd, Kampala')
+    // The pickup arrives from the device, so only the destination is asked.
+    expect(await screen.findByText('Plot 9, Bukoto Street, Kampala')).toBeInTheDocument()
     await user.type(screen.getByLabelText(/destination/i), 'Acacia Mall')
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
@@ -50,29 +115,193 @@ describe('OrderPage', () => {
     await user.click(screen.getByRole('radio', { name: /boda boda/i }))
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
-    // The contact step: no account, no password — just what the dispatcher's
-    // phone call needs. Locked until the phone number is reachable.
-    await user.type(screen.getByLabelText(/full name/i), 'Nakato Grace')
-    expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled()
-    await user.type(screen.getByLabelText(/phone number/i), '0700123456')
-    expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled()
-    await user.type(screen.getByLabelText(/email address/i), 'nakato@example.com')
-    await user.click(screen.getByRole('button', { name: /continue/i }))
-
-    // Review shows what will be sent, then the submit fires exactly once.
-    expect(screen.getByText('Bukerere Rd, Kampala')).toBeInTheDocument()
-    expect(screen.getByText('Boda Boda')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /place order/i }))
+    // Sign-up, locked until every required field is answered. For a ride
+    // this same tap places the order — there is no confirm screen.
+    expect(screen.getByRole('button', { name: /request ride/i })).toBeDisabled()
+    await completeSignup(user)
 
     expect(await screen.findByText('KR-7XKPQ2')).toBeInTheDocument()
-    expect(post).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('button', { name: /place order/i })).not.toBeInTheDocument()
 
-    const payload = post.mock.calls[0][1] as Record<string, unknown>
+    const order = post.mock.calls.find(([url]) => url === '/public/order-requests')!
+    const payload = order[1] as Record<string, unknown>
     expect(payload.service_type).toBe('ride')
+    // Contact details come off the account, not off a form.
+    expect(payload.contact_name).toBe('Nakato Grace')
     expect(payload.contact_phone).toBe('0700123456')
+    expect(payload.contact_email).toBe('nakato@example.com')
     expect((payload.details as Record<string, unknown>).vehicle_class).toBe('boda')
     // The honeypot stays home when a human fills the form.
     expect(payload.website).toBeUndefined()
+  })
+
+  it('sends the sign-up with split names and the stated gender', async () => {
+    const user = userEvent.setup()
+    renderOrderPage('/order?service=ride&pickup=Seeta&dropoff=Acacia+Mall')
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+
+    await user.selectOptions(screen.getByLabelText(/gender/i), 'female')
+    await completeSignup(user)
+
+    const register = post.mock.calls.find(([url]) => url === '/customer/auth/register')!
+    expect(register[1]).toMatchObject({
+      first_name: 'Nakato',
+      last_name: 'Grace',
+      gender: 'female',
+      phone: '0700123456',
+      email: 'nakato@example.com',
+      password: 'kampala-rides-1',
+    })
+  })
+
+  it('treats an unanswered gender as null rather than inventing one', async () => {
+    const user = userEvent.setup()
+    renderOrderPage('/order?service=ride&pickup=Seeta&dropoff=Acacia+Mall')
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+
+    await completeSignup(user)
+
+    const register = post.mock.calls.find(([url]) => url === '/customer/auth/register')!
+    expect((register[1] as Record<string, unknown>).gender).toBeNull()
+  })
+
+  it('never asks a signed-in customer to sign up again', async () => {
+    const user = userEvent.setup()
+    signedInCustomer()
+    renderOrderPage('/order?service=ride&pickup=Seeta&dropoff=Acacia+Mall')
+
+    await user.click(await screen.findByRole('button', { name: /continue/i }))
+
+    // The vehicle step is the last one: no sign-up, and for a ride no
+    // confirm screen either, so this button hails rather than advances.
+    expect(await screen.findByRole('button', { name: /request ride/i })).toBeInTheDocument()
+    expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /create account/i })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /request ride/i }))
+    expect(await screen.findByText('KR-7XKPQ2')).toBeInTheDocument()
+
+    // The order still carries the account's details, and no register call
+    // was made for somebody who already has an account.
+    const order = post.mock.calls.find(([url]) => url === '/public/order-requests')!
+    expect((order[1] as Record<string, unknown>).contact_name).toBe('Nakato Grace')
+    expect(post.mock.calls.some(([url]) => url === '/customer/auth/register')).toBe(false)
+  })
+
+  it('offers the log-in when the email already has an account, keeping the email', async () => {
+    const user = userEvent.setup()
+    renderOrderPage('/order?service=ride&pickup=Seeta&dropoff=Acacia+Mall')
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+
+    post.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: {
+        status: 422,
+        data: { errors: { email: ['An account with this email already exists. Log in instead.'] } },
+      },
+    })
+    await completeSignup(user)
+
+    // Moved to the log-in, with the email named back to them and the typed
+    // value intact — retyping an address you just typed loses people.
+    expect(await screen.findByRole('button', { name: /sign in/i })).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent(/already have an account/i)
+    expect(screen.getByRole('status')).toHaveTextContent('nakato@example.com')
+    expect(screen.getByLabelText(/email address/i)).toHaveValue('nakato@example.com')
+    // Password is cleared: it belonged to the account that was not created.
+    expect(screen.getByLabelText(/^password$/i)).toHaveValue('')
+  })
+
+  it('signs an existing customer in and places the ride on the same tap', async () => {
+    const user = userEvent.setup()
+    renderOrderPage('/order?service=ride&pickup=Seeta&dropoff=Acacia+Mall')
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+
+    await user.click(screen.getByRole('button', { name: /^log in$/i }))
+    await user.type(screen.getByLabelText(/email address/i), 'nakato@example.com')
+    await user.type(screen.getByLabelText(/^password$/i), 'kampala-rides-1')
+    await user.click(screen.getByRole('button', { name: /sign in/i }))
+
+    expect(await screen.findByText('KR-7XKPQ2')).toBeInTheDocument()
+    expect(post.mock.calls.some(([url]) => url === '/customer/auth/login')).toBe(true)
+
+    /*
+     * The account that had just signed in must be the one on the order.
+     * Submitting straight after authentication reads it from the callback
+     * rather than from state, because `adopt` has not re-rendered yet —
+     * getting that wrong sends an order with an empty name.
+     */
+    const order = post.mock.calls.find(([url]) => url === '/public/order-requests')!
+    expect((order[1] as Record<string, unknown>).contact_name).toBe('Nakato Grace')
+    expect((order[1] as Record<string, unknown>).contact_phone).toBe('0700123456')
+  })
+
+  it('says so plainly when the credentials do not match an account', async () => {
+    const user = userEvent.setup()
+    renderOrderPage('/order?service=ride&pickup=Seeta&dropoff=Acacia+Mall')
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+
+    await user.click(screen.getByRole('button', { name: /^log in$/i }))
+    post.mockRejectedValueOnce({ isAxiosError: true, response: { status: 401, data: {} } })
+    await user.type(screen.getByLabelText(/email address/i), 'nakato@example.com')
+    await user.type(screen.getByLabelText(/^password$/i), 'wrong-password')
+    await user.click(screen.getByRole('button', { name: /sign in/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/do not match an account/i)
+  })
+
+  /** Walk to the account step of a ride order. */
+  async function reachAccountStep(user: ReturnType<typeof userEvent.setup>) {
+    renderOrderPage('/order?service=ride&pickup=Seeta&dropoff=Acacia+Mall')
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+  }
+
+  it('lets the password be shown, and hides it again', async () => {
+    const user = userEvent.setup()
+    await reachAccountStep(user)
+
+    const field = screen.getByLabelText(/^password$/i)
+    expect(field).toHaveAttribute('type', 'password')
+
+    await user.click(screen.getByRole('button', { name: /show password/i }))
+    expect(screen.getByLabelText(/^password$/i)).toHaveAttribute('type', 'text')
+
+    await user.click(screen.getByRole('button', { name: /hide password/i }))
+    expect(screen.getByLabelText(/^password$/i)).toHaveAttribute('type', 'password')
+  })
+
+  it('rates the password as it is typed, and stays quiet until it is', async () => {
+    const user = userEvent.setup()
+    await reachAccountStep(user)
+
+    // Nothing typed, nothing judged.
+    expect(screen.queryByText(/password strength/i)).not.toBeInTheDocument()
+
+    await user.type(screen.getByLabelText(/^password$/i), 'password123')
+    expect(await screen.findByText('Weak')).toBeInTheDocument()
+
+    await user.clear(screen.getByLabelText(/^password$/i))
+    await user.type(screen.getByLabelText(/^password$/i), 'correct horse battery staple')
+    expect(await screen.findByText('Strong')).toBeInTheDocument()
+  })
+
+  it('offers the social buttons on the log-in too, not only on sign-up', async () => {
+    const user = userEvent.setup()
+    await reachAccountStep(user)
+
+    expect(screen.getByRole('button', { name: /google/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^log in$/i }))
+
+    expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /google/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /facebook/i })).toBeInTheDocument()
   })
 
   it('starts on the details step when the hero form prefilled the trip', async () => {
@@ -89,7 +318,7 @@ describe('OrderPage', () => {
 
   it('requires rider details for a ride for someone else, and sends them', async () => {
     const user = userEvent.setup()
-    post.mockResolvedValue({ data: { data: { reference: 'KR-RIDER1' } } })
+    mockApi('KR-RIDER1')
     renderOrderPage('/order?service=ride&pickup=Seeta&dropoff=Acacia+Mall')
 
     await user.click(screen.getByRole('button', { name: /pickup/i }))
@@ -104,16 +333,17 @@ describe('OrderPage', () => {
     // Through the vehicle chooser with the default class.
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
-    await completeContact(user)
-    await user.click(screen.getByRole('button', { name: /place order/i }))
+    // Sign-up places the ride; there is no confirm screen for a hail.
+    await completeSignup(user)
 
     expect(await screen.findByText('KR-RIDER1')).toBeInTheDocument()
-    const payload = post.mock.calls[0][1] as { details: Record<string, unknown> }
+    const order = post.mock.calls.find(([url]) => url === '/public/order-requests')!
+    const payload = order[1] as { details: Record<string, unknown> }
     expect(payload.details.recipient_name).toBe('Auma Brenda')
     expect(payload.details.recipient_phone).toBe('0700987654')
   })
 
-  it('jumps straight to the contact step when a history destination is picked', async () => {
+  it('jumps straight to the vehicle step when a history destination is picked', async () => {
     const user = userEvent.setup()
     localStorage.setItem(
       'kr.recent-destinations',
@@ -128,7 +358,7 @@ describe('OrderPage', () => {
 
   it('leads delivery with the vehicle, recommended from the package size', async () => {
     const user = userEvent.setup()
-    post.mockResolvedValue({ data: { data: { reference: 'KR-DELIV1' } } })
+    mockApi('KR-DELIV1')
     renderOrderPage('/order?service=delivery')
 
     // Straight onto the vehicle screen: medium is the default size, so the
@@ -137,23 +367,77 @@ describe('OrderPage', () => {
     await user.click(screen.getByRole('radio', { name: /5 ton/i }))
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
-    // Locations come after the vehicle.
+    // Locations come after the vehicle, as two stops on one route.
     await user.type(screen.getByLabelText(/pickup location/i), 'Seeta')
     await user.type(screen.getByLabelText(/drop-off location/i), 'Ntinda')
+    // Parcel is the default; say it is documents instead.
+    await user.click(screen.getByRole('radio', { name: /documents/i }))
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
-    await completeContact(user)
-    await user.click(screen.getByRole('button', { name: /place order/i }))
+    await completeSignup(user)
+    await user.click(await screen.findByRole('button', { name: /place order/i }))
 
     expect(await screen.findByText('KR-DELIV1')).toBeInTheDocument()
-    const payload = post.mock.calls[0][1] as { details: Record<string, unknown> }
+    const order = post.mock.calls.find(([url]) => url === '/public/order-requests')!
+    const payload = order[1] as { details: Record<string, unknown> }
     expect(payload.details.package_size).toBe('medium')
     expect(payload.details.delivery_vehicle).toBe('5 Ton')
+    expect(payload.details.item_type).toBe('documents')
+  })
+
+  it('defaults the pickup to the device location, and collapses once it lands', async () => {
+    const user = userEvent.setup()
+    renderOrderPage('/order?service=delivery')
+    await user.click(await screen.findByRole('button', { name: /continue/i }))
+
+    // Resolved from geolocation: labelled "Current location", carrying the
+    // address a dispatcher can drive to.
+    expect(await screen.findByText('Current location')).toBeInTheDocument()
+    expect(screen.getByText('Plot 9, Bukoto Street, Kampala')).toBeInTheDocument()
+    // No longer a form — it collapsed on its own when the value arrived.
+    expect(screen.queryByLabelText('Pickup location')).not.toBeInTheDocument()
+  })
+
+  it('leaves the pickup typeable when the device refuses to locate', async () => {
+    const user = userEvent.setup()
+    locate.mockResolvedValue(null)
+    renderOrderPage('/order?service=delivery')
+    await user.click(await screen.findByRole('button', { name: /continue/i }))
+
+    expect(screen.getByLabelText('Pickup location')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /use my current location/i })).toBeInTheDocument()
+  })
+
+  it('collapses a resolved stop to a place, and reopens it on the pencil', async () => {
+    const user = userEvent.setup()
+    renderOrderPage('/order?service=delivery')
+    await user.click(await screen.findByRole('button', { name: /continue/i }))
+
+    // The located pickup is a resolved place, so it reads as one rather
+    // than as a form. Exact labels: the pencil is "Edit pickup location".
+    expect(await screen.findByText('Current location')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Pickup location')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Edit pickup location' }))
+    expect(screen.getByLabelText('Pickup location')).toHaveValue('Plot 9, Bukoto Street, Kampala')
+  })
+
+  it('keeps a free-typed stop editable, so typing is never cut off', async () => {
+    const user = userEvent.setup()
+    renderOrderPage('/order?service=delivery&dropoff=Ntinda')
+    await user.click(await screen.findByRole('button', { name: /continue/i }))
+
+    // Text alone is not a resolved place: the box stays open so the next
+    // keystroke lands (collapsing on the first one broke the search).
+    const box = screen.getByLabelText('Drop-off location')
+    expect(box).toHaveValue('Ntinda')
+    await user.type(box, ' Market')
+    expect(screen.getByLabelText('Drop-off location')).toHaveValue('Ntinda Market')
   })
 
   it('walks a self-drive rental through the vehicle catalogue', async () => {
     const user = userEvent.setup()
-    post.mockResolvedValue({ data: { data: { reference: 'KR-RENT01' } } })
+    mockApi('KR-RENT01')
     renderOrderPage('/order?service=self_drive')
 
     // A one-day rental: tap the same calendar day twice.
@@ -173,27 +457,27 @@ describe('OrderPage', () => {
     await user.click(screen.getByRole('radio', { name: /subaru forester/i }))
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
-    await completeContact(user)
-    await user.click(screen.getByRole('button', { name: /place order/i }))
+    await completeSignup(user)
+    await user.click(await screen.findByRole('button', { name: /place order/i }))
 
     expect(await screen.findByText('KR-RENT01')).toBeInTheDocument()
-    const payload = post.mock.calls[0][1] as { details: Record<string, unknown> }
+    const order = post.mock.calls.find(([url]) => url === '/public/order-requests')!
+    const payload = order[1] as { details: Record<string, unknown> }
     expect(payload.details.vehicle_category).toBe('suv')
     expect(payload.details.vehicle_model).toBe('Subaru Forester')
   })
 
-  it('asks for contact details, never a password or an account', async () => {
+  it('requires an account before an order can be placed', async () => {
     const user = userEvent.setup()
     renderOrderPage('/order?service=ride&pickup=Seeta&dropoff=Acacia+Mall')
     await user.click(screen.getByRole('button', { name: /continue/i }))
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
-    // A contact step, deliberately not a signup (ADR-0012 §3): no
-    // customer-auth endpoint exists, so nothing here may collect a
-    // credential or promise an account.
-    expect(screen.getByText('How do we reach you?')).toBeInTheDocument()
-    expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /sign up|log in/i })).not.toBeInTheDocument()
+    // ADR-0015 §1 replaced ADR-0012 §3's anonymous contact step: there is
+    // no way past this screen that does not create or resume an account.
+    expect(screen.getByText('Create your account')).toBeInTheDocument()
+    expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /place order/i })).not.toBeInTheDocument()
   })
 
   it('will not continue without pickup and drop-off for a ride', async () => {
@@ -209,40 +493,48 @@ describe('OrderPage', () => {
     expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled()
   })
 
-  it('sends the visitor back to the failing step with the server message on 422', async () => {
-    const user = userEvent.setup()
-    post.mockRejectedValue({
-      isAxiosError: true,
-      response: {
-        status: 422,
-        data: {
-          errors: { contact_phone: ['Please give us a phone number.'] },
-        },
-      },
+  /**
+   * Auth succeeds, the order write fails. Set before the sign-up, because
+   * for a ride those are the same tap — a plain `mockRejectedValueOnce`
+   * would reject the registration instead of the order.
+   */
+  function failOrderWith(rejection: unknown) {
+    post.mockImplementation(async (url: string) => {
+      if (url.startsWith('/customer/auth/')) {
+        return { data: { data: { customer: CUSTOMER, token: 'customer-token' } } }
+      }
+      throw rejection
     })
+  }
 
+  it('explains a rejected account detail rather than looping back to a form', async () => {
+    const user = userEvent.setup()
     renderOrderPage('/order?service=ride&pickup=Seeta&dropoff=Acacia+Mall')
     await user.click(screen.getByRole('button', { name: /continue/i }))
-    // Vehicle chooser sits between details and contact for rides.
     await user.click(screen.getByRole('button', { name: /continue/i }))
-    await completeContact(user, '123456789')
-    await user.click(screen.getByRole('button', { name: /place order/i }))
 
-    expect(await screen.findByText('Please give us a phone number.')).toBeInTheDocument()
-    // Back on the contact step, not stranded on review.
-    expect(screen.getByLabelText(/phone number/i)).toBeInTheDocument()
+    // The contact fields are the account's now, so there is no earlier
+    // step holding them — bouncing back to one would be a loop.
+    failOrderWith({
+      isAxiosError: true,
+      response: { status: 422, data: { errors: { contact_phone: ['Give us a phone number.'] } } },
+    })
+    await completeSignup(user)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/account details were rejected/i)
+    // A hail that failed falls back to the summary, so it can be retried
+    // without re-entering anything — the account was created either way.
+    expect(screen.getByRole('button', { name: /place order/i })).toBeInTheDocument()
   })
 
   it('explains a 429 in words rather than an error code', async () => {
     const user = userEvent.setup()
-    post.mockRejectedValue({ isAxiosError: true, response: { status: 429, data: {} } })
-
     renderOrderPage('/order?service=ride&pickup=Seeta&dropoff=Acacia+Mall')
     await user.click(screen.getByRole('button', { name: /continue/i }))
-    // Vehicle chooser sits between details and contact for rides.
     await user.click(screen.getByRole('button', { name: /continue/i }))
-    await completeContact(user)
-    await user.click(screen.getByRole('button', { name: /place order/i }))
+
+    failOrderWith({ isAxiosError: true, response: { status: 429, data: {} } })
+    await completeSignup(user)
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/wait a minute/i)
   })

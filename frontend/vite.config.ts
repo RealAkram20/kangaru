@@ -27,6 +27,16 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
 
     /*
+     * Vitest defaults to 5s per test. These are Testing Library flows that
+     * type character by character through multi-step forms, and the runner
+     * executes files in parallel — so under load the slowest of them tip
+     * over 5s and fail in a different combination on every run. The work
+     * is genuine, not a hang; 20s removes the false negatives without
+     * hiding a real deadlock, which would still blow through it.
+     */
+    testTimeout: 20_000,
+
+    /*
      * The app's styling is design tokens in plain CSS. None of it changes
      * what a test asserts, and processing it per file is dead time.
      */

@@ -124,7 +124,7 @@ export function DateRangePicker({
               type="button"
               aria-pressed={active}
               onClick={() => applyRange(range[0], range[1])}
-              className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium transition-colors duration-150 ease-out active:scale-[0.97] ${
+              className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium transition-[background-color,transform] duration-150 ease-[var(--kr-ease-out)] active:scale-[0.97] ${
                 active
                   ? 'bg-brand-green text-text-on-brand'
                   : 'bg-surface-sunken text-text-secondary hover:text-text-heading'
@@ -201,7 +201,7 @@ export function DateRangePicker({
                 onClick={() => pick(day)}
                 aria-label={iso(day)}
                 aria-pressed={isStart || isEnd}
-                className={`relative z-10 mx-auto grid h-10 w-10 place-items-center rounded-full text-sm transition-[background-color,transform] duration-150 ease-out active:scale-95 ${
+                className={`relative z-10 mx-auto grid h-10 w-10 place-items-center rounded-full text-sm transition-[background-color,transform] duration-150 ease-[var(--kr-ease-out)] active:scale-95 ${
                   isStart || isEnd
                     ? 'bg-brand-green font-semibold text-text-on-brand shadow-sm'
                     : inRange
