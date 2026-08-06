@@ -68,8 +68,20 @@ class StorePublicOrderRequest extends FormRequest
                 Rule::in(['documents', 'food', 'parcel', 'electronics', 'furniture', 'appliances', 'other']),
             ],
             'details.package_size' => ['nullable', Rule::in(['small', 'medium', 'large', 'heavy'])],
+            // Which end settles the bill, and on which rail. The rider is
+            // told both before setting off — a parcel is the one service
+            // where the person ordering is often not the person paying.
+            'details.payer' => ['nullable', Rule::in(['sender', 'receiver'])],
+            'details.payment_method' => ['nullable', Rule::in(['cash', 'mobile_money', 'card'])],
+            // Both ends of a parcel as people the rider can ring. The sender
+            // pair is absent whenever the account holder is the sender —
+            // their name and number are already the contact fields.
+            'details.sender_name' => ['nullable', 'string', 'max:120'],
+            'details.sender_phone' => ['nullable', 'string', 'max:32', 'regex:/^[+0-9 ()-]+$/'],
             'details.recipient_name' => ['nullable', 'string', 'max:120'],
             'details.recipient_phone' => ['nullable', 'string', 'max:32', 'regex:/^[+0-9 ()-]+$/'],
+            // Handover with a four-digit code rather than "left at the gate".
+            'details.confirm_with_pin' => ['nullable', 'boolean'],
             // Self drive
             'details.vehicle_category' => ['nullable', Rule::in(['sedan', 'suv', 'van', 'pickup'])],
             'details.start_date' => [
@@ -80,6 +92,10 @@ class StorePublicOrderRequest extends FormRequest
                 Rule::requiredIf($service === 'self_drive'),
                 'nullable', 'date', 'after_or_equal:details.start_date',
             ],
+            // Which identity documents the renter has to hand, comma
+            // separated. Not the documents themselves — there is no upload
+            // endpoint yet, and the desk checks the originals at collection.
+            'details.kyc_documents' => ['nullable', 'string', 'max:255'],
         ];
     }
 

@@ -56,12 +56,18 @@ import {
   type PlaceHit,
 } from './places'
 import { DateRangePicker } from './DateRangePicker'
+import { DeliverySummary, type Payer, type PaymentMethod } from './DeliverySummary'
+import { DeliveryParties } from './DeliveryParties'
+import { EMPTY_PARTY, type Party } from './party'
+import { KycVerification } from './KycVerification'
+import { RENTAL_KYC, type KycFiles } from './kycDocuments'
+import { tripEstimate } from './tripEstimate'
 import { MapPanel } from './MapPanel'
 import { RideScreen } from './RideScreen'
 import { OrderNav } from './OrderNav'
 import './landing.css'
 
-type Step = 'service' | 'details' | 'vehicle' | 'account' | 'review'
+type Step = 'service' | 'details' | 'vehicle' | 'account' | 'review' | 'parties' | 'kyc'
 
 /**
  * The vehicle IS the product. Delivery leads with it (the size defaults and
@@ -84,10 +90,26 @@ function stepsFor(service: PublicService, signedIn: boolean): Step[] {
    *
    * Delivery and self-drive keep theirs: a parcel's size and contents, or
    * a rental's dates, are worth reading back before they are committed to.
+   *
+   * A parcel then asks one more thing nothing else needs: who is at each
+   * end of it. A rider arriving at a gate has to ask for somebody by name,
+   * and the account only names the person who booked.
    */
-  const confirm: Step[] = service === 'ride' ? [] : ['review']
+  const confirm: Step[] =
+    service === 'ride' ? [] : service === 'delivery' ? ['review', 'parties'] : ['review']
 
-  return signedIn ? [...upToVehicle, ...confirm] : [...upToVehicle, 'account', ...confirm]
+  /*
+   * A rental hands somebody a vehicle and lets them drive away in it, which
+   * makes it the one order on this page that has to know who they are. It
+   * follows the vehicle directly for a customer already signed in; signed
+   * out it waits for the account, because documents belonging to nobody are
+   * documents with nowhere to hang.
+   */
+  const identity: Step[] = service === 'self_drive' ? ['kyc'] : []
+
+  return signedIn
+    ? [...upToVehicle, ...identity, ...confirm]
+    : [...upToVehicle, 'account', ...identity, ...confirm]
 }
 
 /**
@@ -330,7 +352,18 @@ export function OrderPage() {
   // walking straight onto the vehicle screen still has a sensible pick.
   const effectiveDeliveryVehicle =
     deliveryVehicle ?? DELIVERY_FLEET.find((v) => v.forSize === packageSize)?.id ?? null
+  // Who settles the bill, and on which rail. Delivery only: a ride is paid
+  // by whoever is in the car, a rental by whoever signs for it.
+  const [payer, setPayer] = useState<Payer>('sender')
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash')
+  // The two ends of a parcel as people. The account holder is the sender by
+  // default and the receiver is somebody new, which is the ordinary case.
+  const [sender, setSender] = useState<Party>({ ...EMPTY_PARTY, isMe: true })
+  const [receiver, setReceiver] = useState<Party>(EMPTY_PARTY)
+  const [pinRequired, setPinRequired] = useState(true)
   const [rentalModel, setRentalModel] = useState<string | null>(null)
+  /** The rental's identity checks, by document id. See `KycVerification`. */
+  const [kycFiles, setKycFiles] = useState<KycFiles>({})
   const [rentalFilter, setRentalFilter] = useState<RentalCategory | 'all'>('all')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
@@ -371,8 +404,12 @@ export function OrderPage() {
   const steps = stepsFor(service, customer !== null)
   const stepIndex = steps.indexOf(step)
 
-  /** What follows the vehicle/details pair: sign up, or straight to review. */
-  const afterChoices: Step = customer === null ? 'account' : 'review'
+  /**
+   * What follows the vehicle/details pair: sign up, the rental's identity
+   * checks, or straight to the confirm screen.
+   */
+  const afterChoices: Step =
+    customer === null ? 'account' : service === 'self_drive' ? 'kyc' : 'review'
 
   /**
    * What the last choice step does. Signed out, everything goes to sign-up
@@ -484,6 +521,22 @@ export function OrderPage() {
       details.item_type = itemType
       const vehicle = DELIVERY_FLEET.find((v) => v.id === effectiveDeliveryVehicle)
       if (vehicle !== undefined) details.delivery_vehicle = vehicle.name
+      // The rider is told at which end, and on which rail, before setting off.
+      details.payer = payer
+      details.payment_method = paymentMethod
+      /*
+       * Both ends as people the rider can ring. "Me" is resolved to the
+       * account *here* rather than stored in the form, so a name edited on
+       * the profile is the name that travels — and so the payload never
+       * carries a party the dispatcher cannot phone.
+       */
+      if (!sender.isMe) {
+        details.sender_name = sender.name.trim()
+        details.sender_phone = sender.phone.trim()
+      }
+      details.recipient_name = receiver.isMe ? account.name : receiver.name.trim()
+      details.recipient_phone = receiver.isMe ? account.phone : receiver.phone.trim()
+      details.confirm_with_pin = pinRequired
     }
     if (service === 'self_drive') {
       const model = SELF_DRIVE_FLEET.find((m) => m.id === rentalModel)
@@ -493,6 +546,14 @@ export function OrderPage() {
       }
       details.start_date = startDate
       details.end_date = endDate
+      /*
+       * Which documents the renter has to hand — not the documents
+       * themselves, which stay on the device (see `KycVerification`). It
+       * is what lets the desk tell a rental that is ready to collect from
+       * one where somebody still has to find their licence.
+       */
+      const provided = Object.keys(kycFiles)
+      if (provided.length > 0) details.kyc_documents = provided.join(',')
     }
 
     return {
@@ -582,11 +643,18 @@ export function OrderPage() {
         {/* The sheet yields half the screen once there is a trip to look
             at: the route is drawn behind it, and at 78dvh the map strip
             left over was too thin to read it in. Matches the bottom
-            padding the map reserves when it fits the route. */}
+            padding the map reserves when it fits the route.
+            The confirm screen is the exception: it is a page to read, not a
+            route to look at, and a summary delivered through a letterbox is
+            a summary nobody reads to the bottom. */}
         <main
           ref={sheetRef}
           className={`kr-sheet fixed inset-x-0 bottom-0 z-30 w-full overflow-y-auto rounded-t-3xl border-t border-border bg-surface-card px-5 pb-[max(2rem,env(safe-area-inset-bottom))] shadow-[0_-12px_40px_rgba(0,16,40,0.16)] transition-[max-height] duration-300 ease-[var(--kr-ease-out)] lg:static lg:z-auto lg:max-h-none lg:max-w-none lg:animate-none lg:overflow-visible lg:rounded-none lg:border-0 lg:bg-transparent lg:px-10 lg:pb-20 lg:pt-8 lg:shadow-none lg:transition-none lg:[transform:none] ${
-            tripVisualised ? 'max-h-[52dvh]' : 'max-h-[78dvh]'
+            step === 'review' || step === 'parties' || step === 'kyc'
+              ? 'max-h-[88dvh]'
+              : tripVisualised
+                ? 'max-h-[52dvh]'
+                : 'max-h-[78dvh]'
           }`}
         >
           {/* The sheet's grab handle, purely visual on the web. */}
@@ -1050,6 +1118,20 @@ export function OrderPage() {
             </StepShell>
           )}
 
+          {/* The rental's identity checks, between the vehicle and the
+              confirm screen. Nothing else on this page asks for them:
+              a ride and a delivery both send a driver of ours. */}
+          {step === 'kyc' && (
+            <KycVerification
+              sections={RENTAL_KYC}
+              files={kycFiles}
+              onFilesChange={setKycFiles}
+              submitting={submitting}
+              onSubmit={() => setStep('review')}
+              onBack={() => setStep(customer !== null ? 'vehicle' : 'account')}
+            />
+          )}
+
           {step === 'account' && sessionLoading && (
             <StepShell
               title="One moment"
@@ -1071,7 +1153,7 @@ export function OrderPage() {
                 // `next` is passed to submit rather than read back from
                 // state, which `adopt` has not flushed yet.
                 if (service === 'ride') void submit(next)
-                else setStep('review')
+                else setStep(service === 'self_drive' ? 'kyc' : 'review')
               }}
               submitLabel={service === 'ride' ? 'Create account & request ride' : undefined}
               honeypot={honeypot}
@@ -1079,13 +1161,60 @@ export function OrderPage() {
             />
           )}
 
-          {step === 'review' && (
+          {/* A parcel confirms on its own screen: it is the one order where
+              the money has a question in it (who pays, on which rail), and
+              the one with a route worth reading back in full. */}
+          {step === 'review' && service === 'delivery' && (
+            <DeliverySummary
+              pickup={pickup}
+              pickupPlace={pickupPlace}
+              dropoff={dropoff}
+              dropoffPlace={dropoffPlace}
+              vehicleName={
+                DELIVERY_FLEET.find((v) => v.id === effectiveDeliveryVehicle)?.name ?? ''
+              }
+              fare={DELIVERY_FLEET.find((v) => v.id === effectiveDeliveryVehicle)?.fare ?? ''}
+              estimate={tripEstimate(tripFrom, tripTo)}
+              payer={payer}
+              onPayerChange={setPayer}
+              paymentMethod={paymentMethod}
+              onPaymentMethodChange={setPaymentMethod}
+              notes={notes}
+              onNotesChange={setNotes}
+              onConfirm={() => setStep('parties')}
+              onBack={() => setStep(customer !== null ? 'details' : 'account')}
+            />
+          )}
+
+          {/* Who is at each end of the parcel — the last thing asked, and
+              the last thing before it is placed. */}
+          {step === 'parties' && (
+            <DeliveryParties
+              customerName={customer?.name ?? ''}
+              sender={sender}
+              onSenderChange={setSender}
+              receiver={receiver}
+              onReceiverChange={setReceiver}
+              pinRequired={pinRequired}
+              onPinRequiredChange={setPinRequired}
+              submitting={submitting}
+              onContinue={() => {
+                // Non-null by construction: this step is unreachable without
+                // an account. The guard is for the compiler, not the user.
+                if (customer !== null) void submit(customer)
+              }}
+              onBack={() => setStep('review')}
+            />
+          )}
+
+          {step === 'review' && service !== 'delivery' && (
             <StepShell
               title="Confirm your order"
               onBack={() =>
-                // Signed in, the sign-up step does not exist to go back to.
+                // A rental came through its identity checks; everything else
+                // came from the vehicle — or, signed out, from the sign-up.
                 setStep(
-                  customer !== null ? (service === 'delivery' ? 'details' : 'vehicle') : 'account',
+                  service === 'self_drive' ? 'kyc' : customer !== null ? 'vehicle' : 'account',
                 )
               }
             >
@@ -1111,14 +1240,6 @@ export function OrderPage() {
                   <ReviewRow
                     label="Vehicle"
                     value={RIDE_CLASSES.find((k) => k.value === vehicleClass)?.label ?? ''}
-                  />
-                )}
-                {service === 'delivery' && (
-                  <ReviewRow
-                    label="Vehicle"
-                    value={
-                      DELIVERY_FLEET.find((v) => v.id === effectiveDeliveryVehicle)?.name ?? ''
-                    }
                   />
                 )}
                 {service === 'ride' && rideFor === 'other' && riderName.trim() !== '' && (
@@ -2075,10 +2196,7 @@ function AccountStep({
   }
 
   return (
-    <StepShell
-      title={mode === 'signup' ? 'Create your account' : 'Welcome back'}
-      onBack={onBack}
-    >
+    <StepShell title={mode === 'signup' ? 'Create your account' : 'Welcome back'} onBack={onBack}>
       <div className="kr-rise">
         <p className="-mt-2 mb-4 text-sm text-text-secondary">
           {mode === 'signup'

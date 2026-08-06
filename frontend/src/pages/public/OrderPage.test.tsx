@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
@@ -375,7 +375,15 @@ describe('OrderPage', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
     await completeSignup(user)
-    await user.click(await screen.findByRole('button', { name: /place order/i }))
+    await user.click(await screen.findByRole('button', { name: /confirm delivery/i }))
+
+    // Who is at each end. The account holder sends; the receiver is new,
+    // and the rider cannot be sent to a name without a number.
+    expect(await screen.findByText(/sender & recipient/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled()
+    await user.type(screen.getByLabelText(/receiver's name/i), 'Auma Brenda')
+    await user.type(screen.getByLabelText(/receiver's phone/i), '0700987654')
+    await user.click(screen.getByRole('button', { name: /continue/i }))
 
     expect(await screen.findByText('KR-DELIV1')).toBeInTheDocument()
     const order = post.mock.calls.find(([url]) => url === '/public/order-requests')!
@@ -383,6 +391,108 @@ describe('OrderPage', () => {
     expect(payload.details.package_size).toBe('medium')
     expect(payload.details.delivery_vehicle).toBe('5 Ton')
     expect(payload.details.item_type).toBe('documents')
+    // Untouched, the defaults still travel with the order: the rider must
+    // be told which end pays, and how the handover is confirmed.
+    expect(payload.details.payer).toBe('sender')
+    expect(payload.details.payment_method).toBe('cash')
+    expect(payload.details.recipient_name).toBe('Auma Brenda')
+    expect(payload.details.confirm_with_pin).toBe(true)
+  })
+
+  it('confirms a delivery with the payment answered on the summary', async () => {
+    const user = userEvent.setup()
+    mockApi('KR-DELIV2')
+    signedInCustomer()
+    renderOrderPage('/order?service=delivery&pickup=Seeta&dropoff=Ntinda')
+
+    // Vehicle (tricycle, recommended for the default medium package), then
+    // the route, then the summary — no sign-up for an account holder.
+    await user.click(await screen.findByRole('button', { name: /continue/i }))
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+
+    // The summary reads the order back: the vehicle and its starting fare.
+    expect(await screen.findByText(/package summary/i)).toBeInTheDocument()
+    expect(screen.getByText('Tricycle')).toBeInTheDocument()
+    expect(screen.getByText('UGX 9,000')).toBeInTheDocument()
+
+    // The receiver is paying, by Mobile Money.
+    await user.click(screen.getByRole('radio', { name: /receiver/i }))
+    await user.selectOptions(screen.getByLabelText(/payment method/i), 'mobile_money')
+
+    // The note is folded away until it is wanted.
+    expect(screen.queryByLabelText(/note for the rider/i)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /add a note/i }))
+    await user.type(screen.getByLabelText(/note for the rider/i), 'Gate code 4417')
+
+    await user.click(screen.getByRole('button', { name: /confirm delivery/i }))
+
+    // The parties screen, with the receiver named and the PIN turned off.
+    await user.type(await screen.findByLabelText(/receiver's name/i), 'Auma Brenda')
+    await user.type(screen.getByLabelText(/receiver's phone/i), '0700987654')
+    await user.click(screen.getByRole('switch', { name: /confirm delivery with pin/i }))
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+
+    expect(await screen.findByText('KR-DELIV2')).toBeInTheDocument()
+    const order = post.mock.calls.find(([url]) => url === '/public/order-requests')!
+    const payload = order[1] as { details: Record<string, unknown>; notes: string }
+    expect(payload.details.payer).toBe('receiver')
+    expect(payload.details.payment_method).toBe('mobile_money')
+    expect(payload.notes).toBe('Gate code 4417')
+    expect(payload.details.recipient_phone).toBe('0700987654')
+    expect(payload.details.confirm_with_pin).toBe(false)
+    // The sender is the account holder, so no second copy of their details.
+    expect(payload.details.sender_name).toBeUndefined()
+  })
+
+  it('sends a parcel on behalf of somebody else, naming both ends', async () => {
+    const user = userEvent.setup()
+    mockApi('KR-DELIV3')
+    signedInCustomer()
+    renderOrderPage('/order?service=delivery&pickup=Seeta&dropoff=Ntinda')
+
+    await user.click(await screen.findByRole('button', { name: /continue/i }))
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+    await user.click(await screen.findByRole('button', { name: /confirm delivery/i }))
+
+    // Neither end is the account holder: a shop owner booking a rider for
+    // a customer's parcel. Both names and both numbers are required.
+    await user.click(await screen.findByRole('radio', { name: /^someone else$/i }))
+    expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled()
+    await user.type(screen.getByLabelText(/sender's name/i), 'Okello James')
+    await user.type(screen.getByLabelText(/sender's phone/i), '0700111222')
+    await user.type(screen.getByLabelText(/receiver's name/i), 'Auma Brenda')
+    await user.type(screen.getByLabelText(/receiver's phone/i), '0700987654')
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+
+    expect(await screen.findByText('KR-DELIV3')).toBeInTheDocument()
+    const order = post.mock.calls.find(([url]) => url === '/public/order-requests')!
+    const payload = order[1] as { details: Record<string, unknown> }
+    expect(payload.details.sender_name).toBe('Okello James')
+    expect(payload.details.sender_phone).toBe('0700111222')
+    expect(payload.details.recipient_name).toBe('Auma Brenda')
+  })
+
+  it('takes the account for whichever end says "me", so nothing drifts', async () => {
+    const user = userEvent.setup()
+    mockApi('KR-DELIV4')
+    signedInCustomer()
+    renderOrderPage('/order?service=delivery&pickup=Seeta&dropoff=Ntinda')
+
+    await user.click(await screen.findByRole('button', { name: /continue/i }))
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+    await user.click(await screen.findByRole('button', { name: /confirm delivery/i }))
+
+    // A parcel coming back to the person who booked it: the receiver is
+    // the account, read off it rather than retyped into the form.
+    const receiverGroup = screen.getByRole('radiogroup', { name: /who is the receiver/i })
+    await user.click(within(receiverGroup).getByRole('radio', { name: /^me /i }))
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+
+    expect(await screen.findByText('KR-DELIV4')).toBeInTheDocument()
+    const order = post.mock.calls.find(([url]) => url === '/public/order-requests')!
+    const payload = order[1] as { details: Record<string, unknown> }
+    expect(payload.details.recipient_name).toBe('Nakato Grace')
+    expect(payload.details.recipient_phone).toBe('0700123456')
   })
 
   it('defaults the pickup to the device location, and collapses once it lands', async () => {
@@ -458,6 +568,24 @@ describe('OrderPage', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
     await completeSignup(user)
+
+    // A rental hands over a vehicle, so it asks who is taking it. Nothing
+    // is submitted until every listed document has been chosen.
+    expect(await screen.findByText(/verify your identity/i)).toBeInTheDocument()
+    const submit = screen.getByRole('button', { name: /submit for review/i })
+    expect(submit).toBeDisabled()
+    // The renter's own papers, and only those: the car is ours, so its
+    // logbook and insurance are not theirs to produce.
+    expect(screen.queryByText(/vehicle registration/i)).not.toBeInTheDocument()
+    for (const label of [/national id/i, /selfie/i, /driver's license/i]) {
+      await user.upload(
+        screen.getByLabelText(label),
+        new File(['x'], 'document.jpg', { type: 'image/jpeg' }),
+      )
+    }
+    expect(screen.getByRole('button', { name: /submit for review/i })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: /submit for review/i }))
+
     await user.click(await screen.findByRole('button', { name: /place order/i }))
 
     expect(await screen.findByText('KR-RENT01')).toBeInTheDocument()
@@ -465,6 +593,43 @@ describe('OrderPage', () => {
     const payload = order[1] as { details: Record<string, unknown> }
     expect(payload.details.vehicle_category).toBe('suv')
     expect(payload.details.vehicle_model).toBe('Subaru Forester')
+    // The documents themselves stay on the device; what the desk gets is
+    // the list of what the renter has to hand.
+    expect(payload.details.kyc_documents).toBe('national_id,selfie,drivers_license')
+  })
+
+  it('asks a signed-in renter for their documents right after the vehicle', async () => {
+    const user = userEvent.setup()
+    signedInCustomer()
+    renderOrderPage('/order?service=self_drive')
+
+    const now = new Date()
+    const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+      now.getDate(),
+    ).padStart(2, '0')}`
+    await user.click(await screen.findByRole('button', { name: todayIso }))
+    await user.click(screen.getByRole('button', { name: todayIso }))
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+    await user.click(screen.getByRole('radio', { name: /toyota premio/i }))
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+
+    // No sign-up stands between the vehicle and the identity check.
+    expect(await screen.findByText(/verify your identity/i)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
+
+    // A ride and a delivery hand over nothing, so neither is asked.
+    await user.click(screen.getByRole('button', { name: /back/i }))
+    expect(await screen.findByText('Pick a vehicle for your trip')).toBeInTheDocument()
+  })
+
+  it('never asks a ride or a delivery for identity documents', async () => {
+    const user = userEvent.setup()
+    signedInCustomer()
+    renderOrderPage('/order?service=ride&pickup=Seeta&dropoff=Acacia+Mall')
+
+    await user.click(await screen.findByRole('button', { name: /continue/i }))
+    expect(await screen.findByRole('button', { name: /request ride/i })).toBeInTheDocument()
+    expect(screen.queryByText(/verify your identity/i)).not.toBeInTheDocument()
   })
 
   it('requires an account before an order can be placed', async () => {

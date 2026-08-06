@@ -15,7 +15,7 @@ export interface PublicOrderPayload {
   dropoff_location?: string
   scheduled_for?: string
   notes?: string
-  details?: Record<string, string | number>
+  details?: Record<string, string | number | boolean>
   /** The honeypot. A human never fills it; the field is visually hidden. */
   website?: string
 }

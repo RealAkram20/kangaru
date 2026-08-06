@@ -39,6 +39,49 @@ it('accepts a walk-in ride request and returns a quotable reference', function (
         ->and($stored->details)->toBe(['passengers' => 2, 'vehicle_class' => 'standard']);
 });
 
+it('keeps the delivery payment answer, which the rider is told before setting off', function () {
+    $response = $this->postJson('/api/v1/public/order-requests', [
+        'service_type' => 'delivery',
+        'contact_name' => 'Nakato Grace',
+        'contact_phone' => '0700123456',
+        'pickup_location' => 'Seeta',
+        'dropoff_location' => 'Acacia Mall, Kampala',
+        'details' => [
+            'item_type' => 'parcel',
+            'package_size' => 'medium',
+            'payer' => 'receiver',
+            'payment_method' => 'mobile_money',
+            'sender_name' => 'Okello James',
+            'sender_phone' => '0700111222',
+            'recipient_name' => 'Auma Brenda',
+            'recipient_phone' => '0700987654',
+            'confirm_with_pin' => true,
+        ],
+    ])->assertStatus(201);
+
+    $stored = OrderRequest::query()->where('reference', $response->json('data.reference'))->firstOrFail();
+    // `validated()` drops any detail key without a rule, so an unlisted
+    // key would vanish between the order screens and the dispatch desk —
+    // which is a rider arriving with nobody to ask for and nothing to pay.
+    expect($stored->details['payer'])->toBe('receiver')
+        ->and($stored->details['payment_method'])->toBe('mobile_money')
+        ->and($stored->details['sender_name'])->toBe('Okello James')
+        ->and($stored->details['recipient_phone'])->toBe('0700987654')
+        ->and($stored->details['confirm_with_pin'])->toBeTrue();
+});
+
+it('rejects a payment rail that is not one we run', function () {
+    $this->postJson('/api/v1/public/order-requests', [
+        'service_type' => 'delivery',
+        'contact_name' => 'Nakato Grace',
+        'contact_phone' => '0700123456',
+        'pickup_location' => 'Seeta',
+        'dropoff_location' => 'Acacia Mall, Kampala',
+        'details' => ['payer' => 'somebody_else', 'payment_method' => 'crypto'],
+    ])->assertStatus(422)
+        ->assertJsonValidationErrors(['details.payer', 'details.payment_method']);
+});
+
 it('requires pickup and drop-off for a ride but not for self drive', function () {
     $this->postJson('/api/v1/public/order-requests', [
         'service_type' => 'ride',

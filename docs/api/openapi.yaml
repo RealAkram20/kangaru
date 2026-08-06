@@ -774,11 +774,17 @@ paths:
                     vehicle_class: { enum: [economy, standard, xl, boda, electric_boda, null] }
                     item_type: { enum: [documents, food, parcel, electronics, furniture, appliances, other, null] }
                     package_size: { enum: [small, medium, large, heavy, null] }
+                    payer: { enum: [sender, receiver, null], description: Delivery only — which end settles the bill. }
+                    payment_method: { enum: [cash, mobile_money, card, null], description: Delivery only. }
+                    sender_name: { type: ['string', 'null'], maxLength: 120, description: Delivery only — absent when the account holder is the sender. }
+                    sender_phone: { type: ['string', 'null'], maxLength: 32 }
                     recipient_name: { type: ['string', 'null'], maxLength: 120 }
                     recipient_phone: { type: ['string', 'null'], maxLength: 32 }
+                    confirm_with_pin: { type: ['boolean', 'null'], description: Delivery only — handover confirmed with a four-digit code. }
                     vehicle_category: { enum: [sedan, suv, van, pickup, null] }
                     start_date: { type: ['string', 'null'], format: date, description: Required for self_drive. }
                     end_date: { type: ['string', 'null'], format: date, description: Required for self_drive. }
+                    kyc_documents: { type: ['string', 'null'], maxLength: 255, description: 'Self drive only — comma-separated ids of the identity documents the renter has to hand (national_id, selfie, drivers_license, …). The files are not uploaded; the desk checks originals at collection.' }
                 website:
                   type: string
                   description: Anti-spam field. Must be left empty.
