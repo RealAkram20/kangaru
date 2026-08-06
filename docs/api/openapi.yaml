@@ -821,10 +821,20 @@ paths:
           application/json:
             schema:
               type: object
-              required: [name, phone, email, password]
+              required: [first_name, last_name, phone, email, password]
               additionalProperties: false
               properties:
-                name: { type: string, maxLength: 120 }
+                first_name: { type: string, maxLength: 60 }
+                last_name: { type: string, maxLength: 60 }
+                gender:
+                  type: string
+                  nullable: true
+                  enum: [female, male, other, prefer_not_to_say]
+                  description: >
+                    Optional (ADR-0015 §2). Held to support a same-gender
+                    captain preference; Uganda's Data Protection and
+                    Privacy Act, 2019 wants a stated purpose for it, which
+                    is a reason to offer the question rather than compel it.
                 phone:
                   type: string
                   minLength: 9
@@ -2968,13 +2978,24 @@ components:
               description: False while the owner has paused online intake — the order form explains instead of failing at submit.
 
     Customer:
-      description: A customer's own account, as shown to them (ADR-0013).
+      description: >
+        A customer's own account, as shown to them (ADR-0013, ADR-0015).
+        `name` is composed from first_name and last_name rather than
+        stored, and is returned so clients need not re-implement the join.
+        `gender` is null when never asked, which is a different answer
+        from "prefer_not_to_say" (ADR-0015 §2).
       type: object
-      required: [id, name, phone, email, created_at]
+      required: [id, first_name, last_name, name, gender, phone, email, created_at]
       additionalProperties: false
       properties:
         id: { type: integer }
+        first_name: { type: string }
+        last_name: { type: string }
         name: { type: string }
+        gender:
+          type: string
+          nullable: true
+          enum: [female, male, other, prefer_not_to_say]
         phone: { type: string }
         email: { type: string }
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }

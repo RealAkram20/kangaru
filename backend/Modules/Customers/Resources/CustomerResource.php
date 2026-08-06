@@ -22,7 +22,13 @@ class CustomerResource extends JsonResource
     {
         return [
             'id' => $this->id,
+            'first_name' => $this->first_name,
+            'last_name' => $this->last_name,
+            // The composed form as well as the parts: the order form
+            // prefills one field with it, and making every client
+            // re-implement the join invites four spellings of it.
             'name' => $this->name,
+            'gender' => $this->gender?->value,
             'phone' => $this->phone,
             'email' => $this->email,
             'created_at' => $this->created_at,

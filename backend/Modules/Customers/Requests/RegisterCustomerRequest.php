@@ -3,6 +3,8 @@
 namespace Modules\Customers\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+use Modules\Customers\Enums\CustomerGender;
 
 /**
  * Customer registration (ADR-0013 §3). An unauthenticated write, so the
@@ -23,7 +25,17 @@ class RegisterCustomerRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name' => ['required', 'string', 'max:120'],
+            // Split names (ADR-0015): the account screen greets people by
+            // their given name, and "Hi, Nakato Grace" is nobody's idea of
+            // being greeted.
+            'first_name' => ['required', 'string', 'max:60'],
+            'last_name' => ['required', 'string', 'max:60'],
+            // Optional on purpose. Uganda's Data Protection and Privacy
+            // Act, 2019 wants a stated purpose for every field we hold
+            // (AGENTS.md); gender has one — a same-gender captain
+            // preference — but that is a reason to offer the question, not
+            // to compel an answer before somebody can book a taxi.
+            'gender' => ['nullable', Rule::enum(CustomerGender::class)],
             // Same loose shape as the order form: a customer turned away
             // over phone formatting is a customer lost.
             'phone' => ['required', 'string', 'min:9', 'max:32', 'regex:/^[+0-9 ()-]+$/'],

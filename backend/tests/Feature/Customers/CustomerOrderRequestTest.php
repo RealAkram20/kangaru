@@ -105,7 +105,10 @@ it('shows the customer their own request by id', function () {
 });
 
 it('shows the dispatch queue who the account holder is, and null for walk-ins', function () {
-    $customer = Customer::factory()->create(['name' => 'Nakato Grace']);
+    // The queue reads `customer.name`, which since ADR-0015 is composed
+    // from the split columns rather than stored — so this asserts the
+    // accessor keeps that contract, not just that a string round-trips.
+    $customer = Customer::factory()->create(['first_name' => 'Nakato', 'last_name' => 'Grace']);
     OrderRequest::factory()->create(['customer_id' => $customer->id]);
     OrderRequest::factory()->create(['customer_id' => null]);
 

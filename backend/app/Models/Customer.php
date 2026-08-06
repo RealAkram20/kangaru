@@ -3,9 +3,11 @@
 namespace App\Models;
 
 use Database\Factories\CustomerFactory;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Laravel\Sanctum\HasApiTokens;
+use Modules\Customers\Enums\CustomerGender;
 
 /**
  * A walk-in customer (ADR-0013 §1) — the platform's own retail client,
@@ -26,6 +28,11 @@ use Laravel\Sanctum\HasApiTokens;
  *                                 Google-only customer has none (ADR-0013 §3). The registration service
  *                                 guarantees at least one credential exists; the model does not.
  * @property string|null $google_id Google's stable `sub` claim.
+ * @property string $first_name
+ * @property string $last_name
+ * @property CustomerGender|null $gender Null means never asked, which is
+ *                                       not the same answer as PREFER_NOT_TO_SAY (ADR-0015 §2).
+ * @property-read string $name Composed from the pair; see {@see name()}.
  */
 class Customer extends Authenticatable
 {
@@ -38,7 +45,9 @@ class Customer extends Authenticatable
      * @var list<string>
      */
     protected $fillable = [
-        'name',
+        'first_name',
+        'last_name',
+        'gender',
         'phone',
         'email',
         'password',
@@ -62,6 +71,22 @@ class Customer extends Authenticatable
     {
         return [
             'password' => 'hashed',
+            'gender' => CustomerGender::class,
         ];
+    }
+
+    /**
+     * The full name, composed rather than stored (ADR-0015). Every reader
+     * that predates the name split — the dispatcher queue through
+     * OrderRequestResource, order notifications — asks for `name` and
+     * still gets one, so the split stayed invisible to them.
+     *
+     * @return Attribute<string, never>
+     */
+    protected function name(): Attribute
+    {
+        return Attribute::get(
+            fn (): string => trim($this->first_name.' '.$this->last_name),
+        );
     }
 }
