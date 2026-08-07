@@ -20,6 +20,7 @@ import { RolesPage } from '../pages/RolesPage'
 import { ProfilePage } from '../pages/ProfilePage'
 import { SystemSettingsPage } from '../pages/SystemSettingsPage'
 import { StaffPage } from '../pages/StaffPage'
+import { LiveMapPage } from '../pages/LiveMapPage'
 import { TripsPage } from '../pages/TripsPage'
 import { VehiclesPage } from '../pages/VehiclesPage'
 import { LandingPage } from '../pages/public/LandingPage'
@@ -85,6 +86,11 @@ export const router = createBrowserRouter([
         ),
       },
       { path: 'trips', element: <TripsPage /> },
+      // Not behind RequireNavAccess, deliberately: /live-positions is scoped
+      // server-side through the trips the caller may see, so every role gets
+      // a correct answer here — a corporate employee sees their own ride,
+      // and a role holding trips.view.all sees the fleet.
+      { path: 'live-map', element: <LiveMapPage /> },
       {
         path: 'invoices',
         element: (

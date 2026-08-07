@@ -143,6 +143,59 @@ is the one lie this field exists to prevent, so it is now computed from raw
 timestamps where the direction cannot be misread, and a test asserts a
 five-minute-old position reads as stale.
 
+## The map itself (7 August 2026)
+
+The read shipped with this ADR and nothing rendered it, so a dispatcher
+could see that a trip was in progress but not see it move. `/live-map` in
+the console closes that, and four decisions in it are load-bearing.
+
+**Ten seconds, and nothing while the tab is hidden.** The interval is
+derived from PROJECT.md's two numbers rather than chosen by feel: freshness
+under 15 seconds, 200 concurrent dashboards. At 10s a marker is never more
+than ten seconds behind the last report, and the whole dashboard population
+costs about 20 requests per second — one indexed read each. Faster would
+spend that budget on nothing a dispatcher can see, because devices report
+every few seconds anyway.
+
+The visibility check is not an optimisation, it is the difference between a
+feature and a leak: this page is left open all day behind other windows, and
+without it 200 dashboards spend the night asking where a fleet that stopped
+at six is. Returning to the tab refreshes **immediately** rather than one
+interval later, because a map showing where things were ten seconds ago is
+most misleading exactly when somebody has just looked back at it.
+
+**Markers are moved, never rebuilt.** The first version cleared the layer
+and repopulated it on every poll, which is simpler and wrong: every vehicle
+blinks on every refresh, any open popup closes under the dispatcher's hand,
+and the DOM node MapLibre is mid-transition on is thrown away. A dispatcher
+watching a van approach a junction saw a flicker rather than a movement. So
+`planMarkers` diffs by vehicle id into add/update/remove, and the component
+does nothing else.
+
+**A failed refresh keeps the markers.** Blanking the map on a dropped
+request would make it useless on a bad connection, and worse, a blank map
+reads as *everything stopped* rather than *we did not hear back*. The banner
+says the refresh failed; the markers stay, and their own `age_seconds` will
+start reading stale on its own if it persists — which is the honest signal
+and one this ADR already built.
+
+**`stale` is trusted, never recomputed.** The threshold lives in
+`tracking.live_stale_after_seconds` and nowhere else. Deriving it on the
+client from `age_seconds` would put it in two places, and the day they
+disagreed the map would be confidently wrong about the single thing that
+field exists to say.
+
+Everything that decides anything lives in `frontend/src/lib/livePositions.ts`
+rather than in the map component, because jsdom cannot run a WebGL context
+and logic only a human can exercise is logic that rots. Sixteen mutations
+across the two files were each confirmed to fail a test — including the
+lat/lng swap, which is the one this platform keeps making.
+
+Verified in Chrome against the running server: four vehicles around Kampala,
+one deliberately older than the stale threshold, drawn on a real MapLibre
+canvas with headings rotated and the not-reporting vehicle sorted to the top
+of the list.
+
 ## What remains deferred, and honestly
 
 **Redis stream ingestion — `XADD`, consumer groups, replay after a crashed

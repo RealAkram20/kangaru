@@ -19,6 +19,9 @@ const SECTIONS: SidebarSection[] = [
       // ADR-0012: the walk-in order queue, the phone-first half of dispatch.
       { id: 'walk-ins', label: 'Walk-ins', icon: 'phone-call' },
       { id: 'trips', label: 'Trips', icon: 'navigation' },
+      // ADR-0019. Beside Trips rather than under Fleet: the question it
+      // answers is "where is this job", not "what do we own".
+      { id: 'live-map', label: 'Live map', icon: 'map' },
       { id: 'companies', label: 'Companies', icon: 'building-2' },
       // ADR-0018. "Customers", not "Clients": Companies already means the
       // corporate clients, and one word for two populations is how a
@@ -75,6 +78,7 @@ const NAV_PATHS: Partial<Record<string, string>> = {
   dispatch: '/dispatch',
   'walk-ins': '/order-requests',
   trips: '/trips',
+  'live-map': '/live-map',
   companies: '/companies',
   customers: '/customers',
   vehicles: '/vehicles',
@@ -95,6 +99,7 @@ const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
   '/dispatch': { id: 'dispatch', title: 'Dispatch board' },
   '/order-requests': { id: 'walk-ins', title: 'Walk-in orders' },
   '/trips': { id: 'trips', title: 'Trips' },
+  '/live-map': { id: 'live-map', title: 'Live map' },
   '/companies': { id: 'companies', title: 'Companies' },
   '/customers': { id: 'customers', title: 'Customers' },
   '/vehicles': { id: 'vehicles', title: 'Vehicles' },

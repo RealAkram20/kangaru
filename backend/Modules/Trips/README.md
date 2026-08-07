@@ -118,7 +118,21 @@ Cancelled: reachable from any state before Trip Started, including Rejected
    needs Redis in the development environment first, which is a
    prerequisite rather than an excuse.
 
-   Still no frontend map; ADR-0019 is the API it will call.
+   **~~Still no frontend map~~ — built, 7 August 2026** (ADR-0019 §
+   "The map itself"). `/live-map` in the console polls this endpoint every
+   ten seconds, pauses entirely while the tab is hidden, and refreshes at
+   once on return. It filters nothing: the scoping above is the whole of
+   it, so a corporate employee sees their own ride and a dispatcher sees the
+   fleet.
+
+   Two properties of that page are worth knowing before changing it.
+   Markers are **moved, never rebuilt** — rebuilding makes every vehicle
+   blink on each poll and closes any popup under the dispatcher's hand. And
+   a failed refresh **keeps the markers on screen**, because a dropped
+   request is not evidence the fleet vanished, and a blanked map reads as
+   "everything stopped". Both are mutation-tested in
+   `frontend/src/lib/livePositions.test.ts` and
+   `frontend/src/pages/LiveMapPage.test.tsx`.
 3. **Rate-card-driven cancellation/no-show charges** — `cancellation_charge_applicable`
    is a manual boolean flag only, no computed amount. No-show has no
    charge flag at all yet. `Modules/Billing` doesn't exist yet.
