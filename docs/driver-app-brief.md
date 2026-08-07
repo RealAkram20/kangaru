@@ -189,6 +189,12 @@ backwards.
 `GET /zones` and `GET /zones/resolve?latitude=&longitude=` are readable by
 drivers (ADR-0021). Useful if you want to show the service area.
 
+Since the billing half of ADR-0021 landed, a zone can also decide what a
+trip costs — but **that is not the driver app's business and it must not
+show a price**. Zone rates live on a rate card the driver cannot read, and a
+figure derived from `zones/resolve` would be a guess at what a client is
+billed. Show where the vehicle is; leave what it costs to the invoice.
+
 ### Error codes worth handling
 
 `INVALID_TRIP_TRANSITION` (409) · `VEHICLE_UNAVAILABLE` · `DRIVER_UNAVAILABLE`

@@ -5,7 +5,7 @@ namespace Modules\Billing\Pricing;
 use App\Support\Money\Shillings;
 use Brick\Money\Money;
 use Modules\Billing\Enums\InvoiceLineType;
-use Modules\Billing\Models\RateCardRate;
+use Modules\Billing\Models\PricedRate;
 use Modules\Billing\Models\RateCardVersion;
 use Modules\Trips\Models\Trip;
 
@@ -28,10 +28,27 @@ use Modules\Trips\Models\Trip;
  *   2. distance       x night multiplier
  *   3. waiting time   (never multiplied — see below)
  *   4. minimum or maximum charge adjustment against the sum of 1-3
+ *
+ * ## Where the zone fits (ADR-0021, billing half)
+ *
+ * The zone is resolved once, before anything is priced, and its only effect
+ * is to **choose which rate row supplies the unit amounts**. There is no
+ * zone line, no zone multiplier and no second arithmetic path: a zone rate
+ * is a complete price, so every line below reads its unit from `$rate`
+ * without knowing or caring which kind of rate it got.
+ *
+ * That is why zone pricing changes four line descriptions and one lookup
+ * and nothing else. A surcharge line or a second multiplier would have
+ * needed a new line type, a new column, and a second definition of how an
+ * amount is computed — and `InvoiceLine::computeAmount()` being the single
+ * definition is what makes an invoice reproducible.
  */
 class TripPricingEngine
 {
-    public function __construct(private readonly WaitingTimeCalculator $waiting) {}
+    public function __construct(
+        private readonly WaitingTimeCalculator $waiting,
+        private readonly TripZoneResolver $zones,
+    ) {}
 
     /**
      * @throws RateCardNotConfiguredException the version does not price this vehicle's category
@@ -52,7 +69,11 @@ class TripPricingEngine
         }
 
         $category = $vehicle->category;
-        $rate = $version->rateFor($category);
+
+        // Null here is a real answer meaning "price at the default rate",
+        // not a failure — see TripZoneResolver. It never suppresses the
+        // refusal below, which is about the category being unpriced.
+        $rate = $version->rateFor($category, $this->zones->pricingZoneFor($trip));
 
         if ($rate === null) {
             throw RateCardNotConfiguredException::categoryNotPriced(
@@ -88,29 +109,34 @@ class TripPricingEngine
     private function chargeLines(
         Trip $trip,
         RateCardVersion $version,
-        RateCardRate $rate,
+        PricedRate $rate,
         string $category,
         int $multiplierBp,
     ): array {
         $distanceKm = (string) ($trip->distance_km ?? '0.00');
         $night = $multiplierBp !== RateCardVersion::NO_MULTIPLIER_BP;
+        $zone = $rate->pricingZoneName();
 
         $lines = [
             new PricedLine(
                 type: InvoiceLineType::BASE_FARE,
-                description: $night ? 'Base fare (night rate)' : 'Base fare',
+                description: $this->describe('Base fare', [$zone, $night ? 'night rate' : null]),
                 quantity: '1.00',
                 unitAmount: $rate->baseFare(),
                 rounding: $version->rounding_mode,
                 rateCardVersionId: $version->id,
                 vehicleCategory: $category,
                 multiplierBp: $multiplierBp,
+                zone: $zone,
+                zoneId: $rate->pricingZoneId(),
             ),
             new PricedLine(
                 type: InvoiceLineType::DISTANCE,
-                description: $night
-                    ? sprintf('Distance travelled (%s km, night rate)', $distanceKm)
-                    : sprintf('Distance travelled (%s km)', $distanceKm),
+                description: $this->describe('Distance travelled', [
+                    sprintf('%s km', $distanceKm),
+                    $zone,
+                    $night ? 'night rate' : null,
+                ]),
                 quantity: $distanceKm,
                 unitAmount: $rate->perKilometre(),
                 rounding: $version->rounding_mode,
@@ -118,6 +144,8 @@ class TripPricingEngine
                 vehicleCategory: $category,
                 multiplierBp: $multiplierBp,
                 distanceKm: $distanceKm,
+                zone: $zone,
+                zoneId: $rate->pricingZoneId(),
             ),
         ];
 
@@ -126,11 +154,11 @@ class TripPricingEngine
         if ($billableMinutes > 0) {
             $lines[] = new PricedLine(
                 type: InvoiceLineType::WAITING,
-                description: sprintf(
-                    'Waiting time (%d min billable, %d min included)',
-                    $billableMinutes,
-                    $version->free_waiting_minutes,
-                ),
+                description: $this->describe('Waiting time', [
+                    sprintf('%d min billable', $billableMinutes),
+                    sprintf('%d min included', $version->free_waiting_minutes),
+                    $zone,
+                ]),
                 quantity: sprintf('%d.00', $billableMinutes),
                 unitAmount: $rate->perWaitingMinute(),
                 rounding: $version->rounding_mode,
@@ -142,12 +170,44 @@ class TripPricingEngine
                 // same per minute whenever it happens, and charging a
                 // surcharge on top of a per-minute charge is the kind of
                 // double-counting a client queries.
+                //
+                // A zone, by contrast, does reach this line: the zone rate
+                // carries its own per-waiting-minute price, because standing
+                // still upcountry with a vehicle that has to get home is not
+                // the same cost as standing still in town. That is a rate,
+                // not a surcharge stacked on one.
                 multiplierBp: RateCardVersion::NO_MULTIPLIER_BP,
                 waitingMinutes: $billableMinutes,
+                zone: $zone,
+                zoneId: $rate->pricingZoneId(),
             );
         }
 
         return $lines;
+    }
+
+    /**
+     * One line's wording: a label, then the qualifiers that apply to it in
+     * parentheses.
+     *
+     * Shared by all four line types so a zone, a night rate and a distance
+     * are punctuated the same way wherever they appear — the repo's rule
+     * that when two places format the same string they share one function.
+     *
+     * With no qualifiers this returns the bare label, so a rate card with no
+     * zones and no night rate produces exactly the wording it always has.
+     * Descriptions are rendered once, at issue time, onto a document that
+     * must never change afterwards.
+     *
+     * @param  array<int, string|null>  $qualifiers  nulls are the ones that do not apply
+     */
+    private function describe(string $label, array $qualifiers): string
+    {
+        $applicable = array_filter($qualifiers, fn (?string $q) => $q !== null && $q !== '');
+
+        return $applicable === []
+            ? $label
+            : sprintf('%s (%s)', $label, implode(', ', $applicable));
     }
 
     /**
@@ -173,32 +233,41 @@ class TripPricingEngine
      */
     private function chargeCapAdjustment(
         array $lines,
-        RateCardRate $rate,
+        PricedRate $rate,
         RateCardVersion $version,
         string $category,
     ): ?PricedLine {
         $subtotal = $this->subtotal($lines);
         $minimum = $rate->minimumCharge();
         $maximum = $rate->maximumCharge();
+        $zone = $rate->pricingZoneName();
 
         if ($subtotal->isLessThan($minimum)) {
             return $this->adjustment(
                 InvoiceLineType::MINIMUM_CHARGE_ADJUSTMENT,
-                sprintf('Minimum charge adjustment (minimum %s)', $minimum->getAmount()),
+                $this->describe('Minimum charge adjustment', [
+                    sprintf('minimum %s', $minimum->getAmount()),
+                    $zone,
+                ]),
                 $minimum->minus($subtotal),
                 $version,
                 $category,
+                $rate,
             );
         }
 
         if ($maximum !== null && $subtotal->isGreaterThan($maximum)) {
             return $this->adjustment(
                 InvoiceLineType::MAXIMUM_CHARGE_ADJUSTMENT,
-                sprintf('Maximum charge adjustment (capped at %s)', $maximum->getAmount()),
+                $this->describe('Maximum charge adjustment', [
+                    sprintf('capped at %s', $maximum->getAmount()),
+                    $zone,
+                ]),
                 // Negative: this line takes money off.
                 $maximum->minus($subtotal),
                 $version,
                 $category,
+                $rate,
             );
         }
 
@@ -227,6 +296,7 @@ class TripPricingEngine
         Money $amount,
         RateCardVersion $version,
         string $category,
+        PricedRate $rate,
     ): PricedLine {
         return new PricedLine(
             type: $type,
@@ -236,6 +306,12 @@ class TripPricingEngine
             rounding: $version->rounding_mode,
             rateCardVersionId: $version->id,
             vehicleCategory: $category,
+            // The adjustment came from this rate's own minimum or maximum,
+            // so it records the same zone as the lines it adjusts. An
+            // adjustment line with no zone beside four that have one would
+            // read as a charge from somewhere else.
+            zone: $rate->pricingZoneName(),
+            zoneId: $rate->pricingZoneId(),
         );
     }
 

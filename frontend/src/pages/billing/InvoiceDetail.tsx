@@ -27,6 +27,19 @@ const LINE_COLUMNS: DataColumn<LineRow>[] = [
   },
   { key: 'description', header: 'Description', wrap: true },
   {
+    key: 'inputs',
+    // Both this and the Multiplier column below read `inputs`, so each needs
+    // its own identity or they share a React key and neither can be sorted.
+    id: 'zone',
+    header: 'Zone',
+    // Null means the vehicle category's default rate priced this line, which
+    // is the meaning the column has carried since before zone pricing
+    // existed — so every invoice issued earlier still reads correctly here.
+    // A dash rather than "Anywhere else": on an issued document the question
+    // is "did a zone move this number", and the answer is no.
+    render: (row) => row.inputs.zone ?? '—',
+  },
+  {
     key: 'quantity',
     header: 'Qty',
     numeric: true,
@@ -41,6 +54,7 @@ const LINE_COLUMNS: DataColumn<LineRow>[] = [
   },
   {
     key: 'inputs',
+    id: 'multiplier',
     header: 'Multiplier',
     numeric: true,
     // Shown for every line, including the ones no multiplier touched, so

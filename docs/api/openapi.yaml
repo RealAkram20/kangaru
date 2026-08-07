@@ -4338,6 +4338,7 @@ components:
             - rate_card_version_id
             - vehicle_category
             - zone
+            - zone_id
             - distance_km
             - waiting_minutes
             - multiplier_bp
@@ -4348,7 +4349,16 @@ components:
             vehicle_category: { type: ['string', 'null'] }
             zone:
               type: ['string', 'null']
-              description: Always null until the geofencing engine exists.
+              description: >-
+                Name of the zone whose rate priced this line, as it read when the
+                invoice was issued. Null means the vehicle category's default rate
+                priced it — the meaning this field has carried since before zone
+                pricing existed, so invoices issued earlier still read correctly.
+            zone_id:
+              type: ['integer', 'null']
+              description: >-
+                Identifies the rate row that supplied the unit amount. Zones can be
+                renamed, so the name alone cannot reproduce the line.
             distance_km: { type: ['string', 'null'] }
             waiting_minutes: { type: ['integer', 'null'] }
             multiplier_bp: { type: ['integer', 'null'] }
@@ -4452,6 +4462,7 @@ components:
               - per_waiting_minute_minor
               - minimum_charge_minor
               - maximum_charge_minor
+              - zone_rates
             additionalProperties: false
             properties:
               vehicle_category: { $ref: '#/components/schemas/VehicleCategory' }
@@ -4462,6 +4473,35 @@ components:
               maximum_charge_minor:
                 type: ['integer', 'null']
                 description: Null means uncapped, never "capped at zero".
+              zone_rates:
+                type: array
+                description: >-
+                  Complete prices that replace the ones above for a trip picked up
+                  inside the named zone (ADR-0021). Nested under the category they
+                  override, because a zone price cannot exist without one.
+                items:
+                  type: object
+                  required:
+                    - zone_id
+                    - zone_name
+                    - base_fare_minor
+                    - per_km_minor
+                    - per_waiting_minute_minor
+                    - minimum_charge_minor
+                    - maximum_charge_minor
+                  additionalProperties: false
+                  properties:
+                    zone_id: { type: integer }
+                    zone_name:
+                      type: string
+                      description: Served even for a retired zone, which soft-deletes rather than vanishing.
+                    base_fare_minor: { type: integer }
+                    per_km_minor: { type: integer }
+                    per_waiting_minute_minor: { type: integer }
+                    minimum_charge_minor: { type: integer }
+                    maximum_charge_minor:
+                      type: ['integer', 'null']
+                      description: Null means uncapped, never "capped at zero".
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
 
     RateCardVersionRequest:
@@ -4496,6 +4536,26 @@ components:
               per_waiting_minute_minor: { type: ['integer', 'null'], minimum: 0 }
               minimum_charge_minor: { type: ['integer', 'null'], minimum: 0 }
               maximum_charge_minor: { type: ['integer', 'null'], minimum: 0 }
+              zone_rates:
+                type: ['array', 'null']
+                description: >-
+                  Zone prices for this vehicle category (ADR-0021). Each is a
+                  complete price, not a partial override. `zone_id` must name an
+                  active pricing or client zone visible to the caller's tenant;
+                  anything else is a 422 on `rates.N.zone_rates.M.zone_id`, with one
+                  message for "does not exist", "belongs to another client" and
+                  "switched off" so the endpoint cannot confirm another client's map.
+                items:
+                  type: object
+                  required: [zone_id]
+                  additionalProperties: false
+                  properties:
+                    zone_id: { type: integer }
+                    base_fare_minor: { type: ['integer', 'null'], minimum: 0 }
+                    per_km_minor: { type: ['integer', 'null'], minimum: 0 }
+                    per_waiting_minute_minor: { type: ['integer', 'null'], minimum: 0 }
+                    minimum_charge_minor: { type: ['integer', 'null'], minimum: 0 }
+                    maximum_charge_minor: { type: ['integer', 'null'], minimum: 0 }
 
     Notification:
       type: object

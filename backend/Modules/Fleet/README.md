@@ -214,8 +214,27 @@ has been drawn — an operator mid-mapping must not have every order refused.
 Once one exists, `POST /public/order-requests` refuses a pickup outside it,
 which is what finally catches a swapped lat/lng.
 
-Zone *pricing* and zone-based dispatch eligibility are not built; the
-resolver is the input they will use. See ADR-0021's closing section.
+**Zone pricing is built, in `Modules/Billing`** (ADR-0021 §7–§11).
+`ZoneResolver::pricingZoneAt()` is its only entry point here;
+`Billing\Pricing\TripZoneResolver` owns the separate question of *which
+point* prices a trip, and `RateCardZoneRate` holds what that zone charges.
+Billing depends on Fleet; Fleet does not depend on Billing.
+
+Two consequences land on this module:
+
+- **A zone rate can hold a `zone_id` open.** `rate_card_zone_rates.zone_id`
+  and `invoice_lines.zone_id` are both `restrictOnDelete`. Retiring a zone
+  soft-deletes it, so that is not a wall an operator can hit — but a hard
+  delete of a zone that priced an invoice is now refused by the database,
+  which is the intent.
+- **Deactivating a zone is a pricing act.** A switched-off zone stops being
+  resolved, so any rate card rate attached to it quietly stops applying and
+  the vehicle category's default rate takes over. That is deliberate: an
+  immutable rate card version must not be invalidated by a map edit. It is
+  also why `zones.manage` sits with Operations Manager and Super Admin only.
+
+Zone-based dispatch eligibility is still not built; the resolver is the
+input it will use.
 
 ## What's explicitly deferred
 

@@ -31,7 +31,7 @@ class RateCardController extends Controller
         $this->authorize('viewAny', RateCard::class);
 
         $paginator = RateCard::query()
-            ->with(['versions.rates'])
+            ->with(['versions.rates.zoneRates.zone'])
             ->orderByDesc('is_default')
             ->orderBy('name')
             ->paginate(25);
@@ -50,7 +50,7 @@ class RateCardController extends Controller
     {
         $this->authorize('view', $rateCard);
 
-        return ApiResponse::success(new RateCardResource($rateCard->load('versions.rates')));
+        return ApiResponse::success(new RateCardResource($rateCard->load('versions.rates.zoneRates.zone')));
     }
 
     public function store(StoreRateCardRequest $request): JsonResponse
@@ -63,7 +63,7 @@ class RateCardController extends Controller
         $card = $this->rateCards->create($request->cardData(), $user);
 
         return ApiResponse::success(
-            new RateCardResource($card->load('versions.rates')),
+            new RateCardResource($card->load('versions.rates.zoneRates.zone')),
             'Rate card created.',
             201,
         );
@@ -103,7 +103,7 @@ class RateCardController extends Controller
         $card = $this->rateCards->makeDefault($rateCard);
 
         return ApiResponse::success(
-            new RateCardResource($card->load('versions.rates')),
+            new RateCardResource($card->load('versions.rates.zoneRates.zone')),
             'Default rate card updated.',
         );
     }

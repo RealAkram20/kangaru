@@ -10,6 +10,7 @@ use Modules\Billing\Enums\RoundingMode;
 use Modules\Billing\Models\RateCard;
 use Modules\Billing\Models\RateCardRate;
 use Modules\Billing\Models\RateCardVersion;
+use Modules\Billing\Models\RateCardZoneRate;
 
 /**
  * Creates rate cards and adds versions to them.
@@ -91,22 +92,56 @@ class RateCardService
             $rates = $data['rates'];
 
             foreach ($rates as $rate) {
-                RateCardRate::create([
+                $created = RateCardRate::create([
                     'tenant_id' => $locked->tenant_id,
                     'rate_card_version_id' => $version->id,
                     'vehicle_category' => $rate['vehicle_category'],
-                    'base_fare_minor' => (int) ($rate['base_fare_minor'] ?? 0),
-                    'per_km_minor' => (int) ($rate['per_km_minor'] ?? 0),
-                    'per_waiting_minute_minor' => (int) ($rate['per_waiting_minute_minor'] ?? 0),
-                    'minimum_charge_minor' => (int) ($rate['minimum_charge_minor'] ?? 0),
-                    'maximum_charge_minor' => isset($rate['maximum_charge_minor'])
-                        ? (int) $rate['maximum_charge_minor']
-                        : null,
+                    ...self::amounts($rate),
                 ]);
+
+                /** @var array<int, array<string, mixed>> $zoneRates */
+                $zoneRates = $rate['zone_rates'] ?? [];
+
+                foreach ($zoneRates as $zoneRate) {
+                    // Attached to the rate, not to the version: a zone price
+                    // for a category the version does not otherwise price
+                    // has nowhere to be written (ADR-0021, billing half).
+                    RateCardZoneRate::create([
+                        'tenant_id' => $locked->tenant_id,
+                        'rate_card_rate_id' => $created->id,
+                        'zone_id' => (int) $zoneRate['zone_id'],
+                        ...self::amounts($zoneRate),
+                    ]);
+                }
             }
 
-            return $version->load('rates');
+            return $version->load('rates.zoneRates.zone');
         });
+    }
+
+    /**
+     * The five money columns a rate carries, defaulted the way the schema
+     * defaults them.
+     *
+     * Shared by a default rate and a zone rate because they are the same
+     * five amounts with the same meanings — a second copy is where one of
+     * them quietly stops being written.
+     *
+     * @param  array<string, mixed>  $rate
+     * @return array<string, int|null>
+     */
+    private static function amounts(array $rate): array
+    {
+        return [
+            'base_fare_minor' => (int) ($rate['base_fare_minor'] ?? 0),
+            'per_km_minor' => (int) ($rate['per_km_minor'] ?? 0),
+            'per_waiting_minute_minor' => (int) ($rate['per_waiting_minute_minor'] ?? 0),
+            'minimum_charge_minor' => (int) ($rate['minimum_charge_minor'] ?? 0),
+            // Null means uncapped, never "capped at zero".
+            'maximum_charge_minor' => isset($rate['maximum_charge_minor'])
+                ? (int) $rate['maximum_charge_minor']
+                : null,
+        ];
     }
 
     /**

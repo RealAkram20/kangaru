@@ -15,8 +15,9 @@ than change a number a client has already seen.
 
 **Rate cards** — a named pricing agreement (`RateCard`), carrying immutable
 priced revisions (`RateCardVersion`) that price each vehicle category
-(`RateCardRate`). Prices never change; a card gains a new version and every
-invoice keeps pointing at the version it was raised under.
+(`RateCardRate`) and, optionally, that category inside one zone
+(`RateCardZoneRate`). Prices never change; a card gains a new version and
+every invoice keeps pointing at the version it was raised under.
 
 **Pricing** (`Modules/Billing/Pricing`) — pure computation, writes nothing.
 `RateCardResolver` picks the version in force on the trip's start date,
@@ -73,6 +74,43 @@ column"). Seconds are summed across every pause and truncated to minutes
 **once, at the end** — truncating each pause separately systematically
 under-bills a trip that waited three times.
 
+## Zone pricing (ADR-0021, billing half)
+
+A rate card version can price a vehicle category differently inside a zone.
+`RateCardZoneRate` carries the **same five amounts** as the default rate and
+replaces them wholesale — it is a complete price, not a multiplier and not a
+partial override. Four decisions are worth knowing:
+
+- **The zone selects a rate row; it never adds a line or a multiplier.**
+  `TripPricingEngine` resolves the zone once and asks
+  `RateCardVersion::rateFor($category, $zone)` for the prices. Everything
+  downstream — rounding, the night multiplier, minimum and maximum
+  adjustments — is untouched, and `InvoiceLine::computeAmount()` is still the
+  only definition of a line's arithmetic.
+- **A zone rate hangs off `rate_card_rates.id`.** Pricing a category in a
+  zone without pricing it by default is not refused by a validation rule; it
+  has nowhere to be written. And two tables rather than a nullable `zone_id`
+  because a UNIQUE index treats NULLs as distinct — one table would have let
+  the default rate be inserted twice.
+- **`invoice_lines.zone` records the zone whose rate *applied*.** A trip
+  picked up inside a zone this card says nothing about is priced by the
+  default rate and records no zone, because the zone contributed nothing to
+  the amount. Null keeps the meaning it carried on every invoice issued
+  before this existed. `zone_id` sits beside the name because a zone can be
+  renamed and a name cannot identify the rate row.
+- **The point is the pickup**, from the booking's coordinates.
+  `Pricing\TripZoneResolver` owns that choice and its three "no zone" cases —
+  no booking, no coordinates, no pricing zone — all of which mean "charge the
+  default rate" rather than "refuse".
+
+`StoreRateCardVersionRequest` accepts a zone rate only for an **active
+pricing or client zone visible to the caller's tenant**, with one message for
+"does not exist", "another client's" and "switched off" — distinguishing them
+would confirm another client's map exists. `active` is checked there and
+deliberately not rechecked at pricing time: switching a zone off stops it
+resolving, so its rate stops applying, without invalidating an immutable
+version.
+
 ## Concurrency
 
 Invoice generation is **serialised per tenant**, by taking the tenant's
@@ -99,6 +137,8 @@ observed, not theorised: `InvoiceNumberRaceTest` reported
   Billing depends on Trips; Trips does not depend on Billing.
 - `Modules\Vehicles\Models\Vehicle` — for `Vehicle::CATEGORIES` and a trip's
   category at pricing time.
+- `Modules\Fleet` — `Zone` and `ZoneResolver`, for zone pricing. Billing
+  depends on Fleet; Fleet does not depend on Billing.
 - `App\Support\Money\{Shillings, MoneyMinorCast}`, `App\Concerns\{Auditable,
   BelongsToTenant}`, `App\Support\Api\ApiResponse`, `App\Enums\ErrorCode`.
 - `brick/money` (and `brick/math`), added by this module.
@@ -169,13 +209,12 @@ Everything here is *not built*, not "partly built".
 2. **Monthly consolidated invoicing.** One invoice per trip. PROJECT.md wants
    monthly billing; that makes `invoices.trip_id` nullable with a line-level
    trip reference, which is additive per the zero-downtime rule.
-3. **Zone pricing** — still unbuilt, but the geofencing half now exists
-   (ADR-0021). `Modules\Fleet\Services\ZoneResolver::pricingZoneAt()`
-   answers which zone a point falls in; what is missing is zone *rates* on a
-   rate card, and inventing a pricing model would be designing this module's
-   next ADR inside that one. `invoice_lines.zone` is still always null, so
-   invoices remain unambiguously "no zone applied" rather than "we did not
-   record it".
+3. **Per-zone distance apportionment.** Zone pricing itself is built (see
+   below); what is not is splitting one trip's distance across the zones it
+   crossed. A trip is priced entirely in its pickup zone. Apportioning needs
+   the GPS route, a rule for which zone each segment belongs to, and a way
+   to show a client the split — and no schema change, because a line already
+   carries its own zone.
 4. **Weekend and holiday rates.** Night rates are in (a time window needs no
    calendar); these need a holiday calendar that does not exist.
 5. **Cancellation and no-show charges.** AGENTS.md makes both rate-card
@@ -227,7 +266,12 @@ Everything here is *not built*, not "partly built".
   both "new card" and "new version", because the payload is the same shape
   and the backend shares one rule set. The night multiplier is typed as
   `1.25` and converted to basis points once, on submit, so a float never
-  reaches storage.
+  reaches storage. Zone prices sit inside the category they override,
+  mirroring the storage and the request body; the picker offers only the
+  zones `priceableZones()` would accept, so the 422 is a backstop rather
+  than the first anybody hears of it. If `/zones` cannot be read at all the
+  section explains its own absence and ordinary prices can still be set —
+  zones refine a rate card, they are not a prerequisite for one.
 - `frontend/src/pages/InvoicesPage.tsx` and `billing/InvoiceDetail.tsx` —
   the list with cursor paging, and one invoice's lines with the inputs that
   produced them. The multiplier column is rendered for every line, including
@@ -290,6 +334,19 @@ suite failed:
 | `CreditNoteService::assertWithinInvoice()` | all of `CreditNoteTest` |
 | `InvoiceService` idempotency replay | "returns the original invoice on a replay of the same idempotency key" |
 | `RateCardVersion` immutability | "refuses every attempt to edit a rate card version or its rates" |
+
+`ZonePricingTest` was mutation-checked the same way, and one of those checks
+found a false green worth recording. Its cross-tenant case originally
+asserted that a trip under another client's overlapping zone fell back to
+the **default** rate — and it stayed green with `Zone::scopeVisibleTo`
+deleted, because the fixture had no zone rates either way. The real hazard
+is that another client's zone *outranks* the town this client is priced in
+(client 10 beats pricing 50) and silently drops them to the default. The
+test now asserts the town rate still applies, and the mutation kills it.
+
+Each filter in `StoreRateCardVersionRequest::priceableZones()` — active,
+kind, tenant visibility — is a separate test rather than one loop, so
+removing any one of them names which rule stopped holding.
 
 `BillingCrossTenantIsolationTest` is the ADR-0001 mandatory isolation proof.
 It exists separately from the other modules' because a leak here is another

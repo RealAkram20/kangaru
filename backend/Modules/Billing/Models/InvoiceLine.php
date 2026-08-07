@@ -41,6 +41,7 @@ use Modules\Billing\Enums\RoundingMode;
  * @property int $rate_card_version_id
  * @property string $vehicle_category
  * @property string|null $zone
+ * @property int|null $zone_id
  * @property string|null $distance_km
  * @property int|null $waiting_minutes
  * @property int $multiplier_bp
@@ -63,6 +64,7 @@ class InvoiceLine extends Model
         'rate_card_version_id',
         'vehicle_category',
         'zone',
+        'zone_id',
         'distance_km',
         'waiting_minutes',
         'multiplier_bp',
@@ -77,6 +79,7 @@ class InvoiceLine extends Model
             'quantity' => 'decimal:2',
             'unit_amount_minor' => MoneyMinorCast::class,
             'amount_minor' => MoneyMinorCast::class,
+            'zone_id' => 'integer',
             'distance_km' => 'decimal:2',
             'waiting_minutes' => 'integer',
             'multiplier_bp' => 'integer',

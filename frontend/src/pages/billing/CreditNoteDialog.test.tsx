@@ -40,6 +40,7 @@ function invoice(overrides: Partial<Invoice> = {}): Invoice {
           rate_card_version_id: 4,
           vehicle_category: 'sedan',
           zone: null,
+          zone_id: null,
           distance_km: '42.00',
           waiting_minutes: null,
           multiplier_bp: 10_000,

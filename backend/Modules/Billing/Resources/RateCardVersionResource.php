@@ -5,8 +5,10 @@ namespace Modules\Billing\Resources;
 use App\Support\Money\Shillings;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Modules\Billing\Models\PricedRate;
 use Modules\Billing\Models\RateCardRate;
 use Modules\Billing\Models\RateCardVersion;
+use Modules\Billing\Models\RateCardZoneRate;
 
 /**
  * @mixin RateCardVersion
@@ -38,16 +40,43 @@ class RateCardVersionResource extends JsonResource
             'notes' => $this->notes,
             'rates' => $this->whenLoaded('rates', fn () => $this->rates->map(fn (RateCardRate $rate) => [
                 'vehicle_category' => $rate->vehicle_category,
-                'base_fare_minor' => Shillings::toMinor($rate->baseFare()),
-                'per_km_minor' => Shillings::toMinor($rate->perKilometre()),
-                'per_waiting_minute_minor' => Shillings::toMinor($rate->perWaitingMinute()),
-                'minimum_charge_minor' => Shillings::toMinor($rate->minimumCharge()),
-                // Null means uncapped, never "capped at zero".
-                'maximum_charge_minor' => $rate->maximumCharge() === null
-                    ? null
-                    : Shillings::toMinor($rate->maximumCharge()),
+                ...self::amounts($rate),
+                // Nested under the category they override, mirroring both
+                // the storage and the request payload. A flat list would
+                // make the client join them back up, and getting that join
+                // wrong shows a finance officer a price that is not theirs.
+                'zone_rates' => $rate->zoneRates->map(fn (RateCardZoneRate $zoneRate) => [
+                    'zone_id' => $zoneRate->zone_id,
+                    // The zone is loaded `withTrashed()`, so a retired zone
+                    // still names itself here rather than reading as null on
+                    // a rate card somebody has to explain.
+                    'zone_name' => $zoneRate->pricingZoneName(),
+                    ...self::amounts($zoneRate),
+                ])->values(),
             ])),
             'created_at' => $this->created_at,
+        ];
+    }
+
+    /**
+     * The five amounts every rate carries, serialised identically whether
+     * it is a category's default price or a zone's override of it. One
+     * function, so the two shapes cannot drift and a client can parse them
+     * with one reader.
+     *
+     * @return array<string, int|null>
+     */
+    private static function amounts(PricedRate $rate): array
+    {
+        return [
+            'base_fare_minor' => Shillings::toMinor($rate->baseFare()),
+            'per_km_minor' => Shillings::toMinor($rate->perKilometre()),
+            'per_waiting_minute_minor' => Shillings::toMinor($rate->perWaitingMinute()),
+            'minimum_charge_minor' => Shillings::toMinor($rate->minimumCharge()),
+            // Null means uncapped, never "capped at zero".
+            'maximum_charge_minor' => $rate->maximumCharge() === null
+                ? null
+                : Shillings::toMinor($rate->maximumCharge()),
         ];
     }
 }

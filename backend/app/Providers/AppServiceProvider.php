@@ -26,6 +26,7 @@ use Modules\Billing\Models\Invoice;
 use Modules\Billing\Models\RateCard;
 use Modules\Billing\Models\RateCardRate;
 use Modules\Billing\Models\RateCardVersion;
+use Modules\Billing\Models\RateCardZoneRate;
 use Modules\Billing\Policies\InvoicePolicy;
 use Modules\Billing\Policies\RateCardPolicy;
 use Modules\Bookings\Events\BookingApproved;
@@ -174,6 +175,10 @@ class AppServiceProvider extends ServiceProvider
             'rate_card' => RateCard::class,
             'rate_card_version' => RateCardVersion::class,
             'rate_card_rate' => RateCardRate::class,
+            // ADR-0021's billing half. A zone rate decides what a client is
+            // charged for a trip picked up inside a boundary, so it is a
+            // rate-card change like any other and audited as one.
+            'rate_card_zone_rate' => RateCardZoneRate::class,
             'invoice' => Invoice::class,
             'credit_note' => CreditNote::class,
             // ADR-0004. AGENTS.md requires an audit trail over

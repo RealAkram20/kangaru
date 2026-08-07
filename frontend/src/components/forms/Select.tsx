@@ -40,6 +40,15 @@ export function Select({
     appearance: 'none',
     WebkitAppearance: 'none',
     flex: 1,
+    // A flex item's `min-width` defaults to `auto`, which for a <select>
+    // resolves to the width of its **widest option**. Without this, a select
+    // whose options are long names — zones on a rate card — grows past the
+    // column it was given and its text renders over the field beside it.
+    // The truncation is the visible half of the same fix.
+    minWidth: 0,
+    overflow: 'hidden',
+    whiteSpace: 'nowrap',
+    textOverflow: 'ellipsis',
     height: '100%',
     padding: '0 34px 0 12px',
     border: 'none',
