@@ -2,7 +2,7 @@ import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiFailure, apiOk, makeUser, renderAs } from '../test/harness'
-import { SettingsPage } from './SettingsPage'
+import { ProfilePage } from './ProfilePage'
 
 vi.mock('../lib/apiClient', () => ({
   apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn() },
@@ -23,11 +23,11 @@ async function fillPassword(current = 'password', next = 'a-much-longer-one') {
   await userEvent.click(screen.getByRole('button', { name: /Change password/i }))
 }
 
-describe('SettingsPage — password', () => {
+describe('ProfilePage — password', () => {
   it('sends the change with its confirmation', async () => {
     patch.mockResolvedValue(apiOk(null))
 
-    renderAs(<SettingsPage />)
+    renderAs(<ProfilePage />)
     await fillPassword()
 
     // The current password is sent even though the caller is signed in: a
@@ -48,7 +48,7 @@ describe('SettingsPage — password', () => {
   it('tells the user they have been signed out everywhere', async () => {
     patch.mockResolvedValue(apiOk(null))
 
-    renderAs(<SettingsPage />)
+    renderAs(<ProfilePage />)
     await fillPassword()
 
     expect(await screen.findByText(/Password changed/i)).toBeVisible()
@@ -67,7 +67,7 @@ describe('SettingsPage — password', () => {
       }),
     )
 
-    renderAs(<SettingsPage />)
+    renderAs(<ProfilePage />)
     await fillPassword('wrong-one')
 
     expect(await screen.findByText('Your current password is incorrect.')).toBeVisible()
@@ -76,11 +76,11 @@ describe('SettingsPage — password', () => {
   })
 })
 
-describe('SettingsPage — two-factor', () => {
+describe('ProfilePage — two-factor', () => {
   const enrolled = makeUser({ role: 'finance', tenant_id: null, mfa_enabled: true })
 
   it('shows a privileged user their factor is on, and offers new codes', async () => {
-    renderAs(<SettingsPage />, enrolled)
+    renderAs(<ProfilePage />, enrolled)
 
     expect(screen.getByText('On')).toBeVisible()
     expect(screen.getByRole('button', { name: /Generate new recovery codes/i })).toBeVisible()
@@ -89,7 +89,7 @@ describe('SettingsPage — two-factor', () => {
   it('shows the new codes once, with the warning', async () => {
     post.mockResolvedValue(apiOk({ recovery_codes: ['AAAAA-11111', 'BBBBB-22222'] }))
 
-    renderAs(<SettingsPage />, enrolled)
+    renderAs(<ProfilePage />, enrolled)
     await userEvent.click(screen.getByRole('button', { name: /Generate new recovery codes/i }))
 
     expect(await screen.findByText('AAAAA-11111')).toBeVisible()
@@ -101,7 +101,7 @@ describe('SettingsPage — two-factor', () => {
   it('says so plainly when the request fails', async () => {
     post.mockRejectedValue(apiFailure(403, 'MFA_ENROLMENT_REQUIRED', 'Set up two-factor first.'))
 
-    renderAs(<SettingsPage />, enrolled)
+    renderAs(<ProfilePage />, enrolled)
     await userEvent.click(screen.getByRole('button', { name: /Generate new recovery codes/i }))
 
     expect(await screen.findByText('Set up two-factor first.')).toBeVisible()
@@ -114,7 +114,7 @@ describe('SettingsPage — two-factor', () => {
    * user who enrolled would hold an authenticator nothing ever asks for.
    */
   it('offers an unprivileged user no way to enable a factor that would be ignored', async () => {
-    renderAs(<SettingsPage />, makeUser({ role: 'corporate_admin', mfa_enabled: false }))
+    renderAs(<ProfilePage />, makeUser({ role: 'corporate_admin', mfa_enabled: false }))
 
     expect(screen.getByText('Off')).toBeVisible()
     expect(screen.queryByRole('button', { name: /Set up|Turn on|Enable/i })).toBeNull()

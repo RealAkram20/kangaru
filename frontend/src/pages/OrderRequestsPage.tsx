@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { isAxiosError } from 'axios'
 import { apiClient } from '../lib/apiClient'
 import { formatTimestamp } from '../lib/format'
+import type { OrderRequest } from '../types/orderRequest'
 
 /**
  * The walk-in order queue (ADR-0012 §4): what the public form feeds and a
@@ -12,25 +13,6 @@ import { formatTimestamp } from '../lib/format'
  * custom role holding `order_requests.manage` is invisible to a slug list,
  * so the page gates on whether the API answers.
  */
-
-interface OrderRequestRow {
-  id: number
-  reference: string
-  service_type: string
-  status: string
-  allowed_transitions: string[]
-  contact_name: string
-  contact_phone: string
-  contact_email: string | null
-  pickup_location: string | null
-  dropoff_location: string | null
-  scheduled_for: string | null
-  details: Record<string, string | number> | null
-  notes: string | null
-  dispatcher_notes: string | null
-  handled_by: { id: number; name: string } | null
-  created_at: string
-}
 
 const SERVICE_LABELS: Record<string, string> = {
   ride: 'Ride',
@@ -51,20 +33,20 @@ const TRANSITION_ACTIONS: Record<string, string> = {
   closed: 'Close',
 }
 
-async function fetchQueue(statusFilter: string): Promise<OrderRequestRow[]> {
+async function fetchQueue(statusFilter: string): Promise<OrderRequest[]> {
   const query = statusFilter ? `?status=${statusFilter}` : ''
   const response = await apiClient.get(`/order-requests${query}`)
 
-  return response.data.data.order_requests as OrderRequestRow[]
+  return response.data.data.order_requests as OrderRequest[]
 }
 
 export function OrderRequestsPage() {
-  const [rows, setRows] = useState<OrderRequestRow[] | null>(null)
+  const [rows, setRows] = useState<OrderRequest[] | null>(null)
   const [statusFilter, setStatusFilter] = useState('')
   const [refused, setRefused] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const applyResult = useCallback((fetched: OrderRequestRow[]) => {
+  const applyResult = useCallback((fetched: OrderRequest[]) => {
     setRows(fetched)
     setError(null)
   }, [])
@@ -89,7 +71,7 @@ export function OrderRequestsPage() {
     void load()
   }, [load])
 
-  const move = (row: OrderRequestRow, to: string) =>
+  const move = (row: OrderRequest, to: string) =>
     apiClient
       .patch(`/order-requests/${row.id}`, { status: to })
       .then(load)

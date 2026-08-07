@@ -41,7 +41,11 @@ const PLATFORM_STAFF = makeUser({
   role: 'dispatcher',
 })
 
-function booking(id: number, client: { id: number; name: string } | undefined, origin: string): Booking {
+function booking(
+  id: number,
+  client: { id: number; name: string } | undefined,
+  origin: string,
+): Booking {
   return {
     id,
     tenant_id: client?.id ?? 1,
@@ -123,6 +127,7 @@ const driver: Driver = {
   license_number: 'DL-99881',
   license_expiry: '2028-01-01',
   status: 'active',
+  account: null,
   created_at: '2026-01-01T00:00:00.000000Z',
   updated_at: '2026-01-01T00:00:00.000000Z',
 }
@@ -154,6 +159,25 @@ function serve(scope: 'platform' | 'tenant') {
       : [trip(81, undefined, 'Head Office')]
 
   get.mockImplementation((url: string) => {
+    // Ahead of the `/bookings` arm: the candidate endpoints are
+    // `/bookings/{id}/...` and the prefix match would hand the dispatch
+    // pickers the booking queue itself (ADR-0017 wired them up).
+    if (url.includes('/candidate-vehicles')) {
+      return Promise.resolve(
+        apiOk([
+          {
+            ...vehicle,
+            allocated: false,
+            dispatchable: true,
+            requires_override_reason: false,
+            note: null,
+          },
+        ]),
+      )
+    }
+    if (url.includes('/candidate-drivers')) {
+      return Promise.resolve(apiOk([{ ...driver, dispatchable: true, note: null }]))
+    }
     if (url.startsWith('/bookings')) return Promise.resolve(apiOk(bookings, meta))
     if (url.startsWith('/trips')) return Promise.resolve(apiOk(trips, meta))
     if (url.startsWith('/vehicles')) return Promise.resolve(apiOk([vehicle]))
@@ -316,9 +340,7 @@ describe('the dispatch board narrows too', () => {
 
     // `dispatchable=1` has to survive the narrowing: without it the board
     // would start offering bookings that already have a vehicle.
-    await waitFor(() =>
-      expect(get).toHaveBeenCalledWith('/bookings?dispatchable=1&tenant_id=2'),
-    )
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/bookings?dispatchable=1&tenant_id=2'))
   })
 
   it('drops the open assignment panel when the client changes', async () => {
@@ -476,7 +498,8 @@ describe('the page never decides the scope for itself', () => {
     // "one client's listing": a column too few, rather than rows labelled
     // with a client the response never confirmed.
     get.mockImplementation((url: string) => {
-      if (url.startsWith('/bookings')) return Promise.resolve(apiOk([booking(41, BANK, 'Head Office')]))
+      if (url.startsWith('/bookings'))
+        return Promise.resolve(apiOk([booking(41, BANK, 'Head Office')]))
       return Promise.reject(new Error(`unexpected GET ${url}`))
     })
 

@@ -9,6 +9,15 @@ vi.mock('../lib/apiClient', () => ({
   apiClient: { get: vi.fn(), post: vi.fn() },
 }))
 
+// jsdom has no geocoder; the picker's suggestions are stubbed at the module
+// boundary so the coordinate path can be exercised (ADR-0020 §2).
+vi.mock('./public/places', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./public/places')>()),
+  searchPlaces: vi.fn(async () => [
+    { name: 'Acacia Mall', detail: 'Kira Road, Kampala', lngLat: [32.5825, 0.3476] },
+  ]),
+}))
+
 const { apiClient } = await import('../lib/apiClient')
 const get = vi.mocked(apiClient.get)
 const post = vi.mocked(apiClient.post)
@@ -68,6 +77,75 @@ describe('BookingsPage', () => {
     // of them means "you have no bookings" — which would be a lie.
     expect(await screen.findByText('Bookings unavailable')).toBeInTheDocument()
     expect(screen.getByText('The bookings service is unavailable.')).toBeInTheDocument()
+  })
+
+  /**
+   * ADR-0020 §2. A dispatcher raising a booking by hand used to produce one
+   * with no coordinates, so the matcher reported "pickup has no
+   * coordinates, so distance was not used" for every staff-created booking.
+   */
+  it('sends the pick-up coordinates when the dispatcher takes a suggestion', async () => {
+    const user = userEvent.setup()
+    renderAs(<BookingsPage />)
+
+    await user.click(await screen.findByRole('button', { name: /new booking/i }))
+    await user.type(screen.getByLabelText(/^passenger\*/i), 'Peter Ochieng')
+    await user.type(screen.getByLabelText(/contact number/i), '+256700111222')
+    await user.type(screen.getByLabelText(/pick-up/i), 'Acacia')
+    await user.click(await screen.findByRole('button', { name: /Acacia Mall/ }))
+    await user.type(screen.getByLabelText(/destination/i), 'Jinja')
+    await user.click(screen.getByRole('button', { name: /create booking/i }))
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+
+    const payload = post.mock.calls[0][1] as Record<string, unknown>
+    // `lngLat` is [lng, lat]; sending them the wrong way round puts a
+    // Kampala pickup off the coast of Ghana with both values still valid.
+    expect(payload.origin_latitude).toBe(0.3476)
+    expect(payload.origin_longitude).toBe(32.5825)
+  })
+
+  it('sends no coordinates when the pick-up was only typed', async () => {
+    const user = userEvent.setup()
+    renderAs(<BookingsPage />)
+
+    await user.click(await screen.findByRole('button', { name: /new booking/i }))
+    await user.type(screen.getByLabelText(/^passenger\*/i), 'Peter Ochieng')
+    await user.type(screen.getByLabelText(/contact number/i), '+256700111222')
+    await user.type(screen.getByLabelText(/pick-up/i), 'Somewhere the geocoder never saw')
+    await user.type(screen.getByLabelText(/destination/i), 'Jinja')
+    await user.click(screen.getByRole('button', { name: /create booking/i }))
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+
+    // Free text always stands: a dispatcher on the phone types what the
+    // caller says, and the booking is created without a point.
+    const payload = post.mock.calls[0][1] as Record<string, unknown>
+    expect(payload).not.toHaveProperty('origin_latitude')
+    expect(payload.origin).toBe('Somewhere the geocoder never saw')
+  })
+
+  it('shows a service-area refusal on the pick-up field, not nowhere', async () => {
+    const user = userEvent.setup()
+    post.mockRejectedValueOnce(
+      apiFailure(422, 'VALIDATION_FAILED', 'The given data was invalid.', {
+        origin_latitude: ['That pickup is outside the area we cover.'],
+      }),
+    )
+    renderAs(<BookingsPage />)
+
+    await user.click(await screen.findByRole('button', { name: /new booking/i }))
+    await user.type(screen.getByLabelText(/^passenger\*/i), 'Peter Ochieng')
+    await user.type(screen.getByLabelText(/contact number/i), '+256700111222')
+    await user.type(screen.getByLabelText(/pick-up/i), 'Acacia')
+    await user.type(screen.getByLabelText(/destination/i), 'Jinja')
+    await user.click(screen.getByRole('button', { name: /create booking/i }))
+
+    // ADR-0021 rejects `origin_latitude`, which has no input of its own.
+    // Without re-labelling, the dialog would show nothing at all.
+    expect(
+      await screen.findByText('That pickup is outside the area we cover.'),
+    ).toBeInTheDocument()
   })
 
   it('sends a booking with no pickup time as an immediate request', async () => {

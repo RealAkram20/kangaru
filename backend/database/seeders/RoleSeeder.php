@@ -75,7 +75,7 @@ class RoleSeeder extends Seeder
         ];
         $fleetManage = [P::VEHICLES_MANAGE, P::DRIVERS_MANAGE];
         // CompanyPolicy/VehiclePolicy/DriverPolicy viewAny all `return true`.
-        $everyoneReads = [P::COMPANIES_VIEW, P::VEHICLES_VIEW, P::DRIVERS_VIEW];
+        $everyoneReads = [P::COMPANIES_VIEW, P::VEHICLES_VIEW, P::DRIVERS_VIEW, P::ZONES_VIEW];
         $billingRead = [P::INVOICES_VIEW, P::RATECARDS_VIEW];
 
         return [
@@ -96,6 +96,11 @@ class RoleSeeder extends Seeder
                 'permissions' => [
                     ...$everyoneReads, ...$desk, ...$dispatch, ...$fleetManage, ...$billingRead,
                     P::BOOKINGS_CREATE, P::BOOKINGS_APPROVE, P::TRIPS_VIEW_ALL, P::REPORTS_VIEW,
+                    P::CUSTOMERS_VIEW,
+                    // ADR-0021: a zone boundary decides what a client is
+                    // charged, so drawing one sits with operations rather
+                    // than with dispatch.
+                    P::ZONES_MANAGE,
                 ],
             ],
 
@@ -110,6 +115,11 @@ class RoleSeeder extends Seeder
                     // ADR-0012: the walk-in queue is dispatch work — the
                     // request that has waited longest is the next call.
                     P::ORDER_REQUESTS_MANAGE,
+                    // ADR-0018: a dispatcher answering the phone has to be
+                    // able to find the caller. Read only — suspending an
+                    // account is an act with a reason attached and belongs
+                    // with the people who answer for it.
+                    P::CUSTOMERS_VIEW,
                 ],
             ],
 

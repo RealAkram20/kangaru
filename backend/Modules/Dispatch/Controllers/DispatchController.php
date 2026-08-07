@@ -7,13 +7,18 @@ use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Services\InvalidBookingTransitionException;
 use Modules\Dispatch\Requests\AssignBookingRequest;
+use Modules\Dispatch\Resources\CandidateDriverResource;
 use Modules\Dispatch\Resources\CandidateVehicleResource;
+use Modules\Dispatch\Resources\DispatchSuggestionResource;
 use Modules\Dispatch\Services\AllocationExclusiveException;
 use Modules\Dispatch\Services\AllocationOverrideRequiredException;
+use Modules\Dispatch\Services\DispatchRecommender;
 use Modules\Dispatch\Services\DispatchService;
+use Modules\Dispatch\Services\DriverCandidates;
 use Modules\Dispatch\Services\VehicleCandidates;
 use Modules\Trips\Resources\TripResource;
 use Modules\Trips\Services\DriverUnavailableException;
@@ -24,6 +29,8 @@ class DispatchController extends Controller
     public function __construct(
         private readonly DispatchService $dispatch,
         private readonly VehicleCandidates $candidates,
+        private readonly DriverCandidates $driverCandidates,
+        private readonly DispatchRecommender $recommender,
     ) {}
 
     /**
@@ -40,6 +47,95 @@ class DispatchController extends Controller
         return ApiResponse::success(
             CandidateVehicleResource::collection($this->candidates->forBooking($booking)),
         );
+    }
+
+    /**
+     * The roster judged for this booking (ADR-0017).
+     *
+     * Same gate as the vehicle list and for the same reason: a candidate
+     * list is a preview of the assignment it precedes.
+     */
+    public function driverCandidates(Booking $booking): JsonResponse
+    {
+        $this->authorize('dispatch', $booking);
+
+        return ApiResponse::success(
+            CandidateDriverResource::collection($this->driverCandidates->forBooking($booking)),
+        );
+    }
+
+    /**
+     * What the matcher would choose, ranked, with its reasons (ADR-0020).
+     *
+     * Always available, flag or no flag. A suggestion a dispatcher reads and
+     * acts on is how an operator builds confidence in a matcher before it is
+     * allowed to act alone, and reading one can do no harm.
+     */
+    public function recommendation(Booking $booking): JsonResponse
+    {
+        $this->authorize('dispatch', $booking);
+
+        return ApiResponse::success(
+            DispatchSuggestionResource::collection($this->recommender->forBooking($booking)),
+        );
+    }
+
+    /**
+     * Commits the top suggestion (ADR-0020) — behind the feature flag
+     * AGENTS.md requires for dispatch algorithm changes.
+     *
+     * Goes through `DispatchService::assign`, exactly as the manual path
+     * does, so the pessimistic locks, the allocation rules and the
+     * availability refusals all still apply. A matcher with its own
+     * assignment path would be a second way to write a trip, and the race
+     * guarantee is only as good as its narrowest path.
+     */
+    public function autoAssign(Request $request, Booking $booking): JsonResponse
+    {
+        $this->authorize('dispatch', $booking);
+
+        if (! config('dispatch.automatic_enabled')) {
+            return ApiResponse::error(
+                ErrorCode::AUTOMATIC_DISPATCH_DISABLED,
+                'Automatic dispatch is switched off. Assign this booking yourself, or ask an administrator to enable it.',
+                [],
+                409,
+            );
+        }
+
+        $suggestion = $this->recommender->bestFor($booking);
+
+        if ($suggestion === null) {
+            return ApiResponse::error(
+                ErrorCode::NO_DISPATCH_CANDIDATE,
+                'Nothing can take this booking right now — no vehicle and driver are both free with enough seats.',
+                [],
+                409,
+            );
+        }
+
+        /** @var User $user */
+        $user = $request->user();
+
+        try {
+            $trip = $this->dispatch->assign(
+                $booking,
+                $suggestion->vehicle->id,
+                $suggestion->driver->id,
+                $user,
+            );
+        } catch (VehicleUnavailableException|DriverUnavailableException $e) {
+            // The world moved between ranking and committing — another
+            // dispatcher took the same van. A 409 rather than silently
+            // trying the second choice: picking again without saying so
+            // would make the matcher unpredictable at exactly the moment
+            // somebody is watching it.
+            return ApiResponse::error(ErrorCode::VEHICLE_UNAVAILABLE, $e->getMessage(), [], 409);
+        } catch (InvalidBookingTransitionException $e) {
+            return ApiResponse::error(ErrorCode::INVALID_BOOKING_TRANSITION, $e->getMessage(), [], 409);
+        }
+
+        return ApiResponse::success(new TripResource($trip), 'Assigned automatically.', 201);
     }
 
     /**

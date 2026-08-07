@@ -45,6 +45,36 @@ enum Permission: string
     /** ADR-0012: work the walk-in queue. Platform staff only — OrderRequestPolicy also requires isPlatformLevel(). */
     case ORDER_REQUESTS_MANAGE = 'order_requests.manage';
 
+    /**
+     * ADR-0018: read the customer register — the platform's own retail
+     * account holders, as distinct from a corporate client's staff.
+     *
+     * A permission of its own rather than folding into `staff.view`,
+     * because these are two different populations with two different
+     * privacy stories. Staff are colleagues; customers are members of the
+     * public whose phone numbers and order history are covered by the
+     * Data Protection and Privacy Act, 2019 (AGENTS.md Compliance). A
+     * dispatcher needs to look one up to answer the phone; nobody needs
+     * both lists by accident.
+     */
+    case CUSTOMERS_VIEW = 'customers.view';
+
+    /** Suspend and restore a customer account (ADR-0018 §3). */
+    case CUSTOMERS_MANAGE = 'customers.manage';
+
+    /**
+     * ADR-0021: read the geofences. Wide, because dispatch, billing and
+     * ordering all resolve points against them and a dispatcher who cannot
+     * see a zone cannot explain why a price or a refusal happened.
+     */
+    case ZONES_VIEW = 'zones.view';
+
+    /**
+     * Draw and retire them. Narrow: a zone boundary decides what a client
+     * is charged, so moving one is a commercial act, not a map edit.
+     */
+    case ZONES_MANAGE = 'zones.manage';
+
     // ── Trips ─────────────────────────────────────────────────────────
     /** Absent = own trips only: assigned to you, or arising from your bookings. */
     case TRIPS_VIEW_ALL = 'trips.view.all';
@@ -126,6 +156,10 @@ enum Permission: string
             // this enum: the census of "every case has a label" is implicit
             // in the role screen rendering at all.
             self::ORDER_REQUESTS_MANAGE => 'Work the walk-in order queue',
+            self::CUSTOMERS_VIEW => 'See the customer register',
+            self::CUSTOMERS_MANAGE => 'Suspend and restore customer accounts',
+            self::ZONES_VIEW => 'See the geofenced zones',
+            self::ZONES_MANAGE => 'Draw and retire zones',
             self::TRIPS_VIEW_ALL => 'See every trip',
             self::TRIPS_CREATE => 'Raise a trip directly',
             self::TRIPS_TRANSITION_ANY => 'Move any trip through its lifecycle',

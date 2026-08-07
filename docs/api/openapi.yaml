@@ -52,6 +52,18 @@ paths:
               properties:
                 email: { type: string, format: email }
                 password: { type: string }
+                client:
+                  type: string
+                  enum: [console, driver]
+                  description: >
+                    Which app is asking (ADR-0022). Omitted means the staff
+                    console, which is how every client that predates this
+                    behaves. A `driver` token may reach only the Driver's
+                    Application surface; anything else answers 403
+                    TOKEN_SCOPE_EXCEEDED. Self-declared, and honest about it:
+                    it does not restrict the *person* signing in — they may
+                    always ask for a console token — it bounds what a token
+                    sitting on a phone can be used for.
       responses:
         '200':
           $ref: '#/components/responses/AuthenticatedResponse'
@@ -94,6 +106,18 @@ paths:
               properties:
                 challenge_id: { type: string }
                 code: { type: string, maxLength: 64 }
+                client:
+                  type: string
+                  enum: [console, driver]
+                  description: >
+                    Which app is asking (ADR-0022). Omitted means the staff
+                    console, which is how every client that predates this
+                    behaves. A `driver` token may reach only the Driver's
+                    Application surface; anything else answers 403
+                    TOKEN_SCOPE_EXCEEDED. Self-declared, and honest about it:
+                    it does not restrict the *person* signing in — they may
+                    always ask for a console token — it bounds what a token
+                    sitting on a phone can be used for.
       responses:
         '200':
           $ref: '#/components/responses/AuthenticatedResponse'
@@ -697,6 +721,79 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/bookings/{booking}/candidate-drivers:
+    get:
+      summary: >
+        Every active driver plus whether they can take this booking
+        (ADR-0017) — available first, and the rest listed with a short note
+        rather than dropped, because a dispatcher who knows the roster will
+        ask where somebody went.
+      parameters:
+        - { name: booking, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Candidate drivers, available first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/CandidateDriver' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/bookings/{booking}/recommendation:
+    parameters:
+      - { name: booking, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: What the matcher would choose, ranked, with its reasons (ADR-0020).
+      description: >
+        Always available, flag or no flag — reading a suggestion can do no
+        harm, and it is how an operator builds confidence in the matcher
+        before it acts alone. Anything the assignment endpoint would refuse
+        is dropped rather than ranked low. Empty when nothing is free.
+      responses:
+        '200':
+          description: Suggestions, best first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DispatchSuggestion' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/bookings/{booking}/auto-assignment:
+    parameters:
+      - { name: booking, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: Commits the top suggestion (ADR-0020).
+      description: >
+        Behind the `dispatch.automatic_enabled` flag, off by default —
+        AGENTS.md requires dispatch algorithm changes to ship behind one.
+        Commits through the same locked path a human dispatcher uses, so the
+        pessimistic locks, allocation rules and availability refusals all
+        apply. 409 AUTOMATIC_DISPATCH_DISABLED when the flag is off,
+        409 NO_DISPATCH_CANDIDATE when nothing is free.
+      responses:
+        '201':
+          $ref: '#/components/responses/TripResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/bookings/{booking}/assignment:
     post:
       summary: >
@@ -1221,6 +1318,487 @@ paths:
       responses:
         '204':
           description: Deleted. No content.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/drivers/{driver}/account:
+    parameters:
+      - { name: driver, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: Gives a driver the account they sign in with (ADR-0016).
+      description: >
+        Either mints a new account (email + password) or adopts an existing
+        unlinked one (user_id); the two shapes are mutually exclusive. Needs
+        drivers.manage AND staff.manage, and the role being granted is checked
+        against the caller's own permissions (ADR-0004 escalation rule).
+        409 DRIVER_ACCOUNT_CONFLICT if either the profile or the account is
+        already linked.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  title: New account
+                  required: [email, password]
+                  additionalProperties: false
+                  properties:
+                    email: { type: string, format: email, maxLength: 255 }
+                    password: { type: string, minLength: 12 }
+                    role: { type: string, description: 'Role slug. Defaults to driver.' }
+                    name: { type: string, maxLength: 255, description: "Defaults to the driver profile's name." }
+                - type: object
+                  title: Existing account
+                  required: [user_id]
+                  additionalProperties: false
+                  properties:
+                    user_id: { type: integer }
+      responses:
+        '201':
+          $ref: '#/components/responses/DriverResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Takes the driver's sign-in away and closes their sessions.
+      description: >
+        Idempotent — a driver with no account is already the requested state.
+        Revokes every token the account holds; the account itself survives.
+      responses:
+        '200':
+          $ref: '#/components/responses/DriverResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # Availability (Modules/Fleet) — who and what is off the road (ADR-0017)
+  # ------------------------------------------------------------------
+  /api/v1/availability-blocks:
+    get:
+      summary: Periods drivers and vehicles are unavailable.
+      description: >
+        Filters are whitelisted; an unknown one answers 422 rather than being
+        ignored. `from` and `to` must be given together — a window with one
+        end is not a window.
+      parameters:
+        - { name: resource_type, in: query, schema: { enum: [driver, vehicle] } }
+        - { name: resource_id, in: query, schema: { type: integer } }
+        - { name: status, in: query, schema: { enum: [requested, approved, declined] } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Blocks.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/AvailabilityBlock' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Takes a driver or vehicle off the road for a period.
+      description: >
+        Needs drivers.manage for a driver and vehicles.manage for a vehicle —
+        the permission follows the resource rather than being one of its own.
+        `ends_at` null is open-ended. Recorded as `approved`; the Driver's
+        Application records `requested` instead and waits for an answer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resource_type, resource_id, kind, starts_at]
+              additionalProperties: false
+              properties:
+                resource_type: { enum: [driver, vehicle] }
+                resource_id: { type: integer }
+                kind: { enum: [leave, sick, rest, training, maintenance, inspection, repair, other] }
+                starts_at: { type: string, format: date-time }
+                ends_at: { type: ['string', 'null'], format: date-time }
+                reason: { type: ['string', 'null'], maxLength: 255 }
+      responses:
+        '201':
+          $ref: '#/components/responses/AvailabilityBlockResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/availability-blocks/{availabilityBlock}:
+    parameters:
+      - { name: availabilityBlock, in: path, required: true, schema: { type: integer } }
+    delete:
+      summary: Ends the block, putting the resource back on the road.
+      responses:
+        '204':
+          description: Removed. No content.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/availability-blocks/{availabilityBlock}/answer:
+    parameters:
+      - { name: availabilityBlock, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: Approves or declines a request for time off (ADR-0017 section 6).
+      description: >
+        The far end of the Driver's Application. Only `approved` withholds the
+        driver from dispatch. Answering twice is 409
+        AVAILABILITY_ALREADY_ANSWERED; answering your own request is 403.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              additionalProperties: false
+              properties:
+                status: { enum: [approved, declined] }
+                note: { type: ['string', 'null'], maxLength: 255 }
+      responses:
+        '200':
+          $ref: '#/components/responses/AvailabilityBlockResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # Customer register (Modules/Customers) — staff side, ADR-0018
+  # ------------------------------------------------------------------
+  /api/v1/customers:
+    get:
+      summary: The customer register — the platform's own retail account holders.
+      description: >
+        Needs customers.view (Dispatcher, Operations Manager, Super Admin).
+        Deliberately closed to a corporate client's administrators: these are
+        Shanitah's customers, not theirs. `q` searches name, email and phone,
+        with punctuation stripped from both sides of the phone comparison.
+      parameters:
+        - { name: q, in: query, schema: { type: string, minLength: 2, maxLength: 100 } }
+        - { name: status, in: query, schema: { enum: [active, suspended] } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Customers, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/CustomerProfile' }
+                  meta:
+                    type: object
+                    required: [cursor, tally]
+                    additionalProperties: false
+                    properties:
+                      cursor:
+                        type: object
+                        required: [next]
+                        additionalProperties: false
+                        properties:
+                          next: { type: ['string', 'null'] }
+                      tally:
+                        type: object
+                        required: [total, active, suspended]
+                        additionalProperties: false
+                        properties:
+                          total: { type: integer }
+                          active: { type: integer }
+                          suspended: { type: integer }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/customers/{customer}:
+    parameters:
+      - { name: customer, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: One customer, as staff see them.
+      responses:
+        '200':
+          $ref: '#/components/responses/CustomerProfileResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/customers/{customer}/activity:
+    parameters:
+      - { name: customer, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: What this customer has asked for (most recent 50).
+      responses:
+        '200':
+          description: Their order requests, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/OrderRequest' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/customers/{customer}/suspension:
+    parameters:
+      - { name: customer, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: Suspends the account and closes every session it holds.
+      description: >
+        Needs customers.manage. The reason is required — it is the sentence a
+        support agent reads back to the customer. Suspension also refuses the
+        next sign-in, with the ordinary wrong-credentials answer so the login
+        form cannot be used to enumerate accounts in trouble.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: { type: string, minLength: 10, maxLength: 255 }
+      responses:
+        '200':
+          $ref: '#/components/responses/CustomerProfileResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Restores the account. Tokens are not restored — they sign in again.
+      responses:
+        '200':
+          $ref: '#/components/responses/CustomerProfileResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # Live positions (Modules/Trips) — ADR-0019
+  # ------------------------------------------------------------------
+  /api/v1/live-positions:
+    get:
+      summary: Where the fleet is right now.
+      description: >
+        One entry per vehicle on a trip that has not finished. Visibility is
+        resolved through the trips query — a client sees only their own, a
+        driver only the trip they are on — so it can never diverge from the
+        trips listing. `age_seconds` is measured from the device clock, not
+        from storage time, so ingestion lag is visible rather than hidden.
+      parameters:
+        - name: tenant_id
+          in: query
+          description: Platform readers only; narrows to one client (ADR-0006).
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Vehicles currently moving.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/LivePosition' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # A driver's own time off (Modules/Fleet) — ADR-0017 section 6
+  # The Driver's Application asks here; the office answers at
+  # /availability-blocks/{id}/answer.
+  # ------------------------------------------------------------------
+  /api/v1/me/availability-requests:
+    get:
+      summary: The signed-in driver's own requests for time off, and their answers.
+      description: >
+        403 NOT_A_DRIVER when the account is not linked to a driver profile —
+        the feature exists, this account simply is not a driver.
+      responses:
+        '200':
+          description: Their requests, most recent first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/AvailabilityBlock' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Asks the office for time off.
+      description: >
+        Takes no `resource_id` and no `status`: the request is pinned to the
+        caller's own driver profile in the `requested` state by the server, so
+        a driver cannot ask on somebody else's behalf or grant themselves
+        leave. **Asking does not withhold them from dispatch** — only an
+        `approved` answer does. Throttled to 10 a minute.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, starts_at, reason]
+              additionalProperties: false
+              properties:
+                kind:
+                  description: Only reasons a person is away; a driver cannot book maintenance.
+                  enum: [leave, sick, rest, training, other]
+                starts_at: { type: string, format: date-time }
+                ends_at:
+                  description: Null is open-ended; the office pins the end when it answers.
+                  type: ['string', 'null']
+                  format: date-time
+                reason: { type: string, minLength: 5, maxLength: 255 }
+      responses:
+        '201':
+          $ref: '#/components/responses/AvailabilityBlockResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/me/availability-requests/{availabilityBlock}:
+    parameters:
+      - { name: availabilityBlock, in: path, required: true, schema: { type: integer } }
+    delete:
+      summary: Withdraws a request the office has not answered yet.
+      description: >
+        409 AVAILABILITY_ALREADY_ANSWERED once answered — deleting an approval
+        would put the driver back on the roster with nobody knowing. Another
+        driver's request answers 404, not 403.
+      responses:
+        '204':
+          description: Withdrawn. No content.
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # Zones (Modules/Fleet) — the geofencing engine, ADR-0021
+  # ------------------------------------------------------------------
+  /api/v1/zones:
+    get:
+      summary: The geofences this caller may see.
+      description: >
+        A client sees the platform's zones plus their own and never another
+        client's; a platform reader sees all. Needs zones.view, seeded on
+        every system role because dispatch, billing and ordering all resolve
+        points against zones.
+      responses:
+        '200':
+          description: Zones, narrowest priority first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Zone' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Draws a zone.
+      description: >
+        Needs zones.manage — a boundary decides what a client is charged, so
+        drawing one is a commercial act. A `client` zone must name its
+        tenant; every other kind must not.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ZoneInput' }
+      responses:
+        '201':
+          $ref: '#/components/responses/ZoneResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/zones/resolve:
+    get:
+      summary: Which zones contain this point.
+      description: >
+        What a dispatcher asks when a price or a refusal needs explaining.
+        `meta.within_service_area` answers "may we take this job at all" and
+        is **true when no service area has been drawn** — coverage is opt-in.
+        `meta.pricing_zone_id` answers "what does it cost", and is null when
+        no priced zone covers the point.
+      parameters:
+        - { name: latitude, in: query, required: true, schema: { type: number } }
+        - { name: longitude, in: query, required: true, schema: { type: number } }
+      responses:
+        '200':
+          description: Containing zones, narrowest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Zone' }
+                  meta:
+                    type: object
+                    required: [within_service_area, pricing_zone_id]
+                    additionalProperties: false
+                    properties:
+                      within_service_area: { type: boolean }
+                      pricing_zone_id: { type: ['integer', 'null'] }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/zones/{zone}:
+    parameters:
+      - { name: zone, in: path, required: true, schema: { type: integer } }
+    patch:
+      summary: Redraws a zone.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ZoneInput' }
+      responses:
+        '200':
+          $ref: '#/components/responses/ZoneResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Retires a zone. Soft-deleted, so invoices priced in it keep their reference.
+      responses:
+        '204':
+          description: Retired. No content.
         default:
           $ref: '#/components/responses/Error'
 
@@ -2360,6 +2938,45 @@ components:
               message: { type: string }
               data: { $ref: '#/components/schemas/Company' }
 
+    AvailabilityBlockResponse:
+      description: One availability block.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/AvailabilityBlock' }
+
+    ZoneResponse:
+      description: One zone.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/Zone' }
+
+    CustomerProfileResponse:
+      description: One customer, as staff see them.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/CustomerProfile' }
+
     DriverResponse:
       description: One driver.
       content:
@@ -2640,6 +3257,12 @@ components:
         - ROLE_IN_USE
         - ORDERING_PAUSED
         - MAIL_DELIVERY_FAILED
+        - DRIVER_ACCOUNT_CONFLICT
+        - AVAILABILITY_ALREADY_ANSWERED
+        - AUTOMATIC_DISPATCH_DISABLED
+        - NO_DISPATCH_CANDIDATE
+        - NOT_A_DRIVER
+        - TOKEN_SCOPE_EXCEEDED
 
     TripStatus:
       enum:
@@ -2816,6 +3439,237 @@ components:
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
         updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
 
+    AvailabilityBlock:
+      type: object
+      required:
+        - id
+        - resource_type
+        - resource_id
+        - kind
+        - status
+        - answered_at
+        - answer_note
+        - starts_at
+        - ends_at
+        - reason
+        - created_at
+        - updated_at
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        resource_type: { enum: [driver, vehicle] }
+        resource_id: { type: integer }
+        kind: { enum: [leave, sick, rest, training, maintenance, inspection, repair, other] }
+        status: { enum: [requested, approved, declined] }
+        answered_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        answer_note: { type: ['string', 'null'] }
+        starts_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        ends_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        reason: { type: ['string', 'null'] }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    DispatchSuggestion:
+      description: A (vehicle, driver) pair the matcher would choose (ADR-0020).
+      type: object
+      required: [vehicle, driver, score, pickup_distance_km, reasons]
+      additionalProperties: false
+      properties:
+        vehicle: { $ref: '#/components/schemas/Vehicle' }
+        driver: { $ref: '#/components/schemas/Driver' }
+        score:
+          description: Higher is better. Contracts dominate; distance decays with range.
+          type: number
+        pickup_distance_km:
+          description: >
+            Great-circle km from the vehicle's live position to the pickup.
+            Null when the booking has no coordinates or the vehicle has not
+            reported — absent rather than guessed.
+          type: ['number', 'null']
+        reasons:
+          description: Plain sentences a dispatcher can audit the ranking against.
+          type: array
+          items: { type: string }
+
+    ZoneBoundaryPoint:
+      description: >
+        Named keys, not GeoJSON's positional [lng, lat]. That ordering is the
+        most common coordinate bug there is, and ADR-0020 records this
+        codebase hitting a swap no range check could catch.
+      type: object
+      required: [lat, lng]
+      additionalProperties: false
+      properties:
+        lat: { type: number, minimum: -90, maximum: 90 }
+        lng: { type: number, minimum: -180, maximum: 180 }
+
+    ZoneInput:
+      type: object
+      required: [name, kind, boundary]
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 255 }
+        kind: { enum: [service_area, pricing, client, branch, depot] }
+        tenant_id:
+          description: Required for a client zone, forbidden for every other kind.
+          type: ['integer', 'null']
+        boundary:
+          description: A closed ring. Three points is the fewest that enclose an area.
+          type: array
+          minItems: 3
+          items: { $ref: '#/components/schemas/ZoneBoundaryPoint' }
+        priority:
+          description: Lower wins where zones overlap. Defaults from the kind.
+          type: integer
+        active: { type: boolean }
+        notes: { type: ['string', 'null'], maxLength: 255 }
+
+    Zone:
+      type: object
+      required: [id, tenant_id, name, kind, boundary, priority, active, notes, created_at, updated_at]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        tenant_id: { type: ['integer', 'null'] }
+        name: { type: string }
+        kind: { enum: [service_area, pricing, client, branch, depot] }
+        boundary:
+          type: array
+          items: { $ref: '#/components/schemas/ZoneBoundaryPoint' }
+        priority: { type: integer }
+        active: { type: boolean }
+        notes: { type: ['string', 'null'] }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    LivePosition:
+      description: One vehicle's current position (ADR-0019).
+      type: object
+      required:
+        - vehicle_id
+        - trip_id
+        - driver_id
+        - latitude
+        - longitude
+        - speed_kph
+        - heading_degrees
+        - recorded_at
+        - age_seconds
+        - stale
+      additionalProperties: false
+      properties:
+        vehicle_id: { type: integer }
+        trip_id: { type: integer }
+        driver_id: { type: ['integer', 'null'] }
+        latitude: { type: number }
+        longitude: { type: number }
+        speed_kph: { type: ['number', 'null'] }
+        heading_degrees: { type: ['integer', 'null'] }
+        recorded_at:
+          description: The device's clock, not the server's.
+          $ref: '#/components/schemas/NullableTimestamp'
+        age_seconds:
+          description: Seconds since the device recorded it — the freshness figure.
+          type: integer
+        stale:
+          description: >
+            Older than tracking.live_stale_after_seconds. A still marker is
+            ambiguous until you know whether it is a parked vehicle or a
+            dead phone.
+          type: boolean
+
+    CustomerProfile:
+      description: >
+        A customer as staff see them (ADR-0018) — distinct from the account
+        the customer sees. Never carries a credential of any kind.
+      type: object
+      required:
+        - id
+        - first_name
+        - last_name
+        - name
+        - gender
+        - phone
+        - email
+        - status
+        - has_password
+        - has_google
+        - suspended_at
+        - suspension_reason
+        - created_at
+        - updated_at
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        first_name: { type: string }
+        last_name: { type: string }
+        name: { type: string }
+        gender: { type: ['string', 'null'] }
+        phone: { type: string }
+        email: { type: ['string', 'null'] }
+        status: { enum: [active, suspended] }
+        has_password:
+          description: Whether they can sign in with a password, not what it is.
+          type: boolean
+        has_google: { type: boolean }
+        suspended_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        suspension_reason: { type: ['string', 'null'] }
+        orders_count: { type: integer }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    CandidateDriver:
+      description: >
+        A driver plus whether they can take this booking (ADR-0017). The
+        driver fields are DriverResource's, restated for the same reason
+        CandidateVehicle restates the vehicle's — additionalProperties:
+        false rules out allOf composition, and the guarantee is worth the
+        duplication.
+      type: object
+      required:
+        - id
+        - name
+        - phone
+        - email
+        - license_number
+        - license_expiry
+        - status
+        - account
+        - created_at
+        - updated_at
+        - dispatchable
+        - note
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        phone: { type: string }
+        email: { type: ['string', 'null'] }
+        license_number: { type: string }
+        license_expiry: { $ref: '#/components/schemas/NullableTimestamp' }
+        status: { enum: [active, suspended, inactive] }
+        account:
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [id, email, role, status]
+              additionalProperties: false
+              properties:
+                id: { type: integer }
+                email: { type: string, format: email }
+                role: { type: string }
+                status: { enum: [active, suspended] }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        dispatchable:
+          description: False means the assignment endpoint will refuse them with 409.
+          type: boolean
+        note:
+          description: >
+            Short sentence, or null when there is nothing to say. Never names
+            the kind of absence.
+          type: ['string', 'null']
+
     Driver:
       type: object
       required:
@@ -2826,6 +3680,7 @@ components:
         - license_number
         - license_expiry
         - status
+        - account
         - created_at
         - updated_at
       additionalProperties: false
@@ -2837,6 +3692,21 @@ components:
         license_number: { type: string }
         license_expiry: { $ref: '#/components/schemas/NullableTimestamp' }
         status: { enum: [active, suspended, inactive] }
+        account:
+          description: >
+            The account this driver signs in with, or null if they cannot sign
+            in yet (ADR-0016). Always present so a client can tell "no account"
+            apart from "not requested". Never carries password material.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [id, email, role, status]
+              additionalProperties: false
+              properties:
+                id: { type: integer }
+                email: { type: string, format: email }
+                role: { type: string }
+                status: { enum: [active, suspended] }
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
         updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
 
@@ -3054,7 +3924,11 @@ components:
         - contact_phone
         - contact_email
         - pickup_location
+        - pickup_latitude
+        - pickup_longitude
         - dropoff_location
+        - dropoff_latitude
+        - dropoff_longitude
         - scheduled_for
         - details
         - notes
@@ -3076,7 +3950,13 @@ components:
         contact_phone: { type: string }
         contact_email: { type: ['string', 'null'] }
         pickup_location: { type: ['string', 'null'] }
+        pickup_latitude:
+          description: Where the pickup is, when the caller's geocoder knew (ADR-0020).
+          type: ['number', 'null']
+        pickup_longitude: { type: ['number', 'null'] }
         dropoff_location: { type: ['string', 'null'] }
+        dropoff_latitude: { type: ['number', 'null'] }
+        dropoff_longitude: { type: ['number', 'null'] }
         scheduled_for: { $ref: '#/components/schemas/NullableTimestamp' }
         details: { $ref: '#/components/schemas/FreeformMap' }
         notes: { type: ['string', 'null'] }

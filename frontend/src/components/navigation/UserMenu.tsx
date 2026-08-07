@@ -8,7 +8,7 @@ export interface UserMenuProps {
   email?: string
   /** Two letters; derived from the name when absent. */
   initials?: string
-  onSettings: () => void
+  onProfile: () => void
   onSignOut: () => void
 }
 
@@ -21,9 +21,9 @@ export interface UserMenuProps {
  * something, so it now does.
  *
  * It gathers three things that were scattered or unreachable: who you are
- * signed in as, `/settings` (which had no navigation entry at all and was
- * reachable only by typing the URL), and signing out (a loose button beside
- * the avatar).
+ * signed in as, your own `/profile` (which had no navigation entry at all
+ * and was reachable only by typing the URL), and signing out (a loose button
+ * beside the avatar).
  *
  * ## Accessibility, deliberately not deferred
  *
@@ -35,7 +35,7 @@ export interface UserMenuProps {
  * focus to the trigger rather than dropping it on `<body>` — which is what
  * strands a keyboard user at the top of the document.
  */
-export function UserMenu({ name, role, email, initials, onSettings, onSignOut }: UserMenuProps) {
+export function UserMenu({ name, role, email, initials, onProfile, onSignOut }: UserMenuProps) {
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -198,7 +198,7 @@ export function UserMenu({ name, role, email, initials, onSettings, onSignOut }:
             )}
           </div>
 
-          <MenuItem icon="settings" label="Settings" onClick={choose(onSettings)} />
+          <MenuItem icon="user-round" label="Profile" onClick={choose(onProfile)} />
           <MenuItem icon="log-out" label="Sign out" onClick={choose(onSignOut)} tone="danger" />
         </div>
       )}

@@ -5,9 +5,12 @@ namespace App\Models;
 use Database\Factories\CustomerFactory;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Laravel\Sanctum\HasApiTokens;
+use Modules\Bookings\Models\OrderRequest;
 use Modules\Customers\Enums\CustomerGender;
+use Modules\Customers\Enums\CustomerStatus;
 
 /**
  * A walk-in customer (ADR-0013 §1) — the platform's own retail client,
@@ -33,6 +36,8 @@ use Modules\Customers\Enums\CustomerGender;
  * @property CustomerGender|null $gender Null means never asked, which is
  *                                       not the same answer as PREFER_NOT_TO_SAY (ADR-0015 §2).
  * @property-read string $name Composed from the pair; see {@see name()}.
+ * @property CustomerStatus $status ADR-0018 — a suspended account keeps its
+ *                                  history and loses its sessions.
  */
 class Customer extends Authenticatable
 {
@@ -52,6 +57,13 @@ class Customer extends Authenticatable
         'email',
         'password',
         'google_id',
+        // ADR-0018. Mass-assignable because the admin service writes it
+        // through `update()`; nothing customer-facing can reach it — the
+        // registration and profile requests whitelist their own fields.
+        'status',
+        'suspended_at',
+        'suspension_reason',
+        'suspended_by_user_id',
     ];
 
     /**
@@ -72,7 +84,24 @@ class Customer extends Authenticatable
         return [
             'password' => 'hashed',
             'gender' => CustomerGender::class,
+            'status' => CustomerStatus::class,
+            'suspended_at' => 'immutable_datetime',
         ];
+    }
+
+    /**
+     * Everything this customer has ever asked for (ADR-0018 §4).
+     *
+     * The only activity a customer currently has: ADR-0012's `converted`
+     * status does not yet create a Trip, so there is no trip history to
+     * join to. When walk-in fulfilment lands, the timeline gains a second
+     * source rather than changing shape.
+     *
+     * @return HasMany<OrderRequest, $this>
+     */
+    public function orderRequests(): HasMany
+    {
+        return $this->hasMany(OrderRequest::class);
     }
 
     /**

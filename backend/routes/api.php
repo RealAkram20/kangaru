@@ -34,6 +34,10 @@ Route::prefix('v1')->group(function () {
     // written here is not what decides it.
     Route::middleware(['auth:sanctum', 'tenant', 'subject-tenant'])->group(function () {
         require base_path('Modules/Clients/Routes/api.php');
+        // ADR-0018's staff-side register. Separate from the module's own
+        // api.php above, which is deliberately unauthenticated so that
+        // customer register/login can be — see that file's header.
+        require base_path('Modules/Customers/Routes/staff.php');
         require base_path('Modules/Vehicles/Routes/api.php');
         require base_path('Modules/Drivers/Routes/api.php');
         require base_path('Modules/Fleet/Routes/api.php');

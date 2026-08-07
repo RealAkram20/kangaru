@@ -169,9 +169,13 @@ Everything here is *not built*, not "partly built".
 2. **Monthly consolidated invoicing.** One invoice per trip. PROJECT.md wants
    monthly billing; that makes `invoices.trip_id` nullable with a line-level
    trip reference, which is additive per the zero-downtime rule.
-3. **Zone pricing and the geofencing engine.** `invoice_lines.zone` exists
-   and is always null, so invoices issued before zones arrive are
-   unambiguously "no zone applied" rather than "we did not record it".
+3. **Zone pricing** — still unbuilt, but the geofencing half now exists
+   (ADR-0021). `Modules\Fleet\Services\ZoneResolver::pricingZoneAt()`
+   answers which zone a point falls in; what is missing is zone *rates* on a
+   rate card, and inventing a pricing model would be designing this module's
+   next ADR inside that one. `invoice_lines.zone` is still always null, so
+   invoices remain unambiguously "no zone applied" rather than "we did not
+   record it".
 4. **Weekend and holiday rates.** Night rates are in (a time window needs no
    calendar); these need a holiday calendar that does not exist.
 5. **Cancellation and no-show charges.** AGENTS.md makes both rate-card

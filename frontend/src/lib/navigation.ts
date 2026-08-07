@@ -93,6 +93,11 @@ const VISIBLE_TO: Record<string, Role[]> = {
   // route is not behind RequireNavAccess, for the same reason Roles is
   // not — the page gates on whether the API answers.
   'system-settings': ['super_admin'],
+  // CustomerPolicy::viewAny — `customers.view` (ADR-0018), seeded on Super
+  // Admin, Operations Manager and Dispatcher. Deliberately closed to a
+  // Corporate Admin: these are Shanitah's retail customers, not their
+  // staff, and the two populations have different privacy stories.
+  customers: ['super_admin', 'operations_manager', 'dispatcher'],
   invoices: BILLING_READERS,
   'rate-cards': BILLING_READERS,
   reports: REPORT_READERS,

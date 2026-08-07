@@ -1,10 +1,11 @@
-import { createBrowserRouter } from 'react-router-dom'
+import { Navigate, createBrowserRouter } from 'react-router-dom'
 import { ProtectedRoute } from '../auth/ProtectedRoute'
 import { RequireNavAccess } from './RequireNavAccess'
 import { AppShell } from '../components/layout/AppShell'
 import { AuditLogPage } from '../pages/AuditLogPage'
 import { BookingsPage } from '../pages/BookingsPage'
 import { CompaniesPage } from '../pages/CompaniesPage'
+import { CustomersPage } from '../pages/CustomersPage'
 import { DashboardPage } from '../pages/DashboardPage'
 import { DispatchPage } from '../pages/DispatchPage'
 import { DriversPage } from '../pages/DriversPage'
@@ -16,7 +17,7 @@ import { OrderRequestsPage } from '../pages/OrderRequestsPage'
 import { RateCardsPage } from '../pages/RateCardsPage'
 import { ReportsPage } from '../pages/ReportsPage'
 import { RolesPage } from '../pages/RolesPage'
-import { SettingsPage } from '../pages/SettingsPage'
+import { ProfilePage } from '../pages/ProfilePage'
 import { SystemSettingsPage } from '../pages/SystemSettingsPage'
 import { StaffPage } from '../pages/StaffPage'
 import { TripsPage } from '../pages/TripsPage'
@@ -115,11 +116,28 @@ export const router = createBrowserRouter([
       // *only ever* about the signed-in user. Every endpoint it calls acts
       // on the caller and takes no user parameter, so there is no role that
       // should be turned away from their own password.
-      { path: 'settings', element: <SettingsPage /> },
+      { path: 'profile', element: <ProfilePage /> },
+      // This page used to live at /settings, next to a sidebar entry of the
+      // same name that meant the platform's configuration. The redirect is
+      // not ceremony: /settings is in people's history and bookmarks, and
+      // the alternative is a 404 on a URL that worked yesterday.
+      { path: 'settings', element: <Navigate to="/profile" replace /> },
       // Platform settings (ADR-0014). Not behind RequireNavAccess, like
       // Roles: a custom role holding `settings.manage` is invisible to a
       // slug list, so the page gates on whether the API answers.
       { path: 'system-settings', element: <SystemSettingsPage /> },
+      // ADR-0018. Behind RequireNavAccess like Staff, not unguarded like
+      // Roles: `customers.view` is seeded on real roles rather than being a
+      // permission a custom role is expected to carry, and the register is
+      // members of the public — the safer side to err on.
+      {
+        path: 'customers',
+        element: (
+          <RequireNavAccess id="customers">
+            <CustomersPage />
+          </RequireNavAccess>
+        ),
+      },
       {
         path: 'staff',
         element: (

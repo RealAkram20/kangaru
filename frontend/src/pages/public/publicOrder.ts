@@ -12,7 +12,16 @@ export interface PublicOrderPayload {
   contact_phone: string
   contact_email?: string
   pickup_location?: string
+  /**
+   * Where the pickup actually is (ADR-0020 §2), when the geocoder knew and
+   * the typed text still matches the place that was picked. Sent as a pair
+   * or not at all — half a point is not a point.
+   */
+  pickup_latitude?: number
+  pickup_longitude?: number
   dropoff_location?: string
+  dropoff_latitude?: number
+  dropoff_longitude?: number
   scheduled_for?: string
   notes?: string
   details?: Record<string, string | number | boolean>

@@ -51,6 +51,20 @@ class CustomerAuthService
             throw new InvalidCredentialsException;
         }
 
+        // ADR-0018 §3. Suspension revokes existing tokens, which stops the
+        // session somebody already had; without this it would not stop them
+        // starting a new one, and "suspended" would mean "signed out once".
+        //
+        // Deliberately the same `InvalidCredentialsException` as a wrong
+        // password, and deliberately after the password check. Answering
+        // "this account is suspended" to anyone who types an email would
+        // turn the login form into a way to enumerate which addresses are
+        // registered *and* which are in trouble. The customer hears why
+        // from a person, which is also the only way they can appeal it.
+        if (! $customer->status->canSignIn()) {
+            throw new InvalidCredentialsException;
+        }
+
         return [
             'customer' => $customer,
             'token' => $customer->createToken('customer')->plainTextToken,

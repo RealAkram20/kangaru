@@ -4,6 +4,9 @@ namespace Modules\Trips\Services;
 
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Modules\Trips\Support\LivePosition;
+use Modules\Trips\Support\LivePositionStore;
 
 /**
  * Writes a batch of GPS pings for one trip.
@@ -20,6 +23,8 @@ use Illuminate\Support\Facades\DB;
  */
 class TripRouteRecorder
 {
+    public function __construct(private readonly LivePositionStore $livePositions) {}
+
     /**
      * Each ping carries `latitude`, `longitude` and `recorded_at`, and
      * optionally `speed_kph`, `heading_degrees` and `accuracy_metres`.
@@ -62,6 +67,67 @@ class TripRouteRecorder
             DB::table('trip_locations')->insert($chunk);
         }
 
+        // ADR-0019. The history is written first and the snapshot second,
+        // deliberately: the route is evidence and must survive even if the
+        // live store is unreachable, whereas a missed snapshot costs one
+        // map refresh. If the order were reversed a Redis outage would take
+        // billing distance with it.
+        $this->updateLivePosition($tenantId, $tripId, $pings);
+
         return count($rows);
+    }
+
+    /**
+     * Records the newest ping in the batch as the vehicle's current
+     * position (ADR-0019).
+     *
+     * Failures are logged and swallowed. The alternative is a live-map
+     * dependency that can fail a ping batch and, through the job's retry,
+     * duplicate a stretch of route into the table billing reads from. A map
+     * one refresh out of date is a smaller problem than a billing dispute.
+     *
+     * @param  array<int, array<string, mixed>>  $pings
+     */
+    private function updateLivePosition(int $tenantId, int $tripId, array $pings): void
+    {
+        try {
+            $trip = DB::table('trips')->where('id', $tripId)->first(['vehicle_id', 'driver_id']);
+
+            if ($trip === null) {
+                return;
+            }
+
+            $latest = null;
+
+            foreach ($pings as $ping) {
+                $at = Carbon::parse($ping['recorded_at']);
+
+                if ($latest === null || $at->greaterThan(Carbon::parse($latest['recorded_at']))) {
+                    $latest = $ping;
+                }
+            }
+
+            if ($latest === null) {
+                return;
+            }
+
+            $this->livePositions->put([new LivePosition(
+                vehicleId: (int) $trip->vehicle_id,
+                tenantId: $tenantId,
+                tripId: $tripId,
+                driverId: $trip->driver_id === null ? null : (int) $trip->driver_id,
+                latitude: (float) $latest['latitude'],
+                longitude: (float) $latest['longitude'],
+                speedKph: isset($latest['speed_kph']) ? (float) $latest['speed_kph'] : null,
+                headingDegrees: isset($latest['heading_degrees']) ? (int) $latest['heading_degrees'] : null,
+                recordedAt: Carbon::parse($latest['recorded_at']),
+            )]);
+        } catch (\Throwable $e) {
+            Log::warning('live_position.update_failed', [
+                'trip_id' => $tripId,
+                'tenant_id' => $tenantId,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }

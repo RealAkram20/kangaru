@@ -36,16 +36,25 @@ use Modules\Bookings\Policies\BookingPolicy;
 use Modules\Bookings\Policies\OrderRequestPolicy;
 use Modules\Clients\Models\Company;
 use Modules\Clients\Policies\CompanyPolicy;
+use Modules\Customers\Policies\CustomerPolicy;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Policies\DriverPolicy;
+use Modules\Fleet\Models\AvailabilityBlock;
+use Modules\Fleet\Models\DriverShiftWindow;
 use Modules\Fleet\Models\VehicleAllocation;
+use Modules\Fleet\Models\Zone;
+use Modules\Fleet\Policies\AvailabilityBlockPolicy;
 use Modules\Fleet\Policies\VehicleAllocationPolicy;
+use Modules\Fleet\Policies\ZonePolicy;
 use Modules\Notifications\Listeners\SendBookingDecisionNotification;
 use Modules\Notifications\Listeners\SendReportExportReadyNotification;
 use Modules\Reports\Enums\ReportType;
 use Modules\Reports\Events\ReportExportCompleted;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Policies\TripPolicy;
+use Modules\Trips\Support\DatabaseLivePositionStore;
+use Modules\Trips\Support\LivePositionStore;
+use Modules\Trips\Support\RedisLivePositionStore;
 use Modules\Vehicles\Models\Vehicle;
 use Modules\Vehicles\Policies\VehiclePolicy;
 
@@ -62,8 +71,25 @@ class AppServiceProvider extends ServiceProvider
     /**
      * Bootstrap any application services.
      */
+    /**
+     * ADR-0019: which store answers "where is the fleet right now".
+     *
+     * Bound by config rather than by environment sniffing, so a deployment
+     * that has Redis says so once in `.env` and every caller follows —
+     * nothing in the codebase asks whether Redis exists.
+     */
+    private function bindLivePositionStore(): void
+    {
+        $this->app->bind(LivePositionStore::class, fn () => match (config('tracking.live_positions_driver')) {
+            'redis' => new RedisLivePositionStore,
+            default => new DatabaseLivePositionStore,
+        });
+    }
+
     public function boot(): void
     {
+        $this->bindLivePositionStore();
+
         // ADR-0012 promised the public order throttle would "move by
         // config, not by removing the throttle"; ADR-0014 phase 2 is that
         // config. Resolved per request through the settings cache, so a
@@ -90,6 +116,9 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Role::class, RolePolicy::class);
         Gate::policy(Setting::class, SettingPolicy::class);
         Gate::policy(VehicleAllocation::class, VehicleAllocationPolicy::class);
+        Gate::policy(AvailabilityBlock::class, AvailabilityBlockPolicy::class);
+        Gate::policy(Customer::class, CustomerPolicy::class);
+        Gate::policy(Zone::class, ZonePolicy::class);
 
         // A Gate rather than a Policy: reports are not a model, and
         // AGENTS.md's authorization rule names Gates alongside Policies.
@@ -161,6 +190,13 @@ class AppServiceProvider extends ServiceProvider
             // the build for any Auditable model this map omits, because
             // creating one would throw from AuditLog::record().
             'order_request' => OrderRequest::class,
+            // ADR-0017's availability calendar. Audited because taking a
+            // driver or a vehicle off the road — and answering a driver's
+            // request for time off — is a decision somebody made and may
+            // later be asked about.
+            'availability_block' => AvailabilityBlock::class,
+            'zone' => Zone::class,
+            'driver_shift_window' => DriverShiftWindow::class,
             // ADR-0013's customer principal. Not Auditable — it is here
             // because Sanctum's personal_access_tokens.tokenable_type is a
             // morph, and an enforced map with no entry throws the moment a

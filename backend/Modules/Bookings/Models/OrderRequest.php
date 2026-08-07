@@ -70,7 +70,13 @@ class OrderRequest extends Model
         'contact_phone',
         'contact_email',
         'pickup_location',
+        // ADR-0020 §2: where the pickup and drop-off actually are, when the
+        // caller's geocoder knew. Nullable — a phone order has neither.
+        'pickup_latitude',
+        'pickup_longitude',
         'dropoff_location',
+        'dropoff_latitude',
+        'dropoff_longitude',
         'scheduled_for',
         'details',
         'notes',
@@ -83,6 +89,15 @@ class OrderRequest extends Model
     {
         return [
             'service_type' => OrderRequestServiceType::class,
+            // Cast, because MariaDB hands DECIMAL back as a *string* and the
+            // API would otherwise emit "0.3476000" where the contract — and
+            // every map library — expects a number. A mobile client parsing
+            // a string coordinate is a bug waiting for a bad connection.
+            // 7dp sits well inside float64's precision.
+            'pickup_latitude' => 'float',
+            'pickup_longitude' => 'float',
+            'dropoff_latitude' => 'float',
+            'dropoff_longitude' => 'float',
             'status' => OrderRequestStatus::class,
             'scheduled_for' => 'datetime',
             'details' => 'array',

@@ -135,6 +135,63 @@ describe('OrderPage', () => {
     expect(payload.website).toBeUndefined()
   })
 
+  /**
+   * ADR-0020 §2. The form has held `lngLat` since the map needed it to
+   * centre; it was never sent, so the platform discarded the one input that
+   * makes proximity dispatch possible and then had nothing to rank by.
+   */
+  it('sends the pickup coordinates when the place is known', async () => {
+    const user = userEvent.setup()
+    locate.mockResolvedValue({
+      name: 'Current location',
+      detail: 'Plot 9, Bukoto Street, Kampala',
+      lngLat: [32.5825, 0.3476],
+    })
+    renderOrderPage()
+
+    await user.click(screen.getByRole('button', { name: /ride/i }))
+    expect(await screen.findByText('Plot 9, Bukoto Street, Kampala')).toBeInTheDocument()
+    await user.type(screen.getByLabelText(/destination/i), 'Acacia Mall')
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+    await completeSignup(user)
+
+    await screen.findByText('KR-7XKPQ2')
+
+    const order = post.mock.calls.find(([url]) => url === '/public/order-requests')!
+    const payload = order[1] as Record<string, unknown>
+
+    // Latitude and longitude the right way round: `lngLat` is [lng, lat],
+    // and swapping them puts a Kampala pickup off the coast of Ghana with
+    // both values still inside their valid ranges — which no validation
+    // rule can catch.
+    expect(payload.pickup_latitude).toBe(0.3476)
+    expect(payload.pickup_longitude).toBe(32.5825)
+  })
+
+  it('sends no coordinates when the geocoder gave none', async () => {
+    const user = userEvent.setup()
+    // The default mock has no `lngLat` — a geocoder outage, which
+    // `places.ts` promises degrades to plain text rather than an error.
+    renderOrderPage()
+
+    await user.click(screen.getByRole('button', { name: /ride/i }))
+    expect(await screen.findByText('Plot 9, Bukoto Street, Kampala')).toBeInTheDocument()
+    await user.type(screen.getByLabelText(/destination/i), 'Acacia Mall')
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+    await completeSignup(user)
+
+    await screen.findByText('KR-7XKPQ2')
+
+    const order = post.mock.calls.find(([url]) => url === '/public/order-requests')!
+    const payload = order[1] as Record<string, unknown>
+
+    // Absent, not null: the order still goes through on the typed text.
+    expect(payload).not.toHaveProperty('pickup_latitude')
+    expect(payload.pickup_location).toBeTruthy()
+  })
+
   it('sends the sign-up with split names and the stated gender', async () => {
     const user = userEvent.setup()
     renderOrderPage('/order?service=ride&pickup=Seeta&dropoff=Acacia+Mall')

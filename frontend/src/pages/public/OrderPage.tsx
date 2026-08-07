@@ -55,6 +55,12 @@ import {
   searchPlaces,
   type PlaceHit,
 } from './places'
+import {
+  dropoffCoordinates,
+  pickupCoordinates,
+  withCoordinateErrorsOnTheirFields,
+} from './orderCoordinates'
+import { usePlaceSearch } from '../../lib/usePlaceSearch'
 import { DateRangePicker } from './DateRangePicker'
 import { DeliverySummary, type Payer, type PaymentMethod } from './DeliverySummary'
 import { DeliveryParties } from './DeliveryParties'
@@ -305,6 +311,7 @@ const RENTAL_FILTERS: { value: RentalCategory | 'all'; label: string }[] = [
  * then the reference the dispatcher will quote back. State lives here and
  * flows down; the only network call is the final submit.
  */
+
 export function OrderPage() {
   const [params] = useSearchParams()
   /*
@@ -504,7 +511,12 @@ export function OrderPage() {
    * reject with a 422 the customer cannot act on.
    */
   const buildPayload = (account: CustomerAccount): PublicOrderPayload => {
-    const details: Record<string, string | number> = {}
+    // `boolean` included because `confirm_with_pin` is one. Without it this
+    // line has failed `tsc -b` since the delivery PIN shipped — the CI type
+    // gate could not pass, and nobody saw it because CI has not been able to
+    // run. `publicOrder.ts`'s own payload type already allowed booleans; it
+    // was only this local narrowing that did not.
+    const details: Record<string, string | number | boolean> = {}
     if (service === 'ride') {
       // The dispatcher settles the headcount on the phone.
       details.passengers = 1
@@ -563,6 +575,18 @@ export function OrderPage() {
       contact_email: account.email,
       pickup_location: service === 'self_drive' ? undefined : pickup.trim(),
       dropoff_location: service === 'self_drive' ? undefined : dropoff.trim(),
+      // ADR-0020 §2. The form has held these since the map needed them to
+      // centre; they were simply never sent, so the platform threw away the
+      // one thing that makes proximity dispatch possible and then had
+      // nothing to rank by.
+      //
+      // Sent only when the text still matches the place that was picked.
+      // Somebody who selects "Acacia Mall" and then edits the field to
+      // "Acacia Mall, gate 3" has moved the pin in their head; sending the
+      // old coordinates would dispatch a driver to the wrong side of a
+      // building with more confidence than the typed text deserves.
+      ...pickupCoordinates(service, pickup, pickupPlace),
+      ...dropoffCoordinates(service, dropoff, dropoffPlace),
       // Every walk-in order is immediate; the dispatcher schedules on the
       // call if the customer wants something later.
       scheduled_for: undefined,
@@ -581,9 +605,7 @@ export function OrderPage() {
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 422) {
         const raw: Record<string, string[]> = error.response.data.errors ?? {}
-        setServerErrors(
-          Object.fromEntries(Object.entries(raw).map(([key, messages]) => [key, messages[0]])),
-        )
+        setServerErrors(withCoordinateErrorsOnTheirFields(raw))
         // The offending field lives on an earlier step; go back to it.
         /*
          * The contact fields come off the account now, not off this form,
@@ -1511,8 +1533,10 @@ function PlaceSearch({
   offerCurrentLocation?: boolean
 }) {
   const id = useId()
-  const [hits, setHits] = useState<PlaceHit[]>([])
-  const [dirty, setDirty] = useState(false)
+  // The debounce, abort and "only search what was typed" rule live in the
+  // hook, shared with the internal booking dialog's PlaceField. Only the
+  // chrome differs between them.
+  const { hits, markTyped, settle } = usePlaceSearch(value)
   const [locating, setLocating] = useState(false)
   const [locateFailed, setLocateFailed] = useState(false)
 
@@ -1525,27 +1549,10 @@ function PlaceSearch({
         setLocateFailed(true)
         return
       }
-      setHits([])
-      setDirty(false)
+      settle()
       onPick(place)
     })
   }
-
-  useEffect(() => {
-    const query = value.trim()
-    const controller = new AbortController()
-    const timer = setTimeout(() => {
-      if (query.length < 3 || !dirty) {
-        setHits([])
-        return
-      }
-      void searchPlaces(query, controller.signal).then(setHits)
-    }, 300)
-    return () => {
-      clearTimeout(timer)
-      controller.abort()
-    }
-  }, [value, dirty])
 
   return (
     <div>
@@ -1565,7 +1572,7 @@ function PlaceSearch({
           placeholder={placeholder}
           aria-invalid={error !== undefined || undefined}
           onChange={(e) => {
-            setDirty(true)
+            markTyped()
             onChange(e.target.value)
           }}
           className="w-full min-w-0 bg-transparent text-text-body outline-none placeholder:text-text-placeholder"
@@ -1606,8 +1613,7 @@ function PlaceSearch({
               <button
                 type="button"
                 onClick={() => {
-                  setHits([])
-                  setDirty(false)
+                  settle()
                   onPick(hit)
                 }}
                 className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors duration-150 hover:bg-surface-sunken"

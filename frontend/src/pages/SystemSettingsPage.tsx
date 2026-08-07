@@ -88,21 +88,31 @@ export function SystemSettingsPage() {
   const [refused, setRefused] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const load = useCallback(async () => {
-    try {
-      const response = await apiClient.get('/settings')
-      setSettings(response.data.data.settings as Settings)
-      setRefused(false)
-      setError(null)
-    } catch (failure) {
-      const problem = apiError(failure, 'Could not load settings.')
-      if (problem.code === 'FORBIDDEN') {
-        setRefused(true)
-        return
-      }
-      setError(problem.message)
-    }
-  }, [])
+  // Deliberately `.then()` rather than `await` inside an async helper, the
+  // same shape DriversPage documents: `react-hooks/set-state-in-effect`
+  // reads a synchronous call to a state-setting helper as a set during
+  // render, and it is right to — the promise chain defers the write to a
+  // microtask, which is what we mean. This page was the one that did not
+  // follow the pattern, and it was the one failing lint.
+  const load = useCallback(
+    () =>
+      apiClient
+        .get('/settings')
+        .then((response) => {
+          setSettings(response.data.data.settings as Settings)
+          setRefused(false)
+          setError(null)
+        })
+        .catch((failure: unknown) => {
+          const problem = apiError(failure, 'Could not load settings.')
+          if (problem.code === 'FORBIDDEN') {
+            setRefused(true)
+            return
+          }
+          setError(problem.message)
+        }),
+    [],
+  )
 
   useEffect(() => {
     void load()

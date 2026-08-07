@@ -2,10 +2,12 @@
 
 namespace Modules\Bookings\Requests;
 
+use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Modules\Administration\Services\SettingsService;
 use Modules\Bookings\Enums\OrderRequestServiceType;
+use Modules\Fleet\Services\ZoneResolver;
 
 /**
  * The public order form (ADR-0012 §3). Unauthenticated, so validated with
@@ -48,6 +50,16 @@ class StorePublicOrderRequest extends FormRequest
                 Rule::requiredIf(in_array($service, ['ride', 'delivery'], true)),
                 'nullable', 'string', 'max:255',
             ],
+            // ADR-0020 §2. Optional, and never required: an order taken over
+            // the phone has no coordinates, and `places.ts` is explicit that
+            // a geocoder outage degrades to plain text rather than an error
+            // screen. Bounded to real coordinates so a client that sends
+            // `[lng, lat]` the wrong way round is rejected rather than
+            // silently placing a Kampala pickup in the Indian Ocean.
+            'pickup_latitude' => ['nullable', 'numeric', 'between:-90,90', 'required_with:pickup_longitude'],
+            'pickup_longitude' => ['nullable', 'numeric', 'between:-180,180', 'required_with:pickup_latitude'],
+            'dropoff_latitude' => ['nullable', 'numeric', 'between:-90,90', 'required_with:dropoff_longitude'],
+            'dropoff_longitude' => ['nullable', 'numeric', 'between:-180,180', 'required_with:dropoff_latitude'],
             // Same advance cap as staff bookings (ADR-0014 phase 2): the
             // dispatcher who calls back should not be promising next year.
             'scheduled_for' => [
@@ -97,6 +109,45 @@ class StorePublicOrderRequest extends FormRequest
             // endpoint yet, and the desk checks the originals at collection.
             'details.kyc_documents' => ['nullable', 'string', 'max:255'],
         ];
+    }
+
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $validator) {
+            $this->refusePickupOutsideServiceArea($validator);
+        });
+    }
+
+    /**
+     * Refuses a pickup that is nowhere the platform operates (ADR-0021).
+     *
+     * This is the check ADR-0020 could not write. Range validation cannot
+     * catch a swapped Kampala pair — 0.3476/32.5825 reversed is a point off
+     * the coast of Ghana with *both values still in range* — but a service
+     * area can, because Ghana is not in it.
+     *
+     * Silent when no service area has been drawn. An operator who has not
+     * yet mapped their coverage must not have every order refused, and a
+     * rule that switched itself on the day somebody saved their first zone
+     * would be worse than no rule.
+     */
+    private function refusePickupOutsideServiceArea(Validator $validator): void
+    {
+        $lat = $this->input('pickup_latitude');
+        $lng = $this->input('pickup_longitude');
+
+        if ($lat === null || $lng === null) {
+            return;
+        }
+
+        if (app(ZoneResolver::class)->withinServiceArea((float) $lat, (float) $lng)) {
+            return;
+        }
+
+        $validator->errors()->add(
+            'pickup_latitude',
+            'That pickup is outside the area we cover. Check the location and try again.',
+        );
     }
 
     /**

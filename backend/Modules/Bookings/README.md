@@ -109,6 +109,24 @@ Rejected, Assigned and Cancelled are terminal. A refused booking is
 re-raised as a new one rather than revived, so the original request and its
 decision reason stay an untouched audit record.
 
+
+## Pickup coordinates (ADR-0020 §2)
+
+`bookings.origin_latitude/longitude` and `order_requests.pickup_*` /
+`dropoff_*` are nullable and hold where a stop actually is, when the
+caller's geocoder knew. They are what `Modules/Dispatch`'s matcher ranks
+proximity by; without them every suggestion reports "pickup has no
+coordinates, so distance was not used".
+
+The public order form sends them; **the internal booking dialog does not**,
+because it has no address autocomplete yet. Both models cast the columns to
+float — MariaDB returns `DECIMAL` as a string, and a client parsing a string
+coordinate is a bug waiting for a bad connection.
+
+Validation bounds each value to a real latitude or longitude and requires
+them in pairs, but **cannot detect a swapped Kampala pair** — both values
+stay in range. See ADR-0020's consequences.
+
 ## What's explicitly deferred
 
 1. **Multi-stop and return trips** — PROJECT.md lists both under Booking

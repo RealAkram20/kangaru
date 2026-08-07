@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Trips\Controllers\LivePositionController;
 use Modules\Trips\Controllers\OdometerPhotoController;
 use Modules\Trips\Controllers\TripController;
 use Modules\Trips\Controllers\TripEventController;
@@ -21,3 +22,11 @@ Route::get('trips/{trip}/odometer-photo/{moment}', [OdometerPhotoController::cla
 // 201: the pings are validated and buffered, not yet written.
 Route::post('trips/{trip}/locations', [TripLocationController::class, 'store'])->name('trips.locations.store');
 Route::get('trips/{trip}/locations', [TripLocationController::class, 'index'])->name('trips.locations.index');
+
+// Where the fleet is right now (ADR-0019). A collection of its own rather
+// than a field on the trips listing: a live map polls this every few
+// seconds and must not drag a page of trip rows along with it.
+//
+// No policy call — visibility is resolved by the trips query inside, which
+// is the one place that predicate lives.
+Route::get('live-positions', [LivePositionController::class, 'index'])->name('live-positions.index');

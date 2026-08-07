@@ -34,7 +34,13 @@ class OrderRequestResource extends JsonResource
             'contact_phone' => $this->contact_phone,
             'contact_email' => $this->contact_email,
             'pickup_location' => $this->pickup_location,
+            // Sent as a pair so a client cannot render half a point. Null
+            // together when the order came in by phone (ADR-0020 §2).
+            'pickup_latitude' => $this->pickup_latitude,
+            'pickup_longitude' => $this->pickup_longitude,
             'dropoff_location' => $this->dropoff_location,
+            'dropoff_latitude' => $this->dropoff_latitude,
+            'dropoff_longitude' => $this->dropoff_longitude,
             'scheduled_for' => $this->scheduled_for,
             'details' => $this->details,
             'notes' => $this->notes,

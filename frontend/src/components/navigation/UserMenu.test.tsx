@@ -10,7 +10,7 @@ import { UserMenu } from './UserMenu'
  * AGENTS.md's "keyboard navigation, visible focus states".
  */
 function renderMenu() {
-  const onSettings = vi.fn()
+  const onProfile = vi.fn()
   const onSignOut = vi.fn()
 
   render(
@@ -18,12 +18,12 @@ function renderMenu() {
       name="Ada Nakato"
       role="Corporate Admin"
       email="ada@centenary-bank.test"
-      onSettings={onSettings}
+      onProfile={onProfile}
       onSignOut={onSignOut}
     />,
   )
 
-  return { onSettings, onSignOut }
+  return { onProfile, onSignOut }
 }
 
 const trigger = () => screen.getByRole('button', { name: /account menu for ada nakato/i })
@@ -37,25 +37,25 @@ describe('UserMenu', () => {
     expect(screen.queryByRole('menu')).toBeNull()
   })
 
-  it('opens on click and offers Settings and Sign out', async () => {
+  it('opens on click and offers Profile and Sign out', async () => {
     renderMenu()
 
     await userEvent.click(trigger())
 
     expect(trigger()).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByRole('menuitem', { name: 'Settings' })).toBeVisible()
+    expect(screen.getByRole('menuitem', { name: 'Profile' })).toBeVisible()
     expect(screen.getByRole('menuitem', { name: 'Sign out' })).toBeVisible()
     // Who you are signed in as — the question the menu exists to answer.
     expect(screen.getByText('ada@centenary-bank.test')).toBeVisible()
   })
 
-  it('reaches Settings, which had no navigation entry at all before this', async () => {
-    const { onSettings } = renderMenu()
+  it('reaches Profile, which had no navigation entry at all before this', async () => {
+    const { onProfile } = renderMenu()
 
     await userEvent.click(trigger())
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Settings' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Profile' }))
 
-    expect(onSettings).toHaveBeenCalledOnce()
+    expect(onProfile).toHaveBeenCalledOnce()
     // Closed behind itself: a menu left hanging over the page it just
     // navigated to is the classic version of this bug.
     expect(screen.queryByRole('menu')).toBeNull()

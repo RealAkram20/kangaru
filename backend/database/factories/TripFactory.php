@@ -24,10 +24,14 @@ class TripFactory extends Factory
     protected $model = Trip::class;
 
     /**
-     * `vehicle_id` and `driver_id` resolve from whatever `tenant_id` ended
-     * up as, so `Trip::factory()->forTenant($t)` yields a trip whose
-     * vehicle and driver are in that same tenant — never a cross-tenant
-     * trip built by accident.
+     * The trip carries the tenant; its vehicle and driver do not.
+     *
+     * Both used to be built with `['tenant_id' => $attributes['tenant_id']]`,
+     * which ADR-0005 turned into a column that is not there — so the bare
+     * `Trip::factory()->create()` threw "Unknown column 'tenant_id'" and
+     * only the `forVehicle()/forDriver()` spellings worked. Every existing
+     * test happened to use those, so nothing failed and the trap stayed set
+     * for the next person.
      *
      * @return array<string, mixed>
      */
@@ -35,12 +39,8 @@ class TripFactory extends Factory
     {
         return [
             'tenant_id' => Tenant::factory(),
-            'vehicle_id' => fn (array $attributes) => Vehicle::factory()->create([
-                'tenant_id' => $attributes['tenant_id'],
-            ])->id,
-            'driver_id' => fn (array $attributes) => Driver::factory()->create([
-                'tenant_id' => $attributes['tenant_id'],
-            ])->id,
+            'vehicle_id' => fn () => Vehicle::factory()->create()->id,
+            'driver_id' => fn () => Driver::factory()->create()->id,
             'origin' => 'Kampala',
             'destination' => fake()->randomElement(['Entebbe', 'Jinja', 'Mbarara', 'Gulu']),
             'status' => TripStatus::ASSIGNED,
