@@ -9,6 +9,7 @@ use App\Support\Tenancy\TenantContext;
 use Modules\Billing\Models\RateCard;
 use Modules\Billing\Models\RateCardVersion;
 use Modules\Billing\Services\RateCardService;
+use Modules\Bookings\Models\Booking;
 use Modules\Drivers\Models\Driver;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
@@ -100,6 +101,8 @@ class BillingFixtures
      *
      * @param  array<int, int>  $waitingPeriodSeconds  one entry per Waiting -> Trip Resumed
      *                                                 pause, each the number of seconds waited
+     * @param  Booking|null  $booking  the booking this trip fulfils, when the test needs
+     *                                 the pickup coordinates zone pricing resolves against
      */
     public static function completedTrip(
         Tenant $tenant,
@@ -109,11 +112,13 @@ class BillingFixtures
         int $odometerStart = 15_000,
         int $odometerEnd = 15_042,
         array $waitingPeriodSeconds = [],
+        ?Booking $booking = null,
     ): Trip {
         self::bindTenant($tenant);
 
         $trip = app(TripService::class)->create([
             'tenant_id' => $tenant->id,
+            'booking_id' => $booking?->id,
             'vehicle_id' => $vehicle->id,
             'driver_id' => $driver->id,
             'origin' => 'Kampala',

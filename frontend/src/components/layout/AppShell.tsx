@@ -16,8 +16,17 @@ const SECTIONS: SidebarSection[] = [
     items: [
       { id: 'bookings', label: 'Bookings', icon: 'calendar-clock' },
       { id: 'dispatch', label: 'Dispatch', icon: 'route' },
+      // ADR-0012: the walk-in order queue, the phone-first half of dispatch.
+      { id: 'walk-ins', label: 'Walk-ins', icon: 'phone-call' },
       { id: 'trips', label: 'Trips', icon: 'navigation' },
+      // ADR-0019. Beside Trips rather than under Fleet: the question it
+      // answers is "where is this job", not "what do we own".
+      { id: 'live-map', label: 'Live map', icon: 'map' },
       { id: 'companies', label: 'Companies', icon: 'building-2' },
+      // ADR-0018. "Customers", not "Clients": Companies already means the
+      // corporate clients, and one word for two populations is how a
+      // support agent ends up looking in the wrong list.
+      { id: 'customers', label: 'Customers', icon: 'contact' },
     ],
   },
   {
@@ -44,6 +53,12 @@ const SECTIONS: SidebarSection[] = [
       { id: 'staff', label: 'Staff', icon: 'user-cog' },
       { id: 'roles', label: 'Roles', icon: 'shield-check' },
       { id: 'audit-log', label: 'Audit log', icon: 'file-clock' },
+      // ADR-0014: the platform's own configuration. It was labelled "System
+      // settings" to keep it apart from a personal Settings entry that used
+      // to sit in the section below; that entry is now Profile, reached from
+      // the identity card, so the qualifier no longer earns its place —
+      // there is exactly one Settings in this menu and this is it.
+      { id: 'system-settings', label: 'Settings', icon: 'sliders-horizontal' },
     ],
   },
   {
@@ -56,11 +71,16 @@ const SECTIONS: SidebarSection[] = [
 
 /** Sidebar item ids mapped to their route. Every item now has one. */
 const NAV_PATHS: Partial<Record<string, string>> = {
-  dashboard: '/',
+  // `/` now belongs to the public landing page (ADR-0012 §5); the
+  // dashboard lives at its own path and `/` redirects signed-in users here.
+  dashboard: '/dashboard',
   bookings: '/bookings',
   dispatch: '/dispatch',
+  'walk-ins': '/order-requests',
   trips: '/trips',
+  'live-map': '/live-map',
   companies: '/companies',
+  customers: '/customers',
   vehicles: '/vehicles',
   drivers: '/drivers',
   invoices: '/invoices',
@@ -70,14 +90,18 @@ const NAV_PATHS: Partial<Record<string, string>> = {
   staff: '/staff',
   roles: '/roles',
   'audit-log': '/audit-log',
+  'system-settings': '/system-settings',
 }
 
 const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
-  '/': { id: 'dashboard', title: 'Dashboard' },
+  '/dashboard': { id: 'dashboard', title: 'Dashboard' },
   '/bookings': { id: 'bookings', title: 'Bookings' },
   '/dispatch': { id: 'dispatch', title: 'Dispatch board' },
+  '/order-requests': { id: 'walk-ins', title: 'Walk-in orders' },
   '/trips': { id: 'trips', title: 'Trips' },
+  '/live-map': { id: 'live-map', title: 'Live map' },
   '/companies': { id: 'companies', title: 'Companies' },
+  '/customers': { id: 'customers', title: 'Customers' },
   '/vehicles': { id: 'vehicles', title: 'Vehicles' },
   '/drivers': { id: 'drivers', title: 'Drivers' },
   '/invoices': { id: 'invoices', title: 'Invoices' },
@@ -87,13 +111,18 @@ const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
   '/staff': { id: 'staff', title: 'Staff' },
   '/roles': { id: 'roles', title: 'Roles' },
   '/audit-log': { id: 'audit-log', title: 'Audit log' },
+  // `profile` matches no sidebar *item*; SidebarNav highlights the identity
+  // card on that id instead, which is where the page is reached from.
+  '/profile': { id: 'profile', title: 'Profile' },
+  '/system-settings': { id: 'system-settings', title: 'Settings' },
 }
 
 /**
  * Shared chrome (SidebarNav + Topbar) for every page behind auth. Extracted
  * once two pages need it, so the active-highlight and sign-out wiring can't
- * drift between them. Identity, Settings and sign-out live in the topbar's
- * account menu; the theme switch stays in the sidebar.
+ * drift between them. Sign-out lives in the topbar's account menu, and your
+ * own Profile is reachable from both that menu and the sidebar identity
+ * card; the theme switch stays in the sidebar.
  */
 export function AppShell() {
   const { user, logout } = useAuth()
@@ -125,6 +154,12 @@ export function AppShell() {
         sections={sections}
         active={page.id}
         user={user ? { name: user.name, role: user.role_label ?? user.role } : undefined}
+        onUserClick={() => {
+          navigate('/profile')
+          // Same as the nav items: the drawer sits over the page it just
+          // navigated to otherwise.
+          sidebar.closeMobile()
+        }}
         bottomItems={[
           {
             id: 'theme',
@@ -151,10 +186,14 @@ export function AppShell() {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         <Topbar
           title={page.title}
-          onOpenSettings={() => navigate('/settings')}
+          onOpenProfile={() => navigate('/profile')}
           onSignOut={() => void logout()}
           tenant={user ? `Tenant ${user.tenant_id ?? '—'}` : undefined}
-          user={user ? { name: user.name, role: user.role_label ?? user.role, email: user.email } : undefined}
+          user={
+            user
+              ? { name: user.name, role: user.role_label ?? user.role, email: user.email }
+              : undefined
+          }
           leading={
             <IconButton
               icon={sidebar.isMobile || sidebar.collapsed ? 'panel-left' : 'panel-left-close'}
@@ -177,6 +216,18 @@ export function AppShell() {
             flex: 1,
             minHeight: 0,
             overflowY: 'auto',
+            // Not decoration, and not for positioning anything of its own:
+            // `overflow` only clips absolutely positioned descendants whose
+            // containing block it *is*, and a static box is nobody's
+            // containing block. Without this, every sr-only clip in the page
+            // (FormField's "(required)", Checkbox's real input) resolves
+            // against the initial containing block, escapes this scroller,
+            // and lands in the document's scrollable overflow.
+            //
+            // The symptom was a second scrollbar on the whole window and a
+            // band of empty page below the 100vh shell — worst on Settings,
+            // where a tall form put the last clipped span ~2500px down.
+            position: 'relative',
             background: 'var(--surface-page)',
             padding: 'var(--space-6)',
           }}

@@ -14,6 +14,17 @@ use Illuminate\Support\Facades\Route;
 */
 
 Route::prefix('v1')->group(function () {
+    // Unauthenticated by design (ADR-0012): the walk-in order form. Each
+    // module's public.php carries its own throttle; nothing in it may
+    // assume a user or a tenant.
+    require base_path('Modules/Bookings/Routes/public.php');
+
+    // The customer surface (ADR-0013). Deliberately outside the staff
+    // middleware group below: customers have no tenant, and their guard
+    // (`auth:customer`) is applied inside the module's own route file so
+    // the register/login pair can stay unauthenticated.
+    require base_path('Modules/Customers/Routes/api.php');
+
     require base_path('Modules/Administration/Routes/api.php');
 
     // `tenant` binds the actor's own tenant before model binding;
@@ -23,6 +34,10 @@ Route::prefix('v1')->group(function () {
     // written here is not what decides it.
     Route::middleware(['auth:sanctum', 'tenant', 'subject-tenant'])->group(function () {
         require base_path('Modules/Clients/Routes/api.php');
+        // ADR-0018's staff-side register. Separate from the module's own
+        // api.php above, which is deliberately unauthenticated so that
+        // customer register/login can be — see that file's header.
+        require base_path('Modules/Customers/Routes/staff.php');
         require base_path('Modules/Vehicles/Routes/api.php');
         require base_path('Modules/Drivers/Routes/api.php');
         require base_path('Modules/Fleet/Routes/api.php');

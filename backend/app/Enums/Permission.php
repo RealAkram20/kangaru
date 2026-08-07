@@ -27,6 +27,12 @@ enum Permission: string
     case STAFF_MANAGE = 'staff.manage';
     /** Creating and editing roles themselves. The keys to the building. */
     case ROLES_MANAGE = 'roles.manage';
+    /**
+     * ADR-0014: read and write platform settings. One permission for
+     * both directions on purpose — settings include operational levers,
+     * so even the read is not for every role.
+     */
+    case SETTINGS_MANAGE = 'settings.manage';
 
     // ── Bookings ──────────────────────────────────────────────────────
     /** Absent = you see only the bookings you raised. */
@@ -36,6 +42,38 @@ enum Permission: string
     /** Absent = you may still cancel your own. */
     case BOOKINGS_CANCEL_ANY = 'bookings.cancel.any';
     case BOOKINGS_DISPATCH = 'bookings.dispatch';
+    /** ADR-0012: work the walk-in queue. Platform staff only — OrderRequestPolicy also requires isPlatformLevel(). */
+    case ORDER_REQUESTS_MANAGE = 'order_requests.manage';
+
+    /**
+     * ADR-0018: read the customer register — the platform's own retail
+     * account holders, as distinct from a corporate client's staff.
+     *
+     * A permission of its own rather than folding into `staff.view`,
+     * because these are two different populations with two different
+     * privacy stories. Staff are colleagues; customers are members of the
+     * public whose phone numbers and order history are covered by the
+     * Data Protection and Privacy Act, 2019 (AGENTS.md Compliance). A
+     * dispatcher needs to look one up to answer the phone; nobody needs
+     * both lists by accident.
+     */
+    case CUSTOMERS_VIEW = 'customers.view';
+
+    /** Suspend and restore a customer account (ADR-0018 §3). */
+    case CUSTOMERS_MANAGE = 'customers.manage';
+
+    /**
+     * ADR-0021: read the geofences. Wide, because dispatch, billing and
+     * ordering all resolve points against them and a dispatcher who cannot
+     * see a zone cannot explain why a price or a refusal happened.
+     */
+    case ZONES_VIEW = 'zones.view';
+
+    /**
+     * Draw and retire them. Narrow: a zone boundary decides what a client
+     * is charged, so moving one is a commercial act, not a map edit.
+     */
+    case ZONES_MANAGE = 'zones.manage';
 
     // ── Trips ─────────────────────────────────────────────────────────
     /** Absent = own trips only: assigned to you, or arising from your bookings. */
@@ -88,8 +126,8 @@ enum Permission: string
     public function group(): string
     {
         return match (explode('.', $this->value)[0]) {
-            'audit', 'staff', 'roles' => 'Administration',
-            'bookings' => 'Bookings',
+            'audit', 'staff', 'roles', 'settings' => 'Administration',
+            'bookings', 'order_requests' => 'Bookings',
             'trips' => 'Trips',
             'invoices', 'ratecards' => 'Billing',
             'companies' => 'Clients',
@@ -106,11 +144,22 @@ enum Permission: string
             self::STAFF_VIEW => 'See the staff list',
             self::STAFF_MANAGE => 'Add, edit and suspend staff',
             self::ROLES_MANAGE => 'Create and edit roles',
+            self::SETTINGS_MANAGE => 'Change platform settings',
             self::BOOKINGS_VIEW_ALL => "See everyone's bookings",
             self::BOOKINGS_CREATE => 'Raise a booking',
             self::BOOKINGS_APPROVE => 'Approve or reject a booking',
             self::BOOKINGS_CANCEL_ANY => "Cancel anyone's booking",
             self::BOOKINGS_DISPATCH => 'Assign a vehicle and driver',
+            // Without this arm the match throws for the case above it, and
+            // GET /roles — which renders the whole catalogue — 500s for
+            // everyone. Found by ADR-0011's contract hook, not by a test of
+            // this enum: the census of "every case has a label" is implicit
+            // in the role screen rendering at all.
+            self::ORDER_REQUESTS_MANAGE => 'Work the walk-in order queue',
+            self::CUSTOMERS_VIEW => 'See the customer register',
+            self::CUSTOMERS_MANAGE => 'Suspend and restore customer accounts',
+            self::ZONES_VIEW => 'See the geofenced zones',
+            self::ZONES_MANAGE => 'Draw and retire zones',
             self::TRIPS_VIEW_ALL => 'See every trip',
             self::TRIPS_CREATE => 'Raise a trip directly',
             self::TRIPS_TRANSITION_ANY => 'Move any trip through its lifecycle',

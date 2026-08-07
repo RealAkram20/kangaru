@@ -1,10 +1,15 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiClient } from '../lib/apiClient'
+import { apiError, fieldErrors } from '../lib/apiError'
 import type { ApiSuccess } from '../types/api'
 import type { Driver } from '../types/driver'
 import { Badge } from '../components/core/Badge'
+import { Button } from '../components/core/Button'
 import { Card } from '../components/core/Card'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
+import { Alert } from '../components/feedback/Alert'
+import { Dialog } from '../components/feedback/Dialog'
+import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
 
 const STATUS_TONE: Record<Driver['status'], 'success' | 'warning' | 'neutral'> = {
@@ -13,29 +18,31 @@ const STATUS_TONE: Record<Driver['status'], 'success' | 'warning' | 'neutral'> =
   inactive: 'neutral',
 }
 
-const COLUMNS: DataColumn<Driver>[] = [
-  { key: 'name', header: 'Name', sortable: true },
-  { key: 'phone', header: 'Phone' },
-  { key: 'license_number', header: 'License number' },
-  { key: 'license_expiry', header: 'License expiry', sortable: true },
-  {
-    key: 'status',
-    header: 'Status',
-    render: (row) => <Badge tone={STATUS_TONE[row.status]}>{row.status}</Badge>,
-  },
-]
-
 export function DriversPage() {
   const [drivers, setDrivers] = useState<Driver[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  const [managing, setManaging] = useState<Driver | null>(null)
 
+  const load = useCallback(
+    () =>
+      apiClient
+        .get<ApiSuccess<Driver[]>>('/drivers')
+        .then((response) => {
+          setDrivers(response.data.data)
+          setError(null)
+        })
+        .catch(() => setError('Could not load drivers.')),
+    [],
+  )
+
+  // Deliberately `.then()` rather than `await` inside an async effect body:
+  // `react-hooks/set-state-in-effect` reads a synchronous call to a
+  // state-setting helper as a set during render, and it is right to — the
+  // promise chain defers the write to a microtask, which is what we mean.
   useEffect(() => {
-    apiClient
-      .get<ApiSuccess<Driver[]>>('/drivers')
-      .then((response) => setDrivers(response.data.data))
-      .catch(() => setError('Could not load drivers.'))
-  }, [])
+    void load()
+  }, [load])
 
   const filtered = useMemo(() => {
     if (!drivers) return []
@@ -45,6 +52,55 @@ export function DriversPage() {
       (d) => d.name.toLowerCase().includes(q) || d.license_number.toLowerCase().includes(q),
     )
   }, [drivers, query])
+
+  const columns: DataColumn<Driver>[] = useMemo(
+    () => [
+      { key: 'name', header: 'Name', sortable: true },
+      { key: 'phone', header: 'Phone' },
+      { key: 'license_number', header: 'License number' },
+      { key: 'license_expiry', header: 'License expiry', sortable: true },
+      {
+        key: 'status',
+        header: 'Status',
+        render: (row) => <Badge tone={STATUS_TONE[row.status]}>{row.status}</Badge>,
+      },
+      {
+        // The column that did not exist before ADR-0016, and the reason the
+        // gap survived so long: nothing on any screen said whether a driver
+        // could sign in, so nobody noticed that none of them could.
+        key: 'account',
+        header: 'Sign-in',
+        render: (row) =>
+          row.account === null ? (
+            <Badge tone="neutral" icon="user-x">
+              No account
+            </Badge>
+          ) : (
+            <span
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}
+              title={row.account.email}
+            >
+              <Badge
+                tone={row.account.status === 'active' ? 'success' : 'warning'}
+                icon="user-check"
+              >
+                {row.account.status === 'active' ? 'Can sign in' : 'Suspended'}
+              </Badge>
+            </span>
+          ),
+      },
+      {
+        key: 'id',
+        header: '',
+        render: (row) => (
+          <Button size="sm" variant="secondary" onClick={() => setManaging(row)}>
+            {row.account === null ? 'Give sign-in' : 'Manage sign-in'}
+          </Button>
+        ),
+      },
+    ],
+    [],
+  )
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
@@ -66,14 +122,171 @@ export function DriversPage() {
           <p style={{ padding: 'var(--space-6)', color: 'var(--kr-error)' }}>{error}</p>
         ) : (
           <DataTable<Driver>
-            columns={COLUMNS}
+            columns={columns}
             rows={filtered}
             emptyMessage={
-              drivers === null ? 'Loading…' : query ? 'No drivers match your filter' : 'No drivers yet'
+              drivers === null
+                ? 'Loading…'
+                : query
+                  ? 'No drivers match your filter'
+                  : 'No drivers yet'
             }
           />
         )}
       </Card>
+
+      {managing && (
+        <DriverAccountDialog
+          driver={managing}
+          onClose={() => setManaging(null)}
+          onSaved={async () => {
+            await load()
+            setManaging(null)
+          }}
+        />
+      )}
     </div>
+  )
+}
+
+/**
+ * Attaching or removing the login a driver signs in with (ADR-0016).
+ *
+ * Two states in one dialog rather than two dialogs, because the question an
+ * administrator arrives with is the same either way — "can this person use
+ * the app?" — and the answer determines which half they see.
+ */
+function DriverAccountDialog({
+  driver,
+  onClose,
+  onSaved,
+}: {
+  driver: Driver
+  onClose: () => void
+  onSaved: () => Promise<void>
+}) {
+  const [form, setForm] = useState({ email: driver.email ?? '', password: '' })
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [message, setMessage] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  const set = (key: keyof typeof form) => (event: { target: { value: string } }) =>
+    setForm((current) => ({ ...current, [key]: event.target.value }))
+
+  const run = async (action: () => Promise<unknown>, fallback: string) => {
+    setSubmitting(true)
+    setErrors({})
+    setMessage(null)
+
+    try {
+      await action()
+      await onSaved()
+    } catch (failure) {
+      const problem = apiError(failure, fallback)
+      setErrors(fieldErrors(problem))
+      setMessage(problem.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const attach = () =>
+    run(
+      () => apiClient.post(`/drivers/${driver.id}/account`, form),
+      'Could not give this driver a sign-in.',
+    )
+
+  const detach = () =>
+    run(
+      () => apiClient.delete(`/drivers/${driver.id}/account`),
+      "Could not remove this driver's sign-in.",
+    )
+
+  const hasAccount = driver.account !== null
+
+  return (
+    <Dialog
+      open
+      title={hasAccount ? `${driver.name}'s sign-in` : `Give ${driver.name} a sign-in`}
+      description={
+        hasAccount
+          ? 'Removing the sign-in ends any session they have open right now, including the app on their phone. The account itself is kept.'
+          : 'They sign in with the password you set here, and can then accept trips and record odometer readings. Ask them to change it from their own profile afterwards.'
+      }
+      onClose={onClose}
+      width={560}
+      tone={hasAccount ? 'warning' : 'default'}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={submitting}>
+            {hasAccount ? 'Close' : 'Cancel'}
+          </Button>
+          {hasAccount ? (
+            <Button variant="destructive" onClick={() => void detach()} disabled={submitting}>
+              {submitting ? 'Removing…' : 'Remove sign-in'}
+            </Button>
+          ) : (
+            <Button onClick={() => void attach()} disabled={submitting}>
+              {submitting ? 'Creating…' : 'Create sign-in'}
+            </Button>
+          )}
+        </>
+      }
+    >
+      {message && Object.keys(errors).length === 0 && (
+        <Alert tone="error" title="Sign-in" onDismiss={() => setMessage(null)}>
+          {message}
+        </Alert>
+      )}
+
+      {hasAccount ? (
+        <dl
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'auto 1fr',
+            gap: 'var(--space-2) var(--space-4)',
+            margin: 0,
+          }}
+        >
+          <dt style={{ color: 'var(--text-secondary)' }}>Signs in as</dt>
+          <dd style={{ margin: 0 }}>{driver.account?.email}</dd>
+          <dt style={{ color: 'var(--text-secondary)' }}>Role</dt>
+          <dd style={{ margin: 0 }}>{driver.account?.role.replace(/_/g, ' ')}</dd>
+          <dt style={{ color: 'var(--text-secondary)' }}>Account</dt>
+          <dd style={{ margin: 0 }}>{driver.account?.status}</dd>
+        </dl>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+          <FormField label="Email" htmlFor="driver-account-email" error={errors.email} required>
+            <Input
+              id="driver-account-email"
+              type="email"
+              iconLeft="mail"
+              value={form.email}
+              onChange={set('email')}
+              required
+            />
+          </FormField>
+
+          <FormField
+            label="Password"
+            htmlFor="driver-account-password"
+            hint="At least 12 characters."
+            error={errors.password}
+            required
+          >
+            <Input
+              id="driver-account-password"
+              type="password"
+              iconLeft="lock"
+              value={form.password}
+              onChange={set('password')}
+              revealable
+              required
+            />
+          </FormField>
+        </div>
+      )}
+    </Dialog>
   )
 }

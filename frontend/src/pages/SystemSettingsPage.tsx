@@ -1,0 +1,1001 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Button } from '../components/core/Button'
+import { Card } from '../components/core/Card'
+import { Alert } from '../components/feedback/Alert'
+import { EmptyState } from '../components/feedback/EmptyState'
+import { Checkbox } from '../components/forms/Checkbox'
+import { FormField } from '../components/forms/FormField'
+import { Input } from '../components/forms/Input'
+import { Select } from '../components/forms/Select'
+import { apiClient } from '../lib/apiClient'
+import { apiError, fieldErrors } from '../lib/apiError'
+
+/**
+ * Platform settings (ADR-0014) — the system's own name, contacts and
+ * defaults, editable by whoever holds `settings.manage`.
+ *
+ * Like RolesPage, deliberately not behind RequireNavAccess: a custom
+ * role holding the permission is invisible to a slug list, so the page
+ * gates on whether the API answers — a 403 renders as an answer, not an
+ * apology.
+ *
+ * Motion here is deliberately quiet. A settings form is occasional-use
+ * chrome, so nothing animates for decoration; the one earned animation
+ * is save feedback — the button's label morphs to "Saved" and back,
+ * because a write the interface never acknowledges feels lost.
+ */
+
+interface Settings {
+  branding: {
+    app_name: string
+    tagline: string | null
+    meta_description: string | null
+    contact_email: string
+    contact_phone: string | null
+    logo_path: string | null
+    favicon_path: string | null
+  }
+  regional: {
+    currency: string
+    timezone: string
+    date_format: string
+  }
+  ordering: {
+    walk_in_enabled: boolean
+    rate_limit_per_minute: number
+  }
+  booking: {
+    approval_required: boolean
+    max_advance_days: number
+  }
+  mail: {
+    enabled: boolean
+    host: string | null
+    port: number
+    username: string | null
+    password: SecretValue
+    encryption: 'tls' | 'none'
+    from_address: string | null
+    from_name: string | null
+  }
+  sms: {
+    provider: '' | 'africastalking' | 'twilio' | null
+    sender_id: string | null
+    api_key: SecretValue
+    api_secret: SecretValue
+  }
+  payments: {
+    mtn_momo_api_user: string | null
+    mtn_momo_api_key: SecretValue
+    airtel_money_client_id: string | null
+    airtel_money_client_secret: SecretValue
+  }
+}
+
+/** ADR-0014 §3: a credential's value never crosses the API — only this. */
+interface SecretValue {
+  configured: boolean
+}
+
+/** The public disk's URL for a stored asset path, cross-origin safe. */
+function assetUrl(path: string | null): string | null {
+  if (!path) return null
+  return `${new URL(import.meta.env.VITE_API_BASE_URL).origin}/storage/${path}`
+}
+
+export function SystemSettingsPage() {
+  const [settings, setSettings] = useState<Settings | null>(null)
+  const [refused, setRefused] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Deliberately `.then()` rather than `await` inside an async helper, the
+  // same shape DriversPage documents: `react-hooks/set-state-in-effect`
+  // reads a synchronous call to a state-setting helper as a set during
+  // render, and it is right to — the promise chain defers the write to a
+  // microtask, which is what we mean. This page was the one that did not
+  // follow the pattern, and it was the one failing lint.
+  const load = useCallback(
+    () =>
+      apiClient
+        .get('/settings')
+        .then((response) => {
+          setSettings(response.data.data.settings as Settings)
+          setRefused(false)
+          setError(null)
+        })
+        .catch((failure: unknown) => {
+          const problem = apiError(failure, 'Could not load settings.')
+          if (problem.code === 'FORBIDDEN') {
+            setRefused(true)
+            return
+          }
+          setError(problem.message)
+        }),
+    [],
+  )
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  if (refused) {
+    return (
+      <Card>
+        <EmptyState
+          icon="lock"
+          title="Platform settings are not available to your role"
+          description="Changing the platform's name, contacts and defaults needs the settings permission. Ask a Super Admin if you need access."
+        />
+      </Card>
+    )
+  }
+
+  if (error !== null) {
+    return (
+      <Alert tone="error" title="Settings" onDismiss={() => setError(null)}>
+        {error}
+      </Alert>
+    )
+  }
+
+  if (settings === null) {
+    return null
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', maxWidth: 720 }}>
+      <BrandingCard branding={settings.branding} onSaved={setSettings} />
+      <OrderingCard ordering={settings.ordering} onSaved={setSettings} />
+      <BookingCard booking={settings.booking} onSaved={setSettings} />
+      <RegionalCard regional={settings.regional} onSaved={setSettings} />
+      <MailCard mail={settings.mail} onSaved={setSettings} />
+      <SmsCard sms={settings.sms} onSaved={setSettings} />
+      <PaymentsCard payments={settings.payments} onSaved={setSettings} />
+    </div>
+  )
+}
+
+/**
+ * A write-only credential (ADR-0014 §3). Shows whether one is stored;
+ * typing here stages a replacement. An empty box means "leave it" — it
+ * is omitted from the save entirely, never sent as an empty value.
+ */
+function SecretField({
+  label,
+  htmlFor,
+  secret,
+  value,
+  onChange,
+  error,
+}: {
+  label: string
+  htmlFor: string
+  secret: SecretValue
+  value: string
+  onChange: (value: string) => void
+  error?: string
+}) {
+  return (
+    <FormField
+      label={label}
+      htmlFor={htmlFor}
+      hint={
+        secret.configured
+          ? 'Configured. Stored values are never shown — type here only to replace it.'
+          : 'Not configured yet.'
+      }
+      error={error}
+    >
+      <Input
+        id={htmlFor}
+        type="password"
+        iconLeft="key-round"
+        autoComplete="new-password"
+        placeholder={secret.configured ? '••••••••' : ''}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </FormField>
+  )
+}
+
+/** Drops empty-string secret values so "leave it" never overwrites. */
+function withSecrets(
+  values: Record<string, unknown>,
+  secrets: Record<string, string>,
+): Record<string, unknown> {
+  const out = { ...values }
+  for (const [key, value] of Object.entries(secrets)) {
+    if (value !== '') out[key] = value
+  }
+  return out
+}
+
+/**
+ * Save-button state machine shared by both cards: idle → saving →
+ * saved (1.6s) → idle. The label morph is the save feedback; anything
+ * louder (a toast, a banner) would outweigh the action.
+ */
+function useSave(group: string, onSaved: (s: Settings) => void) {
+  const [state, setState] = useState<'idle' | 'saving' | 'saved'>('idle')
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [message, setMessage] = useState<string | null>(null)
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
+
+  useEffect(() => () => clearTimeout(timer.current), [])
+
+  const save = async (values: Record<string, unknown>) => {
+    setState('saving')
+    setMessage(null)
+    setErrors({})
+    try {
+      const response = await apiClient.patch(`/settings/${group}`, values)
+      onSaved(response.data.data.settings as Settings)
+      setState('saved')
+      timer.current = setTimeout(() => setState('idle'), 1600)
+    } catch (failure) {
+      const problem = apiError(failure, 'Could not save settings.')
+      setErrors(fieldErrors(problem))
+      setMessage(Object.keys(fieldErrors(problem)).length === 0 ? problem.message : null)
+      setState('idle')
+    }
+  }
+
+  return { state, errors, message, setMessage, save }
+}
+
+function SaveButton({ state }: { state: 'idle' | 'saving' | 'saved' }) {
+  return (
+    <div>
+      <Button
+        type="submit"
+        disabled={state === 'saving'}
+        iconLeft={state === 'saved' ? 'check' : undefined}
+      >
+        {state === 'saving' ? 'Saving…' : state === 'saved' ? 'Saved' : 'Save changes'}
+      </Button>
+    </div>
+  )
+}
+
+function BrandingCard({
+  branding,
+  onSaved,
+}: {
+  branding: Settings['branding']
+  onSaved: (s: Settings) => void
+}) {
+  const [appName, setAppName] = useState(branding.app_name)
+  const [tagline, setTagline] = useState(branding.tagline ?? '')
+  const [metaDescription, setMetaDescription] = useState(branding.meta_description ?? '')
+  const [contactEmail, setContactEmail] = useState(branding.contact_email)
+  const [contactPhone, setContactPhone] = useState(branding.contact_phone ?? '')
+  const { state, errors, message, setMessage, save } = useSave('branding', onSaved)
+
+  return (
+    <Card
+      title="Branding"
+      subtitle="The platform's public identity — shown on the landing page, sign-in screen and browser tab."
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          void save({
+            app_name: appName,
+            tagline: tagline || null,
+            meta_description: metaDescription || null,
+            contact_email: contactEmail,
+            contact_phone: contactPhone || null,
+          })
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
+      >
+        {message !== null && (
+          <Alert tone="error" title="Branding" onDismiss={() => setMessage(null)}>
+            {message}
+          </Alert>
+        )}
+
+        <FormField label="App name" htmlFor="settings-app-name" error={errors.app_name} required>
+          <Input
+            id="settings-app-name"
+            value={appName}
+            onChange={(e) => setAppName(e.target.value)}
+            required
+          />
+        </FormField>
+
+        <FormField label="Tagline" htmlFor="settings-tagline" error={errors.tagline}>
+          <Input id="settings-tagline" value={tagline} onChange={(e) => setTagline(e.target.value)} />
+        </FormField>
+
+        <FormField
+          label="Meta description"
+          htmlFor="settings-meta"
+          hint="What search engines show under the name. One or two sentences."
+          error={errors.meta_description}
+        >
+          <Input
+            id="settings-meta"
+            value={metaDescription}
+            onChange={(e) => setMetaDescription(e.target.value)}
+          />
+        </FormField>
+
+        <FormField
+          label="Contact email"
+          htmlFor="settings-contact-email"
+          error={errors.contact_email}
+          required
+        >
+          <Input
+            id="settings-contact-email"
+            type="email"
+            iconLeft="mail"
+            value={contactEmail}
+            onChange={(e) => setContactEmail(e.target.value)}
+            required
+          />
+        </FormField>
+
+        <FormField label="Contact phone" htmlFor="settings-contact-phone" error={errors.contact_phone}>
+          <Input
+            id="settings-contact-phone"
+            iconLeft="phone"
+            value={contactPhone}
+            onChange={(e) => setContactPhone(e.target.value)}
+          />
+        </FormField>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: 'var(--space-4)',
+          }}
+        >
+          <AssetUploader
+            label="Logo"
+            hint="PNG, JPG, SVG or WebP, up to 2MB."
+            asset="logo"
+            currentPath={branding.logo_path}
+            onSaved={onSaved}
+          />
+          <AssetUploader
+            label="Favicon"
+            hint="PNG, ICO or SVG, up to 512KB."
+            asset="favicon"
+            currentPath={branding.favicon_path}
+            onSaved={onSaved}
+          />
+        </div>
+
+        <SaveButton state={state} />
+      </form>
+    </Card>
+  )
+}
+
+function AssetUploader({
+  label,
+  hint,
+  asset,
+  currentPath,
+  onSaved,
+}: {
+  label: string
+  hint: string
+  asset: 'logo' | 'favicon'
+  currentPath: string | null
+  onSaved: (s: Settings) => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+  const url = assetUrl(currentPath)
+
+  const upload = async (file: File) => {
+    setUploading(true)
+    setProblem(null)
+    const body = new FormData()
+    body.append('file', file)
+    try {
+      const response = await apiClient.post(`/settings/assets/${asset}`, body)
+      onSaved(response.data.data.settings as Settings)
+    } catch (failure) {
+      setProblem(apiError(failure, `Could not upload the ${label.toLowerCase()}.`).message)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+      <span style={{ font: 'var(--type-label)', color: 'var(--text-heading)' }}>{label}</span>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 'var(--space-3)',
+          padding: 'var(--space-3)',
+          border: '1px dashed var(--border-input)',
+          borderRadius: 'var(--radius-lg)',
+          background: 'var(--surface-sunken)',
+        }}
+      >
+        {url ? (
+          <img
+            src={url}
+            alt=""
+            style={{ height: 36, maxWidth: 96, objectFit: 'contain', borderRadius: 4 }}
+          />
+        ) : (
+          <span style={{ font: 'var(--type-caption)', color: 'var(--text-placeholder)' }}>
+            None yet
+          </span>
+        )}
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          iconLeft="upload"
+          disabled={uploading}
+          onClick={() => inputRef.current?.click()}
+        >
+          {uploading ? 'Uploading…' : url ? 'Replace' : 'Upload'}
+        </Button>
+        <input
+          ref={inputRef}
+          type="file"
+          hidden
+          aria-label={`Upload ${label.toLowerCase()}`}
+          accept={asset === 'logo' ? '.png,.jpg,.jpeg,.svg,.webp' : '.png,.ico,.svg'}
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) void upload(file)
+            e.target.value = ''
+          }}
+        />
+      </div>
+      <span style={{ font: 'var(--type-caption)', color: 'var(--text-secondary)' }}>
+        {problem ?? hint}
+      </span>
+    </div>
+  )
+}
+
+function OrderingCard({
+  ordering,
+  onSaved,
+}: {
+  ordering: Settings['ordering']
+  onSaved: (s: Settings) => void
+}) {
+  const [enabled, setEnabled] = useState(ordering.walk_in_enabled)
+  const [rateLimit, setRateLimit] = useState(String(ordering.rate_limit_per_minute))
+  const { state, errors, message, setMessage, save } = useSave('ordering', onSaved)
+
+  return (
+    <Card
+      title="Public ordering"
+      subtitle="The walk-in order form on the public site — the intake switch and its abuse limit."
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          void save({ walk_in_enabled: enabled, rate_limit_per_minute: Number(rateLimit) })
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
+      >
+        {message !== null && (
+          <Alert tone="error" title="Public ordering" onDismiss={() => setMessage(null)}>
+            {message}
+          </Alert>
+        )}
+
+        <Checkbox
+          label="Accept online orders"
+          hint="Off pauses the public order form immediately — visitors are told to call the dispatch desk instead. Nothing already in the queue is affected."
+          checked={enabled}
+          onChange={(e) => setEnabled(e.target.checked)}
+        />
+
+        <FormField
+          label="Orders per minute, per visitor"
+          htmlFor="settings-rate-limit"
+          hint="The public form's abuse limit per IP address. Raise it if a shared office network genuinely hits the ceiling."
+          error={errors.rate_limit_per_minute}
+          required
+        >
+          <Input
+            id="settings-rate-limit"
+            type="number"
+            min={1}
+            max={60}
+            value={rateLimit}
+            onChange={(e) => setRateLimit(e.target.value)}
+            required
+            style={{ maxWidth: 120 }}
+          />
+        </FormField>
+
+        <SaveButton state={state} />
+      </form>
+    </Card>
+  )
+}
+
+function BookingCard({
+  booking,
+  onSaved,
+}: {
+  booking: Settings['booking']
+  onSaved: (s: Settings) => void
+}) {
+  const [approvalRequired, setApprovalRequired] = useState(booking.approval_required)
+  const [maxAdvanceDays, setMaxAdvanceDays] = useState(String(booking.max_advance_days))
+  const { state, errors, message, setMessage, save } = useSave('booking', onSaved)
+
+  return (
+    <Card
+      title="Booking rules"
+      subtitle="How corporate bookings move from request to dispatch."
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          void save({
+            approval_required: approvalRequired,
+            max_advance_days: Number(maxAdvanceDays),
+          })
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
+      >
+        {message !== null && (
+          <Alert tone="error" title="Booking rules" onDismiss={() => setMessage(null)}>
+            {message}
+          </Alert>
+        )}
+
+        <Checkbox
+          label="Require approval before dispatch"
+          hint="Off means new bookings are approved automatically at creation — the requester's own booking, with no second pair of eyes. Every auto-approval is still audited."
+          checked={approvalRequired}
+          onChange={(e) => setApprovalRequired(e.target.checked)}
+        />
+
+        <FormField
+          label="Maximum days in advance"
+          htmlFor="settings-max-advance"
+          hint="How far ahead a pickup may be scheduled, on bookings and the public order form alike."
+          error={errors.max_advance_days}
+          required
+        >
+          <Input
+            id="settings-max-advance"
+            type="number"
+            min={1}
+            max={365}
+            value={maxAdvanceDays}
+            onChange={(e) => setMaxAdvanceDays(e.target.value)}
+            required
+            style={{ maxWidth: 120 }}
+          />
+        </FormField>
+
+        <SaveButton state={state} />
+      </form>
+    </Card>
+  )
+}
+
+function MailCard({ mail, onSaved }: { mail: Settings['mail']; onSaved: (s: Settings) => void }) {
+  const [enabled, setEnabled] = useState(mail.enabled)
+  const [host, setHost] = useState(mail.host ?? '')
+  const [port, setPort] = useState(String(mail.port))
+  const [username, setUsername] = useState(mail.username ?? '')
+  const [password, setPassword] = useState('')
+  const [encryption, setEncryption] = useState<'tls' | 'none'>(mail.encryption)
+  const [fromAddress, setFromAddress] = useState(mail.from_address ?? '')
+  const [fromName, setFromName] = useState(mail.from_name ?? '')
+  const { state, errors, message, setMessage, save } = useSave('mail', onSaved)
+
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const sendTest = async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const response = await apiClient.post('/settings/mail/test', {})
+      setTestResult({ ok: true, text: response.data.message as string })
+    } catch (failure) {
+      setTestResult({
+        ok: false,
+        text: apiError(failure, 'Could not send the test email.').message,
+      })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <Card
+      title="Email (SMTP)"
+      subtitle="How the platform sends email. Required before customer password reset can ship."
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          setPassword('')
+          void save(
+            withSecrets(
+              {
+                enabled,
+                host: host || null,
+                port: Number(port),
+                username: username || null,
+                encryption,
+                from_address: fromAddress || null,
+                from_name: fromName || null,
+              },
+              { password },
+            ),
+          )
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
+      >
+        {message !== null && (
+          <Alert tone="error" title="Email" onDismiss={() => setMessage(null)}>
+            {message}
+          </Alert>
+        )}
+
+        <Checkbox
+          label="Send email through this SMTP server"
+          hint="Off, the platform writes email to its log instead of sending — the safe default until the settings below are proven by a test send."
+          checked={enabled}
+          onChange={(e) => setEnabled(e.target.checked)}
+        />
+
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 'var(--space-4)' }}>
+          <FormField label="SMTP host" htmlFor="settings-mail-host" error={errors.host}>
+            <Input
+              id="settings-mail-host"
+              placeholder="smtp.your-provider.com"
+              value={host}
+              onChange={(e) => setHost(e.target.value)}
+            />
+          </FormField>
+          <FormField label="Port" htmlFor="settings-mail-port" error={errors.port} required>
+            <Input
+              id="settings-mail-port"
+              type="number"
+              min={1}
+              max={65535}
+              value={port}
+              onChange={(e) => setPort(e.target.value)}
+              required
+            />
+          </FormField>
+        </div>
+
+        <FormField label="Username" htmlFor="settings-mail-username" error={errors.username}>
+          <Input
+            id="settings-mail-username"
+            autoComplete="off"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+          />
+        </FormField>
+
+        <SecretField
+          label="Password"
+          htmlFor="settings-mail-password"
+          secret={mail.password}
+          value={password}
+          onChange={setPassword}
+          error={errors.password}
+        />
+
+        <FormField label="Encryption" htmlFor="settings-mail-encryption" error={errors.encryption} required>
+          <Select
+            id="settings-mail-encryption"
+            value={encryption}
+            onChange={(e) => setEncryption(e.target.value as 'tls' | 'none')}
+            options={[
+              { value: 'tls', label: 'TLS (standard)' },
+              { value: 'none', label: 'None (unencrypted — local relay only)' },
+            ]}
+          />
+        </FormField>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)' }}>
+          <FormField label="From address" htmlFor="settings-mail-from" error={errors.from_address}>
+            <Input
+              id="settings-mail-from"
+              type="email"
+              iconLeft="mail"
+              placeholder="noreply@kangaruride.com"
+              value={fromAddress}
+              onChange={(e) => setFromAddress(e.target.value)}
+            />
+          </FormField>
+          <FormField label="From name" htmlFor="settings-mail-from-name" error={errors.from_name}>
+            <Input
+              id="settings-mail-from-name"
+              value={fromName}
+              onChange={(e) => setFromName(e.target.value)}
+            />
+          </FormField>
+        </div>
+
+        <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
+          <SaveButton state={state} />
+          <Button
+            type="button"
+            variant="secondary"
+            iconLeft="send"
+            disabled={testing}
+            onClick={() => void sendTest()}
+          >
+            {testing ? 'Sending…' : 'Send test email'}
+          </Button>
+        </div>
+
+        {testResult !== null && (
+          <Alert
+            tone={testResult.ok ? 'success' : 'error'}
+            title={testResult.ok ? 'Test email' : 'Test failed'}
+            onDismiss={() => setTestResult(null)}
+          >
+            {testResult.text}
+          </Alert>
+        )}
+      </form>
+    </Card>
+  )
+}
+
+function SmsCard({ sms, onSaved }: { sms: Settings['sms']; onSaved: (s: Settings) => void }) {
+  const [provider, setProvider] = useState(sms.provider ?? '')
+  const [senderId, setSenderId] = useState(sms.sender_id ?? '')
+  const [apiKey, setApiKey] = useState('')
+  const [apiSecret, setApiSecret] = useState('')
+  const { state, errors, message, setMessage, save } = useSave('sms', onSaved)
+
+  return (
+    <Card
+      title="SMS gateway"
+      subtitle="Credentials stored for the SMS launch. Nothing sends SMS yet — switching messaging on is a separate decision, made deliberately because SMS fraud is a real cost here."
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          setApiKey('')
+          setApiSecret('')
+          void save(
+            withSecrets(
+              { provider: provider || null, sender_id: senderId || null },
+              { api_key: apiKey, api_secret: apiSecret },
+            ),
+          )
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
+      >
+        {message !== null && (
+          <Alert tone="error" title="SMS gateway" onDismiss={() => setMessage(null)}>
+            {message}
+          </Alert>
+        )}
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)' }}>
+          <FormField label="Provider" htmlFor="settings-sms-provider" error={errors.provider}>
+            <Select
+              id="settings-sms-provider"
+              value={provider}
+              onChange={(e) => setProvider(e.target.value as typeof provider)}
+              placeholder="Not chosen yet"
+              options={[
+                { value: 'africastalking', label: "Africa's Talking" },
+                { value: 'twilio', label: 'Twilio' },
+              ]}
+            />
+          </FormField>
+          <FormField
+            label="Sender ID"
+            htmlFor="settings-sms-sender"
+            hint="The name recipients see, as registered with the provider."
+            error={errors.sender_id}
+          >
+            <Input
+              id="settings-sms-sender"
+              value={senderId}
+              onChange={(e) => setSenderId(e.target.value)}
+            />
+          </FormField>
+        </div>
+
+        <SecretField
+          label="API key"
+          htmlFor="settings-sms-key"
+          secret={sms.api_key}
+          value={apiKey}
+          onChange={setApiKey}
+          error={errors.api_key}
+        />
+        <SecretField
+          label="API secret"
+          htmlFor="settings-sms-secret"
+          secret={sms.api_secret}
+          value={apiSecret}
+          onChange={setApiSecret}
+          error={errors.api_secret}
+        />
+
+        <SaveButton state={state} />
+      </form>
+    </Card>
+  )
+}
+
+function PaymentsCard({
+  payments,
+  onSaved,
+}: {
+  payments: Settings['payments']
+  onSaved: (s: Settings) => void
+}) {
+  const [mtnUser, setMtnUser] = useState(payments.mtn_momo_api_user ?? '')
+  const [mtnKey, setMtnKey] = useState('')
+  const [airtelId, setAirtelId] = useState(payments.airtel_money_client_id ?? '')
+  const [airtelSecret, setAirtelSecret] = useState('')
+  const { state, errors, message, setMessage, save } = useSave('payments', onSaved)
+
+  return (
+    <Card
+      title="Payment gateways"
+      subtitle="Credential slots for the payments launch. Nothing charges anyone yet — enabling payments is its own project with its own decision record."
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          setMtnKey('')
+          setAirtelSecret('')
+          void save(
+            withSecrets(
+              {
+                mtn_momo_api_user: mtnUser || null,
+                airtel_money_client_id: airtelId || null,
+              },
+              { mtn_momo_api_key: mtnKey, airtel_money_client_secret: airtelSecret },
+            ),
+          )
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
+      >
+        {message !== null && (
+          <Alert tone="error" title="Payment gateways" onDismiss={() => setMessage(null)}>
+            {message}
+          </Alert>
+        )}
+
+        <FormField label="MTN MoMo API user" htmlFor="settings-mtn-user" error={errors.mtn_momo_api_user}>
+          <Input
+            id="settings-mtn-user"
+            autoComplete="off"
+            value={mtnUser}
+            onChange={(e) => setMtnUser(e.target.value)}
+          />
+        </FormField>
+        <SecretField
+          label="MTN MoMo API key"
+          htmlFor="settings-mtn-key"
+          secret={payments.mtn_momo_api_key}
+          value={mtnKey}
+          onChange={setMtnKey}
+          error={errors.mtn_momo_api_key}
+        />
+
+        <FormField
+          label="Airtel Money client ID"
+          htmlFor="settings-airtel-id"
+          error={errors.airtel_money_client_id}
+        >
+          <Input
+            id="settings-airtel-id"
+            autoComplete="off"
+            value={airtelId}
+            onChange={(e) => setAirtelId(e.target.value)}
+          />
+        </FormField>
+        <SecretField
+          label="Airtel Money client secret"
+          htmlFor="settings-airtel-secret"
+          secret={payments.airtel_money_client_secret}
+          value={airtelSecret}
+          onChange={setAirtelSecret}
+          error={errors.airtel_money_client_secret}
+        />
+
+        <SaveButton state={state} />
+      </form>
+    </Card>
+  )
+}
+
+function RegionalCard({
+  regional,
+  onSaved,
+}: {
+  regional: Settings['regional']
+  onSaved: (s: Settings) => void
+}) {
+  const [currency, setCurrency] = useState(regional.currency)
+  const [timezone, setTimezone] = useState(regional.timezone)
+  const [dateFormat, setDateFormat] = useState(regional.date_format)
+  const { state, errors, message, setMessage, save } = useSave('regional', onSaved)
+
+  return (
+    <Card
+      title="Regional defaults"
+      subtitle="Currency, timezone and date formatting used across invoices and reports."
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          void save({ currency, timezone, date_format: dateFormat })
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
+      >
+        {message !== null && (
+          <Alert tone="error" title="Regional defaults" onDismiss={() => setMessage(null)}>
+            {message}
+          </Alert>
+        )}
+
+        <FormField
+          label="Currency"
+          htmlFor="settings-currency"
+          hint="Three-letter code (UGX, KES, USD)."
+          error={errors.currency}
+          required
+        >
+          <Input
+            id="settings-currency"
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value.toUpperCase())}
+            maxLength={3}
+            required
+          />
+        </FormField>
+
+        <FormField
+          label="Timezone"
+          htmlFor="settings-timezone"
+          hint="An IANA name, like Africa/Kampala."
+          error={errors.timezone}
+          required
+        >
+          <Input
+            id="settings-timezone"
+            value={timezone}
+            onChange={(e) => setTimezone(e.target.value)}
+            required
+          />
+        </FormField>
+
+        <FormField label="Date format" htmlFor="settings-date-format" error={errors.date_format} required>
+          <Input
+            id="settings-date-format"
+            value={dateFormat}
+            onChange={(e) => setDateFormat(e.target.value)}
+            required
+          />
+        </FormField>
+
+        <SaveButton state={state} />
+      </form>
+    </Card>
+  )
+}

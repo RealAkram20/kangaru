@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 320">
+  <!-- KangaruRide fleet · box truck (5 / 10 ton cargo) · side view -->
+  <defs>
+    <radialGradient id="shadow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0B1220" stop-opacity="0.20"/>
+      <stop offset="70%" stop-color="#0B1220" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#0B1220" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.7" stop-color="#F2F4F6"/>
+      <stop offset="1" stop-color="#DDE2E7"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3A4047"/>
+      <stop offset="1" stop-color="#16181D"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1CB964"/>
+      <stop offset="1" stop-color="#118A48"/>
+    </linearGradient>
+  </defs>
+
+  <ellipse cx="256" cy="268" rx="210" ry="14" fill="url(#shadow)"/>
+
+  <!-- cargo box -->
+  <rect x="176" y="64" width="290" height="160" rx="10" fill="url(#body)"/>
+  <!-- box outline shading + ribs -->
+  <g stroke="#D7DCE1" stroke-width="4" stroke-linecap="round">
+    <line x1="216" y1="76" x2="216" y2="212"/>
+    <line x1="428" y1="76" x2="428" y2="212"/>
+  </g>
+  <!-- green brand band on the box -->
+  <rect x="232" y="128" width="180" height="34" rx="12" fill="url(#green)"/>
+  <rect x="238" y="133" width="168" height="12" rx="6" fill="#FFFFFF" opacity="0.16"/>
+
+  <!-- chassis line -->
+  <rect x="96" y="216" width="370" height="12" rx="6" fill="#2A2E33"/>
+
+  <!-- cab -->
+  <path fill="url(#body)" d="M168 108 L168 224 L94 224 C82 224 74 216 74 204 L74 156 C74 128 94 108 122 108 Z"/>
+  <path fill="url(#glass)" d="M122 118 C100 120 86 134 84 154 L130 154 C136 154 140 150 140 144 L140 124 C140 120 136 118 132 118 Z"/>
+  <!-- cab door seam + handle -->
+  <path d="M148 118 L148 218" stroke="#D7DCE1" stroke-width="3" stroke-linecap="round" fill="none"/>
+  <rect x="118" y="164" width="18" height="5" rx="2.5" fill="#B6BDC4"/>
+  <!-- mirror -->
+  <rect x="70" y="118" width="8" height="22" rx="4" fill="#2A2E33"/>
+
+  <!-- headlamp -->
+  <path fill="#E8ECEF" d="M76 196 C80 192 88 190 96 190 L94 206 C86 206 80 204 76 200 Z"/>
+
+  <!-- wheels: front + rear tandem -->
+  <g>
+    <circle cx="126" cy="238" r="34" fill="#17191C"/>
+    <circle cx="126" cy="238" r="19" fill="#C9CFD5"/>
+    <circle cx="126" cy="238" r="7" fill="#8E969E"/>
+    <circle cx="330" cy="238" r="34" fill="#17191C"/>
+    <circle cx="330" cy="238" r="19" fill="#C9CFD5"/>
+    <circle cx="330" cy="238" r="7" fill="#8E969E"/>
+    <circle cx="404" cy="238" r="34" fill="#17191C"/>
+    <circle cx="404" cy="238" r="19" fill="#C9CFD5"/>
+    <circle cx="404" cy="238" r="7" fill="#8E969E"/>
+  </g>
+</svg>

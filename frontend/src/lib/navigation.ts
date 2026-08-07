@@ -61,6 +61,12 @@ const REPORT_READERS: Role[] = ALL.filter((r) => r !== 'driver' && r !== 'corpor
  * (dashboard, notifications) that every account has.
  */
 const VISIBLE_TO: Record<string, Role[]> = {
+  // RoleSeeder's `order_requests.manage` grant (ADR-0012): Dispatcher plus
+  // the Super Admin who holds everything. Menu visibility only; the
+  // /order-requests route is not behind RequireNavAccess, for the same
+  // reason Roles is not — a custom role holding the permission is invisible
+  // to a slug list, and the page gates on whether the API answers.
+  'walk-ins': ['super_admin', 'dispatcher'],
   // Bookings and Trips are open to all roles; the server narrows *what* is
   // in them (a Corporate Employee sees their own, a Driver sees theirs), so
   // hiding the entry would remove the one page they most need.
@@ -82,6 +88,16 @@ const VISIBLE_TO: Record<string, Role[]> = {
   // /audit-log route is not behind RequireNavAccess, for the same reason
   // Roles is not.
   'audit-log': USER_ADMINISTRATORS,
+  // SettingPolicy::viewAny — `settings.manage`, held only by Super Admin
+  // as seeded (ADR-0014). Menu visibility only; the /system-settings
+  // route is not behind RequireNavAccess, for the same reason Roles is
+  // not — the page gates on whether the API answers.
+  'system-settings': ['super_admin'],
+  // CustomerPolicy::viewAny — `customers.view` (ADR-0018), seeded on Super
+  // Admin, Operations Manager and Dispatcher. Deliberately closed to a
+  // Corporate Admin: these are Shanitah's retail customers, not their
+  // staff, and the two populations have different privacy stories.
+  customers: ['super_admin', 'operations_manager', 'dispatcher'],
   invoices: BILLING_READERS,
   'rate-cards': BILLING_READERS,
   reports: REPORT_READERS,

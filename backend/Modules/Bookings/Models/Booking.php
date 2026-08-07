@@ -60,6 +60,12 @@ class Booking extends Model
         'passenger_phone',
         'passenger_count',
         'origin',
+        // ADR-0020: where the pickup actually is, when the caller knew.
+        // Nullable — every booking that predates this has none, and the
+        // recommender ranks without distance for those rather than
+        // refusing to answer.
+        'origin_latitude',
+        'origin_longitude',
         'destination',
         'scheduled_for',
         'status',
@@ -72,6 +78,11 @@ class Booking extends Model
     protected function casts(): array
     {
         return [
+            // See OrderRequest: MariaDB returns DECIMAL as a string, and the
+            // matcher's `(float)` casts would hide that from PHP while the
+            // API still emitted a string to every client (ADR-0020 §2).
+            'origin_latitude' => 'float',
+            'origin_longitude' => 'float',
             'status' => BookingStatus::class,
             'passenger_count' => 'integer',
             'scheduled_for' => 'datetime',

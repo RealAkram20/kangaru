@@ -3,8 +3,18 @@
 use Illuminate\Support\Facades\Route;
 use Modules\Administration\Controllers\AuditLogController;
 use Modules\Administration\Controllers\AuthController;
+use Modules\Administration\Controllers\PublicSettingsController;
 use Modules\Administration\Controllers\RoleController;
+use Modules\Administration\Controllers\SettingsController;
 use Modules\Administration\Controllers\UserController;
+
+// The branding subset, unauthenticated (ADR-0014 §5): the landing page,
+// login screen and document head read their identity from here. Only
+// catalogue keys flagged `public` can appear; throttled like any public
+// read.
+Route::get('/public/settings', [PublicSettingsController::class, 'index'])
+    ->middleware('throttle:30,1')
+    ->name('public.settings');
 
 Route::post('/auth/login', [AuthController::class, 'login'])
     ->middleware('throttle:5,1')
@@ -86,6 +96,19 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::post('/users', [UserController::class, 'store'])->name('users.store');
     Route::get('/users/{user}', [UserController::class, 'show'])->name('users.show');
     Route::patch('/users/{user}', [UserController::class, 'update'])->name('users.update');
+
+    // Platform settings (ADR-0014), behind `settings.manage` via
+    // SettingPolicy. PATCH takes the group name so each save is one
+    // audited, validated write of related keys.
+    Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
+    Route::patch('/settings/{group}', [SettingsController::class, 'update'])->name('settings.update');
+    Route::post('/settings/assets/{asset}', [SettingsController::class, 'uploadAsset'])
+        ->name('settings.assets.upload');
+    // Throttled: each call opens a real SMTP connection to whatever host
+    // is stored, which must not become an outbound-probe primitive.
+    Route::post('/settings/mail/test', [SettingsController::class, 'sendTestMail'])
+        ->middleware('throttle:5,1')
+        ->name('settings.mail.test');
 
     // The role catalogue (ADR-0004). Platform-wide and curated by whoever
     // holds `roles.manage` — Super Admin alone, as seeded. Route key is the

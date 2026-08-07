@@ -26,6 +26,7 @@ enum ErrorCode: string
     case SERVER_ERROR = 'SERVER_ERROR';
     case INVALID_TRIP_TRANSITION = 'INVALID_TRIP_TRANSITION';
     case INVALID_BOOKING_TRANSITION = 'INVALID_BOOKING_TRANSITION';
+    case INVALID_ORDER_REQUEST_TRANSITION = 'INVALID_ORDER_REQUEST_TRANSITION';
     case VEHICLE_UNAVAILABLE = 'VEHICLE_UNAVAILABLE';
     case DRIVER_UNAVAILABLE = 'DRIVER_UNAVAILABLE';
     case REPORT_TOO_LARGE = 'REPORT_TOO_LARGE';
@@ -60,4 +61,70 @@ enum ErrorCode: string
      * a silent, total loss of access rather than an error anyone can read.
      */
     case ROLE_IN_USE = 'ROLE_IN_USE';
+
+    /**
+     * The owner switched public order intake off (ADR-0014 phase 2). A
+     * deliberate pause, not a fault — 503 with this code so the order
+     * form can say "not taking online orders right now" instead of
+     * "something went wrong".
+     */
+    case ORDERING_PAUSED = 'ORDERING_PAUSED';
+
+    /**
+     * The SMTP server refused or never answered (ADR-0014 phase 3). The
+     * message carries the transport's own words — a settings screen that
+     * says "failed" without saying why is a support call, not a feature.
+     */
+    case MAIL_DELIVERY_FAILED = 'MAIL_DELIVERY_FAILED';
+
+    /**
+     * The sign-in account cannot be attached to this driver (ADR-0016):
+     * the profile already has one, or the account being linked is already
+     * some other driver's. 409 rather than 422 — the request is
+     * well-formed, it is the world that disagrees with it, and the caller
+     * fixes it by detaching first rather than by editing a field.
+     */
+    case DRIVER_ACCOUNT_CONFLICT = 'DRIVER_ACCOUNT_CONFLICT';
+
+    /**
+     * Somebody already approved or declined this request for time off
+     * (ADR-0017 §6). 409, not 422: the request is well formed and the
+     * caller fixes it by looking at the answer that exists, not by editing
+     * a field. Silently re-deciding leave is how a driver and a depot end
+     * up holding two different answers.
+     */
+    case AVAILABILITY_ALREADY_ANSWERED = 'AVAILABILITY_ALREADY_ANSWERED';
+
+    /**
+     * The automatic dispatch flag is off (ADR-0020). 409 rather than 403:
+     * the caller is entitled to dispatch this booking, the platform is
+     * simply not doing it for them yet — and the fix is a setting, not a
+     * permission.
+     */
+    case AUTOMATIC_DISPATCH_DISABLED = 'AUTOMATIC_DISPATCH_DISABLED';
+
+    /**
+     * No vehicle and driver are both free with enough seats (ADR-0020).
+     * Distinct from VEHICLE_UNAVAILABLE, which names one that was tried:
+     * this says the matcher found nothing to try, which is a staffing
+     * answer rather than a retry-with-something-else one.
+     */
+    case NO_DISPATCH_CANDIDATE = 'NO_DISPATCH_CANDIDATE';
+
+    /**
+     * The signed-in account is not linked to a driver profile (ADR-0016),
+     * so the Driver's Application has no roster to show it. 403 with a code
+     * rather than a 404, because the feature exists — this account simply
+     * is not a driver, which is a support question and not a bug.
+     */
+    case NOT_A_DRIVER = 'NOT_A_DRIVER';
+
+    /**
+     * The token was issued to a client app whose surface does not include
+     * this route (ADR-0022). 403 rather than 404: the endpoint exists and
+     * the person may well be entitled to it — their *app* is not. A client
+     * that gets this has either drifted from the agreed surface or is being
+     * replayed somewhere it should not be.
+     */
+    case TOKEN_SCOPE_EXCEEDED = 'TOKEN_SCOPE_EXCEEDED';
 }

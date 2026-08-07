@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiClient } from '../lib/apiClient'
 import { apiError } from '../lib/apiError'
 import { bookingStatusLabel, bookingStatusTone, pickupLabel } from '../lib/bookingStatus'
 import type { ApiSuccess, FilterOption, ScopedCursorMeta, TenancyScope } from '../types/api'
 import type { Booking } from '../types/booking'
+import type { CandidateDriver, CandidateVehicle } from '../types/dispatch'
 import type { Driver } from '../types/driver'
 import type { Trip } from '../types/trip'
 import type { Vehicle } from '../types/vehicle'
@@ -23,11 +24,20 @@ import { Select } from '../components/forms/Select'
  * `KangaruRide Design System/ui_kits/platform/DispatchScreen.jsx`: queue on
  * the left, the selected booking and its assignment controls on the right.
  *
- * The design mock also shows eligibility filtering (category, geofence,
- * depot, distance) and a route preview. Neither is built: the reference
- * tables and Mapbox integration they need do not exist yet, and a control
- * that looks like it filters but does not would be worse than its absence.
- * Every active vehicle and driver is offered, and the server decides.
+ * The pickers are **annotated by the server**, not filtered here. Selecting
+ * a booking loads `/candidate-vehicles` and `/candidate-drivers`, which
+ * decide contracts (ADR-0009) and availability (ADR-0017) together;
+ * anything the assignment endpoint would refuse arrives `dispatchable:
+ * false` and is rendered as a disabled option carrying its reason.
+ *
+ * Disabled rather than dropped, deliberately. A dispatcher who knows the
+ * fleet will ask where UAA 123B went, and an option that has quietly
+ * vanished is the worst available answer.
+ *
+ * The design mock also shows eligibility filtering by geofence and depot,
+ * plus a route preview. Those stay unbuilt: the reference tables and Mapbox
+ * integration they need do not exist yet, and a control that looks like it
+ * filters but does not would be worse than its absence.
  */
 interface Board {
   queue: Booking[]
@@ -48,7 +58,9 @@ interface Board {
  * that only sifts the first 25 rows.
  */
 function queueUrl(client: string): string {
-  return client === '' ? '/bookings?dispatchable=1' : `/bookings?dispatchable=1&tenant_id=${encodeURIComponent(client)}`
+  return client === ''
+    ? '/bookings?dispatchable=1'
+    : `/bookings?dispatchable=1&tenant_id=${encodeURIComponent(client)}`
 }
 
 /**
@@ -69,6 +81,31 @@ async function fetchBoard(client: string): Promise<Board> {
     scope: bookings.data.meta?.scope ?? 'tenant',
     clients: bookings.data.meta?.filters?.clients ?? [],
   }
+}
+
+/**
+ * Whether each vehicle and driver can take *this* booking (ADR-0009,
+ * ADR-0017) — contracts, leave, maintenance, rosters and live trips, all
+ * decided by the server.
+ *
+ * The board used to offer every active vehicle and driver and let the
+ * assignment endpoint refuse. That worked, and taught a dispatcher nothing:
+ * the rule was discovered by being stopped. These two endpoints already
+ * existed for vehicles (ADR-0009) and were never consumed —
+ * `Modules/Dispatch/README.md` carried it as deferred item 6.
+ */
+interface Candidates {
+  vehicles: CandidateVehicle[]
+  drivers: CandidateDriver[]
+}
+
+async function fetchCandidates(bookingId: number): Promise<Candidates> {
+  const [vehicles, drivers] = await Promise.all([
+    apiClient.get<ApiSuccess<CandidateVehicle[]>>(`/bookings/${bookingId}/candidate-vehicles`),
+    apiClient.get<ApiSuccess<CandidateDriver[]>>(`/bookings/${bookingId}/candidate-drivers`),
+  ])
+
+  return { vehicles: vehicles.data.data, drivers: drivers.data.data }
 }
 
 function onLoadFailure(setError: (message: string) => void) {
@@ -149,12 +186,16 @@ export function DispatchPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-      {loadError && <Alert tone="error" title="Dispatch board unavailable">{loadError}</Alert>}
+      {loadError && (
+        <Alert tone="error" title="Dispatch board unavailable">
+          {loadError}
+        </Alert>
+      )}
 
       {assigned && (
         <Alert tone="success" title="Booking dispatched" onDismiss={() => setAssigned(null)}>
-          {assigned.booking.origin} → {assigned.booking.destination} is now trip #{assigned.trip.id},
-          assigned to {assigned.trip.driver?.name ?? 'the selected driver'} in{' '}
+          {assigned.booking.origin} → {assigned.booking.destination} is now trip #{assigned.trip.id}
+          , assigned to {assigned.trip.driver?.name ?? 'the selected driver'} in{' '}
           {assigned.trip.vehicle?.registration_number ?? 'the selected vehicle'}.
         </Alert>
       )}
@@ -192,7 +233,12 @@ export function DispatchPage() {
                   style={{ width: 180 }}
                 />
               )}
-              <Button variant="secondary" size="sm" iconLeft="refresh-cw" onClick={() => void load()}>
+              <Button
+                variant="secondary"
+                size="sm"
+                iconLeft="refresh-cw"
+                onClick={() => void load()}
+              >
                 Refresh
               </Button>
             </>
@@ -311,6 +357,28 @@ function QueueRow({
   )
 }
 
+/**
+ * Turns a candidate into a `<Select>` option, disabled when the server has
+ * already said it will refuse it.
+ *
+ * Disabled rather than omitted, which is the whole point of ADR-0017 on this
+ * screen: a dispatcher who knows the fleet will ask where UAA 123B went, and
+ * an option that has quietly vanished is the worst available answer. The
+ * note rides in the label because a `<option>` cannot carry a tooltip that
+ * survives the native dropdown.
+ */
+function candidateOption(
+  value: number,
+  label: string,
+  row: { dispatchable: boolean; note: string | null },
+) {
+  return {
+    value: String(value),
+    label: row.dispatchable || row.note === null ? label : `${label} — ${row.note}`,
+    disabled: !row.dispatchable,
+  }
+}
+
 function AssignmentPanel({
   booking,
   vehicles,
@@ -329,20 +397,89 @@ function AssignmentPanel({
   const [confirming, setConfirming] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [conflict, setConflict] = useState<string | null>(null)
+  const [candidates, setCandidates] = useState<Candidates | null>(null)
+
+  /**
+   * Candidates are per booking, so they load when one is selected rather
+   * than with the board.
+   *
+   * "Is this vehicle free" has no answer except relative to a window, and
+   * the window comes from the booking. Fetching them with the board would
+   * mean answering the question before it had been asked.
+   */
+  useEffect(() => {
+    let cancelled = false
+
+    fetchCandidates(booking.id)
+      .then((next) => {
+        if (!cancelled) setCandidates(next)
+      })
+      .catch(() => {
+        // Deliberately silent, and deliberately not fatal. The assignment
+        // endpoint enforces availability regardless; losing the preview
+        // costs a dispatcher the annotation, not the ability to work. An
+        // error banner over a panel that still functions would be noise.
+        if (!cancelled) setCandidates({ vehicles: [], drivers: [] })
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [booking.id])
 
   const vehicle = vehicles.find((v) => String(v.id) === vehicleId)
   const driver = drivers.find((d) => String(d.id) === driverId)
   const ready = vehicle !== undefined && driver !== undefined
+
+  /**
+   * The server's ordering is kept, not re-sorted here: allocated first, then
+   * dispatchable, then registration (ADR-0009 §1). Re-sorting client-side is
+   * how a board and an API come to disagree about what "first" means.
+   *
+   * Falls back to the plain fleet list until the candidates arrive — and if
+   * they never do, which is the catch above. A picker that renders empty
+   * while a request is in flight looks broken; one that renders unannotated
+   * is merely the board as it was before ADR-0017.
+   */
+  const vehicleOptions = useMemo(() => {
+    if (candidates === null || candidates.vehicles.length === 0) {
+      return vehicles.map((v) => ({
+        value: String(v.id),
+        label: `${v.registration_number} · ${v.make} ${v.model} · ${v.category} (${v.seating_capacity} seats)`,
+      }))
+    }
+
+    return candidates.vehicles.map((v) =>
+      candidateOption(
+        v.id,
+        `${v.registration_number} · ${v.make} ${v.model} · ${v.category} (${v.seating_capacity} seats)`,
+        v,
+      ),
+    )
+  }, [candidates, vehicles])
+
+  const driverOptions = useMemo(() => {
+    if (candidates === null || candidates.drivers.length === 0) {
+      return drivers.map((d) => ({ value: String(d.id), label: `${d.name} · ${d.license_number}` }))
+    }
+
+    return candidates.drivers.map((d) =>
+      candidateOption(d.id, `${d.name} · ${d.license_number}`, d),
+    )
+  }, [candidates, drivers])
 
   const submit = async () => {
     setSubmitting(true)
     setConflict(null)
 
     try {
-      const response = await apiClient.post<ApiSuccess<Trip>>(`/bookings/${booking.id}/assignment`, {
-        vehicle_id: Number(vehicleId),
-        driver_id: Number(driverId),
-      })
+      const response = await apiClient.post<ApiSuccess<Trip>>(
+        `/bookings/${booking.id}/assignment`,
+        {
+          vehicle_id: Number(vehicleId),
+          driver_id: Number(driverId),
+        },
+      )
 
       setConfirming(false)
       onAssigned(booking, response.data.data)
@@ -396,9 +533,16 @@ function AssignmentPanel({
         )}
       </Card>
 
-      <Card title="Assign a vehicle and driver" subtitle="Availability is confirmed by the server on assignment">
+      <Card
+        title="Assign a vehicle and driver"
+        subtitle="Unavailable vehicles and drivers are listed but cannot be picked"
+      >
         {conflict && (
-          <Alert tone="warning" title="Assignment refused" style={{ marginBottom: 'var(--space-4)' }}>
+          <Alert
+            tone="warning"
+            title="Assignment refused"
+            style={{ marginBottom: 'var(--space-4)' }}
+          >
             {conflict}
           </Alert>
         )}
@@ -410,10 +554,7 @@ function AssignmentPanel({
               placeholder="Select a vehicle"
               value={vehicleId}
               onChange={(e) => setVehicleId(e.target.value)}
-              options={vehicles.map((v) => ({
-                value: String(v.id),
-                label: `${v.registration_number} · ${v.make} ${v.model} · ${v.category} (${v.seating_capacity} seats)`,
-              }))}
+              options={vehicleOptions}
             />
           </FormField>
 
@@ -423,17 +564,14 @@ function AssignmentPanel({
               placeholder="Select a driver"
               value={driverId}
               onChange={(e) => setDriverId(e.target.value)}
-              options={drivers.map((d) => ({
-                value: String(d.id),
-                label: `${d.name} · ${d.license_number}`,
-              }))}
+              options={driverOptions}
             />
           </FormField>
 
           {vehicle && vehicle.seating_capacity < booking.passenger_count && (
             <Alert tone="warning" title="Seats may be short">
-              {vehicle.registration_number} seats {vehicle.seating_capacity}, and this booking is for{' '}
-              {booking.passenger_count} passengers.
+              {vehicle.registration_number} seats {vehicle.seating_capacity}, and this booking is
+              for {booking.passenger_count} passengers.
             </Alert>
           )}
         </div>

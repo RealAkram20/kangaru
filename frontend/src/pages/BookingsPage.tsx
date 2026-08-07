@@ -20,6 +20,9 @@ import { Dialog } from '../components/feedback/Dialog'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
 import { LoadMore } from '../components/data/LoadMore'
 import { FormField } from '../components/forms/FormField'
+import { PlaceField } from '../components/forms/PlaceField'
+import type { PlaceHit } from './public/places'
+import { coordinatesFor, withCoordinateErrorsOnFields } from './public/orderCoordinates'
 import { Input } from '../components/forms/Input'
 
 /**
@@ -395,6 +398,12 @@ function NewBookingDialog({
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [message, setMessage] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  /**
+   * The suggestion a dispatcher took, if any (ADR-0020 §2). Kept beside the
+   * text rather than merged into it, because the coordinates are only sent
+   * while the two still agree — typing over a picked place drops them.
+   */
+  const [originPlace, setOriginPlace] = useState<PlaceHit | null>(null)
 
   const set = (key: keyof typeof form) => (event: { target: { value: string } }) =>
     setForm((current) => ({ ...current, [key]: event.target.value }))
@@ -410,6 +419,9 @@ function NewBookingDialog({
         passenger_phone: form.passenger_phone,
         passenger_count: Number(form.passenger_count) || 1,
         origin: form.origin,
+        // Only while the typed text still matches what was picked — the
+        // same rule the public order form uses (ADR-0020 §2).
+        ...coordinatesFor(form.origin, originPlace, 'origin_latitude', 'origin_longitude'),
         destination: form.destination,
         // Empty means immediate. The backend treats a missing
         // `scheduled_for` as "now", so send null rather than "".
@@ -421,7 +433,10 @@ function NewBookingDialog({
       await onCreated()
     } catch (error) {
       const failure = apiError(error, 'Could not create this booking.')
-      setErrors(fieldErrors(failure))
+      // A service-area refusal (ADR-0021) rejects `origin_latitude`, and
+      // there is no such input — the dispatcher types an address. Left
+      // alone it would render as nothing visibly wrong.
+      setErrors(withCoordinateErrorsOnFields(fieldErrors(failure)))
       setMessage(failure.message)
     } finally {
       setSubmitting(false)
@@ -470,9 +485,17 @@ function NewBookingDialog({
               placeholder="+256700000000"
             />
           </FormField>
-          <FormField label="Pick-up" htmlFor="b-origin" required error={errors.origin}>
-            <Input id="b-origin" value={form.origin} onChange={set('origin')} />
-          </FormField>
+          <PlaceField
+            label="Pick-up"
+            value={form.origin}
+            required
+            error={errors.origin}
+            hint="Pick a suggestion and the board can rank drivers by how near they are."
+            onChange={(value, place) => {
+              setForm((current) => ({ ...current, origin: value }))
+              setOriginPlace(place)
+            }}
+          />
           <FormField
             label="Destination"
             htmlFor="b-destination"

@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 320">
+  <!-- KangaruRide fleet · economy sedan · side view · shares the family palette -->
+  <defs>
+    <radialGradient id="shadow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0B1220" stop-opacity="0.20"/>
+      <stop offset="70%" stop-color="#0B1220" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#0B1220" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.7" stop-color="#F2F4F6"/>
+      <stop offset="1" stop-color="#DDE2E7"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3A4047"/>
+      <stop offset="1" stop-color="#16181D"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1CB964"/>
+      <stop offset="1" stop-color="#118A48"/>
+    </linearGradient>
+  </defs>
+
+  <ellipse cx="256" cy="262" rx="196" ry="15" fill="url(#shadow)"/>
+
+  <!-- body silhouette -->
+  <path fill="url(#body)" d="M40 218 C34 200 36 184 52 176 C66 170 98 162 150 156 C172 118 210 100 258 98 C306 98 338 112 368 146 C410 152 442 160 456 172 C470 184 468 202 460 218 Z"/>
+
+  <!-- cabin glass -->
+  <path fill="url(#glass)" d="M196 146 C210 116 234 108 258 106 C298 106 326 118 350 144 C318 148 240 149 196 146 Z"/>
+  <!-- B-pillar -->
+  <rect x="268" y="106" width="9" height="42" fill="#F2F4F6"/>
+
+  <!-- door seams -->
+  <g stroke="#D7DCE1" stroke-width="3" fill="none" stroke-linecap="round">
+    <path d="M272 152 L272 210"/>
+    <path d="M196 152 L192 210"/>
+    <path d="M346 150 L352 206"/>
+  </g>
+
+  <!-- brand panel on the doors -->
+  <rect x="206" y="162" width="126" height="36" rx="12" fill="url(#green)"/>
+  <rect x="212" y="167" width="114" height="12" rx="6" fill="#FFFFFF" opacity="0.16"/>
+
+  <!-- door handles -->
+  <rect x="236" y="156" width="22" height="5" rx="2.5" fill="#B6BDC4"/>
+  <rect x="300" y="156" width="22" height="5" rx="2.5" fill="#B6BDC4"/>
+
+  <!-- lights -->
+  <path fill="#E8ECEF" d="M44 182 C52 178 66 176 78 176 L74 190 C62 190 50 188 44 186 Z"/>
+  <path fill="#C9505A" d="M452 176 C458 180 462 186 462 192 L446 190 L448 176 Z"/>
+
+  <!-- wheels -->
+  <g>
+    <circle cx="142" cy="218" r="42" fill="#17191C"/>
+    <circle cx="142" cy="218" r="24" fill="#C9CFD5"/>
+    <circle cx="142" cy="218" r="9" fill="#8E969E"/>
+    <circle cx="376" cy="218" r="42" fill="#17191C"/>
+    <circle cx="376" cy="218" r="24" fill="#C9CFD5"/>
+    <circle cx="376" cy="218" r="9" fill="#8E969E"/>
+  </g>
+</svg>

@@ -25,6 +25,7 @@ enum NotificationType: string
     case BOOKING_APPROVED = 'booking.approved';
     case BOOKING_REJECTED = 'booking.rejected';
     case REPORT_EXPORT_READY = 'report.export.ready';
+    case ORDER_REQUEST_RECEIVED = 'order_request.received';
 
     public function label(): string
     {
@@ -32,6 +33,7 @@ enum NotificationType: string
             self::BOOKING_APPROVED => 'Booking approved',
             self::BOOKING_REJECTED => 'Booking rejected',
             self::REPORT_EXPORT_READY => 'Export ready',
+            self::ORDER_REQUEST_RECEIVED => 'Walk-in order received',
         };
     }
 
@@ -55,6 +57,10 @@ enum NotificationType: string
                 NotificationChannel::MAIL,
             ],
             self::REPORT_EXPORT_READY => [NotificationChannel::DATABASE],
+            // In-app only: the desk lives in the dashboard, and a walk-in
+            // request emailed to every dispatcher is inbox noise, not
+            // dispatch. Config can widen it per deployment.
+            self::ORDER_REQUEST_RECEIVED => [NotificationChannel::DATABASE],
         };
     }
 }

@@ -107,6 +107,31 @@ Two things the page states rather than hides:
 
 ## Notes
 
+**A token is now scoped to the app that asked for it (ADR-0022).** `POST
+/auth/login` and `POST /auth/mfa/verify` take an optional
+`client: console | driver`. Absent means `console`, which holds `*` exactly
+as every token did before, so the web app and existing integrations are
+untouched. A `driver` token reaches the nineteen route names in
+`App\Support\Auth\ClientScope::routesFor()` and answers
+`403 TOKEN_SCOPE_EXCEEDED` on everything else.
+
+Three things about it are easy to get wrong later:
+
+- **The list is fail-closed.** Adding a route to this API leaves it *shut*
+  to the driver app until somebody names it. If the mobile team reports a
+  403 on something they legitimately need, the fix is a line in
+  `ClientScope`, not a change to the middleware.
+- **The client is self-declared and the code says so.** It is not a defence
+  against the person signing in — they may always ask for a console token.
+  It bounds what a credential sitting on a lost handset is worth. Do not
+  let it be described as more than that.
+- **It refuses before the policy check**, so a super admin on the driver app
+  gets `TOKEN_SCOPE_EXCEEDED` rather than `INSUFFICIENT_PERMISSIONS`. That
+  ordering is what makes the feature testable: a test using a driver-role
+  token alone would pass with the whole thing deleted, because the role
+  refuses those endpoints anyway. `TokenScopeTest` signs a super admin in on
+  the driver app for exactly that reason, and the guard is mutation-checked.
+
 **Tenant scoping on `/users` is manual and must stay that way.** `User`
 deliberately has no `BelongsToTenant`: login must find an account by email
 before any tenant is known, and Super Admins have no tenant at all. Nothing

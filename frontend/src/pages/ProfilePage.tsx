@@ -12,7 +12,15 @@ import { apiError, fieldErrors } from '../lib/apiError'
 import type { ApiSuccess } from '../types/api'
 
 /**
- * Your own account: password, and the second factor if you have one.
+ * Your own account: who you are signed in as, your password, and the second
+ * factor if you have one. Reached from the profile widget in the sidebar and
+ * from the topbar avatar menu — the two places an account already has a face.
+ *
+ * It was called "Settings" and sat one row away from System settings in the
+ * same sidebar, which is the whole reason it is now called Profile: two
+ * entries named Settings, one of them meaning "your password" and the other
+ * "the platform's name and SMTP credentials", is a name collision the user
+ * has to open a page to resolve.
  *
  * Built because three endpoints had no door. `PATCH /auth/password` has
  * existed since staff administration shipped and nothing ever called it —
@@ -27,7 +35,7 @@ import type { ApiSuccess } from '../types/api'
  * changing another person's credentials is the one act an audit trail
  * cannot tell apart from impersonation.
  */
-export function SettingsPage() {
+export function ProfilePage() {
   const { user, logout } = useAuth()
 
   const [current, setCurrent] = useState('')
@@ -155,12 +163,12 @@ export function SettingsPage() {
             */}
             <FormField
               label="Current password"
-              htmlFor="settings-current-password"
+              htmlFor="profile-current-password"
               error={passwordErrors.current_password}
               required
             >
               <Input
-                id="settings-current-password"
+                id="profile-current-password"
                 type="password"
                 iconLeft="lock"
                 value={current}
@@ -172,13 +180,13 @@ export function SettingsPage() {
 
             <FormField
               label="New password"
-              htmlFor="settings-new-password"
+              htmlFor="profile-new-password"
               hint="At least 12 characters, and different from your current one."
               error={passwordErrors.password}
               required
             >
               <Input
-                id="settings-new-password"
+                id="profile-new-password"
                 type="password"
                 iconLeft="lock"
                 value={next}
@@ -188,9 +196,9 @@ export function SettingsPage() {
               />
             </FormField>
 
-            <FormField label="Confirm new password" htmlFor="settings-confirm-password" required>
+            <FormField label="Confirm new password" htmlFor="profile-confirm-password" required>
               <Input
-                id="settings-confirm-password"
+                id="profile-confirm-password"
                 type="password"
                 iconLeft="lock"
                 value={confirmation}

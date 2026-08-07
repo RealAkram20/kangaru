@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 320">
+  <!-- KangaruRide fleet · double-cabin pickup · side view -->
+  <defs>
+    <radialGradient id="shadow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0B1220" stop-opacity="0.20"/>
+      <stop offset="70%" stop-color="#0B1220" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#0B1220" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.7" stop-color="#F2F4F6"/>
+      <stop offset="1" stop-color="#DDE2E7"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3A4047"/>
+      <stop offset="1" stop-color="#16181D"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1CB964"/>
+      <stop offset="1" stop-color="#118A48"/>
+    </linearGradient>
+  </defs>
+
+  <ellipse cx="256" cy="262" rx="206" ry="15" fill="url(#shadow)"/>
+
+  <!-- body: cab up front, open bed with a straight rail behind -->
+  <path fill="url(#body)" d="M38 218 C30 200 32 182 50 174 C64 166 92 160 128 154 C146 112 180 94 232 92 L268 94 C296 98 314 112 330 140 L462 140 L466 158 L466 204 C466 212 460 218 452 218 Z"/>
+
+  <!-- bed inner shadow line -->
+  <path fill="#C9CFD5" d="M336 140 L456 140 L456 148 L338 148 Z"/>
+
+  <!-- cabin glass -->
+  <path fill="url(#glass)" d="M164 140 C178 110 202 102 230 100 L262 102 C286 106 302 118 314 138 C266 143 202 143 164 140 Z"/>
+  <!-- B-pillar -->
+  <rect x="240" y="100" width="9" height="42" fill="#F2F4F6"/>
+
+  <!-- door seams -->
+  <g stroke="#D7DCE1" stroke-width="3" fill="none" stroke-linecap="round">
+    <path d="M244 146 L244 210"/>
+    <path d="M168 144 L164 210"/>
+    <path d="M318 144 L322 208"/>
+  </g>
+
+  <!-- brand panel across the doors -->
+  <rect x="176" y="156" width="132" height="36" rx="12" fill="url(#green)"/>
+  <rect x="182" y="161" width="120" height="12" rx="6" fill="#FFFFFF" opacity="0.16"/>
+
+  <!-- door handles -->
+  <rect x="206" y="150" width="22" height="5" rx="2.5" fill="#B6BDC4"/>
+  <rect x="272" y="150" width="22" height="5" rx="2.5" fill="#B6BDC4"/>
+
+  <!-- lights -->
+  <path fill="#E8ECEF" d="M42 178 C52 174 66 172 78 172 L74 188 C62 188 48 186 42 182 Z"/>
+  <rect x="458" y="146" width="8" height="26" rx="3" fill="#C9505A"/>
+
+  <!-- wheels -->
+  <g>
+    <circle cx="134" cy="218" r="45" fill="#17191C"/>
+    <circle cx="134" cy="218" r="26" fill="#C9CFD5"/>
+    <circle cx="134" cy="218" r="10" fill="#8E969E"/>
+    <circle cx="392" cy="218" r="45" fill="#17191C"/>
+    <circle cx="392" cy="218" r="26" fill="#C9CFD5"/>
+    <circle cx="392" cy="218" r="10" fill="#8E969E"/>
+  </g>
+</svg>

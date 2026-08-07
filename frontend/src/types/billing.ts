@@ -17,14 +17,35 @@ export type InvoiceLineType =
   | 'minimum_charge_adjustment'
   | 'maximum_charge_adjustment'
 
-export interface RateCardRate {
-  vehicle_category: string
+/**
+ * The five amounts every rate carries, whether it is a vehicle category's
+ * default price or a zone's override of it. One shape, because the backend
+ * serialises both through one function — a zone rate is a complete price,
+ * not a partial override.
+ */
+export interface RateAmounts {
   base_fare_minor: number
   per_km_minor: number
   per_waiting_minute_minor: number
   minimum_charge_minor: number
   /** Null means uncapped, never "capped at zero". */
   maximum_charge_minor: number | null
+}
+
+/**
+ * What a rate card version charges for one vehicle category inside one zone
+ * (ADR-0021). Nested under the category it overrides, because a zone price
+ * cannot exist without one.
+ */
+export interface RateCardZoneRate extends RateAmounts {
+  zone_id: number
+  /** Served even for a retired zone — zones soft-delete rather than vanish. */
+  zone_name: string
+}
+
+export interface RateCardRate extends RateAmounts {
+  vehicle_category: string
+  zone_rates: RateCardZoneRate[]
 }
 
 export interface RateCardVersion {
@@ -70,8 +91,14 @@ export interface RateCard {
 export interface InvoiceLineInputs {
   rate_card_version_id: number
   vehicle_category: string
-  /** Always null until the geofencing engine exists. */
+  /**
+   * The zone whose rate priced this line, named as it read when the invoice
+   * was issued. Null means the vehicle category's default rate priced it —
+   * the meaning this field has carried since before zone pricing existed.
+   */
   zone: string | null
+  /** Identifies the rate row; a zone can be renamed, a name cannot identify one. */
+  zone_id: number | null
   /** Decimal string from the API ("42.00"), not a number. */
   distance_km: string | null
   waiting_minutes: number | null

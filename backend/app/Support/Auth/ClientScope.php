@@ -1,0 +1,147 @@
+<?php
+
+namespace App\Support\Auth;
+
+/**
+ * Which routes a token issued to a particular client app may reach
+ * (ADR-0022).
+ *
+ * AGENTS.md: *"Sanctum tokens with expiry; token abilities scoped per client
+ * app when the driver app ships."* It ships now, so this does.
+ *
+ * ## Why an allow-list, and why here
+ *
+ * A token on a driver's phone is the most losable credential this platform
+ * issues. Role permissions already stop a driver reading the invoice
+ * ledger, but they are about *who the person is*; this is about *what the
+ * token is for*. A phone in a taxi and a browser on a desk deserve
+ * different reach even when the same person holds both.
+ *
+ * The list is by **route name**, in one file, and it is **fail-closed**: a
+ * scoped token may reach exactly what is named here and nothing else. Add a
+ * route to the API and it is automatically closed to the driver app until
+ * somebody decides otherwise — which is the safe direction for that
+ * decision to default in. A deny-list would have the opposite property, and
+ * the failure would be silent.
+ *
+ * Console tokens hold `*` and are unaffected. That keeps this additive: the
+ * staff web app behaves exactly as it did, and only a client that asks to
+ * be scoped is.
+ */
+final class ClientScope
+{
+    /** The staff web console. Holds `*` — every route, as before. */
+    public const CONSOLE = 'console';
+
+    /** The Driver's Application (React Native). Narrow by design. */
+    public const DRIVER = 'driver';
+
+    /**
+     * @return array<int, string>
+     */
+    public static function clients(): array
+    {
+        return [self::CONSOLE, self::DRIVER];
+    }
+
+    /**
+     * The abilities a token gets for a client.
+     *
+     * `*` for the console is deliberate rather than lazy. Enumerating every
+     * console route would be a second copy of the route table, drifting
+     * every time somebody adds a screen — and the console runs in a browser
+     * behind the same session the person is already sitting at, so the
+     * token buys an attacker nothing the browser did not already have.
+     *
+     * @return array<int, string>
+     */
+    public static function abilitiesFor(string $client): array
+    {
+        return $client === self::DRIVER ? [self::DRIVER] : ['*'];
+    }
+
+    /**
+     * Route names a driver-app token may reach.
+     *
+     * Read this as the Driver's Application's entire API surface. If the
+     * mobile team needs something not on it, that is a conversation, not a
+     * config tweak — several of the omissions below are deliberate.
+     *
+     * @return array<int, string>
+     */
+    public static function routesFor(string $client): array
+    {
+        return match ($client) {
+            self::DRIVER => [
+                // Their own session and account.
+                'auth.me',
+                'auth.logout',
+                'auth.password.change',
+
+                // The work. `trips.index` is already scoped server-side to
+                // trips assigned to them (TripController), and
+                // `trips.store` is deliberately absent — creating a trip is
+                // dispatch's act, not a driver's.
+                'trips.index',
+                'trips.show',
+                'trips.events.index',
+                'trips.transitions.store',
+                'trips.odometer-photo.show',
+
+                // GPS, which is the whole point of the device being there.
+                'trips.locations.store',
+                'trips.locations.index',
+
+                // Their own time off (ADR-0017 §6).
+                'me.availability-requests.index',
+                'me.availability-requests.store',
+                'me.availability-requests.destroy',
+
+                // Where the platform operates, so the app can draw it.
+                'zones.index',
+                'zones.resolve',
+
+                // Their inbox.
+                'notifications.index',
+                'notifications.read',
+                'notifications.read-all',
+
+                // Scoped to trips they can see, so a driver gets their own
+                // vehicle and nothing else (ADR-0019).
+                'live-positions.index',
+            ],
+            default => [],
+        };
+    }
+
+    /**
+     * Whether a token holding these abilities may reach this route.
+     *
+     * A token with `*` passes everything — that is Sanctum's own convention
+     * and what every console token holds. Anything else is checked against
+     * the list.
+     *
+     * A null `$routeName` — an unnamed route, or none matched — falls
+     * through the loop and is refused, which is the wanted answer and needs
+     * no branch of its own: a route with no name cannot be on a list of
+     * names. There was an explicit guard here; it was deleted because no
+     * mutation of it could fail a test, which is the definition of code
+     * that is not doing anything.
+     *
+     * @param  array<int, string>  $abilities
+     */
+    public static function permits(array $abilities, ?string $routeName): bool
+    {
+        if (in_array('*', $abilities, true)) {
+            return true;
+        }
+
+        foreach ($abilities as $ability) {
+            if (in_array($routeName, self::routesFor($ability), true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}

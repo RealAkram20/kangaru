@@ -3,6 +3,7 @@
 use App\Enums\ErrorCode;
 use App\Http\Middleware\AssignRequestId;
 use App\Http\Middleware\BindSubjectTenant;
+use App\Http\Middleware\EnforceTokenScope;
 use App\Http\Middleware\EnsureMfaEnrolled;
 use App\Http\Middleware\IdentifyTenant;
 use App\Support\Api\ApiResponse;
@@ -54,6 +55,11 @@ return Application::configure(basePath: dirname(__DIR__))
         // `$request->user()` is null and this would wave everything
         // through. That ordering is the whole of its correctness.
         $middleware->api(append: [
+            // ADR-0022. Must run *after* `auth:sanctum` has resolved the
+            // token, which the priority list below arranges — before it,
+            // `currentAccessToken()` is null on every request and the
+            // middleware would wave everything through.
+            EnforceTokenScope::class,
             EnsureMfaEnrolled::class,
         ]);
 
@@ -85,6 +91,16 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->appendToPriorityList(
             after: AuthenticatesRequests::class,
             append: EnsureMfaEnrolled::class,
+        );
+
+        // ADR-0022, and in the priority list for exactly the reason above:
+        // appended to the api group alone it would run *before* the route's
+        // `auth:sanctum`, see no token, and permit everything. A scope
+        // enforcer that silently enforces nothing is worse than none,
+        // because it looks like protection on the org chart.
+        $middleware->appendToPriorityList(
+            after: AuthenticatesRequests::class,
+            append: EnforceTokenScope::class,
         );
 
         // And its counterpart runs immediately AFTER model binding, because

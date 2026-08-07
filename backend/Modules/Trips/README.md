@@ -86,14 +86,53 @@ Cancelled: reachable from any state before Trip Started, including Rejected
    acceptance criteria and the photo supports it. Trips missing one are
    not currently reported anywhere either — the trip report's completeness
    figure counts the six criteria, not photos.
-2. **Redis streams and live tracking** — ADR-0003's ingestion architecture
-   is built (validate → buffer → batch worker → partitioned MySQL) but the
-   buffer is Laravel's queue, which is Redis-backed in production via
-   `QUEUE_CONNECTION=redis`. What is *not* built is the Redis **stream**
-   specifically — `XADD`, consumer groups, replay after a crashed worker —
-   and the live latest-position reads ADR-0003 says must come from Redis
-   rather than MySQL, with the <15 s freshness PROJECT.md asks for. There
-   is no live map. See "GPS route capture" below.
+2. **~~Live latest-position reads~~ — built, ADR-0019 (7 August 2026).**
+   `GET /api/v1/live-positions` answers "where is the fleet right now" from
+   a `live_positions` snapshot — one row per vehicle, upserted newest-wins
+   on every ping — so it never touches `trip_locations`, the table expected
+   to reach ~500M rows a year. Each entry carries `age_seconds` from the
+   *device* clock and a server-computed `stale` flag, so ingestion lag is
+   visible rather than hidden.
+
+   Visibility is resolved through `Trip::forActor()` and the
+   `trips.view.all` predicate, never by filtering the positions table — two
+   copies of that predicate drifting apart would show one client another
+   client's van moving.
+
+   The history is written **before** the snapshot and a live-store failure
+   is logged and swallowed: the route is evidence, and a live-map dependency
+   that could fail a ping batch would duplicate route through the job's
+   retry.
+
+   `LivePositionStore` has a Redis driver (hash per vehicle + TTL + an index
+   set, as ADR-0003 intended) and a database driver. **The database one is
+   the default**, because this environment has no Redis server, extension or
+   client — so the Redis driver is written and has never been run, and
+   defaulting to an unexercised path is shipping a guess.
+
+   **Redis *stream* ingestion remains unbuilt** — `XADD`, consumer groups,
+   replay after a crashed worker. The write path still buffers on Laravel's
+   queue. Building a stream worker never once run against a real Redis would
+   be worse than not building it: the failure modes it exists to handle are
+   exactly the ones that cannot be reasoned into correctness. That work
+   needs Redis in the development environment first, which is a
+   prerequisite rather than an excuse.
+
+   **~~Still no frontend map~~ — built, 7 August 2026** (ADR-0019 §
+   "The map itself"). `/live-map` in the console polls this endpoint every
+   ten seconds, pauses entirely while the tab is hidden, and refreshes at
+   once on return. It filters nothing: the scoping above is the whole of
+   it, so a corporate employee sees their own ride and a dispatcher sees the
+   fleet.
+
+   Two properties of that page are worth knowing before changing it.
+   Markers are **moved, never rebuilt** — rebuilding makes every vehicle
+   blink on each poll and closes any popup under the dispatcher's hand. And
+   a failed refresh **keeps the markers on screen**, because a dropped
+   request is not evidence the fleet vanished, and a blanked map reads as
+   "everything stopped". Both are mutation-tested in
+   `frontend/src/lib/livePositions.test.ts` and
+   `frontend/src/pages/LiveMapPage.test.tsx`.
 3. **Rate-card-driven cancellation/no-show charges** — `cancellation_charge_applicable`
    is a manual boolean flag only, no computed amount. No-show has no
    charge flag at all yet. `Modules/Billing` doesn't exist yet.

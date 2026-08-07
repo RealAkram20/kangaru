@@ -4,39 +4,58 @@ namespace App\Providers;
 
 use App\Enums\Permission;
 use App\Models\AuditLog;
+use App\Models\Customer;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Eloquent\Relations\Relation;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Modules\Administration\Models\Role;
+use Modules\Administration\Models\Setting;
 use Modules\Administration\Policies\AuditLogPolicy;
 use Modules\Administration\Policies\RolePolicy;
+use Modules\Administration\Policies\SettingPolicy;
 use Modules\Administration\Policies\UserPolicy;
+use Modules\Administration\Services\SettingsService;
 use Modules\Billing\Models\CreditNote;
 use Modules\Billing\Models\Invoice;
 use Modules\Billing\Models\RateCard;
 use Modules\Billing\Models\RateCardRate;
 use Modules\Billing\Models\RateCardVersion;
+use Modules\Billing\Models\RateCardZoneRate;
 use Modules\Billing\Policies\InvoicePolicy;
 use Modules\Billing\Policies\RateCardPolicy;
 use Modules\Bookings\Events\BookingApproved;
 use Modules\Bookings\Events\BookingRejected;
 use Modules\Bookings\Models\Booking;
+use Modules\Bookings\Models\OrderRequest;
 use Modules\Bookings\Policies\BookingPolicy;
+use Modules\Bookings\Policies\OrderRequestPolicy;
 use Modules\Clients\Models\Company;
 use Modules\Clients\Policies\CompanyPolicy;
+use Modules\Customers\Policies\CustomerPolicy;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Policies\DriverPolicy;
+use Modules\Fleet\Models\AvailabilityBlock;
+use Modules\Fleet\Models\DriverShiftWindow;
 use Modules\Fleet\Models\VehicleAllocation;
+use Modules\Fleet\Models\Zone;
+use Modules\Fleet\Policies\AvailabilityBlockPolicy;
 use Modules\Fleet\Policies\VehicleAllocationPolicy;
+use Modules\Fleet\Policies\ZonePolicy;
 use Modules\Notifications\Listeners\SendBookingDecisionNotification;
 use Modules\Notifications\Listeners\SendReportExportReadyNotification;
 use Modules\Reports\Enums\ReportType;
 use Modules\Reports\Events\ReportExportCompleted;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Policies\TripPolicy;
+use Modules\Trips\Support\DatabaseLivePositionStore;
+use Modules\Trips\Support\LivePositionStore;
+use Modules\Trips\Support\RedisLivePositionStore;
 use Modules\Vehicles\Models\Vehicle;
 use Modules\Vehicles\Policies\VehiclePolicy;
 
@@ -53,8 +72,36 @@ class AppServiceProvider extends ServiceProvider
     /**
      * Bootstrap any application services.
      */
+    /**
+     * ADR-0019: which store answers "where is the fleet right now".
+     *
+     * Bound by config rather than by environment sniffing, so a deployment
+     * that has Redis says so once in `.env` and every caller follows —
+     * nothing in the codebase asks whether Redis exists.
+     */
+    private function bindLivePositionStore(): void
+    {
+        $this->app->bind(LivePositionStore::class, fn () => match (config('tracking.live_positions_driver')) {
+            'redis' => new RedisLivePositionStore,
+            default => new DatabaseLivePositionStore,
+        });
+    }
+
     public function boot(): void
     {
+        $this->bindLivePositionStore();
+
+        // ADR-0012 promised the public order throttle would "move by
+        // config, not by removing the throttle"; ADR-0014 phase 2 is that
+        // config. Resolved per request through the settings cache, so a
+        // saved change applies to the very next request — floored at 1 so
+        // no stored value can accidentally disable the limiter outright.
+        RateLimiter::for('public-orders', function (Request $request) {
+            $perMinute = (int) app(SettingsService::class)->get('ordering', 'rate_limit_per_minute');
+
+            return Limit::perMinute(max(1, $perMinute))->by($request->ip());
+        });
+
         // Explicit registration rather than relying on Laravel's naming-
         // convention policy guesser across the Modules\ namespace.
         Gate::policy(Company::class, CompanyPolicy::class);
@@ -63,11 +110,16 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Driver::class, DriverPolicy::class);
         Gate::policy(Trip::class, TripPolicy::class);
         Gate::policy(Booking::class, BookingPolicy::class);
+        Gate::policy(OrderRequest::class, OrderRequestPolicy::class);
         Gate::policy(RateCard::class, RateCardPolicy::class);
         Gate::policy(Invoice::class, InvoicePolicy::class);
         Gate::policy(User::class, UserPolicy::class);
         Gate::policy(Role::class, RolePolicy::class);
+        Gate::policy(Setting::class, SettingPolicy::class);
         Gate::policy(VehicleAllocation::class, VehicleAllocationPolicy::class);
+        Gate::policy(AvailabilityBlock::class, AvailabilityBlockPolicy::class);
+        Gate::policy(Customer::class, CustomerPolicy::class);
+        Gate::policy(Zone::class, ZonePolicy::class);
 
         // A Gate rather than a Policy: reports are not a model, and
         // AGENTS.md's authorization rule names Gates alongside Policies.
@@ -123,6 +175,10 @@ class AppServiceProvider extends ServiceProvider
             'rate_card' => RateCard::class,
             'rate_card_version' => RateCardVersion::class,
             'rate_card_rate' => RateCardRate::class,
+            // ADR-0021's billing half. A zone rate decides what a client is
+            // charged for a trip picked up inside a boundary, so it is a
+            // rate-card change like any other and audited as one.
+            'rate_card_zone_rate' => RateCardZoneRate::class,
             'invoice' => Invoice::class,
             'credit_note' => CreditNote::class,
             // ADR-0004. AGENTS.md requires an audit trail over
@@ -134,6 +190,27 @@ class AppServiceProvider extends ServiceProvider
             // ownership. Audited because it is the record of what a client
             // was promised.
             'vehicle_allocation' => VehicleAllocation::class,
+            // ADR-0012's walk-in queue. Registered the moment the model
+            // became Auditable — AuditableModelsHaveMorphAliasTest fails
+            // the build for any Auditable model this map omits, because
+            // creating one would throw from AuditLog::record().
+            'order_request' => OrderRequest::class,
+            // ADR-0017's availability calendar. Audited because taking a
+            // driver or a vehicle off the road — and answering a driver's
+            // request for time off — is a decision somebody made and may
+            // later be asked about.
+            'availability_block' => AvailabilityBlock::class,
+            'zone' => Zone::class,
+            'driver_shift_window' => DriverShiftWindow::class,
+            // ADR-0013's customer principal. Not Auditable — it is here
+            // because Sanctum's personal_access_tokens.tokenable_type is a
+            // morph, and an enforced map with no entry throws the moment a
+            // customer token is minted.
+            'customer' => Customer::class,
+            // ADR-0014: settings changes are audited like rate cards and
+            // roles — an operational lever silently flipped is the audit
+            // trail's business.
+            'setting' => Setting::class,
         ]);
     }
 }

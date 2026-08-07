@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- KangaruRide fleet · four-door sedan · true top-down · unified scale (1 unit shared across the set) -->
+  <defs>
+    <radialGradient id="shadow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0B1220" stop-opacity="0.20"/>
+      <stop offset="65%" stop-color="#0B1220" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#0B1220" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#D7DCE2"/>
+      <stop offset="0.16" stop-color="#F4F6F8"/>
+      <stop offset="0.5" stop-color="#FFFFFF"/>
+      <stop offset="0.84" stop-color="#F4F6F8"/>
+      <stop offset="1" stop-color="#D7DCE2"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0.7" y2="1">
+      <stop offset="0" stop-color="#33383F"/>
+      <stop offset="0.5" stop-color="#1D2025"/>
+      <stop offset="1" stop-color="#111318"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1CB964"/>
+      <stop offset="1" stop-color="#118A48"/>
+    </linearGradient>
+  </defs>
+
+  <ellipse cx="256" cy="258" rx="120" ry="216" fill="url(#shadow)"/>
+
+  <!-- tires with a hint of alloy hub, peeking from under the body -->
+  <g>
+    <rect x="151" y="116" width="22" height="64" rx="10" fill="#17191C"/>
+    <rect x="339" y="116" width="22" height="64" rx="10" fill="#17191C"/>
+    <rect x="151" y="334" width="22" height="64" rx="10" fill="#17191C"/>
+    <rect x="339" y="334" width="22" height="64" rx="10" fill="#17191C"/>
+    <g fill="#8E969E">
+      <rect x="156" y="136" width="5" height="24" rx="2.5"/>
+      <rect x="351" y="136" width="5" height="24" rx="2.5"/>
+      <rect x="156" y="354" width="5" height="24" rx="2.5"/>
+      <rect x="351" y="354" width="5" height="24" rx="2.5"/>
+    </g>
+  </g>
+
+  <!-- mirrors -->
+  <rect x="142" y="148" width="30" height="15" rx="7" transform="rotate(-16 157 155)" fill="#EEF1F4"/>
+  <rect x="340" y="148" width="30" height="15" rx="7" transform="rotate(16 355 155)" fill="#EEF1F4"/>
+
+  <!-- body shell -->
+  <path fill="url(#body)" d="M256 52 C305 52 336 65 340 116 L344 200 L344 330 L340 392 C336 440 306 460 256 460 C206 460 176 440 172 392 L168 330 L168 200 L172 116 C176 65 207 52 256 52 Z"/>
+
+  <!-- panel seams -->
+  <g stroke="#DDE2E7" stroke-width="3" fill="none" stroke-linecap="round">
+    <path d="M176 206 L200 202"/>
+    <path d="M336 206 L312 202"/>
+    <path d="M172 288 L196 286"/>
+    <path d="M340 288 L316 286"/>
+    <path d="M186 414 C216 424 296 424 326 414"/>
+    <path d="M190 92 C214 78 298 78 322 92"/>
+  </g>
+
+  <!-- windshield -->
+  <path fill="url(#glass)" d="M190 138 C190 126 212 118 256 118 C300 118 322 126 322 138 L314 184 C312 194 292 199 256 199 C220 199 200 194 198 184 Z"/>
+
+  <!-- panoramic roof -->
+  <rect x="194" y="188" width="124" height="154" rx="28" fill="url(#glass)"/>
+
+  <!-- roof gloss streak -->
+  <path fill="#FFFFFF" opacity="0.07" d="M204 196 L240 192 L214 338 L200 320 Z"/>
+
+  <!-- brand panel -->
+  <rect x="223" y="220" width="66" height="90" rx="17" fill="url(#green)"/>
+  <rect x="229" y="226" width="54" height="34" rx="12" fill="#FFFFFF" opacity="0.14"/>
+
+  <!-- rear window -->
+  <path fill="url(#glass)" d="M198 336 L314 336 C320 356 321 372 316 384 C300 393 212 393 196 384 C191 372 192 356 198 336 Z"/>
+</svg>

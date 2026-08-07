@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Customer;
 use App\Models\User;
 
 return [
@@ -42,6 +43,33 @@ return [
             'driver' => 'session',
             'provider' => 'users',
         ],
+
+        /*
+        |------------------------------------------------------------------
+        | The two token guards (ADR-0013 §2)
+        |------------------------------------------------------------------
+        |
+        | Both entries are load-bearing, and `sanctum` doubly so: Sanctum
+        | registers `auth.guards.sanctum` with `provider => null` when the
+        | app does not define it, and a null provider makes its
+        | hasValidProvider() accept ANY tokenable model. Left alone, a
+        | Customer token would authenticate on every staff route — and a
+        | Customer has no tenant_id, which IdentifyTenant reads as
+        | platform-level. Pinning the provider is what makes "a customer
+        | request cannot even reach a staff policy" structurally true
+        | rather than a convention. CustomerGuardIsolationTest proves both
+        | directions.
+        |
+        */
+        'sanctum' => [
+            'driver' => 'sanctum',
+            'provider' => 'users',
+        ],
+
+        'customer' => [
+            'driver' => 'sanctum',
+            'provider' => 'customers',
+        ],
     ],
 
     /*
@@ -67,10 +95,13 @@ return [
             'model' => env('AUTH_MODEL', User::class),
         ],
 
-        // 'users' => [
-        //     'driver' => 'database',
-        //     'table' => 'users',
-        // ],
+        // The second principal (ADR-0013 §1). Not an AUTH_MODEL-style env
+        // override: there is exactly one customer model, and making it
+        // configurable would only invite the guard pinning above to drift.
+        'customers' => [
+            'driver' => 'eloquent',
+            'model' => Customer::class,
+        ],
     ],
 
     /*

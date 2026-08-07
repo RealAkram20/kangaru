@@ -44,8 +44,18 @@ enum UserRole: string
     /**
      * Whether the role exists above any single tenant. Both may hold a null
      * `tenant_id`; everyone else must belong somewhere.
+     *
+     * Deliberately NOT named `isPlatformLevel()`: that name belongs to
+     * `User::isPlatformLevel()`, which answers a different question —
+     * whether an *account* actually has `tenant_id === null`, which is what
+     * every policy and scope keys on (ADR-0006). A platform-capable role can
+     * still be seeded inside a tenant, and a policy that reached for the
+     * role's answer instead of the account's would silently widen or narrow
+     * access. Two methods with one name and two meanings is the drift
+     * ADR-0004 exists to prevent, so the role-shaped question carries a
+     * role-shaped name.
      */
-    public function isPlatformLevel(): bool
+    public function isPlatformRole(): bool
     {
         return $this === self::SUPER_ADMIN || $this === self::OPERATIONS_MANAGER;
     }

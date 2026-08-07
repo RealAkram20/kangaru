@@ -42,6 +42,15 @@ Standard REST resource, all behind `auth:sanctum` + `tenant` middleware:
 | POST | `/api/v1/drivers` | `create` — `drivers.manage` |
 | PATCH | `/api/v1/drivers/{id}` | `update` — `drivers.manage` |
 | DELETE | `/api/v1/drivers/{id}` | `delete` — `drivers.manage` |
+| POST | `/api/v1/drivers/{id}/account` | `manageAccount` — `drivers.manage` **and** `staff.manage` (ADR-0016) |
+| DELETE | `/api/v1/drivers/{id}/account` | `manageAccount` — same pair |
+
+The account sub-resource takes one of two mutually exclusive bodies:
+`{email, password, role?, name?}` mints a login, `{user_id}` adopts an
+existing unlinked one. `409 DRIVER_ACCOUNT_CONFLICT` if either the profile
+or the account is already spoken for. `DELETE` is idempotent and revokes
+every token the account holds — see ADR-0016 §5 for why that matters more
+than the link itself.
 
 ## Notes
 
@@ -61,16 +70,58 @@ than left as a trap for whoever called it first.
 
 ## What's explicitly deferred
 
-- **`user_id` cannot be set through the API.** Neither `StoreDriverRequest`
-  nor `UpdateDriverRequest` accepts it, so the link between a driver
-  profile and the account that signs in as them is populated only by
-  seeders, tests or direct Eloquent. In practice a driver onboarded
-  through the API today **cannot sign in to run their own trips**. This is
-  the largest gap in this module.
-- **No availability model.** A driver has a `status` string. There is no
-  shift calendar, no leave, no hours-of-service limit, and no way to ask
-  who is free at a given time — which is also what
-  ADR-0005 names as the buildable half of automatic dispatch.
+- **~~`user_id` cannot be set through the API~~ — built, ADR-0016
+  (7 August 2026).** Kept in place rather than deleted because it was the
+  largest gap in this module and the shape of what remains is easier to
+  read against it. A driver onboarded through the API could not sign in,
+  and so could not capture the odometer readings two of the Bank's six
+  acceptance criteria are made of.
+
+  What shipped: `POST|DELETE /drivers/{driver}/account` as its own
+  sub-resource — not a field on the driver, because creating a login is
+  creating a user and folding it into `drivers.manage` would let a Depot
+  Manager mint accounts from the fleet screen, defeating ADR-0004's
+  escalation rule by a side door. `DriverPolicy::manageAccount` is
+  therefore `drivers.manage` **and** `staff.manage`, and the *role* the
+  account lands in is checked separately against the actor's own
+  permissions.
+
+  The link is exclusive on both sides, enforced by a unique index:
+  `TripPolicy::transition` authorises by comparing `$trip->driver->user_id`
+  to the caller, so a shared account could move two drivers' trips and
+  record one driver's odometer against the other's.
+
+  Three paths revoke, and all of them revoke *tokens* rather than only the
+  link — detaching the account, suspending the driver, and deleting the
+  driver (which detaches first, or the unique index would reserve the
+  account against a soft-deleted row and re-hiring would fail with a
+  conflict naming a driver who appears not to exist). Re-activating a
+  driver deliberately does not restore the account; see ADR-0016 §5.
+
+  Still deferred inside it: no self-service driver sign-up, no
+  administrator-initiated password reset for somebody else (the same
+  impersonation hazard `Modules/Administration` refuses), and no MFA for
+  the driver role, which PROJECT.md confines to Super Admin and Finance.
+- **~~No availability model~~ — built, ADR-0017 (7 August 2026).** A weekly
+  roster (`driver_shift_windows`) and dated absences
+  (`availability_blocks`) now live in `Modules/Fleet`, and
+  `AvailabilityService` is the one place that combines them with status and
+  live-trip conflicts. Dispatch refuses a driver on approved leave at the
+  endpoint, not merely on the board.
+
+  A driver with no roster rows is available at any hour, which is what makes
+  it additive — every driver predates the table and dispatch behaves for
+  them exactly as before.
+
+  Because the Driver's Application (Phase 2) is where a driver *asks* for
+  time off, a block carries a status and only `approved` withholds anybody;
+  `POST /availability-blocks/{id}/answer` is where the fleet office answers.
+
+  **Hours-of-service limits remain deferred**, and deliberately: the data is
+  in `trip_events`, but how many hours in what rolling window — and what
+  happens to a trip in progress when a driver hits the cap — is an
+  operations decision, not an engineering one. Building it first would
+  encode a guess as policy.
 - **Licence expiry is stored but not acted on.** `license_expiry` is a
   column; nothing warns, nothing blocks assignment of a driver whose
   licence has lapsed, and "Document Expiring" is a named notification type

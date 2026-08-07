@@ -37,7 +37,13 @@ class RateCardResolver
         $on = ($trip->started_at ?? $trip->created_at)->toDateString();
 
         $version = $card->versions()
-            ->with('rates')
+            // Down to `zoneRates.zone`, because pricing reads all three:
+            // the rates to find the category, the zone rates to find an
+            // override, and the zone itself for the name that goes on the
+            // issued document. Lazy loading would answer correctly and take
+            // a query per rate to do it, on the one path AGENTS.md puts a
+            // 90% coverage gate over.
+            ->with('rates.zoneRates.zone')
             ->where('effective_from', '<=', $on)
             ->reorder()
             ->orderByDesc('effective_from')
