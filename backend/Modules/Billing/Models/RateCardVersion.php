@@ -33,7 +33,8 @@ use Modules\Fleet\Models\Zone;
  * numbers were in force. Creating another version costs nothing.
  *
  * @property int $id
- * @property int $tenant_id
+ * @property int|null $tenant_id Null on the platform's public tariff
+ *                                (ADR-0026 §1), which belongs to no client.
  * @property int $rate_card_id
  * @property int $version
  * @property CarbonInterface $effective_from

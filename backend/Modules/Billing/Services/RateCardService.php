@@ -52,7 +52,16 @@ class RateCardService
                 $this->makeDefault($card);
             }
 
-            return $card->refresh();
+            // `forActor`, not `refresh()`. The model's own refresh goes back
+            // through `TenantScope`, which fails closed — so a platform
+            // actor creating the public tariff (ADR-0026 §4) would insert
+            // the row correctly and then fail to read it back, with a
+            // "no query results" for a card created two statements earlier.
+            //
+            // `$actor->tenant_id` is already what decides the card's owner
+            // above, so a platform actor makes a platform card; this is the
+            // read side of that same fact.
+            return RateCard::forActor($actor)->findOrFail($card->id);
         });
     }
 
@@ -70,7 +79,7 @@ class RateCardService
             // (rate_card_id, version) is the backstop if this is ever
             // bypassed.
             /** @var RateCard $locked */
-            $locked = RateCard::whereKey($card->id)->lockForUpdate()->firstOrFail();
+            $locked = RateCard::forActor($actor)->whereKey($card->id)->lockForUpdate()->firstOrFail();
 
             $version = RateCardVersion::create([
                 'tenant_id' => $locked->tenant_id,

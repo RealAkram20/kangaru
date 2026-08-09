@@ -24,7 +24,8 @@ use Modules\Vehicles\Models\Vehicle;
  * ever issued, because invoices reference a version, not a card.
  *
  * @property int $id
- * @property int $tenant_id
+ * @property int|null $tenant_id Null on the platform's public tariff
+ *                                (ADR-0026 §1), which belongs to no client.
  * @property string $name
  * @property RateCardStatus $status
  * @property bool $is_default

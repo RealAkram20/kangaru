@@ -5,6 +5,7 @@ namespace Modules\Trips\Services;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Modules\Trips\Enums\TripStatus;
+use Modules\Trips\Events\TripCompleted;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Models\TripEvent;
 
@@ -52,6 +53,16 @@ class TripStateMachine
                 $trip->save();
 
                 TripEvent::record($trip, $from, $to, $actor, $payload['notes'] ?? null);
+
+                // Announced, not acted on. `trip_completed` is the
+                // transition that captures the closing odometer and computes
+                // the distance, so it is the first moment a fare can exist —
+                // and this module deliberately does not know that anybody
+                // prices anything (see the event's docblock, and
+                // `BookingApproved` before it).
+                if ($to === TripStatus::TRIP_COMPLETED) {
+                    TripCompleted::dispatch($trip);
+                }
 
                 return $trip->refresh();
             });

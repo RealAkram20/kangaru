@@ -21,6 +21,7 @@ use Modules\Administration\Policies\RolePolicy;
 use Modules\Administration\Policies\SettingPolicy;
 use Modules\Administration\Policies\UserPolicy;
 use Modules\Administration\Services\SettingsService;
+use Modules\Billing\Listeners\SettleWalkInFare;
 use Modules\Billing\Models\CreditNote;
 use Modules\Billing\Models\Invoice;
 use Modules\Billing\Models\RateCard;
@@ -55,6 +56,7 @@ use Modules\Notifications\Listeners\SendBookingDecisionNotification;
 use Modules\Notifications\Listeners\SendReportExportReadyNotification;
 use Modules\Reports\Enums\ReportType;
 use Modules\Reports\Events\ReportExportCompleted;
+use Modules\Trips\Events\TripCompleted;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Policies\TripPolicy;
 use Modules\Trips\Support\ContactChannel;
@@ -176,6 +178,12 @@ class AppServiceProvider extends ServiceProvider
         // Registered here rather than in a Notifications service provider
         // because this application has one provider and adding a second
         // for two lines would be more indirection than it removes.
+        // ADR-0026 §3: a walk-in ride is priced the moment it finishes.
+        // Registered here for the same reason the booking listeners are —
+        // Laravel's event discovery scans app/Listeners by convention and
+        // would never look under Modules\.
+        Event::listen(TripCompleted::class, SettleWalkInFare::class);
+
         Event::listen(BookingApproved::class, [SendBookingDecisionNotification::class, 'approved']);
         Event::listen(BookingRejected::class, [SendBookingDecisionNotification::class, 'rejected']);
         Event::listen(ReportExportCompleted::class, SendReportExportReadyNotification::class);

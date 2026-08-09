@@ -122,6 +122,13 @@ class Trip extends Model
         'cancellation_charge_applicable',
         'started_at',
         'completed_at',
+        // What the walk-in ride cost, and what priced it (ADR-0026 §3).
+        // Recorded on the trip rather than in `invoices`, which answers
+        // "what does this client owe" and has no place for a cash fare.
+        'fare_minor',
+        'fare_currency',
+        'fare_rate_card_version_id',
+        'fare_computed_at',
     ];
 
     protected function casts(): array
@@ -136,6 +143,8 @@ class Trip extends Model
             'cancellation_charge_applicable' => 'boolean',
             'started_at' => 'datetime',
             'completed_at' => 'datetime',
+            'fare_minor' => 'integer',
+            'fare_computed_at' => 'datetime',
         ];
     }
 
