@@ -4,9 +4,9 @@ namespace Modules\Dispatch\Services;
 
 use Illuminate\Support\Collection;
 use Modules\Bookings\Models\Booking;
+use Modules\Dispatch\Support\GreatCircle;
 use Modules\Drivers\Models\Driver;
 use Modules\Fleet\Services\AllocationLookup;
-use Modules\Dispatch\Support\GreatCircle;
 use Modules\Fleet\Services\AvailabilityService;
 use Modules\Trips\Support\LivePositionStore;
 use Modules\Vehicles\Models\Vehicle;
