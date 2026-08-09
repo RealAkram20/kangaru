@@ -51,6 +51,18 @@ enum ErrorCode: string
     // Modules/Billing.
     case RATE_CARD_NOT_CONFIGURED = 'RATE_CARD_NOT_CONFIGURED';
     case TRIP_NOT_INVOICEABLE = 'TRIP_NOT_INVOICEABLE';
+
+    /**
+     * A walk-in customer's trip has no client to invoice (ADR-0024).
+     *
+     * Distinct from TRIP_NOT_INVOICEABLE, which means "not yet": that trip
+     * becomes invoiceable when it reaches Trip Completed, and a client
+     * showing the button greyed out is right to. This one means "not ever",
+     * and a client that cannot tell the two apart will keep offering an
+     * action that can only ever fail.
+     */
+    case TRIP_NOT_INVOICEABLE_WALK_IN = 'TRIP_NOT_INVOICEABLE_WALK_IN';
+
     case TRIP_ALREADY_INVOICED = 'TRIP_ALREADY_INVOICED';
     case IDEMPOTENCY_KEY_REUSED = 'IDEMPOTENCY_KEY_REUSED';
     case CREDIT_NOTE_EXCEEDS_INVOICE = 'CREDIT_NOTE_EXCEEDS_INVOICE';
@@ -118,6 +130,36 @@ enum ErrorCode: string
      * is not a driver, which is a support question and not a bug.
      */
     case NOT_A_DRIVER = 'NOT_A_DRIVER';
+
+    /**
+     * A position heartbeat arrived from a driver who is not on duty
+     * (ADR-0024 §2).
+     *
+     * Refused rather than silently dropped, and that is the point of it
+     * having a code: the app stops sending heartbeats at sign-off, so one
+     * arriving means the app and the platform disagree about whether a
+     * shift is running. Ignoring it would leave the app showing a driver as
+     * online while dispatch had already written them off — a disagreement
+     * neither side would ever discover.
+     */
+    case NOT_ON_DUTY = 'NOT_ON_DUTY';
+
+    /**
+     * The offered job can no longer be answered (ADR-0024 §3).
+     *
+     * One code for three causes — the clock ran out, another driver was
+     * faster, or the desk fulfilled the order by hand — because from the
+     * driver's side they are the same event: the job is gone. Splitting them
+     * would put the platform's internal bookkeeping on a screen somebody is
+     * reading while driving.
+     */
+    case OFFER_NO_LONGER_OPEN = 'OFFER_NO_LONGER_OPEN';
+
+    /**
+     * The offer names no vehicle, so accepting it could not produce a trip
+     * (ADR-0024 §3). A driver on duty before the depot issued them keys.
+     */
+    case OFFER_HAS_NO_VEHICLE = 'OFFER_HAS_NO_VEHICLE';
 
     /**
      * The token was issued to a client app whose surface does not include

@@ -14,6 +14,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use Modules\Bookings\Enums\OrderRequestServiceType;
 use Modules\Bookings\Enums\OrderRequestStatus;
+use Modules\Trips\Models\Trip;
 
 /**
  * A walk-in visitor's ask, before any account, booking, or trip exists
@@ -83,6 +84,12 @@ class OrderRequest extends Model
         'dispatcher_notes',
         'handled_by_user_id',
         'customer_id',
+        // The trip this order became (ADR-0024 §4) — the foreign key
+        // `OrderRequestStatus::CONVERTED` was promised when walk-in
+        // fulfilment got its own ADR. Written only by
+        // `DispatchOfferService::accept`, inside the transaction that
+        // creates the trip.
+        'trip_id',
     ];
 
     protected function casts(): array
@@ -129,5 +136,21 @@ class OrderRequest extends Model
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class);
+    }
+
+    /**
+     * The trip a driver accepted for this order (ADR-0024 §4).
+     *
+     * Null until one does, and null forever for an order the desk closed or
+     * fulfilled outside the platform. Its presence is also the flag that
+     * stops the matcher searching: `DispatchOfferService::dispatch()` returns
+     * immediately when this is set, which is what makes a second accept
+     * impossible rather than merely unlikely.
+     *
+     * @return BelongsTo<Trip, $this>
+     */
+    public function trip(): BelongsTo
+    {
+        return $this->belongsTo(Trip::class);
     }
 }

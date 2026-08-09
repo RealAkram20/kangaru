@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use Modules\Dispatch\Controllers\DispatchController;
+use Modules\Dispatch\Controllers\DriverOfferController;
 
 // The assignment is a resource of the booking, not a field on it: creating
 // one produces a Trip (201), and POST is the only verb that makes sense for
@@ -28,3 +29,29 @@ Route::get('bookings/{booking}/recommendation', [DispatchController::class, 'rec
     ->name('bookings.recommendation.index');
 Route::post('bookings/{booking}/auto-assignment', [DispatchController::class, 'autoAssign'])
     ->name('bookings.auto-assignment.store');
+
+// The driver's side of automatic dispatch (ADR-0024 §3). `/me/`, like the
+// duty and time-off routes, because the driver is the token and an id in the
+// path is a thing to tamper with.
+//
+// This list is the source of truth, not the push notification. ADR-0025 §3
+// makes push best-effort — a driver can refuse the permission, a token can
+// go stale, and ADR-0023's whole thesis is dead zones — so everything a push
+// says must be independently readable here.
+Route::get('me/offers', [DriverOfferController::class, 'index'])->name('me.offers.index');
+
+// Plain integers, not bound models: the controller scopes the lookup to the
+// caller's own driver profile, so another driver's offer id answers 404
+// rather than resolving and needing a policy to refuse it with a 403 that
+// confirms it exists.
+//
+// `acceptance` and `decline` as sub-resources rather than a PATCH with a
+// status field: an accept is an act that can conflict and that creates a
+// Trip, which is the same reasoning `bookings/{booking}/assignment` records
+// for being a POST.
+Route::post('me/offers/{offer}/acceptance', [DriverOfferController::class, 'accept'])
+    ->whereNumber('offer')
+    ->name('me.offers.acceptance.store');
+Route::post('me/offers/{offer}/decline', [DriverOfferController::class, 'decline'])
+    ->whereNumber('offer')
+    ->name('me.offers.decline.store');

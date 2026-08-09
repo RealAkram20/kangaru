@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use Modules\Fleet\Controllers\AvailabilityBlockController;
 use Modules\Fleet\Controllers\DriverAvailabilityController;
+use Modules\Fleet\Controllers\DriverPresenceController;
 use Modules\Fleet\Controllers\VehicleAllocationController;
 use Modules\Fleet\Controllers\ZoneController;
 
@@ -57,3 +58,24 @@ Route::post('me/availability-requests', [DriverAvailabilityController::class, 's
     ->name('me.availability-requests.store');
 Route::delete('me/availability-requests/{availabilityBlock}', [DriverAvailabilityController::class, 'destroy'])
     ->name('me.availability-requests.destroy');
+
+// A driver going on duty and saying where they are (ADR-0024 §2) — the
+// input automatic dispatch was missing, because `live_positions` only knows
+// about vehicles already on a trip.
+//
+// `/me/` for the same reason as the time-off routes above: the driver is the
+// token, and an id in the path is a thing to tamper with.
+Route::get('me/duty', [DriverPresenceController::class, 'show'])->name('me.duty.show');
+
+// PUT, not POST: going on duty is idempotent and there is exactly one duty
+// state per driver to replace. A driver whose request times out and retries
+// must not end up having started two shifts.
+Route::put('me/duty', [DriverPresenceController::class, 'update'])->name('me.duty.update');
+
+// The heartbeat. Throttled well above the configured cadence
+// (`dispatch.presence_heartbeat_seconds`, 60s by default) so an ordinary
+// retry after a dead zone is never refused, but a handset stuck in a loop
+// cannot hammer the dispatch table all day.
+Route::post('me/presence', [DriverPresenceController::class, 'ping'])
+    ->middleware('throttle:30,1')
+    ->name('me.presence.store');

@@ -3,6 +3,7 @@
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
+use Modules\Dispatch\Console\AdvanceDispatchOffers;
 use Modules\Reports\Console\PruneReportExports;
 
 Artisan::command('inspire', function () {
@@ -39,5 +40,28 @@ Schedule::command(PruneReportExports::class)
 // signed out by this that was not already signed out.
 Schedule::command('sanctum:prune-expired --hours=24')
     ->daily()
+    ->withoutOverlapping()
+    ->onOneServer();
+
+// Automatic dispatch's backstop (ADR-0024 §5).
+//
+// **This is not what makes an offer expire.** `expires_at` is a wall clock
+// and every read evaluates it, so a driver cannot accept a lapsed offer and
+// a customer never sees one — whether or not this has ever run. What this
+// does is notice, and offer the ride to the next driver.
+//
+// The common case does not wait for it: a driver who actually declines
+// advances the search in the same request. This is the backstop for the
+// driver who says nothing at all.
+//
+// `everyMinute()` is cron's floor, which is coarse against a 15-second offer
+// window — a passenger can wait out one tick for somebody who ignored their
+// phone. That is the honest cost of not requiring a daemon, and a deployment
+// running a worker can lower it to `everyTenSeconds()` with no code change.
+Schedule::command(AdvanceDispatchOffers::class)
+    ->everyMinute()
+    // A slow sweep must never stack up behind itself: two concurrent runs
+    // would race to settle the same offers and could open two waves on one
+    // ride.
     ->withoutOverlapping()
     ->onOneServer();

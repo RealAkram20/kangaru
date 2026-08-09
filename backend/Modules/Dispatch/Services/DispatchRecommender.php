@@ -6,6 +6,7 @@ use Illuminate\Support\Collection;
 use Modules\Bookings\Models\Booking;
 use Modules\Drivers\Models\Driver;
 use Modules\Fleet\Services\AllocationLookup;
+use Modules\Dispatch\Support\GreatCircle;
 use Modules\Fleet\Services\AvailabilityService;
 use Modules\Trips\Support\LivePositionStore;
 use Modules\Vehicles\Models\Vehicle;
@@ -175,24 +176,14 @@ class DispatchRecommender
             return null;
         }
 
-        return $this->haversineKm(
+        // Shared with `WalkInRecommender` since ADR-0024, rather than a
+        // second private copy: two rankings that disagree about what
+        // "0.4 km away" means is a difference nobody could explain.
+        return GreatCircle::kilometres(
             (float) $booking->origin_latitude,
             (float) $booking->origin_longitude,
             $position->latitude,
             $position->longitude,
         );
-    }
-
-    private function haversineKm(float $lat1, float $lon1, float $lat2, float $lon2): float
-    {
-        $earthRadiusKm = 6371.0088;
-
-        $dLat = deg2rad($lat2 - $lat1);
-        $dLon = deg2rad($lon2 - $lon1);
-
-        $a = sin($dLat / 2) ** 2
-            + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLon / 2) ** 2;
-
-        return $earthRadiusKm * 2 * asin(min(1.0, sqrt($a)));
     }
 }

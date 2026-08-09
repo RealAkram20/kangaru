@@ -14,6 +14,13 @@ return new class extends Migration
         Schema::create('trip_events', function (Blueprint $table) {
             $table->id();
             // Unlike audit_logs.tenant_id, a Trip is always tenant-owned
+            //
+            // NO LONGER TRUE. ADR-0024 gave trips a second kind of owner —
+            // a walk-in customer — and this column became nullable in
+            // `2026_08_09_090100_allow_tenantless_trip_evidence`. Left in
+            // place rather than rewritten, because the reasoning below is
+            // still why it was NOT NULL for the first year, and a comment
+            // that quietly changes its mind teaches nobody why.
             // (never platform-level), so non-nullable is correct here.
             $table->foreignId('tenant_id')->constrained()->cascadeOnDelete();
             $table->foreignId('trip_id')->constrained()->cascadeOnDelete();

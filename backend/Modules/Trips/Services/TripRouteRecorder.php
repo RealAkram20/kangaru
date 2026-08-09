@@ -37,7 +37,7 @@ class TripRouteRecorder
      * @param  array<int, array<string, mixed>>  $pings
      * @return int the number of pings written
      */
-    public function record(int $tenantId, int $tripId, array $pings): int
+    public function record(?int $tenantId, int $tripId, array $pings): int
     {
         if ($pings === []) {
             return 0;
@@ -88,7 +88,7 @@ class TripRouteRecorder
      *
      * @param  array<int, array<string, mixed>>  $pings
      */
-    private function updateLivePosition(int $tenantId, int $tripId, array $pings): void
+    private function updateLivePosition(?int $tenantId, int $tripId, array $pings): void
     {
         try {
             $trip = DB::table('trips')->where('id', $tripId)->first(['vehicle_id', 'driver_id']);

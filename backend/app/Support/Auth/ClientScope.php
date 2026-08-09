@@ -97,6 +97,21 @@ final class ClientScope
                 'me.availability-requests.store',
                 'me.availability-requests.destroy',
 
+                // Jobs offered to them, and their answer (ADR-0024 §3).
+                // `me.offers.index` is the source of truth the app polls;
+                // push only shortens the latency (ADR-0025 §3).
+                'me.offers.index',
+                'me.offers.acceptance.store',
+                'me.offers.decline.store',
+
+                // Going on duty, and saying where they are (ADR-0024 §2).
+                // The app cannot be offered work without these, and the
+                // fail-closed rule above is why they have to be named: they
+                // were invisible to a driver token the moment they existed.
+                'me.duty.show',
+                'me.duty.update',
+                'me.presence.store',
+
                 // Where the platform operates, so the app can draw it.
                 'zones.index',
                 'zones.resolve',

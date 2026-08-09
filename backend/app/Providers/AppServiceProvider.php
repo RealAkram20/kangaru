@@ -53,7 +53,13 @@ use Modules\Reports\Enums\ReportType;
 use Modules\Reports\Events\ReportExportCompleted;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Policies\TripPolicy;
+use Modules\Dispatch\Models\DispatchOffer;
+use Modules\Fleet\Support\DatabaseDriverPresenceStore;
+use Modules\Fleet\Support\DriverPresenceStore;
+use Modules\Fleet\Support\RedisDriverPresenceStore;
+use Modules\Trips\Support\ContactChannel;
 use Modules\Trips\Support\DatabaseLivePositionStore;
+use Modules\Trips\Support\DirectContactChannel;
 use Modules\Trips\Support\LivePositionStore;
 use Modules\Trips\Support\RedisLivePositionStore;
 use Modules\Vehicles\Models\Vehicle;
@@ -67,6 +73,15 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(TenantContext::class);
+
+        // ADR-0024 §7: how the driver and the passenger reach each other.
+        //
+        // Bound rather than instantiated at the call sites so that adopting
+        // a masking provider — Twilio, Africa's Talking — is one line here
+        // and nothing else. Without the seam, adding masking later means
+        // finding every place a number is rendered, which is exactly when
+        // one gets missed.
+        $this->app->bind(ContactChannel::class, DirectContactChannel::class);
     }
 
     /**
@@ -87,9 +102,27 @@ class AppServiceProvider extends ServiceProvider
         });
     }
 
+    /**
+     * ADR-0024 §2: which store answers "who is on duty and where".
+     *
+     * A sibling of `bindLivePositionStore()` and bound the same way, but a
+     * *separate* setting rather than sharing `tracking.live_positions_driver`.
+     * The two answer different questions with different freshness budgets —
+     * a map a human watches versus a battery budget on a handset — and a
+     * deployment could sensibly want Redis for one and not the other.
+     */
+    private function bindDriverPresenceStore(): void
+    {
+        $this->app->bind(DriverPresenceStore::class, fn () => match (config('dispatch.presence_driver')) {
+            'redis' => new RedisDriverPresenceStore,
+            default => new DatabaseDriverPresenceStore,
+        });
+    }
+
     public function boot(): void
     {
         $this->bindLivePositionStore();
+        $this->bindDriverPresenceStore();
 
         // ADR-0012 promised the public order throttle would "move by
         // config, not by removing the throttle"; ADR-0014 phase 2 is that
@@ -211,6 +244,13 @@ class AppServiceProvider extends ServiceProvider
             // roles — an operational lever silently flipped is the audit
             // trail's business.
             'setting' => Setting::class,
+            // ADR-0024's automatic dispatch. Audited because an offer is the
+            // record of a decision the *platform* made about a person — who
+            // was asked, in what order, and what they said — and "why did it
+            // pick him" has to stay answerable next week, when the fleet has
+            // moved. It is also the acceptance-rate data
+            // `Modules/Drivers/README.md` lists as missing.
+            'dispatch_offer' => DispatchOffer::class,
         ]);
     }
 }

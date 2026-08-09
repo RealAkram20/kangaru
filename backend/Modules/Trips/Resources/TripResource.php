@@ -7,6 +7,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
 use Modules\Drivers\Resources\DriverResource;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
+use Modules\Trips\Support\ContactChannel;
 use Modules\Vehicles\Resources\VehicleResource;
 
 /**
@@ -21,7 +22,11 @@ class TripResource extends JsonResource
     {
         return [
             'id' => $this->id,
+            // Null on a walk-in trip (ADR-0024 §1), where `customer_id`
+            // carries the ownership instead. Exactly one of the pair is ever
+            // set, so a client can branch on either without asking both.
             'tenant_id' => $this->tenant_id,
+            'customer_id' => $this->customer_id,
             // Which client this trip is for, by name. See BookingResource
             // for the reasoning — same rule, same ADR-0006 queue, and a
             // trips list opened by platform staff spans clients too.
@@ -79,8 +84,50 @@ class TripResource extends JsonResource
             // Bank acceptance criterion #6. Served explicitly rather than
             // left for each client to re-derive from the two timestamps.
             'duration_minutes' => $this->durationMinutes(),
+            // Who to ring, if anybody (ADR-0024 §7). Null far more often
+            // than not — see below.
+            'passenger_contact' => $this->passengerContactFor($request),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];
+    }
+
+    /**
+     * The passenger's number, for the driver on this trip and nobody else.
+     *
+     * Three gates, and only the third is in this method:
+     *
+     * - **`ContactChannel` decides whether the trip is one where the parties
+     *   may speak at all** — walk-in only, and only from `accepted` to
+     *   `trip_completed`. That policy lives in one class because the
+     *   customer's ride payload asks the same question, and a rule split
+     *   across two resources is a rule applied to one and a half of them.
+     * - **This method decides whether the *caller* is the driver.** A
+     *   dispatcher listing trips holds `trips.view.all` and can already see
+     *   the whole board; that does not make a passenger's mobile number part
+     *   of a list view. It is served to the one person who needs to ring
+     *   the passenger to find them at a busy pickup.
+     * - The customer guard never reaches this resource at all.
+     *
+     * Note it is keyed off `driver->user_id`, the same ownership test
+     * `TripPolicy::transition` uses. That relation is loaded on every path
+     * that serves this resource; where it is not, `?->` yields null and the
+     * field is withheld — which fails closed, and is the right direction for
+     * a field like this one to fail in.
+     *
+     * @return array<string, string>|null
+     */
+    private function passengerContactFor(Request $request): ?array
+    {
+        $user = $request->user();
+
+        if ($user === null || $this->driver?->user_id !== $user->id) {
+            return null;
+        }
+
+        /** @var Trip $trip */
+        $trip = $this->resource;
+
+        return app(ContactChannel::class)->forPassenger($trip)?->toArray();
     }
 }

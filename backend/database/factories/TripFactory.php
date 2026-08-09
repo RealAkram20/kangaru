@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Models\Customer;
 use App\Models\Tenant;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Modules\Drivers\Models\Driver;
@@ -50,6 +51,25 @@ class TripFactory extends Factory
     public function forTenant(Tenant $tenant): static
     {
         return $this->state(fn (array $attributes) => ['tenant_id' => $tenant->id]);
+    }
+
+    /**
+     * A walk-in customer's trip (ADR-0024 §1): owned by a customer, and
+     * therefore owned by no tenant.
+     *
+     * `tenant_id` is nulled here as well as set, because `definition()`
+     * supplies a `Tenant::factory()` and leaving it would both create a
+     * client company nobody asked for and produce a trip with two owners —
+     * the exact state `TripService::assertExactlyOneOwner` refuses. A
+     * factory that can build a row the service would reject is a factory
+     * that will eventually be used to "prove" the invariant holds.
+     */
+    public function forCustomer(Customer $customer): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'tenant_id' => null,
+            'customer_id' => $customer->id,
+        ]);
     }
 
     public function forVehicle(Vehicle $vehicle): static

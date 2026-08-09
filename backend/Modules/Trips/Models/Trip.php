@@ -4,9 +4,12 @@ namespace Modules\Trips\Models;
 
 use App\Concerns\Auditable;
 use App\Concerns\BelongsToTenant;
+use App\Models\Customer;
 use App\Models\Tenant;
+use App\Support\Tenancy\TenantScope;
 use Carbon\CarbonInterface;
 use Database\Factories\TripFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -28,7 +31,10 @@ use Modules\Vehicles\Models\Vehicle;
  * effects, and the trip_events timeline AGENTS.md requires.
  *
  * @property int $id
- * @property int $tenant_id
+ * @property int|null $tenant_id Null on a walk-in trip (ADR-0024 §1), which
+ *                               is owned by a customer instead. Exactly one
+ *                               of this and customer_id is ever set.
+ * @property int|null $customer_id
  * @property int|null $booking_id
  * @property int $vehicle_id
  * @property int $driver_id
@@ -63,8 +69,40 @@ class Trip extends Model
         return TripFactory::new();
     }
 
+    /**
+     * Keeps a walk-in trip tenantless (ADR-0024 §1).
+     *
+     * `BelongsToTenant` fills `tenant_id` from the ambient `TenantContext`
+     * whenever it is null on create. That is correct for every other model
+     * using the trait and cannot be correct here, because it cannot know
+     * that a customer already owns this row — so a walk-in trip created
+     * inside a request that happens to have a tenant bound would be filed
+     * under that client, which is the cross-tenant leak ADR-0001 calls the
+     * worst bug this platform can have.
+     *
+     * Registered in `booted()` rather than in the trait so it runs *after*
+     * the trait's own hook and undoes it, and so the exception stays in the
+     * one model the exception applies to.
+     *
+     * This corrects an ambient fill; it does not paper over a caller who
+     * passed both owners. That is caught in `TripService`, against the
+     * attributes as written, where the mistake is legible.
+     */
+    protected static function booted(): void
+    {
+        static::creating(function (self $trip) {
+            if ($trip->customer_id !== null) {
+                $trip->tenant_id = null;
+            }
+        });
+    }
+
     protected $fillable = [
         'tenant_id',
+        // ADR-0024 §1. The other owner: set on a walk-in trip, where
+        // tenant_id is null. TripService is the only writer and asserts
+        // that exactly one of the pair is present.
+        'customer_id',
         'booking_id',
         'vehicle_id',
         'driver_id',
@@ -145,6 +183,55 @@ class Trip extends Model
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);
+    }
+
+    /**
+     * The walk-in customer who ordered this trip (ADR-0024 §1). Null on
+     * every corporate trip, which is owned by a tenant instead.
+     *
+     * @return BelongsTo<Customer, $this>
+     */
+    public function customer(): BelongsTo
+    {
+        return $this->belongsTo(Customer::class);
+    }
+
+    /**
+     * Whether this trip belongs to a walk-in customer rather than a client.
+     *
+     * Asked as `customer_id !== null` rather than `tenant_id === null` even
+     * though the two are equivalent by the invariant: the positive form says
+     * what the trip *is*, and a future third kind of owner would make the
+     * negative form silently wrong.
+     */
+    public function isWalkIn(): bool
+    {
+        return $this->customer_id !== null;
+    }
+
+    /**
+     * A customer's own trips, past the tenant scope (ADR-0024 §1).
+     *
+     * The named counterpart of `BelongsToTenant::forActor`, and it exists
+     * for the same reason: `TenantScope` fails closed, so a query made in a
+     * request with no tenant bound returns nothing at all — and a customer
+     * never has a tenant bound, because a customer has no tenant. Reaching
+     * for `allTenants()` here would be the raw opt-out that trait's docblock
+     * now calls a review failure; this is the intent, spelled.
+     *
+     * The narrowing IS the authorization, exactly as in
+     * `CustomerOrderRequestController`: every query starts from the token's
+     * own customer_id, so there is no "may this customer see that row"
+     * question left for a policy to get wrong.
+     *
+     * @param  Builder<static>  $query
+     * @return Builder<static>
+     */
+    public function scopeForCustomer(Builder $query, Customer $customer): Builder
+    {
+        return $query
+            ->withoutGlobalScope(TenantScope::class)
+            ->where($this->getTable().'.customer_id', $customer->id);
     }
 
     /** @return HasMany<TripEvent, $this> */

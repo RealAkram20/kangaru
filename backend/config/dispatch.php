@@ -46,4 +46,121 @@ return [
 
     'automatic_enabled' => (bool) env('DISPATCH_AUTOMATIC_ENABLED', false),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Driver presence (ADR-0024 §2)
+    |--------------------------------------------------------------------------
+    |
+    | Where a driver is *while they are waiting for work*, which is a
+    | different question from `live_positions` — that one answers "where is
+    | this vehicle on this trip" and is written by the GPS pipeline, which
+    | only runs from Trip Started. Before ADR-0024 an idle driver reported
+    | nothing at all, so "the nearest driver" was a question with no data
+    | behind it.
+    |
+    | `presence_driver` selects the store, exactly as
+    | `tracking.live_positions_driver` does, so a deployment with Redis says
+    | so once and nothing in the codebase asks whether Redis exists.
+    |
+    */
+
+    'presence_driver' => env('DISPATCH_PRESENCE_DRIVER', 'database'),
+
+    /*
+    | How long a presence record is trusted.
+    |
+    | Past this, a driver is treated as **absent** rather than as "available
+    | at the last place they were seen". The failure mode of the alternative
+    | is specific and bad: a phone that lost signal at 07:00 keeps winning
+    | the proximity ranking all morning, and every order routed to it times
+    | out while the passenger watches a spinner.
+    |
+    | Comfortably more than `presence_heartbeat_seconds` below, so an
+    | ordinary missed heartbeat — a tunnel, a garbage collection pause —
+    | does not take a working driver out of the pool.
+    */
+
+    'presence_ttl_seconds' => (int) env('DISPATCH_PRESENCE_TTL_SECONDS', 180),
+
+    /*
+    | How often the app should report in while on duty and not on a trip.
+    |
+    | Served to the client rather than hardcoded in it, so the cadence can be
+    | tuned against real battery data without shipping a new build to every
+    | handset — the same reason the trip lifecycle is served as
+    | `allowed_transitions` instead of duplicated in the app.
+    |
+    | Deliberately far coarser than trip GPS. That stream is billing
+    | evidence sampled for a route; this is a dispatch radius sampled for a
+    | ranking, and running the fine-grained one all day to answer the coarse
+    | question is how a driver's battery dies before lunch. A driver whose
+    | battery died is off duty for the rest of the shift whatever this
+    | database says.
+    */
+
+    'presence_heartbeat_seconds' => (int) env('DISPATCH_PRESENCE_HEARTBEAT_SECONDS', 60),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Walk-in dispatch (ADR-0024 §4 and §6)
+    |--------------------------------------------------------------------------
+    |
+    | On by default, which is the opposite of `automatic_enabled` above and
+    | needs its reason stated rather than assumed.
+    |
+    | That flag is off because it changes how *corporate bookings* are
+    | dispatched — an existing, working, human-operated flow on accounts with
+    | commercial agreements behind them, where a matcher acting unattended is
+    | a new risk taken on somebody else's behalf. This one governs a flow
+    | that does not exist yet: a walk-in order today reaches a telephone.
+    | Shipping it switched off would ship a feature nobody can use, and its
+    | failure mode is the status quo the desk is already staffed for.
+    |
+    | The two are separate settings and neither reads the other.
+    |
+    */
+
+    'walk_in_auto_dispatch' => (bool) env('DISPATCH_WALK_IN_AUTO', true),
+
+    /*
+    | How long a driver has to answer an offer.
+    |
+    | The passenger is standing on a kerb watching a spinner, so this is
+    | short; a driver may be mid-junction when it arrives, so it is not
+    | *that* short. Fifteen seconds is the industry's rough consensus and is
+    | a starting point to tune against real accept latencies, not a finding.
+    |
+    | Every read compares against the stored `expires_at` rather than
+    | recomputing from this, so changing it never retroactively expires
+    | offers that are already out.
+    */
+
+    'offer_ttl_seconds' => (int) env('DISPATCH_OFFER_TTL_SECONDS', 15),
+
+    /*
+    | How many drivers are offered a ride at once.
+    |
+    | One, deliberately. Broadcasting to everyone nearby produces a single
+    | winner and N-1 drivers who dropped what they were doing for nothing,
+    | which is how a fleet learns to ignore offers — and it turns every
+    | dispatch into a contended write on the same rows.
+    |
+    | It is genuinely better on a thin night when the nearest driver is
+    | eleven minutes away, so it is a number rather than an `if`. The code
+    | offers *a wave*; the wave happens to be one driver.
+    */
+
+    'offer_wave_size' => (int) max(1, (int) env('DISPATCH_OFFER_WAVE_SIZE', 1)),
+
+    /*
+    | How many waves before the matcher gives up.
+    |
+    | When this is exhausted the order is not dropped: it returns to the
+    | human queue ADR-0012 built, which a dispatcher is already watching, and
+    | the customer's screen says so. A matcher that gives up loudly is one an
+    | operator can trust; one that gives up quietly is one they stop using.
+    */
+
+    'offer_max_rounds' => (int) max(1, (int) env('DISPATCH_OFFER_MAX_ROUNDS', 5)),
+
 ];

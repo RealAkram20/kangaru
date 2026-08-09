@@ -1697,6 +1697,257 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/customer/rides/active:
+    get:
+      summary: The signed-in customer's current ride.
+      description: >
+        What replaces the simulated ride source in the public order flow
+        (ADR-0024 §7). **Takes no identifier at all** — the customer asks for
+        their own ride, so there is nothing in the request to tamper with.
+
+
+        Keying this by the `KR-` reference was rejected: ADR-0012 gave the
+        public order endpoint nothing enumerable to return precisely because
+        a six-character code is guessable, and a lookup by it — even behind a
+        token — would reintroduce that.
+
+
+        200 with a null `data` when there is no ride in progress, not 404:
+        "no ride" is a state the screen renders, and a 404 would make a
+        genuinely broken request render as that same state.
+
+
+        The captain's phone number appears only while the trip is live and
+        disappears at a terminal status.
+      responses:
+        '200':
+          description: The ride, or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    anyOf:
+                      - { $ref: '#/components/schemas/CustomerRide' }
+                      - { enum: [null] }
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # Job offers (Modules/Dispatch) — ADR-0024 §3
+  #
+  # The driver's side of automatic dispatch. An offer is NOT a trip: nothing
+  # is written to `trips` until a driver accepts, because a trip in
+  # `assigned` occupies its vehicle and an unanswered offer must not.
+  #
+  # This list is the source of truth, not the push notification — ADR-0025 §3
+  # makes push best-effort, so everything a push says is readable here.
+  # ------------------------------------------------------------------
+  /api/v1/me/offers:
+    get:
+      summary: Jobs currently offered to the signed-in driver.
+      description: >
+        Live offers only. An offer whose clock ran out while the handset was
+        in a dead zone is absent rather than listed — rendering it would give
+        the driver a countdown reading a negative number and a button whose
+        only outcome is a 409.
+
+
+        403 NOT_A_DRIVER when the account is not linked to a driver profile.
+      responses:
+        '200':
+          description: Offers in front of this driver, soonest to expire first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DispatchOffer' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/me/offers/{offer}/acceptance:
+    parameters:
+      - { name: offer, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: Takes the job, creating the trip.
+      description: >
+        Goes through the same pessimistic locks every other assignment path
+        takes (`TripAssignmentGuard`), so a driver or vehicle committed
+        elsewhere in the seconds the offer was out rolls the whole accept
+        back — 409 VEHICLE_UNAVAILABLE or DRIVER_UNAVAILABLE.
+
+
+        409 OFFER_NO_LONGER_OPEN when the clock ran out, another driver was
+        faster, or the desk fulfilled the order by hand. One code for all
+        three: from the driver's side they are the same event.
+
+
+        409 OFFER_HAS_NO_VEHICLE when the driver is on duty without one.
+        404 for another driver's offer id — not 403, which would confirm it
+        exists.
+
+
+        Returns the Trip rather than the offer, so the app moves straight to
+        a trip screen without a second request.
+      responses:
+        '201':
+          $ref: '#/components/responses/TripResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/me/offers/{offer}/decline:
+    parameters:
+      - { name: offer, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: Says no, and moves the search to the next driver immediately.
+      description: >
+        The search advances in this request rather than waiting out the
+        clock — that is the whole value of a decline over a timeout.
+
+
+        200 rather than 204: an empty response over a bad connection is
+        indistinguishable from a request that never arrived, and a driver who
+        declines is entitled to know it registered. Answering an already
+        settled offer is not an error; the intent and the outcome agree.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason: { type: ['string', 'null'], maxLength: 255 }
+      responses:
+        '200':
+          description: Declined. The envelope's `data` is null — the message is the payload.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { enum: [null] }
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # Driver presence (Modules/Fleet) — ADR-0024 §2
+  #
+  # The input automatic dispatch was missing. `/live-positions` answers
+  # "where is this vehicle on this trip" and is written by the GPS pipeline
+  # from Trip Started onward, so a driver waiting at a stage for work
+  # reported nothing at all. These say "I am available, and I am here".
+  # ------------------------------------------------------------------
+  /api/v1/me/duty:
+    get:
+      summary: The signed-in driver's own duty state.
+      description: >
+        Answers a synthesised off-duty record for a driver who has never
+        reported, rather than 404 — a client forced to read "nothing" as
+        "off duty" will eventually read "request failed" as "off duty" too.
+        403 NOT_A_DRIVER when the account is not linked to a driver profile.
+      responses:
+        '200':
+          $ref: '#/components/responses/DriverPresenceResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      summary: Goes on or off duty.
+      description: >
+        PUT rather than POST: there is exactly one duty state per driver to
+        replace, and a driver whose request times out and retries must not
+        start two shifts. Takes no `driver_id` — the driver is the token.
+
+
+        Checked against the same availability service that refuses a
+        dispatcher (ADR-0017), so a driver on approved leave gets 409
+        DRIVER_UNAVAILABLE here rather than discovering it at assignment.
+        Going off duty clears the stored position.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [on_duty]
+              additionalProperties: false
+              properties:
+                on_duty: { type: boolean }
+                vehicle_id:
+                  description: >
+                    The vehicle they hold the keys to. Null or absent is
+                    legitimate — a driver can be signed on before the depot
+                    has issued anything, and dispatch ranks them without a
+                    vehicle of their own rather than refusing them.
+                  type: ['integer', 'null']
+      responses:
+        '200':
+          $ref: '#/components/responses/DriverPresenceResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/me/presence:
+    post:
+      summary: Reports where an on-duty driver is.
+      description: >
+        One point, not a batch. `/trips/{trip}/locations` batches because it
+        is billing evidence and none of it may be lost; this is a dispatch
+        radius, where only the newest point has any use — a driver coming
+        out of a dead zone should send where they are now, not replay where
+        they were.
+
+
+        202, not 201: nothing is created, one row is overwritten in place,
+        and the store discards a ping older than the one it holds.
+
+
+        409 NOT_ON_DUTY when the shift has ended. Refused rather than
+        silently dropped, so an app that disagrees with the platform about
+        whether a shift is running finds out. Throttled to 30 a minute,
+        well above the served `heartbeat_seconds` cadence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [latitude, longitude, recorded_at]
+              additionalProperties: false
+              properties:
+                latitude: { type: number, minimum: -90, maximum: 90 }
+                longitude: { type: number, minimum: -180, maximum: 180 }
+                accuracy_metres:
+                  description: What the handset thinks of its own fix. A 2,000 m cell-tower fix and a 5 m GPS fix are very different inputs to a ranking.
+                  type: ['number', 'null']
+                recorded_at:
+                  description: The device's clock, not the server's — staleness is judged against this.
+                  type: string
+                  format: date-time
+                vehicle_id:
+                  description: A driver may swap vehicles mid-shift. Absent means unchanged, not none.
+                  type: ['integer', 'null']
+      responses:
+        '202':
+          $ref: '#/components/responses/DriverPresenceResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
   # ------------------------------------------------------------------
   # Zones (Modules/Fleet) — the geofencing engine, ADR-0021
   # ------------------------------------------------------------------
@@ -2951,6 +3202,19 @@ components:
               message: { type: string }
               data: { $ref: '#/components/schemas/AvailabilityBlock' }
 
+    DriverPresenceResponse:
+      description: The signed-in driver's duty state.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/DriverPresence' }
+
     ZoneResponse:
       description: One zone.
       content:
@@ -3251,6 +3515,7 @@ components:
         - INVALID_ORDER_REQUEST_TRANSITION
         - RATE_CARD_NOT_CONFIGURED
         - TRIP_NOT_INVOICEABLE
+        - TRIP_NOT_INVOICEABLE_WALK_IN
         - TRIP_ALREADY_INVOICED
         - IDEMPOTENCY_KEY_REUSED
         - CREDIT_NOTE_EXCEEDS_INVOICE
@@ -3262,6 +3527,9 @@ components:
         - AUTOMATIC_DISPATCH_DISABLED
         - NO_DISPATCH_CANDIDATE
         - NOT_A_DRIVER
+        - NOT_ON_DUTY
+        - OFFER_NO_LONGER_OPEN
+        - OFFER_HAS_NO_VEHICLE
         - TOKEN_SCOPE_EXCEEDED
 
     TripStatus:
@@ -3438,6 +3706,182 @@ components:
         status: { enum: [active, suspended] }
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
         updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    ContactDetails:
+      description: >
+        A number to dial and who answers it. `label` is not decoration —
+        under a future masking channel it would read "Passenger (via
+        KangaruRide)", and a driver dialling a proxy needs to know that is
+        what they are doing, or they will save it as the passenger's real
+        number and call it next week.
+      type: object
+      required: [name, phone, label]
+      additionalProperties: false
+      properties:
+        name: { type: string }
+        phone: { type: string }
+        label: { type: string }
+
+    CustomerRide:
+      description: >
+        A ride as the person waiting for it sees it (ADR-0024 §7). Phase
+        names are `RidePhase`'s own in the web client, so the mapping is an
+        identity function rather than a translation table.
+      type: object
+      required: [reference, service_type, phase, pickup, dropoff, trip_id, captain, created_at]
+      additionalProperties: false
+      properties:
+        reference: { type: string }
+        service_type: { type: string }
+        phase:
+          description: >
+            The search state before a trip exists, the trip's own status
+            after. One field, because the screen renders one timeline and
+            should not have to decide which of two is authoritative.
+          enum:
+            - searching
+            - offered
+            - unmatched
+            - assigned
+            - accepted
+            - rejected
+            - driver_en_route
+            - driver_arrived
+            - no_show
+            - passenger_onboard
+            - trip_started
+            - waiting
+            - trip_resumed
+            - trip_completed
+            - invoice_generated
+            - disputed
+            - closed
+            - cancelled
+        pickup: { $ref: '#/components/schemas/OfferPlace' }
+        dropoff: { $ref: '#/components/schemas/OfferPlace' }
+        trip_id: { type: ['integer', 'null'] }
+        captain:
+          anyOf:
+            - { $ref: '#/components/schemas/RideCaptain' }
+            - { enum: [null] }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    RideCaptain:
+      description: >
+        No rating and no ETA: neither exists (driver rating is unbuilt, and
+        ranking is straight-line, not a road-distance arrival time). Omitted
+        rather than faked — a number the screen invents is worse than a
+        screen that does not show one.
+      type: object
+      required: [name, phone, phone_label, vehicle, plate, vehicle_colour]
+      additionalProperties: false
+      properties:
+        name: { type: string }
+        phone:
+          description: Null once the trip is over (ADR-0024 §7).
+          type: ['string', 'null']
+        phone_label: { type: ['string', 'null'] }
+        vehicle: { type: ['string', 'null'] }
+        plate: { type: ['string', 'null'] }
+        vehicle_colour: { type: ['string', 'null'] }
+
+    DispatchOffer:
+      description: >
+        A job put in front of one driver, with a clock on it (ADR-0024 §3).
+
+
+        Deliberately carries **no passenger name or phone number**. Those are
+        released only after the driver accepts (ADR-0024 §7): a number handed
+        to a driver who then declines is given away for nothing, and this
+        payload is what a push notification is built from — which puts it on
+        a lock screen readable by whoever is holding the phone.
+      type: object
+      required:
+        - id
+        - status
+        - expires_at
+        - expires_in_seconds
+        - pickup
+        - dropoff
+        - service_type
+        - reference
+        - pickup_distance_km
+        - reasons
+        - vehicle_id
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        status: { enum: [offered, accepted, declined, expired, superseded] }
+        expires_at: { type: string, format: date-time }
+        expires_in_seconds:
+          description: >
+            Served alongside the timestamp so the first render is right even
+            on a handset whose clock is minutes out — common enough on cheap
+            Android hardware to matter, and it would otherwise show a driver
+            40 seconds left on a 15-second offer.
+          type: integer
+          minimum: 0
+        pickup: { $ref: '#/components/schemas/OfferPlace' }
+        dropoff: { $ref: '#/components/schemas/OfferPlace' }
+        service_type: { type: ['string', 'null'] }
+        reference: { type: ['string', 'null'] }
+        pickup_distance_km:
+          description: Straight-line, not road distance — a ranking, not a promised ETA (ADR-0020 §3).
+          type: ['number', 'null']
+        reasons:
+          description: One sentence per scoring component, so a ranking stays auditable (ADR-0020 §4).
+          type: array
+          items: { type: string }
+        vehicle_id: { type: ['integer', 'null'] }
+        vehicle_registration: { type: ['string', 'null'] }
+
+    OfferPlace:
+      type: object
+      required: [label, latitude, longitude]
+      additionalProperties: false
+      properties:
+        label: { type: ['string', 'null'] }
+        latitude: { type: ['number', 'null'] }
+        longitude: { type: ['number', 'null'] }
+
+    DriverPresence:
+      description: >
+        Whether a driver is waiting for work, and where (ADR-0024 §2).
+      type: object
+      required:
+        - driver_id
+        - on_duty
+        - vehicle_id
+        - latitude
+        - longitude
+        - recorded_at
+        - dispatchable
+        - position_age_seconds
+        - heartbeat_seconds
+      additionalProperties: false
+      properties:
+        driver_id: { type: integer }
+        on_duty: { type: boolean }
+        vehicle_id: { type: ['integer', 'null'] }
+        latitude: { type: ['number', 'null'] }
+        longitude: { type: ['number', 'null'] }
+        recorded_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        dispatchable:
+          description: >
+            Whether the matcher would offer this driver work right now — on
+            duty, and either heard from within the TTL or never able to
+            report a position at all. Served rather than left for a client
+            to re-derive: three conditions and a configured number would
+            drift, and the symptom is an app telling a driver they are
+            online while the platform offers them nothing. Same reasoning as
+            `allowed_transitions` on a trip.
+          type: boolean
+        position_age_seconds:
+          description: Null when they have never reported. Lets an app say "last seen 4 minutes ago" instead of showing a green dot it has no evidence for.
+          type: ['integer', 'null']
+        heartbeat_seconds:
+          description: How often to report in. Served from config so the cadence can be tuned against real battery data without shipping a new build to every handset.
+          type: integer
 
     AvailabilityBlock:
       type: object
@@ -4132,6 +4576,7 @@ components:
       required:
         - id
         - tenant_id
+        - customer_id
         - booking_id
         - vehicle_id
         - driver_id
@@ -4152,12 +4597,22 @@ components:
         - started_at
         - completed_at
         - duration_minutes
+        - passenger_contact
         - created_at
         - updated_at
       additionalProperties: false
       properties:
         id: { type: integer }
-        tenant_id: { type: integer }
+        tenant_id:
+          description: >
+            Null on a walk-in trip (ADR-0024 §1), which is owned by a
+            customer instead. Exactly one of this and `customer_id` is
+            ever set, so a client may branch on either without asking
+            both.
+          type: ['integer', 'null']
+        customer_id:
+          description: Null on every corporate trip, which is owned by a tenant.
+          type: ['integer', 'null']
         client: { $ref: '#/components/schemas/ClientRef' }
         booking_id:
           type: ['integer', 'null']
@@ -4193,6 +4648,15 @@ components:
         cancellation_charge_applicable: { type: ['boolean', 'null'] }
         started_at: { $ref: '#/components/schemas/NullableTimestamp' }
         completed_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        passenger_contact:
+          description: >
+            Who to ring, for the driver on this trip and nobody else
+            (ADR-0024 §7). Null unless the caller is the assigned driver,
+            the trip is a walk-in, and it is live — accepted through
+            trip_completed. A completed trip is not a directory.
+          anyOf:
+            - { $ref: '#/components/schemas/ContactDetails' }
+            - { enum: [null] }
         duration_minutes: { type: ['integer', 'null'] }
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
         updated_at: { $ref: '#/components/schemas/NullableTimestamp' }

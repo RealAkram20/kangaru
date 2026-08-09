@@ -17,6 +17,7 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Validation\ValidationException;
+use Modules\Dispatch\Console\AdvanceDispatchOffers;
 use Modules\Reports\Console\PruneReportExports;
 use Modules\Trips\Console\MaintainTripLocationPartitions;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
@@ -36,6 +37,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withCommands([
         PruneReportExports::class,
         MaintainTripLocationPartitions::class,
+        AdvanceDispatchOffers::class,
     ])
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->api(prepend: [

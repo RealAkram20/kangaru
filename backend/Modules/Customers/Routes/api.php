@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use Modules\Customers\Controllers\CustomerAuthController;
 use Modules\Customers\Controllers\CustomerOrderRequestController;
+use Modules\Customers\Controllers\CustomerRideController;
 
 /*
 |--------------------------------------------------------------------------
@@ -41,5 +42,17 @@ Route::prefix('customer')->group(function () {
             ->name('customer.order-requests.index');
         Route::get('/order-requests/{orderRequest}', [CustomerOrderRequestController::class, 'show'])
             ->name('customer.order-requests.show');
+
+        // The ride screen's live feed (ADR-0024 §7) — what replaces
+        // `simulatedRideSource` in the public order flow.
+        //
+        // Takes no identifier at all, deliberately. The screen holds a
+        // `KR-` reference and not an id, because ADR-0012 gave the public
+        // order endpoint nothing enumerable to return; keying this by the
+        // reference would reintroduce exactly the guessable lookup that ADR
+        // rejected. The customer asks for their own current ride, and there
+        // is nothing in the request to tamper with.
+        Route::get('/rides/active', [CustomerRideController::class, 'active'])
+            ->name('customer.rides.active');
     });
 });

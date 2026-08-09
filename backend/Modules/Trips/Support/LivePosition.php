@@ -17,7 +17,7 @@ final class LivePosition
 {
     public function __construct(
         public readonly int $vehicleId,
-        public readonly int $tenantId,
+        public readonly ?int $tenantId,
         public readonly int $tripId,
         public readonly ?int $driverId,
         public readonly float $latitude,
@@ -61,7 +61,7 @@ final class LivePosition
     {
         return new self(
             vehicleId: (int) $row['vehicle_id'],
-            tenantId: (int) $row['tenant_id'],
+            tenantId: isset($row['tenant_id']) ? (int) $row['tenant_id'] : null,
             tripId: (int) $row['trip_id'],
             driverId: isset($row['driver_id']) ? (int) $row['driver_id'] : null,
             latitude: (float) $row['latitude'],

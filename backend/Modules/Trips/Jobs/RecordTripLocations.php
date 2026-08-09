@@ -44,7 +44,7 @@ class RecordTripLocations implements ShouldQueue
      * @param  array<int, array<string, mixed>>  $pings
      */
     public function __construct(
-        private readonly int $tenantId,
+        private readonly ?int $tenantId,
         private readonly int $tripId,
         private readonly array $pings,
     ) {}
