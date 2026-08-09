@@ -1,8 +1,8 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import type { TripStatus } from '../api/types';
+import type { ContactDetails, TripStatus } from '../api/types';
 import { useSync } from '../offline/SyncProvider';
 import { driverActions, shouldStreamGps, statusLabel, type TripAction } from '../trips/transitions';
 import { useTrip, useTripEvents } from '../trips/queries';
@@ -42,6 +42,10 @@ export function TripDetailScreen({ route, navigation }: Props) {
   }
 
   const actions = driverActions(trip);
+  // Bound to a local so the null check narrows inside the press handler —
+  // TypeScript cannot prove a property is still non-null by the time a
+  // callback runs, and it is right not to.
+  const passenger = trip.passenger_contact;
 
   const run = async (action: TripAction) => {
     // The two readings are the product. They get their own screen rather than
@@ -126,6 +130,24 @@ export function TripDetailScreen({ route, navigation }: Props) {
           )}
         </Card>
 
+        {/*
+          The passenger's number, when the server sends one (ADR-0024 §7).
+          It withholds it unless this driver is on this trip, the trip is a
+          walk-in, and it is live — so there is no rule to re-implement here.
+          The field is present or it is not, and the button follows.
+        */}
+        {passenger !== null && (
+          <Card>
+            <Text style={styles.sectionTitle}>Passenger</Text>
+            <Text style={styles.meta}>{passenger.label}</Text>
+            <Button
+              label={`Call ${passenger.name}`}
+              tone="neutral"
+              onPress={() => void callPassenger(passenger)}
+            />
+          </Card>
+        )}
+
         {actions.length === 0 ? (
           <Notice
             message="There is nothing for you to do on this trip right now."
@@ -209,6 +231,28 @@ function formatMoment(value: string | null): string {
   const parsed = Date.parse(value);
 
   return Number.isNaN(parsed) ? '' : new Date(parsed).toLocaleString();
+}
+
+/**
+ * Dials the passenger.
+ *
+ * `tel:` rather than anything cleverer. It hands off to the dialler the
+ * driver already knows, works with whatever SIM and network they have, and
+ * costs this app no permission — an in-app calling stack would need one, and
+ * would still end up placing an ordinary call.
+ *
+ * A failure here is silent on purpose: the only realistic cause is a handset
+ * with no dialler, which is not a state a driver can act on, and the number
+ * is on screen above the button either way.
+ */
+async function callPassenger(contact: ContactDetails): Promise<void> {
+  const url = `tel:${contact.phone.replace(/\s+/g, '')}`;
+
+  try {
+    await Linking.openURL(url);
+  } catch {
+    // Nothing useful to say. The number is rendered above.
+  }
 }
 
 const styles = StyleSheet.create({

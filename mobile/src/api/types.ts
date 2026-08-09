@@ -37,9 +37,26 @@ export type Driver = {
   phone: string | null;
 };
 
+/**
+ * A number to dial, and who answers it (ADR-0024 §7).
+ *
+ * `label` is not the same as `name` on purpose. Today they match, because
+ * `DirectContactChannel` hands over the real number. Under a masking provider
+ * the label would read "Passenger (via KangaruRide)", and a driver dialling a
+ * proxy needs to be told so — otherwise they save it to their contacts as the
+ * passenger's own number and ring it next week.
+ */
+export type ContactDetails = {
+  name: string;
+  phone: string;
+  label: string;
+};
+
 export type Trip = {
   id: number;
-  tenant_id: number;
+  /** Null on a walk-in ride (ADR-0024 §1), which a customer owns instead. */
+  tenant_id: number | null;
+  customer_id: number | null;
   booking_id: number | null;
   vehicle_id: number | null;
   vehicle?: Vehicle | null;
@@ -65,8 +82,91 @@ export type Trip = {
   started_at: string | null;
   completed_at: string | null;
   duration_minutes: number | null;
+  /**
+   * Who to ring, and null far more often than not (ADR-0024 §7).
+   *
+   * The server withholds it unless this driver is the one on the trip, the
+   * trip is a walk-in, and it is live — accepted through trip_completed. Not
+   * before the accept, because a number given to a driver who then declines
+   * is given away for nothing; not after a terminal status, because a
+   * completed trip is not a directory.
+   *
+   * So the app renders a call button when this is present and simply does not
+   * when it is absent. There is no rule to duplicate here.
+   */
+  passenger_contact: ContactDetails | null;
   created_at: string | null;
   updated_at: string | null;
+};
+
+/**
+ * Whether this driver is waiting for work, and where (ADR-0024 §2).
+ *
+ * Distinct from the GPS the app streams during a trip: that is billing
+ * evidence sampled for a route, this is a dispatch radius sampled for a
+ * ranking, and running the fine-grained one all day is how a handset dies
+ * before lunch.
+ */
+export type DriverPresence = {
+  driver_id: number;
+  on_duty: boolean;
+  vehicle_id: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  recorded_at: string | null;
+  /**
+   * Whether the matcher would offer this driver work right now. Served by the
+   * server rather than derived here, because the rule is three conditions and
+   * a configured TTL — a copy would drift, and the symptom is the app telling
+   * a driver they are online while the platform offers them nothing.
+   */
+  dispatchable: boolean;
+  position_age_seconds: number | null;
+  /** How often to report in. From config, so the cadence tunes without a release. */
+  heartbeat_seconds: number;
+};
+
+export type OfferPlace = {
+  label: string | null;
+  latitude: number | null;
+  longitude: number | null;
+};
+
+/**
+ * A job in front of this driver, with a clock on it (ADR-0024 §3).
+ *
+ * Not a trip. Nothing exists in `trips` until the driver accepts — a trip in
+ * `assigned` would occupy their vehicle for as long as they ignored the
+ * phone. Accepting returns the Trip that was created.
+ *
+ * Carries no passenger name or number, deliberately: those are released only
+ * after the accept, and this payload is also what a push notification is
+ * built from, which puts it on a lock screen.
+ */
+export type DispatchOffer = {
+  id: number;
+  status: 'offered' | 'accepted' | 'declined' | 'expired' | 'superseded';
+  expires_at: string;
+  /**
+   * Seconds left, as the *server* counted them at the moment it answered.
+   *
+   * Both this and `expires_at` are served, and the app prefers this one for
+   * its first render: cheap Android hardware routinely has a clock minutes
+   * out, and a countdown started from `expires_at` against a wrong local
+   * clock shows a driver 40 seconds on a 15-second offer, or an offer that
+   * has already expired.
+   */
+  expires_in_seconds: number;
+  pickup: OfferPlace;
+  dropoff: OfferPlace;
+  service_type: string | null;
+  reference: string | null;
+  /** Straight-line, not road distance — a ranking, not a promised ETA. */
+  pickup_distance_km: number | null;
+  /** Why the matcher chose this driver, in sentences (ADR-0020 §4). */
+  reasons: string[];
+  vehicle_id: number | null;
+  vehicle_registration?: string | null;
 };
 
 export type TripEvent = {

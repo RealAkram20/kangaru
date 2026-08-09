@@ -4,6 +4,7 @@ import { act } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RideScreen } from './RideScreen'
+import { simulatedRideSource } from './ride'
 
 /**
  * The matching timeline is driven by timers, so every case here drives the
@@ -11,15 +12,31 @@ import { RideScreen } from './RideScreen'
  * fallback under MODE=test, so no GL context is needed.
  */
 function renderMatching(reference = 'KR-7XKPQ2') {
+  const near: [number, number] = [32.5825, 0.3476]
+
   return render(
     <MemoryRouter>
       <RideScreen
         reference={reference}
         pickup="Plot 9, Bukoto Street"
         dropoff="Acacia Mall"
-        near={[32.5825, 0.3476]}
+        near={near}
         from={null}
         to={null}
+        /*
+         * The simulation, injected.
+         *
+         * Since ADR-0024 the app's own `createRideSource` polls the real
+         * `/customer/rides/active`, which this suite has no server for — and
+         * should not, because what it tests is the *screen*: that a captain
+         * appears when one is assigned, that the fare breaks itself down,
+         * that a rating is asked for last. The simulation is the only source
+         * that can drive that whole timeline on a clock the test controls.
+         *
+         * The live source has its own coverage of what it maps and what it
+         * refuses to invent.
+         */
+        source={simulatedRideSource(reference, near, null)}
       />
     </MemoryRouter>,
   )

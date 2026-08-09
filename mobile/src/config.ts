@@ -40,3 +40,39 @@ export const TRIP_POLL_INTERVAL_MS = 60_000;
 
 /** How often the outbox retries while the app is open and online. */
 export const OUTBOX_TICK_INTERVAL_MS = 15_000;
+
+/**
+ * How often the job-offer list refreshes while the driver is on duty.
+ *
+ * Far faster than `TRIP_POLL_INTERVAL_MS`, and the two are different numbers
+ * because they answer different questions. A trip assigned by a dispatcher is
+ * work for later today, and a minute's delay costs nothing. An offer is a
+ * fifteen-second countdown (`dispatch.offer_ttl_seconds`) with a passenger
+ * standing on a kerb at the end of it — poll that once a minute and the offer
+ * has expired before the driver ever sees it.
+ *
+ * Five seconds is chosen against that window rather than against battery: a
+ * fifteen-second offer polled every five is seen with two thirds of its clock
+ * left, and polled every ten could be seen with three seconds.
+ *
+ * The cost is bounded by *when* it runs. This polls only while the driver is
+ * on duty and only in the foreground, so it is not a background drain — a
+ * driver who signs off stops paying for it entirely, which is the whole point
+ * of duty being an explicit act.
+ *
+ * The right answer is still push (ADR-0025), which makes this the fallback
+ * rather than the mechanism. It stays either way: ADR-0025 §3 makes push
+ * best-effort, because a driver can refuse the OS permission and ADR-0023's
+ * thesis is dead zones.
+ */
+export const OFFER_POLL_INTERVAL_MS = 5_000;
+
+/**
+ * How long to wait for a duty or presence write before giving up.
+ *
+ * Shorter than the app's default, because these are statements about *now*.
+ * A "go on duty" that lands after thirty seconds of retrying is a driver who
+ * has already put the phone down believing it failed, and a presence ping
+ * that old describes somewhere they no longer are.
+ */
+export const DUTY_REQUEST_TIMEOUT_MS = 10_000;

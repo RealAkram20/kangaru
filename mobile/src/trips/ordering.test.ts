@@ -5,6 +5,7 @@ function trip(id: number, status: TripStatus, createdAt: string | null): Trip {
   return {
     id,
     tenant_id: 1,
+    customer_id: null,
     booking_id: null,
     vehicle_id: 1,
     driver_id: 1,
@@ -22,6 +23,7 @@ function trip(id: number, status: TripStatus, createdAt: string | null): Trip {
     started_at: null,
     completed_at: null,
     duration_minutes: null,
+    passenger_contact: null,
     created_at: createdAt,
     updated_at: null,
   };

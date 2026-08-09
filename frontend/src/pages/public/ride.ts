@@ -1,3 +1,4 @@
+import { liveRideSource } from './liveRideSource'
 import type { VehicleKind } from './MapPanel'
 
 /**
@@ -6,8 +7,19 @@ import type { VehicleKind } from './MapPanel'
  *
  * ## What is real and what is not
  *
- * Nothing behind this file is real yet, and the gap is wider than one
- * missing endpoint. The platform has two public routes —
+ * **This is now wired to the platform (ADR-0024).** `createRideSource` hands
+ * back `liveRideSource`, which polls `GET /customer/rides/active`; the
+ * simulation below is kept for tests and for `VITE_SIMULATE_RIDE=true`.
+ *
+ * The rest of this note is left as written, because it is the record of what
+ * had to exist first and every item on its list is now built: the driver is
+ * an authenticated principal (ADR-0016), walk-in trips have a non-tenant
+ * owner (ADR-0024 §1), driver presence and position are stored (§2), and
+ * matching offers a ride and takes an accept under the same pessimistic lock
+ * dispatch already used (§3).
+ *
+ * Nothing behind this file was real when it was written, and the gap was
+ * wider than one missing endpoint. The platform has two public routes —
  * `POST /api/v1/public/order-requests` and `GET /api/v1/public/settings` —
  * and the fulfilment spine underneath is corporate-only: `trips.tenant_id`
  * is a non-nullable foreign key, there is no `trips.customer_id`, `Driver`
@@ -109,6 +121,20 @@ export interface RideState {
   fare: Fare | null
   /** Set when the ride was called off, so the screen can explain itself. */
   cancelledReason: string | null
+  /**
+   * Whether the *source* can actually call this ride off.
+   *
+   * Separate from `isCancellable(phase)`, which answers a different question:
+   * that one says whether cancelling would make sense at this point in the
+   * ride, and this one says whether anything is behind the button.
+   *
+   * The live source sets it false. ADR-0024 defers customer cancellation by
+   * name — cancelling carries a charge rule, and who pays what when somebody
+   * calls off a ride ninety seconds before pickup is a commercial decision
+   * nobody has made. A button wired to nothing is worse than no button,
+   * because it appears to work.
+   */
+  cancellable: boolean
 }
 
 export interface RideSource {
@@ -134,6 +160,7 @@ export const INITIAL_RIDE_STATE: RideState = {
   estimate: null,
   fare: null,
   cancelledReason: null,
+  cancellable: false,
 }
 
 /**
@@ -325,7 +352,10 @@ export function simulatedRideSource(
    */
   const remaining = (totalMinutes: number, t: number) =>
     Math.max(0, Math.round((1 - t) * totalMinutes * 60))
-  const assigned = { ...INITIAL_RIDE_STATE, captain, progress: 1, estimate }
+  // `cancellable: true` throughout the simulation, because its `cancel()`
+  // genuinely calls the ride off. Only the live source answers false, and
+  // only because ADR-0024 defers the endpoint (see `RideState.cancellable`).
+  const assigned = { ...INITIAL_RIDE_STATE, captain, progress: 1, estimate, cancellable: true }
 
   const emit = (state: RideState) => {
     if (!stopped && listener !== null) listener(state)
@@ -362,7 +392,11 @@ export function simulatedRideSource(
       const searchTick = window.setInterval(() => {
         const elapsed = Date.now() - started
         if (elapsed >= SEARCH_MS) return
-        emit({ ...INITIAL_RIDE_STATE, progress: Math.min(0.95, elapsed / SEARCH_MS) })
+        emit({
+          ...INITIAL_RIDE_STATE,
+          progress: Math.min(0.95, elapsed / SEARCH_MS),
+          cancellable: true,
+        })
       }, 120)
       timers.push(searchTick)
 
@@ -472,15 +506,31 @@ export function simulatedRideSource(
 }
 
 /**
- * The seam. Today it hands back the simulation; when walk-in fulfilment
- * ships, this is the one function that changes.
+ * The seam, and it has now moved (ADR-0024).
+ *
+ * Walk-in fulfilment shipped, so this hands back a source that polls the
+ * customer's real ride. `simulatedRideSource` is kept rather than deleted for
+ * two reasons: the screen's own tests drive it, and it is the only way to see
+ * a full timeline — search, approach, trip, fare — without a driver on duty
+ * somewhere. Set `VITE_SIMULATE_RIDE=true` to get it back.
+ *
+ * The arguments are now unused by the live path and are kept because the
+ * simulation still takes them and `RideScreen` still passes them. The
+ * destination is a fact on the order request server-side, and the reference
+ * is deliberately not how the ride is looked up — see
+ * `CustomerRideController` for why keying by a six-character code would
+ * undo ADR-0012's refusal to return anything enumerable.
  */
 export function createRideSource(
   reference: string,
   near: [number, number] | null,
   destination: [number, number] | null = null,
 ): RideSource {
-  return simulatedRideSource(reference, near, destination)
+  if (import.meta.env.VITE_SIMULATE_RIDE === 'true') {
+    return simulatedRideSource(reference, near, destination)
+  }
+
+  return liveRideSource()
 }
 
 /** "UGX 12,500" — the one place a shilling amount becomes a string. */

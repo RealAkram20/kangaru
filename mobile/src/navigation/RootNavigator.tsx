@@ -4,6 +4,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ActivityIndicator, View } from 'react-native';
 
 import { useAuth } from '../auth/AuthProvider';
+import { PresenceController } from '../duty/PresenceController';
 import { GpsController } from '../location/GpsController';
 import { AccountScreen } from '../screens/AccountScreen';
 import { PasswordScreen } from '../screens/PasswordScreen';
@@ -92,9 +93,11 @@ export function RootNavigator() {
         <SignInScreen />
       ) : (
         <>
-        {/* Renders nothing; keeps GPS following the live trip regardless of
-            which tab is open. */}
+        {/* Both render nothing, and both are mounted here rather than on a
+            screen for the same reason: a driver who switches tabs must not
+            silently stop being tracked or stop being findable. */}
         <GpsController />
+        <PresenceController />
         <Tabs.Navigator
           screenOptions={{
             headerShown: false,

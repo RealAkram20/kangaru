@@ -20,6 +20,7 @@ import type { NewOutboxItem, OutboxItem } from './outboxTypes';
 const KAMPALA_TRIP: Trip = {
   id: 42,
   tenant_id: 1,
+  customer_id: null,
   booking_id: 7,
   vehicle_id: 3,
   driver_id: 9,
@@ -37,6 +38,7 @@ const KAMPALA_TRIP: Trip = {
   started_at: '2026-08-07T08:00:00Z',
   completed_at: null,
   duration_minutes: null,
+  passenger_contact: null,
   created_at: '2026-08-07T07:30:00Z',
   updated_at: '2026-08-07T08:00:00Z',
 };

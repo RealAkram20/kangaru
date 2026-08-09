@@ -12,7 +12,7 @@ export type ApiEnvelope<TData, TMeta = unknown> = {
 };
 
 export type RequestOptions = {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   /** Serialised as JSON. Mutually exclusive with `form`. */
   body?: unknown;
   /** Sent as multipart/form-data — the transition endpoint's photo path. */

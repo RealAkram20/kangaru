@@ -21,6 +21,7 @@ import { OrderNav } from './OrderNav'
 import {
   CANCEL_REASONS,
   createRideSource,
+  type RideSource,
   formatUgx,
   INITIAL_RIDE_STATE,
   isCancellable,
@@ -109,6 +110,7 @@ export function RideScreen({
   near,
   from,
   to,
+  source: injectedSource,
 }: {
   /** The reference the order came back with; also seeds which captain matches. */
   reference: string
@@ -118,6 +120,17 @@ export function RideScreen({
   near: [number, number] | null
   from: [number, number] | null
   to: [number, number] | null
+  /**
+   * Where the ride's state comes from. Omitted in the app, where
+   * `createRideSource` decides (ADR-0024: the live poll, or the simulation
+   * under `VITE_SIMULATE_RIDE`).
+   *
+   * Injectable so tests can drive the full timeline — search, approach, trip,
+   * fare — deterministically, without a driver on duty and without a fake
+   * server. The alternative was reading an env flag inside the tests, which
+   * would make what they exercise depend on how the suite was launched.
+   */
+  source?: RideSource
 }) {
   const [state, setState] = useState<RideState>(INITIAL_RIDE_STATE)
   const [cancelOpen, setCancelOpen] = useState(false)
@@ -159,7 +172,9 @@ export function RideScreen({
    * watching it. A destination geocoded later is pushed in through
    * `setDestination` instead, so the car still steers to it.
    */
-  const [source] = useState(() => createRideSource(reference, near, destination))
+  const [source] = useState(
+    () => injectedSource ?? createRideSource(reference, near, destination),
+  )
 
   // Told, not asked: a drop-off geocoded after the ride began still steers
   // the car, and the ride does not restart to learn it.
@@ -169,7 +184,8 @@ export function RideScreen({
 
   useEffect(() => source.subscribe(setState), [source])
 
-  const { phase, captain, progress, etaSeconds, estimate, fare, cancelledReason } = state
+  const { phase, captain, progress, etaSeconds, estimate, fare, cancelledReason, cancellable } =
+    state
   const copy = PRE_ASSIGNMENT_COPY[phase]
 
   /**
@@ -318,8 +334,16 @@ export function RideScreen({
 
           {/* Cancelling stays available for exactly as long as there is a
               ride to cancel, and disappears the moment there is not. Red,
-              full width and unmissable: it is a decision, not a nudge. */}
-          {isCancellable(phase) && (
+              full width and unmissable: it is a decision, not a nudge.
+
+              Two conditions, not one. `isCancellable(phase)` asks whether
+              cancelling would make sense here; `cancellable` asks whether
+              anything is behind the button. ADR-0024 defers customer
+              cancellation by name — it carries a charge rule nobody has
+              decided — so the live source answers false and the button is
+              absent rather than inert. A control that appears to work and
+              does nothing is the worse failure. */}
+          {isCancellable(phase) && cancellable && (
             <button
               type="button"
               onClick={() => setCancelOpen(true)}

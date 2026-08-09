@@ -5,6 +5,7 @@ function tripWith(status: TripStatus, allowed: TripStatus[]): Trip {
   return {
     id: 1,
     tenant_id: 1,
+    customer_id: null,
     booking_id: null,
     vehicle_id: 1,
     driver_id: 1,
@@ -22,6 +23,7 @@ function tripWith(status: TripStatus, allowed: TripStatus[]): Trip {
     started_at: null,
     completed_at: null,
     duration_minutes: null,
+    passenger_contact: null,
     created_at: null,
     updated_at: null,
   };

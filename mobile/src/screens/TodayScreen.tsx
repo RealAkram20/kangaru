@@ -3,6 +3,9 @@ import { useCallback } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
 import type { Trip } from '../api/types';
+import { DutyBar } from '../duty/DutyBar';
+import { OfferCard } from '../duty/OfferCard';
+import { useAcceptOffer, useDeclineOffer, useDuty, useOffers } from '../duty/queries';
 import { useSync } from '../offline/SyncProvider';
 import { isInProgress, statusLabel } from '../trips/transitions';
 import { useTrips } from '../trips/queries';
@@ -16,6 +19,14 @@ type Props = NativeStackScreenProps<TripsStackParams, 'Today'>;
 export function TodayScreen({ navigation }: Props) {
   const { trips, isLoading, isError, refetch, isRefetching, dataUpdatedAt } = useTrips();
   const { sync, online } = useSync();
+
+  const { data: duty } = useDuty();
+  // Polled only while on duty. A driver who has signed off is not waiting for
+  // anything, and a five-second poll running all evening is the battery cost
+  // that gets an app force-stopped.
+  const { offers } = useOffers(duty?.on_duty ?? false);
+  const accept = useAcceptOffer();
+  const decline = useDeclineOffer();
 
   const refresh = useCallback(async () => {
     await Promise.all([refetch(), sync()]);
@@ -37,22 +48,49 @@ export function TodayScreen({ navigation }: Props) {
           />
         }
         ListHeaderComponent={
-          // A stale list is served rather than hidden, so the app has to say
-          // when it is stale. Without this a driver cannot tell yesterday's
-          // work from today's.
-          isError && dataUpdatedAt > 0 ? (
-            <Notice
-              message={`Showing the list from ${formatTime(dataUpdatedAt)}. Could not reach the office.`}
-            />
-          ) : null
+          <>
+            <DutyBar />
+
+            {/*
+              Offers sit above everything, including the staleness notice.
+              They are the only thing on this screen with a clock on it — a
+              trip assigned this morning will still be there in fifteen
+              seconds, and the offer will not.
+            */}
+            {offers.map((offer) => (
+              <OfferCard
+                key={offer.id}
+                offer={offer}
+                busy={accept.isPending || decline.isPending}
+                onAccept={() => accept.mutate(offer.id)}
+                onDecline={() => decline.mutate({ offerId: offer.id })}
+              />
+            ))}
+
+            {/* A stale list is served rather than hidden, so the app has to
+                say when it is stale. Without this a driver cannot tell
+                yesterday's work from today's. */}
+            {isError && dataUpdatedAt > 0 ? (
+              <Notice
+                message={`Showing the list from ${formatTime(dataUpdatedAt)}. Could not reach the office.`}
+              />
+            ) : null}
+          </>
         }
         ListEmptyComponent={
           isLoading ? null : (
             <Empty
               message={
-                online
-                  ? 'Nothing assigned to you yet. Pull down to check again.'
-                  : 'No connection, and nothing saved on this phone yet.'
+                // Three states, not two. "Nothing assigned yet" is misleading
+                // to a driver who is off duty — nothing *will* be assigned,
+                // and the fix is one tap above. Telling them to pull down
+                // instead would have them refreshing an empty list all
+                // afternoon.
+                !online
+                  ? 'No connection, and nothing saved on this phone yet.'
+                  : (duty?.on_duty ?? false)
+                    ? 'Nothing yet. Jobs will appear here as they come in.'
+                    : 'You are off duty. Go on duty above to start getting jobs.'
               }
             />
           )

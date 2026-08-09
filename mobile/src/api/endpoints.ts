@@ -3,6 +3,8 @@ import type {
   AvailabilityBlock,
   AvailabilityKind,
   CursorMeta,
+  DispatchOffer,
+  DriverPresence,
   Trip,
   TripEvent,
   User,
@@ -138,4 +140,121 @@ export async function createAvailabilityRequest(
 
 export async function withdrawAvailabilityRequest(api: ApiClient, id: number): Promise<void> {
   await api.request(`/me/availability-requests/${id}`, { method: 'DELETE' });
+}
+
+/* ------------------------------------------------------------------ *
+ * Duty and presence (ADR-0024 §2)
+ *
+ * The input automatic dispatch was missing. Trip GPS only streams from
+ * `trip_started`, so a driver waiting at a stage reported nothing at all and
+ * "the nearest driver" was a question with no data behind it.
+ * ------------------------------------------------------------------ */
+
+export async function fetchDuty(api: ApiClient): Promise<DriverPresence> {
+  const response = await api.request<DriverPresence>('/me/duty');
+
+  return response.data;
+}
+
+/**
+ * Goes on or off duty.
+ *
+ * PUT, not POST: there is one duty state per driver to replace, and a driver
+ * whose request times out and retries must not start two shifts.
+ *
+ * Deliberately **not** through the offline outbox, for the same reason the
+ * password change is not: a queued "go on duty" would apply at some
+ * unpredictable later moment, putting a driver into the dispatch pool hours
+ * after they went home. It needs a connection, and the screen says so.
+ */
+export async function setDuty(
+  api: ApiClient,
+  input: { onDuty: boolean; vehicleId?: number | null },
+): Promise<DriverPresence> {
+  const response = await api.request<DriverPresence>('/me/duty', {
+    method: 'PUT',
+    body: { on_duty: input.onDuty, vehicle_id: input.vehicleId ?? null },
+  });
+
+  return response.data;
+}
+
+/**
+ * Reports where an on-duty driver is.
+ *
+ * One point, not a batch, and not queued. `POST /trips/{trip}/locations`
+ * batches because it is billing evidence and none of it may be lost; this is
+ * a dispatch radius, where only the newest point has any use. A driver coming
+ * out of a dead zone should send where they are *now* — replaying where they
+ * were would rank them from a place they have left.
+ *
+ * 409 NOT_ON_DUTY when the shift has ended. The caller treats that as the
+ * server correcting it, not as an error to retry.
+ */
+export async function sendPresence(
+  api: ApiClient,
+  input: {
+    latitude: number;
+    longitude: number;
+    accuracyMetres?: number | null;
+    recordedAt: string;
+    vehicleId?: number | null;
+  },
+): Promise<DriverPresence> {
+  const response = await api.request<DriverPresence>('/me/presence', {
+    method: 'POST',
+    body: {
+      latitude: input.latitude,
+      longitude: input.longitude,
+      accuracy_metres: input.accuracyMetres ?? null,
+      recorded_at: input.recordedAt,
+      vehicle_id: input.vehicleId ?? null,
+    },
+  });
+
+  return response.data;
+}
+
+/* ------------------------------------------------------------------ *
+ * Job offers (ADR-0024 §3)
+ *
+ * This list is the source of truth, not a push notification. Push shortens
+ * the latency; ADR-0025 §3 makes it best-effort, because a driver can refuse
+ * the OS permission and ADR-0023's whole thesis is dead zones.
+ * ------------------------------------------------------------------ */
+
+export async function fetchOffers(api: ApiClient): Promise<DispatchOffer[]> {
+  const response = await api.request<DispatchOffer[]>('/me/offers');
+
+  return response.data;
+}
+
+/**
+ * Takes the job. Returns the Trip that was created.
+ *
+ * **Never queued through the outbox**, and this is the sharpest case of that
+ * rule in the app. An offer has a fifteen-second clock; a queued accept would
+ * be delivered after it expired, to a passenger already collected by somebody
+ * else. The server refuses it with 409 OFFER_NO_LONGER_OPEN, which is the
+ * right answer — but queueing it would mean the driver's phone told them they
+ * had the job for minutes before finding out.
+ *
+ * So this needs a connection, fails loudly, and the offer simply disappears
+ * from the list when its clock runs out.
+ */
+export async function acceptOffer(api: ApiClient, offerId: number): Promise<Trip> {
+  const response = await api.request<Trip>(`/me/offers/${offerId}/acceptance`, { method: 'POST' });
+
+  return response.data;
+}
+
+export async function declineOffer(
+  api: ApiClient,
+  offerId: number,
+  reason?: string,
+): Promise<void> {
+  await api.request(`/me/offers/${offerId}/decline`, {
+    method: 'POST',
+    body: reason === undefined ? {} : { reason },
+  });
 }
