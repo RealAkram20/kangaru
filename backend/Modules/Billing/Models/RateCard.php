@@ -25,7 +25,7 @@ use Modules\Vehicles\Models\Vehicle;
  *
  * @property int $id
  * @property int|null $tenant_id Null on the platform's public tariff
- *                                (ADR-0026 §1), which belongs to no client.
+ *                               (ADR-0026 §1), which belongs to no client.
  * @property string $name
  * @property RateCardStatus $status
  * @property bool $is_default

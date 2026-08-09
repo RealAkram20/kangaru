@@ -10,6 +10,8 @@ use Modules\Fleet\Enums\AvailabilityResource;
 use Modules\Fleet\Enums\AvailabilityStatus;
 use Modules\Fleet\Models\AvailabilityBlock;
 use Modules\Fleet\Support\DriverPresenceStore;
+use Modules\Trips\Enums\TripStatus;
+use Modules\Trips\Models\Trip;
 use Modules\Vehicles\Models\Vehicle;
 
 /**
@@ -103,10 +105,10 @@ it('lets a driver carrying a passenger go back on duty', function () {
     [$user, $driver] = signedInDriver();
     $vehicle = Vehicle::factory()->create();
 
-    $trip = Modules\Trips\Models\Trip::factory()->create([
+    $trip = Trip::factory()->create([
         'driver_id' => $driver->id,
         'vehicle_id' => $vehicle->id,
-        'status' => Modules\Trips\Enums\TripStatus::DRIVER_EN_ROUTE,
+        'status' => TripStatus::DRIVER_EN_ROUTE,
     ]);
 
     // `AvailabilityService` calls this driver unavailable, and for the
@@ -124,7 +126,7 @@ it('lets a driver carrying a passenger go back on duty', function () {
         ->assertJsonPath('data.on_duty', true);
 
     expect(app(DriverPresenceStore::class)->get($driver->id)?->onDuty)->toBeTrue();
-    expect($trip->fresh()->status)->toBe(Modules\Trips\Enums\TripStatus::DRIVER_EN_ROUTE);
+    expect($trip->fresh()->status)->toBe(TripStatus::DRIVER_EN_ROUTE);
 });
 
 it('records a heartbeat and reports the driver as dispatchable', function () {
