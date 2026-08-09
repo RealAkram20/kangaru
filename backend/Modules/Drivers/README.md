@@ -68,6 +68,26 @@ There is deliberately no `tenant()` relation on `Driver`. ADR-0005 dropped
 Nothing called it, so nothing ever failed — it has been removed rather
 than left as a trap for whoever called it first.
 
+### Seeding a driver who can sign in
+
+`DemoFleetSeeder` creates driver **profiles**. Since ADR-0016 a profile and
+a sign-in account are two different things, so `migrate:fresh --seed` leaves
+a fleet of drivers none of whom can log in — which is fine for the console
+and blocks the Driver's Application entirely.
+
+```
+php artisan db:seed --class=DriverAppSeeder
+```
+
+`database/seeders/DriverAppSeeder.php` mints one account through
+`DriverAccountService` (the same path the endpoint uses), assigns it an
+`assigned` trip and two completed ones, and prints the credentials. It is
+re-runnable, refuses to run outside `local`/`testing`/`staging`, and
+restores the documented password — which matters because testing
+`PATCH /auth/password` is the first thing that invalidates it, and ADR-0016
+provides no self-service reset. See `mobile/README.md` for the first-test
+walkthrough.
+
 ## What's explicitly deferred
 
 - **~~`user_id` cannot be set through the API~~ — built, ADR-0016

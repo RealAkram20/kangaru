@@ -235,6 +235,46 @@ driver profile; a support question, not a bug) ·
 
 ---
 
+## Raised back by the app (7 August 2026)
+
+Found while building `mobile/`. Each is flagged rather than worked around
+invisibly; `mobile/README.md` says what the app does in the meantime and why.
+
+6. **`allowed_transitions` cannot be rendered verbatim, because it is
+   state-legality and not permission.** `TripResource` says so itself. From
+   `assigned` the server allows `cancelled`, `TripPolicy` refuses it to a
+   driver, and a button built straight from the field can only produce a 403.
+   The app filters against a flat mirror of
+   `TripPolicy::DRIVER_JOURNEY_STATES` — a list of statuses, not a graph, so
+   there are no edges to drift. **Ask:** an `allowed_transitions_for_me` field
+   computed from the policy. Additive, so allowed within v1.
+
+7. **A trip carries no scheduled time**, so "today's work, soonest first" —
+   requirement 2 of this brief — is not buildable as written.
+   `TripResource` exposes `booking_id` but no `scheduled_for`, `/trips` has no
+   `?include=booking` and no sort parameter, and `TripController::index`
+   orders `created_at desc`. The app sorts `created_at` *ascending* within
+   status groups as a proxy and documents it as one. **Ask:** `scheduled_for`
+   on `TripResource`.
+
+8. **No idempotency key on `POST /trips/{trip}/transitions`.**
+   `TripTransitionRequest` is `additionalProperties: false` and no
+   `Idempotency-Key` header is read, so the app reconstructs intent from trip
+   state instead (ADR-0023). That works — the state machine has no self-loops,
+   so a replay 409s — *except* on `waiting ⇄ trip_resumed`, the one legal
+   cycle, where a replay is accepted and writes a second `trip_events` row into
+   the table waiting-time billing is computed from. **Ask:** an
+   `Idempotency-Key` header, as `Modules/Billing` already accepts for invoices.
+
+9. **No driver-facing notification type.** `Notification.type` is
+   `booking.approved | booking.rejected | report.export.ready`. Nothing means
+   "you have been assigned a trip", so `notifications.index` — one of the
+   nineteen scoped routes — is an empty inbox for every driver. The app ships
+   no inbox screen rather than one that is always empty. **Ask:** a
+   `trip.assigned` type.
+
+---
+
 ## Repository conventions the mobile app should inherit
 
 - **Comments explain decisions, not mechanics.** This codebase documents
