@@ -6,6 +6,7 @@ use App\Enums\UserRole;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Hash;
@@ -13,6 +14,8 @@ use Modules\Bookings\Models\Booking;
 use Modules\Dispatch\Services\DispatchService;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Services\DriverAccountService;
+use Modules\Fleet\Support\DriverPresence;
+use Modules\Fleet\Support\DriverPresenceStore;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Services\TripStateMachine;
@@ -64,6 +67,23 @@ class DriverAppSeeder extends Seeder
 
     private const ACCOUNT_PASSWORD = 'driver-demo-password';
 
+    /**
+     * A second driver, free and on duty, so automatic dispatch has somebody
+     * to offer a ride to (ADR-0024).
+     *
+     * Not the same account, and that took a run against a live server to
+     * discover. The driver above is deliberately left holding a live trip so
+     * the app has a lifecycle to walk through — and a live trip *occupies*
+     * them (`TripStatus::occupiesVehicle`), so `AvailabilityService` excludes
+     * them from dispatch, correctly. Seeding one driver produced a database
+     * where a walk-in order created no offer at all, and the seeder cheerfully
+     * printed that it would.
+     *
+     * The two accounts answer the two halves of the app: sign in as this one
+     * to be offered work, as the one above to see work in progress.
+     */
+    private const DISPATCH_EMAIL = 'driver.free@kangaruride.test';
+
     public function run(): void
     {
         $this->refuseOutsideDevelopment();
@@ -91,7 +111,9 @@ class DriverAppSeeder extends Seeder
             app(TenantContext::class)->set(null);
         }
 
-        $this->report($driver);
+        $onDuty = $this->freeDriverOnDuty();
+
+        $this->report($driver, $onDuty);
     }
 
     /**
@@ -126,9 +148,24 @@ class DriverAppSeeder extends Seeder
      */
     private function driverWithAccount(): Driver
     {
+        return $this->accountFor(self::ACCOUNT_EMAIL, 'Demo Driver');
+    }
+
+    /**
+     * A driver with a sign-in, by email, made once and reused after that.
+     *
+     * Generalised from the single demo account when ADR-0024 needed a second
+     * one — see `DISPATCH_EMAIL`. Both go through `DriverAccountService`
+     * rather than writing `drivers.user_id` directly, the same discipline the
+     * trips below follow by going through the state machine: a seeder that
+     * bypasses the service would happily produce a link the product itself
+     * refuses to make, and the first thing anybody learns from it is wrong.
+     */
+    private function accountFor(string $email, string $name): Driver
+    {
         $existing = Driver::query()->whereHas(
             'user',
-            fn ($query) => $query->where('email', self::ACCOUNT_EMAIL),
+            fn ($query) => $query->where('email', $email),
         )->first();
 
         if ($existing !== null) {
@@ -138,12 +175,15 @@ class DriverAppSeeder extends Seeder
         }
 
         $driver = Driver::factory()->create([
-            'name' => 'Demo Driver',
-            'phone' => '+256700000001',
+            'name' => $name,
+            // Distinct per account, because `drivers.phone` is what
+            // ADR-0024 §7 hands a passenger to ring. Two demo drivers
+            // sharing a number would make the call button untestable.
+            'phone' => '+2567000000'.substr(md5($email), 0, 2),
         ]);
 
         app(DriverAccountService::class)->open($driver, [
-            'email' => self::ACCOUNT_EMAIL,
+            'email' => $email,
             'password' => self::ACCOUNT_PASSWORD,
             'role' => UserRole::DRIVER->value,
             'name' => $driver->name,
@@ -369,7 +409,115 @@ class DriverAppSeeder extends Seeder
      * Reporting "seeded" and nothing else would have them hunting for a button
      * that is two states behind them.
      */
-    private function report(Driver $driver): void
+    /**
+     * Signs the demo driver on, in Kampala, so a walk-in order dispatches
+     * (ADR-0024 §2).
+     *
+     * Without this the whole of ADR-0024 is unobservable from a fresh
+     * database. Everything works — the matcher runs, the ranking is correct —
+     * and it ranks an empty pool, because presence is an explicit act and a
+     * seeder is the only thing here that never taps a toggle. Somebody
+     * following `mobile/README.md` would place an order, see nothing happen,
+     * and reasonably conclude the feature is broken.
+     *
+     * Written through `DriverPresenceStore`, not straight into the table, for
+     * the same reason the account above goes through `DriverAccountService`:
+     * a seeder that bypasses the service can produce a state the product
+     * itself refuses to make.
+     *
+     * The position is the city centre, and the coordinates are the ones every
+     * fixture in this codebase uses — 0.3476 N, 32.5825 E. Deliberately the
+     * same, so a walk-in order raised from the public form's default map
+     * centre lands metres away and the distance scoring is visibly doing
+     * something.
+     */
+    private function freeDriverOnDuty(): Driver
+    {
+        $driver = $this->accountFor(self::DISPATCH_EMAIL, 'Demo Driver (free)');
+
+        $this->releaseLiveTrips($driver);
+
+        $presence = app(DriverPresenceStore::class);
+
+        // A vehicle nobody else is on, or the guard refuses the accept even
+        // though the offer went out. `occupyingValues()` is the same
+        // predicate `TripAssignmentGuard` uses, so this asks exactly the
+        // question the accept path will ask.
+        $vehicle = Vehicle::query()
+            ->where('status', 'active')
+            ->whereNotIn('id', Trip::allTenants()
+                ->whereIn('status', TripStatus::occupyingValues())
+                ->pluck('vehicle_id'))
+            ->orderBy('id')
+            ->first();
+
+        $presence->setDuty($driver->id, true, $vehicle?->id);
+
+        // `now()`, not a fixed instant: presence goes stale after
+        // `dispatch.presence_ttl_seconds`, so a hardcoded timestamp would
+        // seed a driver who is already invisible — the exact failure this
+        // method exists to prevent, reintroduced by the fixture.
+        $presence->heartbeat(new DriverPresence(
+            driverId: $driver->id,
+            onDuty: true,
+            vehicleId: $vehicle?->id,
+            latitude: 0.3476,
+            longitude: 32.5825,
+            accuracyMetres: 10.0,
+            recordedAt: CarbonImmutable::now(),
+        ));
+
+        return $driver;
+    }
+
+    /**
+     * Cancels anything this driver is still holding, so the demo repeats.
+     *
+     * Accepting an offer occupies the driver, and an occupied driver is
+     * excluded from dispatch by `AvailabilityService` — correctly. The
+     * consequence is that the walk-in demo works exactly once: run it, accept
+     * a ride, and every subsequent order is offered to nobody, with the
+     * seeder still printing that it would be offered here.
+     *
+     * Found by doing it twice. The first run was proof the chain works; the
+     * second was silence.
+     *
+     * Through `TripStateMachine`, so `trip_events` shows the cancellation
+     * rather than a row mutating under the timeline. A trip already past
+     * `trip_started` cannot be cancelled — the graph does not allow it — and
+     * is left alone rather than forced: this is a convenience for a demo
+     * database, not a licence to rewrite a lifecycle.
+     */
+    private function releaseLiveTrips(Driver $driver): void
+    {
+        $dispatcher = $this->dispatcher();
+
+        $live = Trip::allTenants()
+            ->where('driver_id', $driver->id)
+            ->whereIn('status', TripStatus::occupyingValues())
+            ->get();
+
+        foreach ($live as $trip) {
+            if (! $trip->status->canTransitionTo(TripStatus::CANCELLED)) {
+                continue;
+            }
+
+            app(TenantContext::class)->set($trip->tenant_id);
+
+            try {
+                app(TripStateMachine::class)->transition(
+                    $trip,
+                    TripStatus::CANCELLED,
+                    $dispatcher,
+                    ['notes' => 'Released by DriverAppSeeder so the walk-in demo can be re-run.'],
+                );
+            } finally {
+                app(TenantContext::class)->set(null);
+            }
+        }
+    }
+
+    private function report(Driver $driver, Driver $onDuty): void
     {
         // `isset`, not a null check: `Seeder::$command` is an untyped property
         // that is simply never assigned when a seeder is constructed directly
@@ -398,7 +546,23 @@ class DriverAppSeeder extends Seeder
                 : '#'.$live->id.' at '.$live->status->value
         ));
         $command->newLine();
+        $command->newLine();
+        $command->info('A second driver, free and on duty, for automatic dispatch.');
+        $command->line('  Email:    '.self::DISPATCH_EMAIL);
+        $command->line('  Password: '.self::ACCOUNT_PASSWORD);
+        $command->line('  Driver:   #'.$onDuty->id.' '.$onDuty->name);
+        $command->line('  On duty at 0.3476, 32.5825 (Kampala centre)');
+        $command->newLine();
+        $command->line('  Two accounts because the driver above holds a live trip, which');
+        $command->line('  occupies them — availability excludes them from dispatch, and an');
+        $command->line('  order would be offered to nobody. Sign in as this one to be');
+        $command->line('  offered work, as the one above to see work in progress.');
+        $command->newLine();
         $command->line('  Send client: "driver" at login (ADR-0022). See mobile/README.md.');
+        $command->newLine();
+        $command->line('  Order at POST /api/v1/public/order-requests with a pickup near that');
+        $command->line('  point and it is offered within seconds. Duty lapses after');
+        $command->line('  dispatch.presence_ttl_seconds — re-run this seeder to refresh it.');
         $command->newLine();
     }
 }

@@ -59,7 +59,21 @@ end, and each of them is a decision rather than a task:
 ### 1. A walk-in trip is owned by a customer, not by a tenant
 
 `trips.tenant_id` becomes **nullable** and `trips.customer_id` is added,
-nullable, referencing `customers`. Exactly one of the two is set.
+nullable, referencing `customers`. **Never both**, and a walk-in is a trip
+with no tenant.
+
+An earlier draft of this section said "exactly one of the two is set". That
+was wrong, and running the flow end to end is what showed it: `POST
+/public/order-requests` is unauthenticated (ADR-0012 §3) and links to an
+account only when a customer token happens to accompany it (ADR-0013 §4), so
+an **anonymous order produces a trip with neither owner** — no client, and no
+account either. Those are walk-ins by every meaningful test: a contact name
+and number sit on the order request, and somebody is standing at a kerb.
+
+`Trip::isWalkIn()` therefore asks `tenant_id === null` rather than
+`customer_id !== null`. It was written the second way first, and the visible
+symptom was the driver's call button never appearing on an anonymous ride —
+§7's contact rules ask that question before anything else.
 
 That invariant is enforced in `TripService`, which is already the only
 writer, and **not** as a database CHECK constraint — following the precedent
@@ -153,7 +167,12 @@ preference:
 
 The accept path runs inside a transaction and calls **`TripService::create`,
 which calls `TripAssignmentGuard`** — the same pessimistic lock every other
-assignment path takes. There is still exactly one way a vehicle and driver
+assignment path takes. It then moves the trip to `accepted` through
+`TripStateMachine`, in the same transaction: the driver has already said yes,
+and a trip left in `assigned` asks them to say it again. The first
+implementation omitted that line and produced exactly that double-accept —
+along with a call button that never appeared, because §7 withholds the
+passenger's number until `accepted`. One missing transition, two symptoms. There is still exactly one way a vehicle and driver
 get onto a trip, which was already the rule and is the reason the guard's
 docblock enumerates its callers.
 

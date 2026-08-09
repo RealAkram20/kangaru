@@ -197,16 +197,30 @@ class Trip extends Model
     }
 
     /**
-     * Whether this trip belongs to a walk-in customer rather than a client.
+     * Whether this trip is a walk-in ride rather than a client's.
      *
-     * Asked as `customer_id !== null` rather than `tenant_id === null` even
-     * though the two are equivalent by the invariant: the positive form says
-     * what the trip *is*, and a future third kind of owner would make the
-     * negative form silently wrong.
+     * `tenant_id === null`, and the first version had it as
+     * `customer_id !== null` on the reasoning that the positive form says
+     * what the trip *is*. That reasoning was wrong, and running the flow end
+     * to end is what showed it: **a walk-in order does not have to have a
+     * customer.** `POST /public/order-requests` is unauthenticated (ADR-0012
+     * §3) and links to an account only when a customer token happens to
+     * accompany it (ADR-0013 §4), so an anonymous order produces a trip with
+     * no tenant *and* no customer.
+     *
+     * Those trips are walk-ins by every meaningful test — no client, a
+     * contact name and number on the order request, a passenger standing at a
+     * kerb — and the old spelling called them corporate. The visible symptom
+     * was the driver's call button never appearing, because
+     * `DirectContactChannel` asks this question first.
+     *
+     * So the invariant is "never both owners", not "always exactly one".
+     * `TripService::assertExactlyOneOwner` only ever refused both, which was
+     * right; the ADR's wording and this method were what overstated it.
      */
     public function isWalkIn(): bool
     {
-        return $this->customer_id !== null;
+        return $this->tenant_id === null;
     }
 
     /**

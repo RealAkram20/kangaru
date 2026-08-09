@@ -193,6 +193,39 @@ it('never shows one customer another customer\'s ride', function () {
         ->assertJsonPath('data', null);
 });
 
+it('gives the driver a number on an anonymous walk-in, which has no customer at all', function () {
+    // The case that was silently broken, and the reason `Trip::isWalkIn()`
+    // asks about the tenant rather than the customer.
+    //
+    // `POST /public/order-requests` is unauthenticated (ADR-0012 §3) and
+    // links to an account only when a customer token happens to accompany it
+    // (ADR-0013 §4) — so the *most common* walk-in has no tenant and no
+    // customer. Testing `customer_id !== null` called those trips corporate
+    // and withheld the passenger's number, and nothing failed: the field was
+    // simply absent, so the driver's app rendered no call button.
+    //
+    // Found by placing a real order against a running server, not by a test.
+    $driverUser = User::factory()->create(['tenant_id' => null, 'role' => UserRole::DRIVER]);
+    $driver = Driver::factory()->create(['user_id' => $driverUser->id, 'phone' => '+256700000111']);
+
+    $trip = Trip::factory()
+        ->forVehicle(Vehicle::factory()->create())
+        ->forDriver($driver)
+        ->create(['tenant_id' => null, 'customer_id' => null, 'status' => TripStatus::ACCEPTED]);
+
+    OrderRequest::factory()->create([
+        'customer_id' => null,
+        'trip_id' => $trip->id,
+        'contact_name' => 'Anonymous Caller',
+        'contact_phone' => '+256700000777',
+    ]);
+
+    $this->actingAs($driverUser, 'sanctum')
+        ->getJson("/api/v1/trips/{$trip->id}")
+        ->assertOk()
+        ->assertJsonPath('data.passenger_contact.phone', '+256700000777');
+});
+
 it('reports the search phase before any driver has accepted', function () {
     $customer = Customer::factory()->create();
 

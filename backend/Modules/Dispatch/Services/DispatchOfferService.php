@@ -12,9 +12,11 @@ use Modules\Dispatch\Enums\DispatchOfferStatus;
 use Modules\Dispatch\Models\DispatchOffer;
 use Modules\Drivers\Models\Driver;
 use Modules\Notifications\Notifications\TripOfferedNotification;
+use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Services\DriverUnavailableException;
 use Modules\Trips\Services\TripService;
+use Modules\Trips\Services\TripStateMachine;
 use Modules\Trips\Services\VehicleUnavailableException;
 
 /**
@@ -55,6 +57,7 @@ class DispatchOfferService
     public function __construct(
         private readonly WalkInRecommender $recommender,
         private readonly TripService $trips,
+        private readonly TripStateMachine $stateMachine,
     ) {}
 
     /**
@@ -165,6 +168,21 @@ class DispatchOfferService
                 'origin' => $request->pickup_location ?? 'Pickup',
                 'destination' => $request->dropoff_location ?? 'As directed',
             ], $actor);
+
+            // The driver has already said yes; the trip must not sit in
+            // `assigned` waiting for them to say it again.
+            //
+            // Found by running the thing end to end: accepting an offer left
+            // a trip the app then asked the driver to *accept*, and
+            // `DirectContactChannel` withholds the passenger's number until
+            // `accepted`, so the call button never appeared either. Two
+            // separate symptoms of one missing line.
+            //
+            // Through `TripStateMachine`, not a status write, so the
+            // `assigned → accepted` pair lands in `trip_events` — the offer
+            // and the acceptance are different moments and the timeline
+            // should show both. ADR-0024 §3 said this; only the code did not.
+            $trip = $this->stateMachine->transition($trip, TripStatus::ACCEPTED, $actor);
 
             $locked->update([
                 'status' => DispatchOfferStatus::ACCEPTED,

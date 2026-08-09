@@ -133,7 +133,15 @@ it('turns an accept into a customer-owned trip', function () {
     expect($trip->tenant_id)->toBeNull();
     expect($trip->driver_id)->toBe($driver->id);
     expect($trip->vehicle_id)->toBe($vehicle->id);
-    expect($trip->status)->toBe(TripStatus::ASSIGNED);
+    // `accepted`, not `assigned`. The driver said yes when they took the
+    // offer; a trip that lands in `assigned` asks them to say it again, and
+    // ADR-0024 §7 withholds the passenger's number until `accepted` so the
+    // call button would never appear either.
+    //
+    // This assertion read ASSIGNED until the flow was run end to end against
+    // a live server — the test had been written to match the implementation
+    // rather than the ADR.
+    expect($trip->status)->toBe(TripStatus::ACCEPTED);
 
     // The foreign key `OrderRequestStatus::CONVERTED` was promised in
     // ADR-0012 and given in ADR-0024 §4. The case keeps its meaning; it now
