@@ -23,6 +23,20 @@ jest.mock('expo-sqlite', () => ({
   })),
 }));
 
+jest.mock('expo-notifications', () => ({
+  getPermissionsAsync: jest.fn(async () => ({ granted: false })),
+  requestPermissionsAsync: jest.fn(async () => ({ granted: false })),
+  getExpoPushTokenAsync: jest.fn(async () => ({ data: 'ExponentPushToken[test]' })),
+}));
+
+// `isDevice: false` by default, which is what a simulator reports — and what
+// `PushRegistrar` checks first, so the common test path exits before it
+// touches anything else.
+jest.mock('expo-device', () => ({
+  isDevice: false,
+  osVersion: '14',
+}));
+
 jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn(async () => ({ status: 'granted' })),
   requestBackgroundPermissionsAsync: jest.fn(async () => ({ status: 'granted' })),

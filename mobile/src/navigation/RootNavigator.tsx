@@ -5,6 +5,7 @@ import { ActivityIndicator, View } from 'react-native';
 
 import { useAuth } from '../auth/AuthProvider';
 import { PresenceController } from '../duty/PresenceController';
+import { PushRegistrar } from '../push/PushRegistrar';
 import { GpsController } from '../location/GpsController';
 import { AccountScreen } from '../screens/AccountScreen';
 import { PasswordScreen } from '../screens/PasswordScreen';
@@ -98,6 +99,7 @@ export function RootNavigator() {
             silently stop being tracked or stop being findable. */}
         <GpsController />
         <PresenceController />
+        <PushRegistrar />
         <Tabs.Navigator
           screenOptions={{
             headerShown: false,

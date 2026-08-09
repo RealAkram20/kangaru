@@ -258,3 +258,42 @@ export async function declineOffer(
     body: reason === undefined ? {} : { reason },
   });
 }
+
+/* ------------------------------------------------------------------ *
+ * Push registration (ADR-0025 §4)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Registers this install so job offers can reach the lock screen.
+ *
+ * Idempotent server-side by the token's unique index, so it is safe to call
+ * on every sign-in and every OS token rotation. Not queued: a registration
+ * that arrives an hour late is a registration for a shift that has ended,
+ * and the app polls offers regardless (ADR-0025 §3).
+ */
+export async function registerDevice(
+  api: ApiClient,
+  input: { token: string; platform?: string | null; appVersion?: string | null },
+): Promise<void> {
+  await api.request('/me/devices', {
+    method: 'POST',
+    body: {
+      token: input.token,
+      provider: 'expo',
+      platform: input.platform ?? null,
+      app_version: input.appVersion ?? null,
+    },
+  });
+}
+
+/**
+ * Unregisters this install.
+ *
+ * Called on sign-out, and it matters more than it looks: a shared depot
+ * handset that kept its previous driver's token would deliver another
+ * person's job offers — pickup address on the lock screen — to whoever is
+ * holding the phone next.
+ */
+export async function unregisterDevice(api: ApiClient, token: string): Promise<void> {
+  await api.request(`/me/devices/${encodeURIComponent(token)}`, { method: 'DELETE' });
+}

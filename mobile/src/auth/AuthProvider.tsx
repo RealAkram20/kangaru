@@ -2,7 +2,12 @@ import type { ReactNode } from 'react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 import { ApiClient } from '../api/client';
-import { login as loginRequest, logout as logoutRequest } from '../api/endpoints';
+import {
+  login as loginRequest,
+  logout as logoutRequest,
+  unregisterDevice,
+} from '../api/endpoints';
+import { forgetPushToken, readPushToken } from '../push/tokenStore';
 import { isApiError } from '../api/errors';
 import type { User } from '../api/types';
 import { API_BASE_URL } from '../config';
@@ -33,6 +38,29 @@ type AuthValue = {
 };
 
 const AuthContext = createContext<AuthValue | null>(null);
+
+/**
+ * Stops job offers reaching this handset.
+ *
+ * Best-effort, like everything else about push. A driver signing off in a
+ * basement must still be able to sign off — the server's own revocation
+ * paths drop device rows too (ADR-0016 §5), and Expo prunes a token whose
+ * app is gone. Blocking a sign-out on this would be trading a certainty for
+ * a nicety.
+ */
+async function releasePushRegistration(api: ApiClient): Promise<void> {
+  try {
+    const token = await readPushToken();
+
+    if (token !== null) {
+      await unregisterDevice(api, token);
+    }
+  } catch {
+    // See above.
+  } finally {
+    await forgetPushToken();
+  }
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
@@ -100,6 +128,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const signOut = useCallback(async () => {
+    // Before the token is discarded, because unregistering needs it.
+    //
+    // This matters more than it looks: a shared depot handset that kept its
+    // previous driver's push registration would deliver another person's job
+    // offers — pickup address on the lock screen — to whoever holds the phone
+    // next (ADR-0025 §4).
+    await releasePushRegistration(api);
+
     try {
       await logoutRequest(api);
     } catch {
@@ -114,6 +150,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [api]);
 
   const signOutLocally = useCallback(async () => {
+    // Deliberately does *not* unregister the device.
+    //
+    // This path runs when the server has already rejected the token — an
+    // expired session, a password change that revoked everything (ADR-0016).
+    // The call would 401, and there is nothing to clean up server-side
+    // anyway: every path that revokes a driver's tokens drops their device
+    // rows in the same transaction.
+    //
+    // The local copy is dropped so the next sign-in registers afresh.
+    await forgetPushToken();
+
     setCurrentToken(null);
     setUser(null);
     await clearSession();

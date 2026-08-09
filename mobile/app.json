@@ -47,6 +47,13 @@
         {
           "cameraPermission": "KangaruRide lets you photograph the dashboard when you record an odometer reading. The photo is optional."
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/android-icon-monochrome.png",
+          "color": "#2563EB"
+        }
       ]
     ]
   }
