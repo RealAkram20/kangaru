@@ -27,6 +27,16 @@ enum NotificationType: string
     case REPORT_EXPORT_READY = 'report.export.ready';
     case ORDER_REQUEST_RECEIVED = 'order_request.received';
 
+    /**
+     * A job put in front of one driver, with a clock on it (ADR-0024 §3).
+     *
+     * The one message in this platform that earns an interruption
+     * (ADR-0025 §5): the recipient has seconds to act on it, and it is the
+     * only reason the Driver's Application is installed. Everything else
+     * here reaches somebody already sitting at a screen.
+     */
+    case TRIP_OFFERED = 'trip.offered';
+
     public function label(): string
     {
         return match ($this) {
@@ -34,6 +44,7 @@ enum NotificationType: string
             self::BOOKING_REJECTED => 'Booking rejected',
             self::REPORT_EXPORT_READY => 'Export ready',
             self::ORDER_REQUEST_RECEIVED => 'Walk-in order received',
+            self::TRIP_OFFERED => 'New job',
         };
     }
 
@@ -61,6 +72,17 @@ enum NotificationType: string
             // request emailed to every dispatcher is inbox noise, not
             // dispatch. Config can widen it per deployment.
             self::ORDER_REQUEST_RECEIVED => [NotificationChannel::DATABASE],
+            // Push *and* the in-app row. The row is what makes an offer
+            // visible in the app's own inbox when a push never arrives —
+            // ADR-0025 §3 makes push best-effort, and a driver who declined
+            // the OS permission must still be told something.
+            //
+            // Never mail: an offer expires in fifteen seconds, and an email
+            // about one would arrive as an apology.
+            self::TRIP_OFFERED => [
+                NotificationChannel::PUSH,
+                NotificationChannel::DATABASE,
+            ],
         };
     }
 }

@@ -2,6 +2,7 @@
 
 namespace Modules\Notifications\Enums;
 
+use Modules\Notifications\Channels\ExpoPushChannel;
 use Modules\Notifications\Channels\TenantDatabaseChannel;
 
 /**
@@ -20,6 +21,17 @@ enum NotificationChannel: string
     case MAIL = 'mail';
 
     /**
+     * A notification on the handset's lock screen (ADR-0025).
+     *
+     * Ships *with* a working transport, which is what separates it from the
+     * SMS case this enum still refuses above: `ExpoPushChannel` exists and
+     * sends. It is inert — not silently lost — for a user with no registered
+     * device, which is every staff account and any driver who declined the
+     * OS permission.
+     */
+    case PUSH = 'push';
+
+    /**
      * The Laravel channel this maps to.
      *
      * DATABASE resolves to our own channel rather than Laravel's, because
@@ -31,6 +43,7 @@ enum NotificationChannel: string
         return match ($this) {
             self::DATABASE => TenantDatabaseChannel::class,
             self::MAIL => 'mail',
+            self::PUSH => ExpoPushChannel::class,
         };
     }
 }

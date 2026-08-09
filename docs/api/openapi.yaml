@@ -1739,6 +1739,71 @@ paths:
           $ref: '#/components/responses/Error'
 
   # ------------------------------------------------------------------
+  # Device registration (Modules/Notifications) — ADR-0025 §4
+  # ------------------------------------------------------------------
+  /api/v1/me/devices:
+    post:
+      summary: Registers this app install for push notifications.
+      description: >
+        Idempotent by the token's unique index, so the app may call it on
+        every sign-in and every OS token rotation without accumulating rows.
+
+
+        The token is **globally** unique, not unique per user: a shared depot
+        handset signed in as one driver and then another must not be
+        reachable as both, or the first driver's job offers — pickup address
+        included — land on whoever is holding it now. The newer registration
+        takes the row.
+
+
+        Takes no `user_id`; the account is the token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              additionalProperties: false
+              properties:
+                token:
+                  description: >
+                    Opaque, and deliberately not pattern-matched. ADR-0025 §2
+                    keeps FCM and APNs available behind the same channel, and
+                    those tokens look nothing like Expo's.
+                  type: string
+                  maxLength: 255
+                provider: { enum: [expo] }
+                platform: { type: ['string', 'null'], maxLength: 20 }
+                app_version: { type: ['string', 'null'], maxLength: 40 }
+      responses:
+        '204':
+          description: Registered. No content.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/me/devices/{token}:
+    parameters:
+      - { name: token, in: path, required: true, schema: { type: string } }
+    delete:
+      summary: Unregisters this app install.
+      description: >
+        Called on sign-out. A shared handset that kept its previous driver's
+        token would deliver another person's job offers to whoever holds it.
+
+
+        204 whether or not a row went: unregistering something already gone is
+        the outcome the caller wanted, and a 404 would make sign-out fail on a
+        retry. A token belonging to somebody else is simply not found — and
+        answers the same, because "that exists but is not yours" is not worth
+        confirming.
+      responses:
+        '204':
+          description: Unregistered. No content.
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
   # Job offers (Modules/Dispatch) — ADR-0024 §3
   #
   # The driver's side of automatic dispatch. An offer is NOT a trip: nothing
@@ -5027,7 +5092,7 @@ components:
       additionalProperties: false
       properties:
         id: { type: integer }
-        type: { enum: [booking.approved, booking.rejected, report.export.ready] }
+        type: { enum: [booking.approved, booking.rejected, report.export.ready, order_request.received, trip.offered] }
         type_label: { type: string }
         subject: { type: string }
         body: { type: string }

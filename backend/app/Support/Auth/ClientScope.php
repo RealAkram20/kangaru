@@ -116,6 +116,13 @@ final class ClientScope
                 'zones.index',
                 'zones.resolve',
 
+                // Where to push a job offer (ADR-0025 §4). Registered on
+                // sign-in, deleted on sign-out — a shared depot handset that
+                // kept the previous driver's token would put their pickup
+                // addresses on somebody else's lock screen.
+                'me.devices.store',
+                'me.devices.destroy',
+
                 // Their inbox.
                 'notifications.index',
                 'notifications.read',

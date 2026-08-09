@@ -11,6 +11,7 @@ use Modules\Bookings\Models\OrderRequest;
 use Modules\Dispatch\Enums\DispatchOfferStatus;
 use Modules\Dispatch\Models\DispatchOffer;
 use Modules\Drivers\Models\Driver;
+use Modules\Notifications\Notifications\TripOfferedNotification;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Services\DriverUnavailableException;
 use Modules\Trips\Services\TripService;
@@ -340,7 +341,7 @@ class DispatchOfferService
         $now = now();
         $expiresAt = $now->copy()->addSeconds((int) config('dispatch.offer_ttl_seconds'));
 
-        return $candidates->values()->map(fn (WalkInCandidate $candidate, int $index) => DispatchOffer::create([
+        $offers = $candidates->values()->map(fn (WalkInCandidate $candidate, int $index) => DispatchOffer::create([
             'order_request_id' => $request->id,
             'driver_id' => $candidate->driver->id,
             'vehicle_id' => $candidate->vehicle?->id,
@@ -356,6 +357,49 @@ class DispatchOfferService
             'offered_at' => $now,
             'expires_at' => $expiresAt,
         ]));
+
+        $offers->each(fn (DispatchOffer $offer) => $this->ring($offer));
+
+        return $offers;
+    }
+
+    /**
+     * Puts the offer on the driver's phone (ADR-0025).
+     *
+     * **Never allowed to fail the dispatch.** This runs inside the request
+     * that received a public order, and `TRIP_OFFERED` goes out on the `sync`
+     * connection like every in-app row — so a throw here would take the offer
+     * down with it. A passenger's ride must not fail because a third-party
+     * push service timed out.
+     *
+     * `ExpoPushChannel` already swallows its own transport errors; this
+     * catches everything above it — a driver with no linked user account, a
+     * notification that cannot be built. ADR-0025 §3 is what makes that safe:
+     * push shortens the latency and is not the transport. The offer is at
+     * `GET /me/offers` either way, and the app polls it every five seconds
+     * while on duty.
+     */
+    private function ring(DispatchOffer $offer): void
+    {
+        try {
+            $user = $offer->driver?->user;
+
+            // A driver profile with no sign-in account (ADR-0016). They can
+            // be assigned work by a dispatcher, but nothing can reach them —
+            // which is exactly why `WalkInRecommender` should not have
+            // offered to them, and is worth staying quiet about rather than
+            // erroring on: the offer is still valid, and the desk can see it.
+            if ($user === null) {
+                return;
+            }
+
+            $user->notify(TripOfferedNotification::for($offer));
+        } catch (\Throwable $e) {
+            Log::warning('dispatch.offer_notification_failed', [
+                'offer_id' => $offer->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
