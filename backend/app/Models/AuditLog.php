@@ -97,13 +97,42 @@ class AuditLog extends Model
 
         static::create([
             'tenant_id' => self::tenantIdFor($model),
-            'user_id' => auth()->id(),
+            'user_id' => self::actingUserId(),
             'auditable_type' => $model->getMorphClass(),
             'auditable_id' => $model->getKey(),
             'action' => $action,
             'changes' => ['before' => $before, 'after' => $after],
             'ip_address' => app()->runningInConsole() ? null : request()->ip(),
         ]);
+    }
+
+    /**
+     * The staff user behind this write, or null when there is not one.
+     *
+     * **Not `auth()->id()`.** That returns whatever the *active guard* holds,
+     * and this platform has more than one principal: `Authenticate` calls
+     * `shouldUse()` on the guard that succeeded, so on a `auth:customer` route
+     * the default guard is `customer` and `auth()->id()` hands back a
+     * **customer's** id — which then goes into `audit_logs.user_id`, a foreign
+     * key to `users`.
+     *
+     * That is not a cosmetic mistake. It resolved to a real, unrelated staff
+     * account whenever the two id spaces happened to overlap, silently
+     * attributing a passenger's action to whichever employee shared the
+     * number. It only surfaced because a customer cancelling their own ride
+     * (ADR-0024 §7) is the first customer-authenticated write to an audited
+     * model, and the foreign key refused an id that did not exist yet.
+     *
+     * Null is the honest answer: no staff user did this. The row still
+     * records what changed, to what, and when — and the customer's own act is
+     * carried by the thing they changed, exactly as `TripEvent` handles the
+     * same situation.
+     */
+    private static function actingUserId(): ?int
+    {
+        $user = auth()->user();
+
+        return $user instanceof User ? $user->getKey() : null;
     }
 
     /**

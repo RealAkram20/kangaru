@@ -54,12 +54,26 @@ Schedule::command('sanctum:prune-expired --hours=24')
 // advances the search in the same request. This is the backstop for the
 // driver who says nothing at all.
 //
-// `everyMinute()` is cron's floor, which is coarse against a 15-second offer
-// window — a passenger can wait out one tick for somebody who ignored their
-// phone. That is the honest cost of not requiring a daemon, and a deployment
-// running a worker can lower it to `everyTenSeconds()` with no code change.
+// Every ten seconds, against a fifteen-second offer window.
+//
+// `everyMinute()` was cron's floor and it was four times coarser than the
+// thing it sweeps: a driver who ignored their phone burned their 15 seconds
+// and the ride then sat untouched for up to another 60 while the passenger
+// watched a spinner. Worst case from order to second driver was about 75
+// seconds, and almost all of it was this tick.
+//
+// Laravel 12 runs sub-minute tasks under both `schedule:work` and a
+// cron-driven `schedule:run` — the scheduler stays resident for the minute to
+// service them — so this no longer costs a daemon requirement the way the
+// original note assumed. Ten seconds bounds the gap at roughly the offer
+// window itself.
+//
+// It is not a substitute for the immediate paths, which still carry the
+// common cases: `dispatch()` runs inside the request that receives the order,
+// and `decline()` advances the search in the driver's own request. This is
+// the backstop for silence, and silence is now noticed in ten seconds.
 Schedule::command(AdvanceDispatchOffers::class)
-    ->everyMinute()
+    ->everyTenSeconds()
     // A slow sweep must never stack up behind itself: two concurrent runs
     // would race to settle the same offers and could open two waves on one
     // ride.

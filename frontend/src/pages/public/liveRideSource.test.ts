@@ -56,7 +56,11 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.useRealTimers()
 })
+
+/** The poll interval in `liveRideSource`, mirrored for the timer tests. */
+const POLL_INTERVAL_MS = 4_000
 
 it('maps the server phase straight through, with no translation table', async () => {
   vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: ride({ phase: 'driver_arrived' }) } })
@@ -91,15 +95,57 @@ it('never promises an arrival time', async () => {
   expect(state.etaSeconds).toBeNull()
 })
 
-it('offers no cancel button, because there is no endpoint behind one', async () => {
+it('offers the cancel button now that an endpoint sits behind it', async () => {
   vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: ride() } })
 
   const state = await firstServerState()
 
-  // A control that appears to work and does nothing is worse than its
-  // absence. ADR-0024 defers customer cancellation: it carries a charge rule
-  // nobody has decided.
-  expect(state.cancellable).toBe(false)
+  // This asserted `false` for as long as cancelling was a no-op, on the rule
+  // that a control which appears to work and does nothing is worse than its
+  // absence. `POST /customer/rides/active/cancellation` exists now.
+  expect(state.cancellable).toBe(true)
+})
+
+it('calls the ride off and asks the server again at once', async () => {
+  const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: ride() } })
+  const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: null } })
+
+  const source = liveRideSource()
+  const stop = source.subscribe(() => {})
+  await vi.waitFor(() => expect(get).toHaveBeenCalled())
+
+  const before = get.mock.calls.length
+  source.cancel('I found another ride')
+
+  expect(post).toHaveBeenCalledWith('/customer/rides/active/cancellation', {
+    reason: 'I found another ride',
+  })
+
+  // Not left to the four-second tick: the customer just acted and is watching
+  // for the screen to acknowledge it.
+  await vi.waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(before))
+  stop()
+})
+
+it('lets the next poll decide when a cancellation is refused', async () => {
+  vi.spyOn(apiClient, 'get').mockResolvedValue({
+    data: { data: ride({ phase: 'trip_started' }) },
+  })
+  vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('409'))
+
+  const source = liveRideSource()
+  const states: RideState[] = []
+  const stop = source.subscribe((s) => states.push(s))
+  await vi.waitFor(() => expect(states.some((s) => s.phase === 'trip_started')).toBe(true))
+
+  source.cancel('Waiting too long')
+
+  // The driver started the journey between the sheet opening and the tap
+  // landing. Forcing `cancelled` locally would tell somebody sitting in a
+  // moving car that their ride was called off.
+  await vi.waitFor(() => expect(states.length).toBeGreaterThan(1))
+  expect(states.every((s) => s.phase !== 'cancelled')).toBe(true)
+  stop()
 })
 
 it('carries the captain and a number to ring', async () => {
@@ -134,6 +180,91 @@ it('shows no rating rather than a flattering one', async () => {
   // `Modules/Drivers/README.md` lists driver rating as unbuilt. Zero renders
   // as "no rating yet"; inventing 4.8 would be a review nobody left.
   expect(state.captain?.rating).toBe(0)
+})
+
+/**
+ * The bug that made a driver's accept invisible to the passenger.
+ *
+ * React StrictMode mounts, cleans up and mounts again in development, and
+ * `RideScreen` subscribes in an effect — so the source is unsubscribed and
+ * resubscribed before the first poll has ever landed. A source that treats
+ * the first cleanup as final never polls again: the screen sits on "Finding
+ * you a captain" while the server has been answering `accepted` for minutes.
+ *
+ * `simulatedRideSource` was fixed for exactly this (`ride.test.ts`, "survives
+ * being unsubscribed and subscribed again") and the live source was not, which
+ * is why every test above passed while the real screen was dead — they all
+ * subscribe exactly once.
+ */
+it('survives being unsubscribed and subscribed again', async () => {
+  vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: ride() } })
+
+  const source = liveRideSource()
+
+  // The StrictMode cleanup, before any answer has arrived.
+  source.subscribe(() => {})()
+
+  const state = await new Promise<RideState>((resolve) => {
+    const stop = source.subscribe((s) => {
+      if (s.captain !== null || s.phase !== 'searching') {
+        stop()
+        resolve(s)
+      }
+    })
+  })
+
+  expect(state.phase).toBe('accepted')
+  expect(state.captain?.name).toBe('Moses Kirabo')
+})
+
+/**
+ * The other half of the restart fix, and the reason it counts generations
+ * rather than flipping a boolean.
+ *
+ * A request already in flight when the last listener leaves resolves *after*
+ * the next subscribe. A flag cannot tell that straggler apart from the new
+ * loop, so it schedules a successor of its own and the screen quietly polls
+ * twice as often for the rest of the ride — on somebody's mobile data.
+ */
+it('runs one poll loop after a restart, not two', async () => {
+  vi.useFakeTimers()
+  const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: ride() } })
+
+  const source = liveRideSource()
+  source.subscribe(() => {})()
+
+  const stop = source.subscribe(() => {})
+  await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 3)
+  stop()
+
+  // One immediate request per subscribe (the second orphaned at once), then
+  // one chain ticking three times. A second chain would show up as extra.
+  expect(get).toHaveBeenCalledTimes(5)
+})
+
+it('stops polling once the last listener leaves', async () => {
+  vi.useFakeTimers()
+  const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: ride() } })
+
+  const stop = liveRideSource().subscribe(() => {})
+  await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 2)
+  stop()
+  const seen = get.mock.calls.length
+
+  // Navigating away must not leave a request going out every four seconds
+  // for as long as the tab is open.
+  await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 5)
+
+  expect(get).toHaveBeenCalledTimes(seen)
+})
+
+it('sends nothing until somebody is watching', () => {
+  vi.useFakeTimers()
+  const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: ride() } })
+
+  liveRideSource()
+
+  expect(get).not.toHaveBeenCalled()
 })
 
 it('holds the last known state when a poll fails', async () => {

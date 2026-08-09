@@ -10,10 +10,12 @@ use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use Modules\Bookings\Enums\OrderRequestServiceType;
 use Modules\Bookings\Enums\OrderRequestStatus;
+use Modules\Dispatch\Models\DispatchOffer;
 use Modules\Trips\Models\Trip;
 
 /**
@@ -136,6 +138,20 @@ class OrderRequest extends Model
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class);
+    }
+
+    /**
+     * Every driver this order was put in front of (ADR-0024 §3).
+     *
+     * Declared on this side rather than only queried from the other because
+     * the retry sweep asks "has this order ever reached anybody" —
+     * `whereDoesntHave('offers')` — and that is a question about the order.
+     *
+     * @return HasMany<DispatchOffer, $this>
+     */
+    public function offers(): HasMany
+    {
+        return $this->hasMany(DispatchOffer::class);
     }
 
     /**

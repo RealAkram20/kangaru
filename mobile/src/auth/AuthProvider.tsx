@@ -62,6 +62,35 @@ async function releasePushRegistration(api: ApiClient): Promise<void> {
   }
 }
 
+/**
+ * How long to wait for the keystore before giving up on it.
+ *
+ * Reading two small values out of Keychain/Keystore is a few milliseconds on
+ * any working device, so a wait this long already means something is wrong.
+ */
+const SESSION_RESTORE_TIMEOUT_MS = 3_000;
+
+/**
+ * Resolves to null rather than waiting forever.
+ *
+ * A `try/catch/finally` around the restore was the first fix and it was not
+ * enough: it handles a promise that *rejects*, and the failure here is a
+ * promise that never settles at all. `SecureStore.getItemAsync` can hang —
+ * an unavailable native module, a keystore the OS will not open — and a
+ * `finally` never runs for a pending promise. The app sat on its spinner
+ * exactly as before.
+ *
+ * A race is the honest shape for "this must not be able to block startup".
+ * The losing promise is left to settle whenever it likes; nothing is
+ * listening.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    promise,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [user, setUser] = useState<User | null>(null);
@@ -87,14 +116,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void (async () => {
-      const session = await readSession();
+      try {
+        const session = await withTimeout(readSession(), SESSION_RESTORE_TIMEOUT_MS);
 
-      if (session !== null) {
-        setCurrentToken(session.token);
-        setUser(session.user);
+        if (session !== null) {
+          setCurrentToken(session.token);
+          setUser(session.user);
+        }
+      } catch {
+        // Signed out, not stuck.
+        //
+        // `readSession` guards its own JSON parse but not the keystore
+        // itself, and `SecureStore.getItemAsync` can reject — a device with
+        // no lock screen, a keystore the OS has invalidated, an Expo Go
+        // build without the native module. Without this catch the rejection
+        // escaped, `setReady(true)` never ran, and the app sat on its
+        // loading spinner forever with nothing to tell the driver.
+        //
+        // `readSession`'s own docblock already picked the right answer for
+        // the case it does handle: "the driver signs in again, which costs
+        // seconds; a crash loop costs the shift." A spinner that never
+        // resolves is worse than either.
+      } finally {
+        // Always. Whatever happened above, the app has finished deciding
+        // whether it has a session — and `ready` means exactly that, not
+        // "a session was found".
+        setReady(true);
       }
-
-      setReady(true);
     })();
   }, []);
 

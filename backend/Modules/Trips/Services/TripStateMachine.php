@@ -24,9 +24,22 @@ class TripStateMachine
     ) {}
 
     /**
+     * Moves a trip along its lifecycle, recording who did it.
+     *
+     * `$actor` is nullable because not every principal on this platform is a
+     * `User`. A walk-in passenger cancelling their own ride (ADR-0024 §7) is
+     * authenticated on the `customer` guard and has no staff account, and
+     * inventing a system user to stand in for them would put a fictitious
+     * name on a real audit row. `trip_events.user_id` is already nullable and
+     * `TripEvent::record` already takes `?User`; this signature was the only
+     * thing insisting otherwise.
+     *
+     * Null means "no staff user did this", not "nobody did" — callers pass a
+     * note saying who, and every existing caller still passes an actor.
+     *
      * @param  array<string, mixed>  $payload
      */
-    public function transition(Trip $trip, TripStatus $to, User $actor, array $payload = []): Trip
+    public function transition(Trip $trip, TripStatus $to, ?User $actor, array $payload = []): Trip
     {
         $from = $trip->status;
 

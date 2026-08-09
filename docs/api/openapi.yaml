@@ -1738,6 +1738,63 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/customer/rides/active/cancellation:
+    post:
+      summary: The passenger calls their current ride off.
+      description: >
+        ADR-0024 §7. No identifier, for the same reason the read above takes
+        none: the ride is whichever one is active for this token.
+
+
+        One button, two acts. Before a captain is assigned there is no trip —
+        the order is closed and any offer still out is superseded, so a driver
+        cannot accept a ride that has just been called off. After one is
+        assigned the trip is cancelled through `TripStateMachine`, releasing
+        the driver and vehicle back into the pool.
+
+
+        **409 once the journey has started.** `TripStatus` has no edge from
+        `trip_started` to `cancelled`: a journey under way ends by being
+        finished, and the opening odometer is evidence that cannot be
+        un-booked. A passenger who needs out mid-journey speaks to their
+        Captain.
+
+
+        Whether anybody is charged is deliberately not decided here.
+        ADR-0024 defers walk-in cancellation charges by name, so
+        `cancellation_charge_applicable` is left null — the column's own way
+        of saying undecided.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason:
+                  description: >
+                    The customer's own words. Free text rather than an enum:
+                    the screen's closed list ends in "Something else", which
+                    exists precisely to carry a sentence.
+                  type: ['string', 'null']
+                  maxLength: 500
+      responses:
+        '200':
+          description: The ride was cancelled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { enum: [null] }
+        default:
+          $ref: '#/components/responses/Error'
+
   # ------------------------------------------------------------------
   # Device registration (Modules/Notifications) — ADR-0025 §4
   # ------------------------------------------------------------------
@@ -4143,6 +4200,7 @@ components:
         - license_number
         - license_expiry
         - status
+        - vehicle_id
         - account
         - created_at
         - updated_at
@@ -4157,6 +4215,12 @@ components:
         license_number: { type: string }
         license_expiry: { $ref: '#/components/schemas/NullableTimestamp' }
         status: { enum: [active, suspended, inactive] }
+        vehicle_id:
+          description: >
+            The vehicle this driver drives, or null when the depot allocates
+            one per shift instead. Restated from Driver for the reason given
+            above.
+          type: ['integer', 'null']
         account:
           oneOf:
             - type: 'null'
@@ -4189,6 +4253,7 @@ components:
         - license_number
         - license_expiry
         - status
+        - vehicle_id
         - account
         - created_at
         - updated_at
@@ -4201,6 +4266,15 @@ components:
         license_number: { type: string }
         license_expiry: { $ref: '#/components/schemas/NullableTimestamp' }
         status: { enum: [active, suspended, inactive] }
+        vehicle_id:
+          description: >
+            The vehicle this driver drives, or null when the depot allocates
+            one per shift instead. A fact about the person rather than about
+            the shift: most drivers here own their vehicle, and for a boda
+            rider the rider and the motorcycle are not separable.
+            `driver_presence.vehicle_id` remains the per-shift answer and
+            still wins when it is set.
+          type: ['integer', 'null']
         account:
           description: >
             The account this driver signs in with, or null if they cannot sign

@@ -24,6 +24,11 @@ class DriverResource extends JsonResource
             'license_number' => $this->license_number,
             'license_expiry' => $this->license_expiry,
             'status' => $this->status,
+            // The vehicle they drive. Served flat rather than as a nested
+            // object: a driver list is read to answer "who is out in what",
+            // and eager-loading a vehicle per row for a registration number
+            // is the N+1 AGENTS.md forbids.
+            'vehicle_id' => $this->vehicle_id,
             // Whether this driver can sign in, and as whom (ADR-0016).
             //
             // Always present, never conditional on the relation being

@@ -54,5 +54,17 @@ Route::prefix('customer')->group(function () {
         // is nothing in the request to tamper with.
         Route::get('/rides/active', [CustomerRideController::class, 'active'])
             ->name('customer.rides.active');
+
+        // Calling the ride off (ADR-0024 §7). Same reasoning as the read
+        // above: no identifier, because the ride is whichever one is active
+        // for this token and there is nothing in the request to tamper with.
+        //
+        // A nested resource under `active` rather than `DELETE /rides/active`
+        // — cancelling creates a cancellation, it does not delete the ride,
+        // and the trip and the order both survive it with a status and a
+        // reason on them. Matches how `/me/offers/{id}/acceptance` names the
+        // driver's side of the same idea.
+        Route::post('/rides/active/cancellation', [CustomerRideController::class, 'cancel'])
+            ->name('customer.rides.cancel');
     });
 });

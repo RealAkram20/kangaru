@@ -2,14 +2,22 @@
 
 namespace Modules\Customers\Controllers;
 
+use App\Enums\ErrorCode;
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Modules\Bookings\Enums\OrderRequestStatus;
 use Modules\Bookings\Models\OrderRequest;
+use Modules\Customers\Requests\CancelRideRequest;
 use Modules\Customers\Resources\CustomerRideResource;
+use Modules\Dispatch\Enums\DispatchOfferStatus;
+use Modules\Dispatch\Models\DispatchOffer;
+use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
+use Modules\Trips\Services\TripStateMachine;
 
 /**
  * The ride a customer is currently waiting on or taking (ADR-0024 §7).
@@ -49,23 +57,14 @@ class CustomerRideController extends Controller
      * a 404 is an error it would have to translate into that state — which
      * means a genuinely broken request would render as "no ride" too.
      */
+    public function __construct(private readonly TripStateMachine $stateMachine) {}
+
     public function active(Request $request): JsonResponse
     {
         /** @var Customer $customer */
         $customer = $request->user('customer');
 
-        $ride = OrderRequest::query()
-            ->where('customer_id', $customer->id)
-            // Immediate rides only. A booking for next Tuesday is not
-            // something to show a live map for, and ADR-0024 does not offer
-            // scheduled rides to drivers yet either — the two agree on
-            // purpose, so the screen never waits for a search that is not
-            // running.
-            ->where(fn ($q) => $q->whereNull('scheduled_for')->orWhere('scheduled_for', '<=', now()))
-            // Newest first: a customer who ordered twice is watching the one
-            // they just placed.
-            ->latest('id')
-            ->first();
+        $ride = $this->activeRideFor($customer);
 
         if ($ride === null) {
             return ApiResponse::success(null, 'No ride in progress.');
@@ -99,6 +98,145 @@ class CustomerRideController extends Controller
         $ride->setRelation('trip', $trip);
 
         return ApiResponse::success(new CustomerRideResource($ride), 'Your ride.');
+    }
+
+    /**
+     * The passenger calls the ride off (ADR-0024 §7).
+     *
+     * ## Two different acts behind one button
+     *
+     * Before a captain is assigned there is no trip, only an order the
+     * matcher is working — so cancelling *closes the order* and supersedes
+     * whatever offer happens to be out. After one is assigned there is a real
+     * trip holding a real driver and vehicle, and cancelling has to release
+     * them through `TripStateMachine` like every other status write.
+     *
+     * The customer taps one control and should not have to know which of
+     * those they are doing, so this endpoint decides.
+     *
+     * ## What it refuses, and why that is not a bug
+     *
+     * `TripStatus` has no edge from `trip_started` to `cancelled`. A journey
+     * under way ends by being finished, not by being called off, and the
+     * odometer reading that opens it is evidence that cannot be un-booked.
+     * A passenger who needs out mid-journey is having a conversation with
+     * their driver, not pressing a button — so this answers 409 and says so
+     * plainly rather than pretending.
+     *
+     * ## What it deliberately does not decide
+     *
+     * Whether anybody is charged. ADR-0024 defers walk-in cancellation
+     * charges by name — who pays what when a ride is called off ninety
+     * seconds before pickup is a commercial decision nobody has made — so
+     * `cancellation_charge_applicable` is left null, which is the column's
+     * own way of saying "undecided". Writing `false` here would quietly make
+     * that decision on the operator's behalf, for every ride, forever.
+     */
+    public function cancel(CancelRideRequest $request): JsonResponse
+    {
+        /** @var Customer $customer */
+        $customer = $request->user('customer');
+
+        $ride = $this->activeRideFor($customer);
+
+        if ($ride === null) {
+            return ApiResponse::error(
+                ErrorCode::NOT_FOUND,
+                'You have no ride in progress to cancel.',
+                [],
+                404,
+            );
+        }
+
+        $reason = $request->string('reason')->value() ?: null;
+        $trip = $this->tripFor($customer, $ride);
+
+        if ($trip !== null && ! $trip->status->occupiesVehicle()) {
+            return ApiResponse::error(
+                ErrorCode::NOT_FOUND,
+                'You have no ride in progress to cancel.',
+                [],
+                404,
+            );
+        }
+
+        if ($trip !== null && ! $trip->status->canTransitionTo(TripStatus::CANCELLED)) {
+            return ApiResponse::error(
+                ErrorCode::INVALID_TRIP_TRANSITION,
+                'Your trip has already started, so it cannot be cancelled here. '
+                .'Please speak to your Captain.',
+                [],
+                409,
+            );
+        }
+
+        DB::transaction(function () use ($ride, $trip, $reason) {
+            if ($trip !== null) {
+                $this->stateMachine->transition(
+                    $trip,
+                    TripStatus::CANCELLED,
+                    // No staff user did this — the passenger did. See
+                    // `TripStateMachine::transition` for why that is a null
+                    // rather than a stand-in account.
+                    null,
+                    ['notes' => $this->cancellationNote($reason)],
+                );
+            }
+
+            // Every offer still out on this order is dead. Only reachable
+            // before a captain was assigned, and written for the case where
+            // `offer_wave_size` is above one.
+            DispatchOffer::query()
+                ->where('order_request_id', $ride->id)
+                ->live()
+                ->update([
+                    'status' => DispatchOfferStatus::SUPERSEDED,
+                    'responded_at' => now(),
+                ]);
+
+            // A converted order keeps its status — the trip carries the
+            // cancellation and `converted` has nowhere legal to go. An order
+            // still in the queue is closed, so the matcher stops working it
+            // and the desk does not ring somebody who changed their mind.
+            if (in_array($ride->status, [OrderRequestStatus::NEW, OrderRequestStatus::CONTACTED], true)) {
+                $ride->forceFill([
+                    'status' => OrderRequestStatus::CLOSED,
+                    'dispatcher_notes' => $this->cancellationNote($reason),
+                ])->save();
+            }
+        });
+
+        return ApiResponse::success(null, 'Your ride has been cancelled.');
+    }
+
+    private function cancellationNote(?string $reason): string
+    {
+        return $reason === null
+            ? 'Cancelled by the passenger.'
+            : "Cancelled by the passenger: {$reason}";
+    }
+
+    /**
+     * The order this customer is currently watching, or null.
+     *
+     * Shared by `active()` and `cancel()` precisely so the two cannot
+     * disagree about which ride the customer means — the cancel button sits
+     * on the screen the other one renders.
+     */
+    private function activeRideFor(Customer $customer): ?OrderRequest
+    {
+        return OrderRequest::query()
+            ->where('customer_id', $customer->id)
+            // Immediate rides only. A booking for next Tuesday is not
+            // something to show a live map for, and ADR-0024 does not offer
+            // scheduled rides to drivers yet either — the two agree on
+            // purpose, so the screen never waits for a search that is not
+            // running.
+            ->where(fn ($q) => $q->whereNull('scheduled_for')->orWhere('scheduled_for', '<=', now()))
+            // Newest first: a customer who ordered twice is watching the one
+            // they just placed.
+            ->latest('id')
+            ->first();
     }
 
     /**

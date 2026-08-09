@@ -60,6 +60,21 @@ import type { VehicleKind } from './MapPanel'
  * takes the accept without the customer watching it. It stays in the type
  * because a real matcher may want to surface a decline that reopens the
  * search, which is a thing the customer would need told about.
+ *
+ * ## Why the in-journey trio is here
+ *
+ * `trip_started`, `waiting` and `trip_resumed` are `TripStatus` cases the
+ * driver's app posts once the passenger is aboard, and `CustomerRideResource`
+ * sends the trip's status through verbatim — so they arrive on this screen
+ * whether or not the type admits them. They were missing, and the failure was
+ * silent in the worst way: the sheet has no copy for an unknown phase and no
+ * captain card either, so the moment a driver tapped "Start trip" the
+ * passenger's screen emptied out mid-journey.
+ *
+ * They are deliberately **not** in `isCancellable`. `TripStatus` allows no
+ * edge from `trip_started` to `cancelled` — a journey under way is ended by
+ * finishing it, not by calling it off — so offering the button would be
+ * offering a refusal.
  */
 export type RidePhase =
   | 'searching'
@@ -69,6 +84,9 @@ export type RidePhase =
   | 'driver_en_route'
   | 'driver_arrived'
   | 'passenger_onboard'
+  | 'trip_started'
+  | 'waiting'
+  | 'trip_resumed'
   | 'trip_completed'
   | 'cancelled'
 

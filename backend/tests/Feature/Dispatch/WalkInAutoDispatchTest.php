@@ -7,6 +7,7 @@ use App\Support\Auth\ClientScope;
 use Illuminate\Support\Carbon;
 use Modules\Bookings\Enums\OrderRequestStatus;
 use Modules\Bookings\Models\OrderRequest;
+use Modules\Bookings\Services\OrderRequestService;
 use Modules\Dispatch\Enums\DispatchOfferStatus;
 use Modules\Dispatch\Models\DispatchOffer;
 use Modules\Dispatch\Services\DispatchOfferService;
@@ -317,6 +318,53 @@ it('reports the search state in the ride screen\'s own vocabulary', function () 
     $this->actingAs($user, 'sanctum')->postJson("/api/v1/me/offers/{$offer->id}/acceptance")->assertStatus(201);
 
     expect($offers->searchState($order->refresh()))->toBe('assigned');
+});
+
+it('stops saying it is searching once nothing will look again', function () {
+    // Nobody on duty, so no wave is ever created.
+    $order = walkInOrder();
+    $offers = app(DispatchOfferService::class);
+
+    $offers->dispatch($order);
+
+    // Round zero: `offerWave` writes no row when there is nobody to offer to.
+    expect(DispatchOffer::query()->where('order_request_id', $order->id)->count())->toBe(0);
+
+    // Inside the retry window this is honestly still a search — a driver may
+    // be two minutes from signing on, and `retryUnoffered()` will pick it up.
+    expect($offers->searchState($order))->toBe('searching');
+
+    // Past the window nothing revisits this order ever again: the retry is
+    // bounded by it, and the lapsed-offer sweep only knows about offers, of
+    // which there are none. Before this, `max('round')` stayed at zero, the
+    // `>= offer_max_rounds` test could never fire, and the customer's screen
+    // showed "Finding you a captain" forever behind a full progress rail.
+    $order->forceFill([
+        'created_at' => now()->subMinutes((int) config('dispatch.offer_retry_window_minutes') + 1),
+    ])->save();
+
+    expect($offers->searchState($order->refresh()))->toBe('unmatched');
+});
+
+it('tells the customer the search is over once the desk closes the order', function () {
+    [, $driver] = onDutyDriverAt(0.3486, 32.5825);
+    $order = walkInOrder();
+    $offers = app(DispatchOfferService::class);
+
+    $offers->dispatch($order);
+    expect($offers->searchState($order->refresh()))->toBe('offered');
+
+    // A dispatcher gives up on it by hand while an offer is still out. The
+    // human decision outranks the matcher: leaving the screen on `offered`
+    // would have the customer waiting on a ride nobody is working any more.
+    app(OrderRequestService::class)->move(
+        $order,
+        OrderRequestStatus::CLOSED,
+        User::factory()->create(['tenant_id' => null]),
+        'Customer rang off.',
+    );
+
+    expect($offers->searchState($order->refresh()))->toBe('unmatched');
 });
 
 it('never offers a ride to a driver who is off duty', function () {

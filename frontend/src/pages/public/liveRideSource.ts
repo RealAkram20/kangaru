@@ -65,7 +65,20 @@ export function liveRideSource(): RideSource {
 
   let state: RideState = INITIAL_RIDE_STATE
   let timer: ReturnType<typeof setTimeout> | null = null
-  let stopped = false
+  /**
+   * Which poll loop is the live one.
+   *
+   * Bumped on every start *and* every stop, which is what makes the source
+   * survive being torn down and set up again. A boolean `stopped` flag cannot:
+   * a request already in flight when the last listener leaves resolves after
+   * the restart, and with only a flag to consult it cannot tell "I am the
+   * current loop" from "I am the ghost of the previous one" — so it schedules
+   * a second chain alongside the new one and the screen polls twice over.
+   *
+   * Comparing a captured generation against this one answers that exactly:
+   * a poll whose generation is stale emits nothing and schedules nothing.
+   */
+  let generation = 0
   /** Wall-clock start, used only for the search rail. See `searchProgress`. */
   const startedAt = Date.now()
 
@@ -74,12 +87,12 @@ export function liveRideSource(): RideSource {
     listeners.forEach((listener) => listener(state))
   }
 
-  const poll = async () => {
+  const poll = async (mine: number) => {
     try {
       const response = await apiClient.get('/customer/rides/active')
       const ride = response.data.data as RideResponse | null
 
-      if (stopped) return
+      if (mine !== generation) return
 
       // Null means the ride is over, or there never was one. The screen's
       // own `trip_completed`/`cancelled` handling has already run by then;
@@ -99,18 +112,39 @@ export function liveRideSource(): RideSource {
        * next tick recovers.
        */
     } finally {
-      if (!stopped) {
-        timer = setTimeout(() => void poll(), POLL_INTERVAL_MS)
+      if (mine === generation) {
+        timer = setTimeout(() => void poll(mine), POLL_INTERVAL_MS)
       }
     }
   }
-
-  void poll()
 
   return {
     subscribe(listener) {
       listener(state)
       listeners.add(listener)
+
+      /*
+       * The first listener starts the loop — and starts it *again* after a
+       * previous one ended it.
+       *
+       * React StrictMode mounts, cleans up and mounts again in development,
+       * and `RideScreen` subscribes in an effect, so the first cleanup lands
+       * before the first poll has ever come back. The earlier version treated
+       * that cleanup as final: the passenger's screen sat on "Finding you a
+       * captain" for the whole ride while the server had been answering
+       * `accepted` since the driver tapped it. Every test here passed, because
+       * they all subscribe exactly once.
+       *
+       * `simulatedRideSource` learned this same lesson already, in the same
+       * words — see its `subscribe`. This is the live half of that fix.
+       *
+       * Starting here rather than at construction also means a source nobody
+       * is watching sends no requests at all.
+       */
+      if (listeners.size === 1) {
+        generation += 1
+        void poll(generation)
+      }
 
       return () => {
         listeners.delete(listener)
@@ -118,25 +152,67 @@ export function liveRideSource(): RideSource {
         // The last listener leaving ends the poll. Without this, navigating
         // away from the ride screen leaves a request going out every four
         // seconds for as long as the tab is open.
+        //
+        // The bump orphans whatever is in flight, so a response that arrives
+        // after this point neither emits to a dead screen nor schedules a
+        // successor.
         if (listeners.size === 0) {
-          stopped = true
-          if (timer !== null) clearTimeout(timer)
+          generation += 1
+          if (timer !== null) {
+            clearTimeout(timer)
+            timer = null
+          }
         }
       }
     },
 
-    cancel() {
+    cancel(reason) {
       /*
-       * Deliberately does nothing, and `RideState.cancellable` is what stops
-       * the button being offered in the first place.
+       * The passenger calls their own ride off (ADR-0024 §7).
        *
-       * ADR-0024 defers customer cancellation by name: cancelling has a
-       * charge rule (`trips.cancellation_charge_applicable`), and who pays
-       * what when somebody calls off a ride ninety seconds before pickup is a
-       * commercial decision nobody has made. Wiring this to an endpoint that
-       * does not exist would be worse than the button's absence — it would
-       * appear to work.
+       * This was a deliberate no-op while there was no endpoint behind it —
+       * a button wired to nothing is worse than no button, because it appears
+       * to work. There is one now.
+       *
+       * Note what is still *not* decided here: whether anybody is charged.
+       * The server leaves `cancellation_charge_applicable` null because the
+       * commercial rule does not exist yet, and this screen does not invent
+       * one either.
        */
+      void (async () => {
+        try {
+          await apiClient.post('/customer/rides/active/cancellation', { reason })
+        } catch {
+          /*
+           * Swallowed, and the poll is what corrects the screen.
+           *
+           * The interesting failure is a 409 — the driver started the journey
+           * in the seconds between the sheet opening and the tap landing, and
+           * the ride genuinely cannot be cancelled any more. Forcing a
+           * `cancelled` state locally would tell a passenger sitting in a
+           * moving car that their ride was called off. The next tick brings
+           * the truth, whichever way it went.
+           */
+        }
+
+        /*
+         * Ask again straight away rather than waiting out the interval: the
+         * customer just acted and is watching for the screen to acknowledge
+         * it, and four seconds of nothing reads as a tap that did not land.
+         *
+         * The running chain is cancelled and restarted under a new
+         * generation, so this does not leave two loops going — the same
+         * bookkeeping `subscribe` does, and the reason `generation` exists.
+         */
+        if (listeners.size === 0) return
+
+        generation += 1
+        if (timer !== null) {
+          clearTimeout(timer)
+          timer = null
+        }
+        void poll(generation)
+      })()
     },
 
     setDestination() {
@@ -166,8 +242,18 @@ function toRideState(ride: RideResponse, startedAt: number): RideState {
     estimate: null,
     fare: null,
     cancelledReason: ride.phase === 'cancelled' ? 'The ride was called off.' : null,
-    // No endpoint, so no button. See `cancel()` above.
-    cancellable: false,
+    /*
+     * There is an endpoint behind the button now (ADR-0024 §7), so this is
+     * true — and `isCancellable(phase)` is the other half of the pair, which
+     * decides whether calling off makes sense at this point in the ride.
+     *
+     * The two are separate on purpose and both still matter: this one says
+     * something is wired up, that one keeps the button away from the phases
+     * `TripStatus` has no `cancelled` edge from. A passenger already moving
+     * cannot un-start their journey, and offering the control there would be
+     * offering a refusal.
+     */
+    cancellable: true,
   }
 }
 

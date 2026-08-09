@@ -163,4 +163,22 @@ return [
 
     'offer_max_rounds' => (int) max(1, (int) env('DISPATCH_OFFER_MAX_ROUNDS', 5)),
 
+    /*
+    | How long an unfulfilled order keeps being re-offered.
+    |
+    | `dispatch()` runs once, when the order arrives. If nobody was on duty
+    | at that instant it finds nothing — and without a retry the order is
+    | never revisited, because the sweep only knows about offers and there
+    | are none. A passenger who ordered thirty seconds before a driver signed
+    | on watched a spinner until they gave up. That was observed, not
+    | theorised.
+    |
+    | Bounded, because a ride somebody asked for this morning is not one to
+    | send a driver to this afternoon. Past the window the order is the
+    | desk's to phone about — which is where ADR-0024 §4 puts an exhausted
+    | search anyway.
+    */
+
+    'offer_retry_window_minutes' => (int) max(1, (int) env('DISPATCH_OFFER_RETRY_WINDOW_MINUTES', 30)),
+
 ];

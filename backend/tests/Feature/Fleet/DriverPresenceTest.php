@@ -99,6 +99,34 @@ it('refuses to put a driver on approved leave on duty', function () {
     expect(app(DriverPresenceStore::class)->get($driver->id))->toBeNull();
 });
 
+it('lets a driver carrying a passenger go back on duty', function () {
+    [$user, $driver] = signedInDriver();
+    $vehicle = Vehicle::factory()->create();
+
+    $trip = Modules\Trips\Models\Trip::factory()->create([
+        'driver_id' => $driver->id,
+        'vehicle_id' => $vehicle->id,
+        'status' => Modules\Trips\Enums\TripStatus::DRIVER_EN_ROUTE,
+    ]);
+
+    // `AvailabilityService` calls this driver unavailable, and for the
+    // dispatcher's question — "may I give them another job" — it is right.
+    // This is the other question, and an occupying trip is the strongest
+    // possible argument *for* being on duty rather than against it.
+    //
+    // Refusing here locked drivers out of their own switch: anyone who closed
+    // the app mid-job, or signed off by accident, got 409 ON_TRIP and stayed
+    // off duty until somebody completed the trip for them. Seen on a live
+    // server — a driver sat off duty in the app while holding a live trip.
+    $this->actingAs($user, 'sanctum')
+        ->putJson('/api/v1/me/duty', ['on_duty' => true])
+        ->assertOk()
+        ->assertJsonPath('data.on_duty', true);
+
+    expect(app(DriverPresenceStore::class)->get($driver->id)?->onDuty)->toBeTrue();
+    expect($trip->fresh()->status)->toBe(Modules\Trips\Enums\TripStatus::DRIVER_EN_ROUTE);
+});
+
 it('records a heartbeat and reports the driver as dispatchable', function () {
     [$user, $driver] = signedInDriver();
 

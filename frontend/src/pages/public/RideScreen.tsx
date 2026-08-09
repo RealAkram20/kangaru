@@ -87,10 +87,44 @@ const PRE_ASSIGNMENT_COPY: Record<string, { title: string; body: string }> = {
   },
 }
 
+/**
+ * Whether the passenger is in the car — the whole in-journey run, not just
+ * the moment they got in.
+ *
+ * `passenger_onboard` is where the driver's app starts this sequence and
+ * `trip_started` is where it books the opening odometer; `waiting` and
+ * `trip_resumed` are a stop along the way. To this screen they are one state:
+ * you are in the car and moving towards your destination.
+ */
+function isOnJourney(phase: RidePhase): boolean {
+  return (
+    phase === 'passenger_onboard' ||
+    phase === 'trip_started' ||
+    phase === 'waiting' ||
+    phase === 'trip_resumed'
+  )
+}
+
 /** The captain card's own headline, which is the thing being waited on. */
 function captainHeadline(phase: RidePhase, captain: Captain, etaSeconds: number | null): string {
   if (phase === 'driver_arrived') return 'Your Captain is here'
-  if (phase === 'passenger_onboard') return 'On your trip'
+  if (phase === 'waiting') return 'Stopped for a moment'
+  if (isOnJourney(phase)) return 'On your trip'
+
+  /*
+   * No ETA at all is the normal case, not the exception.
+   *
+   * The live source sends `etaSeconds: null` and `etaMinutes: 0` on every
+   * ride by design — ADR-0020 §3 ranks on straight-line distance, and a
+   * minutes figure derived from it is a promise the platform cannot keep. The
+   * old fallback read that zero as a countdown and told every real passenger
+   * their captain arrived "in 0 min" while the rider was still kilometres
+   * away. A screen that shows less is better than a screen that lies.
+   */
+  if (etaSeconds === null && captain.etaMinutes <= 0) {
+    return 'Your Captain is on the way'
+  }
+
   /*
    * Ceiling, not rounding. Rounding crosses each minute boundary halfway
    * through it, so the same number can appear to stall and then drop two —
@@ -194,7 +228,7 @@ export function RideScreen({
    * the car is no longer yours to watch.
    */
   const showCaptain =
-    phase === 'accepted' || phase === 'driver_en_route' || phase === 'passenger_onboard'
+    phase === 'accepted' || phase === 'driver_en_route' || isOnJourney(phase)
 
   /** The assigned phases, where the captain card is the whole screen. */
   const assigned =
@@ -202,10 +236,10 @@ export function RideScreen({
     (phase === 'accepted' ||
       phase === 'driver_en_route' ||
       phase === 'driver_arrived' ||
-      phase === 'passenger_onboard')
+      isOnJourney(phase))
 
   /** In the car: the map is the screen, the sheet is a strip. */
-  const onTrip = phase === 'passenger_onboard'
+  const onTrip = isOnJourney(phase)
   const sheetFraction = onTrip ? SHEET_FRACTION_ON_TRIP : SHEET_FRACTION
 
   return (

@@ -263,6 +263,19 @@ class DispatchOfferService
      */
     public function advance(): int
     {
+        // Orders nobody could take when they arrived, before anything else.
+        //
+        // This was missing, and it is the difference between a search that
+        // recovers and one that does not. `dispatch()` runs once, when the
+        // order is received; if no driver is on duty at that instant it
+        // returns empty and **nothing ever revisits the order** — the sweep
+        // below only knows about offers, and there are none. A passenger who
+        // ordered thirty seconds before a driver signed on watched a spinner
+        // until they gave up.
+        //
+        // Found by watching exactly that happen on a live server.
+        $this->retryUnoffered();
+
         $lapsed = DispatchOffer::query()->lapsed()->get();
 
         if ($lapsed->isEmpty()) {
@@ -293,6 +306,53 @@ class DispatchOfferService
     }
 
     /**
+     * Offers again for rides that never reached anybody.
+     *
+     * Bounded two ways, because an unbounded version would re-dispatch every
+     * unfulfilled order in the table on every tick:
+     *
+     * - **By age.** `offer_retry_window_minutes` — a ride somebody asked for
+     *   this morning is not one to send a driver to this afternoon. Past the
+     *   window it is the desk's to phone about, which is where ADR-0024 §4
+     *   puts an exhausted search anyway.
+     * - **By state.** Only orders still open, with no trip and no live
+     *   offer. A converted order is done; one already out with a driver is
+     *   somebody else's turn.
+     */
+    private function retryUnoffered(): void
+    {
+        $window = (int) config('dispatch.offer_retry_window_minutes');
+
+        $stale = OrderRequest::query()
+            ->whereNull('trip_id')
+            ->whereIn('status', [OrderRequestStatus::NEW, OrderRequestStatus::CONTACTED])
+            ->where('created_at', '>=', now()->subMinutes($window))
+            // Immediate rides only, matching `receive()`: a booking for this
+            // evening is not something to offer now.
+            ->where(fn ($q) => $q->whereNull('scheduled_for')->orWhere('scheduled_for', '<=', now()))
+            // The scope is spelled out rather than called as `$q->live()`:
+            // inside `whereDoesntHave` the builder is typed against the base
+            // Model, so a model scope is not visible to it.
+            ->whereDoesntHave('offers', fn ($q) => $q
+                ->where('status', DispatchOfferStatus::OFFERED)
+                ->where('expires_at', '>', now()))
+            ->get();
+
+        foreach ($stale as $request) {
+            try {
+                $this->dispatch($request);
+            } catch (\Throwable $e) {
+                // One order that cannot be offered must not stop the rest —
+                // this runs unattended.
+                Log::warning('dispatch.retry_failed', [
+                    'order_request_id' => $request->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+    }
+
+    /**
      * Where this order's search has got to.
      *
      * Derived rather than stored, and that is a deliberate choice against a
@@ -311,6 +371,15 @@ class DispatchOfferService
             return 'assigned';
         }
 
+        // The desk gave up on this one, so the customer must be told rather
+        // than left on a rail with nothing behind it. Checked before the live
+        // offer: closing an order is a human decision that outranks whatever
+        // the matcher happens to still have out, and an offer left open on a
+        // closed order is exactly the case where the two would disagree.
+        if ($request->status === OrderRequestStatus::CLOSED) {
+            return 'unmatched';
+        }
+
         $live = DispatchOffer::query()
             ->where('order_request_id', $request->id)
             ->live()
@@ -322,13 +391,41 @@ class DispatchOfferService
 
         $round = (int) DispatchOffer::query()->where('order_request_id', $request->id)->max('round');
 
-        // Round zero means nobody has been offered anything yet, which reads
-        // as "still looking" — either the search has not started, or it ran
-        // and found nobody, and both are honestly "searching" until the
-        // rounds are used up. Claiming `unmatched` the instant a first pass
-        // came back empty would give up in front of the customer while a
-        // driver is two minutes from signing on.
-        return $round >= (int) config('dispatch.offer_max_rounds') ? 'unmatched' : 'searching';
+        if ($round >= (int) config('dispatch.offer_max_rounds')) {
+            return 'unmatched';
+        }
+
+        /*
+         * The search is over even though the rounds are not used up.
+         *
+         * Rounds only advance when a wave is actually *created*. When no
+         * driver is offerable, `offerWave()` writes no row and `max('round')`
+         * stays where it was — so an order that never reached anybody sits at
+         * round zero, `0 >= 5` is never true, and the customer's screen says
+         * "Finding you a captain" for the rest of time. Seen exactly that
+         * way: one order, no offers, no driver free, a full progress rail and
+         * a spinner that could not terminate.
+         *
+         * `retryUnoffered()` is what would revisit this order, and it is
+         * bounded by `offer_retry_window_minutes` — past that window nothing
+         * in the platform will ever look at this order again, because the
+         * lapsed-offer sweep only knows about offers and there are none. So
+         * the honest answer past the window is that no captain was found,
+         * which is the state ADR-0024 §4 defined and which hands the order to
+         * the desk's queue.
+         *
+         * Round zero inside the window still reads as `searching`, and that
+         * is deliberate: a driver may be two minutes from signing on, and
+         * giving up in front of the customer while the platform is still
+         * trying would be the opposite lie.
+         */
+        $window = (int) config('dispatch.offer_retry_window_minutes');
+
+        if ($request->created_at !== null && $request->created_at->lt(now()->subMinutes($window))) {
+            return 'unmatched';
+        }
+
+        return 'searching';
     }
 
     /**

@@ -13,9 +13,11 @@ use Modules\Drivers\Models\Driver;
 use Modules\Fleet\Requests\StorePresencePingRequest;
 use Modules\Fleet\Requests\UpdateDutyRequest;
 use Modules\Fleet\Resources\DriverPresenceResource;
+use Modules\Fleet\Services\Availability;
 use Modules\Fleet\Services\AvailabilityService;
 use Modules\Fleet\Support\DriverPresence;
 use Modules\Fleet\Support\DriverPresenceStore;
+use Modules\Trips\Models\Trip;
 
 /**
  * A driver going on duty, and saying where they are (ADR-0024 §2).
@@ -89,7 +91,7 @@ class DriverPresenceController extends Controller
         $this->presence->setDuty(
             $driver->id,
             $onDuty,
-            $onDuty ? $request->integer('vehicle_id') ?: null : null,
+            $onDuty ? $this->vehicleFor($driver, $request->integer('vehicle_id') ?: null) : null,
         );
 
         return ApiResponse::success(
@@ -152,6 +154,57 @@ class DriverPresenceController extends Controller
     }
 
     /**
+     * Which vehicle this driver is on shift with.
+     *
+     * Whatever they said, and otherwise **the one they drove last**.
+     *
+     * The fallback is not a convenience. A driver on duty with no vehicle is
+     * ranked by the matcher and then dropped as unofferable — they appear in
+     * the pool, score well on distance, and can never be sent anything. That
+     * is exactly what happened the first time this was run end to end: the
+     * app sends the vehicle the server already knew about, which on a first
+     * sign-on is nothing, so going on duty *cleared* the vehicle a
+     * dispatcher had set and made the driver permanently unofferable.
+     *
+     * Their last trip is the best answer the platform actually holds:
+     * `drivers` has no vehicle column, and a driver in Kampala turns up in
+     * the same car most days. It is a default, not a decision — an explicit
+     * `vehicle_id` always wins, and the depot can still reassign.
+     *
+     * Null when they have never driven anything. That driver still goes on
+     * duty and is still ranked; they simply cannot be sent a job until
+     * somebody says what they are driving, and the API says so rather than
+     * guessing.
+     */
+    private function vehicleFor(Driver $driver, ?int $stated): ?int
+    {
+        if ($stated !== null) {
+            return $stated;
+        }
+
+        // Their own vehicle, which for most drivers here — and for every
+        // boda rider — is simply *the* answer. Preferred over the last trip
+        // because it is a stated fact rather than an inference.
+        if ($driver->vehicle_id !== null) {
+            return $driver->vehicle_id;
+        }
+
+        $existing = $this->presence->get($driver->id);
+
+        if ($existing?->vehicleId !== null) {
+            return $existing->vehicleId;
+        }
+
+        // `allTenants()`: a driver's last trip may have been a walk-in, which
+        // carries no tenant, and nothing is bound in this request anyway —
+        // `TenantScope` would fail closed and answer null for every driver.
+        return Trip::allTenants()
+            ->where('driver_id', $driver->id)
+            ->latest('id')
+            ->value('vehicle_id');
+    }
+
+    /**
      * Why this driver may not start a shift, or null if they may.
      *
      * The window asked about is "now", not the assumed trip duration: this
@@ -164,6 +217,30 @@ class DriverPresenceController extends Controller
         $verdict = $this->availability->forDriver($driver->id, $now, $now);
 
         if ($verdict->free) {
+            return null;
+        }
+
+        /*
+         * Being on a trip is not a reason to refuse a shift — it is the most
+         * on-duty a driver can possibly be.
+         *
+         * `forDriver` answers the *dispatcher's* question, "may I give this
+         * driver another job", and for that an occupying trip is exactly the
+         * right refusal. This is a different question: "may this driver begin
+         * working". Reusing the verdict wholesale conflated the two, and the
+         * result locked drivers out of their own duty switch — a driver
+         * carrying a passenger who closed the app and reopened it, or who
+         * signed off by accident mid-job, got `409 ON_TRIP` and could not get
+         * back on duty until somebody completed the trip for them. Found on a
+         * live server: driver 7 sat off duty in the app while holding trip
+         * #14, with no way back in.
+         *
+         * Every other code still refuses, and those are the ones this guard
+         * was written for: `OUT_OF_SERVICE` is a suspension, `BLOCKED` is
+         * leave, `OFF_SHIFT` is a roster. Those say the driver should not be
+         * working at all. `ON_TRIP` says the opposite.
+         */
+        if ($verdict->code === Availability::ON_TRIP) {
             return null;
         }
 

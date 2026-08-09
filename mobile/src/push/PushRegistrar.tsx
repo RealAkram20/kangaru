@@ -1,5 +1,5 @@
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Device from 'expo-device';
-import * as Notifications from 'expo-notifications';
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
 
@@ -14,17 +14,28 @@ import { rememberPushToken } from './tokenStore';
  * shape as `GpsController` and `PresenceController`, and for the same reason:
  * a driver who never opens a particular screen must still be reachable.
  *
+ * ## Why `expo-notifications` is imported dynamically
+ *
+ * **Expo Go cannot do push at all since SDK 53**, and the module does not
+ * fail politely: importing it registers a token listener at module scope,
+ * which throws `[runtime not ready]` and takes the entire app down before a
+ * single screen renders. A static import here bricked the app in Expo Go —
+ * the one environment the driver flow is demonstrated in.
+ *
+ * So the import lives inside the effect, behind the Expo Go check below, and
+ * never executes there. Everything else in the app is unaffected.
+ *
  * ## Everything here is allowed to fail
  *
- * A refused permission, a simulator with no push support, an Expo project id
- * that is not configured yet — none of them is an error worth showing a
- * driver, and none of them stops the app working. ADR-0025 §3 is what makes
- * that true: push shortens the latency and is not the transport. Offers are
- * at `GET /me/offers`, which the app polls every five seconds while on duty.
+ * A refused permission, a simulator, an Expo Go session, an unconfigured
+ * project id — none is an error worth showing a driver, and none stops the
+ * app working. ADR-0025 §3 is what makes that true: push shortens the
+ * latency and is not the transport. Offers are at `GET /me/offers`, which
+ * the app polls every five seconds while on duty.
  *
- * So this is best-effort by construction. The failure it must avoid is the
- * opposite one — an app that refuses to start because a notification service
- * was unreachable.
+ * That is not a consolation here, it is the design working as intended: in
+ * Expo Go the driver gets every offer, five seconds later than a push would
+ * have delivered it.
  */
 export function PushRegistrar() {
   const { api, user } = useAuth();
@@ -38,12 +49,21 @@ export function PushRegistrar() {
 
     const register = async () => {
       try {
+        // Expo Go, checked before anything touches the module. `storeClient`
+        // is the Expo Go app itself; a development build reports `bare` or
+        // `standalone` and can push normally.
+        if (Constants.executionEnvironment === ExecutionEnvironment.StoreClient) {
+          return;
+        }
+
         // A simulator has no push token to give, and asking produces an
-        // error rather than a refusal. Checked first so the common
-        // development case is silent instead of noisy.
+        // error rather than a refusal.
         if (!Device.isDevice) {
           return;
         }
+
+        // Imported here, not at the top of the file. See the note above.
+        const Notifications = await import('expo-notifications');
 
         const existing = await Notifications.getPermissionsAsync();
         const granted =

@@ -1,8 +1,9 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { act } from 'react'
+import { StrictMode, act } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { apiClient } from '../../lib/apiClient'
 import { RideScreen } from './RideScreen'
 import { simulatedRideSource } from './ride'
 
@@ -58,6 +59,75 @@ afterEach(() => {
 })
 
 describe('RideScreen', () => {
+  /**
+   * The whole feature, mounted the way the app mounts it: no injected source,
+   * so this drives `createRideSource` → `liveRideSource` → the real poll, and
+   * wrapped in StrictMode because `main.tsx` is.
+   *
+   * Every other case here injects the simulation into a bare `render`, and
+   * that is why the reported bug got through with a green suite. The driver
+   * accepted, the server answered `accepted` with a captain, and the
+   * passenger's screen said "Finding you a captain" until they gave up:
+   * StrictMode's mount → cleanup → mount tore the poll down before its first
+   * response and the old source never restarted it.
+   *
+   * `test/harness.tsx` says the same thing about `useNotifications` — "every
+   * test passed; the browser showed a spinner". Same shape, same cost.
+   */
+  it('shows the captain once the driver accepts, mounted as the app mounts it', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      data: {
+        data: {
+          reference: 'KR-C5DBWK',
+          service_type: 'ride',
+          phase: 'accepted',
+          pickup: { label: 'Plot 9, Bukoto Street', latitude: 0.3476, longitude: 32.5825 },
+          dropoff: { label: 'Acacia Mall', latitude: null, longitude: null },
+          trip_id: 14,
+          captain: {
+            name: 'Demo Driver',
+            phone: '+256700000072',
+            phone_label: 'Demo Driver',
+            vehicle: 'Bajaj Boxer',
+            plate: 'UEB 001B',
+            vehicle_colour: null,
+          },
+          created_at: '2026-08-09T20:30:51.000Z',
+        },
+      },
+    })
+
+    render(
+      <StrictMode>
+        <MemoryRouter>
+          <RideScreen
+            reference="KR-C5DBWK"
+            pickup="Plot 9, Bukoto Street"
+            dropoff="Acacia Mall"
+            near={[32.5825, 0.3476]}
+            from={null}
+            to={null}
+          />
+        </MemoryRouter>
+      </StrictMode>,
+    )
+
+    // The plate, because that is what the passenger is looking for at a kerb
+    // — and the card renders only the captain's first name beside the rating.
+    await waitFor(() => expect(screen.getByText('UEB 001B')).toBeInTheDocument())
+
+    expect(screen.getByRole('link', { name: 'Contact Captain' })).toHaveAttribute(
+      'href',
+      'tel:+256700000072',
+    )
+
+    // The search is over, and the screen must say so rather than leaving the
+    // rail running underneath the captain it has just been given.
+    expect(
+      screen.queryByRole('heading', { name: 'Finding you a captain' }),
+    ).not.toBeInTheDocument()
+  })
+
   it('opens on the search, not on a captain it does not have yet', () => {
     renderMatching()
 
