@@ -14,12 +14,15 @@
   },
   "dependencies": {
     "axios": "^1.18.1",
+    "clsx": "^2.1.1",
     "lucide-react": "^1.27.0",
     "mapbox-gl": "^3.27.0",
     "maplibre-gl": "^5.24.0",
+    "motion": "^13.1.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-router-dom": "^7.18.1"
+    "react-router-dom": "^7.18.1",
+    "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

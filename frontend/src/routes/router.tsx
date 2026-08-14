@@ -8,6 +8,7 @@ import { CompaniesPage } from '../pages/CompaniesPage'
 import { CustomersPage } from '../pages/CustomersPage'
 import { DashboardPage } from '../pages/DashboardPage'
 import { DispatchPage } from '../pages/DispatchPage'
+import { DriverApplicationsPage } from '../pages/DriverApplicationsPage'
 import { DriversPage } from '../pages/DriversPage'
 import { InvoicesPage } from '../pages/InvoicesPage'
 import { LoginPage } from '../pages/LoginPage'
@@ -187,6 +188,14 @@ export const router = createBrowserRouter([
             <DriversPage />
           </RequireNavAccess>
         ),
+      },
+      {
+        // Deliberately NOT behind RequireNavAccess, for the same reason
+        // Roles and Settings are not: `drivers.view` can live on a custom
+        // role that a slug list cannot see, and the page gates on whether
+        // the API answers — a 403 renders as an answer, not an apology.
+        path: 'driver-applications',
+        element: <DriverApplicationsPage />,
       },
     ],
   },

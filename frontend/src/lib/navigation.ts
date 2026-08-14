@@ -109,6 +109,10 @@ const VISIBLE_TO: Record<string, Role[]> = {
   companies: ALL.filter((r) => r !== 'corporate_employee' && r !== 'driver'),
   vehicles: ALL.filter((r) => r !== 'corporate_employee' && r !== 'driver'),
   drivers: ALL.filter((r) => r !== 'corporate_employee' && r !== 'driver'),
+  // DriverApplicationPolicy::viewAny — `drivers.view`, the same read the
+  // fleet list needs. Deciding one takes more (ADR-0027), and the dialog's
+  // buttons answer 403 for anybody who lacks it.
+  'driver-applications': ALL.filter((r) => r !== 'corporate_employee' && r !== 'driver'),
 }
 
 export function canUseNavItem(role: string | undefined, id: string): boolean {

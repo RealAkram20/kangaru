@@ -7,6 +7,7 @@ import { Checkbox } from '../components/forms/Checkbox'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
 import { Select } from '../components/forms/Select'
+import { Textarea } from '../components/forms/Textarea'
 import { apiClient } from '../lib/apiClient'
 import { apiError, fieldErrors } from '../lib/apiError'
 
@@ -34,6 +35,18 @@ interface Settings {
     contact_phone: string | null
     logo_path: string | null
     favicon_path: string | null
+  }
+  legal: {
+    terms: string | null
+    privacy: string | null
+  }
+  auth: {
+    password_reset_enabled: boolean
+    google_enabled: boolean
+    facebook_enabled: boolean
+    google_client_ids: string | null
+    facebook_app_id: string | null
+    facebook_app_secret: SecretValue
   }
   regional: {
     currency: string
@@ -148,6 +161,8 @@ export function SystemSettingsPage() {
       <OrderingCard ordering={settings.ordering} onSaved={setSettings} />
       <BookingCard booking={settings.booking} onSaved={setSettings} />
       <RegionalCard regional={settings.regional} onSaved={setSettings} />
+      <LegalCard legal={settings.legal} onSaved={setSettings} />
+      <AuthMethodsCard auth={settings.auth} mailEnabled={settings.mail.enabled} onSaved={setSettings} />
       <MailCard mail={settings.mail} onSaved={setSettings} />
       <SmsCard sms={settings.sms} onSaved={setSettings} />
       <PaymentsCard payments={settings.payments} onSaved={setSettings} />
@@ -518,6 +533,206 @@ function OrderingCard({
             style={{ maxWidth: 120 }}
           />
         </FormField>
+
+        <SaveButton state={state} />
+      </form>
+    </Card>
+  )
+}
+
+/**
+ * The two notices the Driver App asks for consent to before it will create an
+ * account (ADR-0014, `legal` group).
+ *
+ * These live in settings rather than in a marketing page because of who has to
+ * be able to change them and how fast: a wrong privacy notice is a regulatory
+ * problem under the Data Protection and Privacy Act, 2019, and waiting for a
+ * release to correct one is not an answer. Saving here changes what the next
+ * driver reads, immediately.
+ */
+function LegalCard({
+  legal,
+  onSaved,
+}: {
+  legal: Settings['legal']
+  onSaved: (s: Settings) => void
+}) {
+  const [terms, setTerms] = useState(legal.terms ?? '')
+  const [privacy, setPrivacy] = useState(legal.privacy ?? '')
+  const { state, errors, message, setMessage, save } = useSave('legal', onSaved)
+
+  return (
+    <Card
+      title="Terms and privacy"
+      subtitle="Shown in the Driver App's sign-up form, which will not create an account until a driver accepts both. Plain text — a blank line starts a new paragraph."
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          void save({ terms, privacy })
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
+      >
+        {message !== null && (
+          <Alert tone="error" title="Terms and privacy" onDismiss={() => setMessage(null)}>
+            {message}
+          </Alert>
+        )}
+
+        <FormField
+          label="Terms and Conditions"
+          htmlFor="settings-terms"
+          hint="What a driver is agreeing to do, and what KangaruRide agrees to in return."
+          error={errors.terms}
+        >
+          <Textarea
+            id="settings-terms"
+            rows={14}
+            value={terms}
+            invalid={errors.terms !== undefined}
+            onChange={(e) => setTerms(e.target.value)}
+          />
+        </FormField>
+
+        <FormField
+          label="Privacy Policy"
+          htmlFor="settings-privacy"
+          hint="What personal data is collected, why, who it is shared with, and how a driver asks to see or delete it. Required by the Data Protection and Privacy Act, 2019."
+          error={errors.privacy}
+        >
+          <Textarea
+            id="settings-privacy"
+            rows={14}
+            value={privacy}
+            invalid={errors.privacy !== undefined}
+            onChange={(e) => setPrivacy(e.target.value)}
+          />
+        </FormField>
+
+        <SaveButton state={state} />
+      </form>
+    </Card>
+  )
+}
+
+/**
+ * Which ways into the Driver App are on (ADR-0028).
+ *
+ * The three switches are what the app's welcome screen renders from —
+ * fail-closed, so turning one off here removes the button from every phone
+ * within a settings-cache refresh, no release involved. The credential
+ * fields exist because the switches are worthless without them: the server
+ * refuses tokens minted for anybody else's app.
+ */
+function AuthMethodsCard({
+  auth,
+  mailEnabled,
+  onSaved,
+}: {
+  auth: Settings['auth']
+  mailEnabled: boolean
+  onSaved: (s: Settings) => void
+}) {
+  const [resetEnabled, setResetEnabled] = useState(auth.password_reset_enabled)
+  const [googleEnabled, setGoogleEnabled] = useState(auth.google_enabled)
+  const [facebookEnabled, setFacebookEnabled] = useState(auth.facebook_enabled)
+  const [googleClientIds, setGoogleClientIds] = useState(auth.google_client_ids ?? '')
+  const [facebookAppId, setFacebookAppId] = useState(auth.facebook_app_id ?? '')
+  const [facebookAppSecret, setFacebookAppSecret] = useState('')
+  const { state, errors, message, setMessage, save } = useSave('auth', onSaved)
+
+  return (
+    <Card
+      title="Sign-in methods"
+      subtitle="What the Driver App offers on its welcome screen. Each switch takes effect on every phone without a release."
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          setFacebookAppSecret('')
+          void save(
+            withSecrets(
+              {
+                password_reset_enabled: resetEnabled,
+                google_enabled: googleEnabled,
+                facebook_enabled: facebookEnabled,
+                google_client_ids: googleClientIds || null,
+                facebook_app_id: facebookAppId || null,
+              },
+              { facebook_app_secret: facebookAppSecret },
+            ),
+          )
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
+      >
+        {message !== null && (
+          <Alert tone="error" title="Sign-in methods" onDismiss={() => setMessage(null)}>
+            {message}
+          </Alert>
+        )}
+
+        <Checkbox
+          label="Password reset by emailed code"
+          hint={
+            mailEnabled
+              ? 'Drivers who forget their password get a six-digit code by email, valid for fifteen minutes. A successful reset signs them out everywhere.'
+              : 'Needs the SMTP settings above configured and enabled first — until then this switch is saved but inert, and the app keeps telling drivers to call the office.'
+          }
+          checked={resetEnabled}
+          onChange={(e) => setResetEnabled(e.target.checked)}
+        />
+
+        <Checkbox
+          label="Continue with Google"
+          hint="Signs existing drivers in with their Google account; a stranger is routed into the application queue, never straight to an account."
+          checked={googleEnabled}
+          onChange={(e) => setGoogleEnabled(e.target.checked)}
+        />
+
+        <FormField
+          label="Google client IDs"
+          htmlFor="settings-auth-google-ids"
+          hint="Comma-separated OAuth client IDs from Google Cloud Console (Android, iOS, web). The server refuses sign-ins minted for any other app."
+          error={errors.google_client_ids}
+        >
+          <Input
+            id="settings-auth-google-ids"
+            placeholder="1234-abc.apps.googleusercontent.com, 1234-def.apps.googleusercontent.com"
+            autoComplete="off"
+            value={googleClientIds}
+            onChange={(e) => setGoogleClientIds(e.target.value)}
+          />
+        </FormField>
+
+        <Checkbox
+          label="Continue with Facebook"
+          hint="Same rules as Google: existing drivers sign in, strangers are routed to the application queue."
+          checked={facebookEnabled}
+          onChange={(e) => setFacebookEnabled(e.target.checked)}
+        />
+
+        <FormField
+          label="Facebook app ID"
+          htmlFor="settings-auth-fb-id"
+          hint="From Meta for Developers."
+          error={errors.facebook_app_id}
+        >
+          <Input
+            id="settings-auth-fb-id"
+            autoComplete="off"
+            value={facebookAppId}
+            onChange={(e) => setFacebookAppId(e.target.value)}
+          />
+        </FormField>
+
+        <SecretField
+          label="Facebook app secret"
+          htmlFor="settings-auth-fb-secret"
+          secret={auth.facebook_app_secret}
+          value={facebookAppSecret}
+          onChange={setFacebookAppSecret}
+          error={errors.facebook_app_secret}
+        />
 
         <SaveButton state={state} />
       </form>

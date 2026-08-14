@@ -34,6 +34,7 @@ const SECTIONS: SidebarSection[] = [
     items: [
       { id: 'vehicles', label: 'Vehicles', icon: 'truck' },
       { id: 'drivers', label: 'Drivers', icon: 'users' },
+      { id: 'driver-applications', label: 'Applications', icon: 'user-plus' },
     ],
   },
   {
@@ -83,6 +84,7 @@ const NAV_PATHS: Partial<Record<string, string>> = {
   customers: '/customers',
   vehicles: '/vehicles',
   drivers: '/drivers',
+  'driver-applications': '/driver-applications',
   invoices: '/invoices',
   'rate-cards': '/rate-cards',
   reports: '/reports',
@@ -104,6 +106,7 @@ const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
   '/customers': { id: 'customers', title: 'Customers' },
   '/vehicles': { id: 'vehicles', title: 'Vehicles' },
   '/drivers': { id: 'drivers', title: 'Drivers' },
+  '/driver-applications': { id: 'driver-applications', title: 'Driver applications' },
   '/invoices': { id: 'invoices', title: 'Invoices' },
   '/rate-cards': { id: 'rate-cards', title: 'Rate cards' },
   '/reports': { id: 'reports', title: 'Reports' },

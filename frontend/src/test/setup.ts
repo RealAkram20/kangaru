@@ -45,5 +45,29 @@ globalThis.ResizeObserver ??= class {
   disconnect() {}
 }
 
+/**
+ * Also absent from jsdom, and reached through Animate UI: its icons call
+ * `useIsInView` on every render to support `animateOnView`, whether or not a
+ * caller asked for it. Without this the constructor throws, React unmounts
+ * the subtree, and the failure surfaces somewhere else entirely — the KYC
+ * step of the self-drive flow reported "unable to find a label", several
+ * components away from the icon that actually blew up.
+ *
+ * Never reports an intersection, which is the right default: nothing in this
+ * suite asserts on scroll-triggered animation, and a stub that fired would
+ * start motion the tests would then have to wait out.
+ */
+globalThis.IntersectionObserver ??= class {
+  readonly root = null
+  readonly rootMargin = ''
+  readonly thresholds: readonly number[] = []
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+  takeRecords(): IntersectionObserverEntry[] {
+    return []
+  }
+} as unknown as typeof IntersectionObserver
+
 /** Used by scroll-into-view behaviour in tables and dialogs. */
 Element.prototype.scrollIntoView ??= function scrollIntoView() {}
