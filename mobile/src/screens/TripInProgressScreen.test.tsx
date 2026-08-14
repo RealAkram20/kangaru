@@ -101,6 +101,7 @@ function trip(overrides: Partial<Trip> = {}): Trip {
       is_estimate: true,
       basis: 'Straight-line distance. The final fare follows the distance actually travelled.',
     },
+    earnings: null,
     passenger_contact: { name: 'John Smith Doe', phone: '+256700123456', label: 'Passenger' },
     created_at: null,
     updated_at: null,
@@ -178,11 +179,28 @@ it('promises no arrival time, in minutes or on a clock', async () => {
 });
 
 it('renders em dashes rather than zeros when the platform cannot answer', async () => {
-  // No timeline yet and no GPS fix — offline, or permission refused.
-  const { getAllByText, queryByText } = await renderProgress(trip(), [], null);
+  // Neither source can answer: no GPS fix (offline, or permission refused),
+  // no timeline, and no `started_at` either. Both halves are named because
+  // the clock has two sources now — the timeline first, then the column — and
+  // a fixture that left `started_at` set was asserting an em dash the screen
+  // no longer has any reason to draw.
+  const { getAllByText, queryByText } = await renderProgress(
+    trip({ started_at: null }),
+    [],
+    null,
+  );
 
   expect(getAllByText('—').length).toBeGreaterThanOrEqual(2);
   expect(queryByText('00:00')).toBeNull();
+});
+
+it('still shows the clock when only the column can answer', async () => {
+  // The bug this pair guards: the timeline arrives a request later than the
+  // trip, so a screen opened straight after the odometer had no `trip_started`
+  // row to count from and drew a dash on a moving trip.
+  const { getByText } = await renderProgress(trip(), []);
+
+  expect(getByText('14:02')).toBeTruthy();
 });
 
 it('names the real payment method and never invents one', async () => {
