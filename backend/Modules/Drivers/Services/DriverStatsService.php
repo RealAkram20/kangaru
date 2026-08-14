@@ -109,8 +109,15 @@ class DriverStatsService
             return ['score' => null, 'count' => $recent->count()];
         }
 
+        // `sum() / count()` rather than `avg()`, and not to satisfy a linter
+        // for its own sake: `avg()` returns null on an empty collection, so
+        // `round()` receives a nullable and Larastan level 8 refuses it. The
+        // guard above already proves the collection is not empty — but the
+        // proof is three lines away and static analysis cannot follow it.
+        // Dividing is the same arithmetic with the null removed at the source
+        // rather than cast away, which AGENTS.md's gate is right to insist on.
         return [
-            'score' => round($recent->avg(), 1),
+            'score' => round($recent->sum() / $recent->count(), 1),
             'count' => $recent->count(),
         ];
     }

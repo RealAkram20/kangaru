@@ -38,7 +38,11 @@ class DriverLedgerService
         // Only fares the platform actually priced (ADR-0029 §4). A corporate
         // trip is invoiced to the client and carries none; inventing one
         // would double-bill them.
-        if ($trip->fare_minor === null || $trip->fare_minor <= 0 || $trip->driver_id === null) {
+        //
+        // No `driver_id === null` clause: `trips.driver_id` is NOT NULL in
+        // both the migration and the live schema, so that arm was dead code
+        // and Larastan level 8 refused it. A trip always has somebody to pay.
+        if ($trip->fare_minor === null || $trip->fare_minor <= 0) {
             return false;
         }
 

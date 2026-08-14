@@ -3,9 +3,9 @@
 namespace Modules\Trips\Models;
 
 use App\Concerns\Auditable;
+use App\Models\Customer;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Modules\Customers\Models\Customer;
 use Modules\Drivers\Models\Driver;
 
 /**

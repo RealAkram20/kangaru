@@ -153,7 +153,18 @@ it("sums today's earnings from the ledger, not the gross fare", function () {
     // Mutation check — return the gross 12,000 here and this fails. The
     // difference is the whole reason ADR-0029 §5 renamed the tile.
     expect($stats['earnings_today_minor'])->toBe(9_600);
-    expect($stats['wallet_balance_minor'])->toBe(9_600 - 2_400);
+
+    // Earned *minus the whole fare*, not minus the commission — the pair of
+    // entries is +9,600 earned and -12,000 cash collected, because the
+    // passenger handed over the full fare and the driver is holding it. The
+    // net is therefore exactly minus the commission, which is what
+    // `recordCompletedTrip`'s own docblock says it should be and what
+    // ADR-0029 §5 calls the ordinary state for a driver taking cash.
+    //
+    // This read `9_600 - 2_400` and asserted 7,200 — a quantity the ledger
+    // cannot produce from one trip. The service was right and the arithmetic
+    // here was wrong.
+    expect($stats['wallet_balance_minor'])->toBe(9_600 - 12_000);
     expect($stats['trips_today'])->toBe(1);
 });
 

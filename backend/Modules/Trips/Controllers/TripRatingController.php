@@ -4,11 +4,11 @@ namespace Modules\Trips\Controllers;
 
 use App\Enums\ErrorCode;
 use App\Http\Controllers\Controller;
+use App\Models\Customer;
 use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
-use Modules\Customers\Models\Customer;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Models\TripRating;
@@ -56,14 +56,12 @@ class TripRatingController extends Controller
             );
         }
 
-        if ($trip->driver_id === null) {
-            return ApiResponse::error(
-                ErrorCode::VALIDATION_FAILED,
-                'That ride has no driver to rate.',
-                [],
-                422,
-            );
-        }
+        // There is deliberately no "this trip has no driver" branch here.
+        // `trips.driver_id` is NOT NULL — the migration constrains it and the
+        // live schema agrees — so a trip always has somebody to rate, and a
+        // guard against null was dead code that Larastan level 8 refused. If
+        // driverless trips ever become a thing, that is a migration and a
+        // decision, and the check comes back with them.
 
         // Immutable (ADR-0030 §2): an editable rating is a lever over a
         // driver. The unique index on trip_id is the real guard; this turns
