@@ -395,3 +395,22 @@ it('opens the map inside the app rather than ejecting the driver to Google Maps'
 
   expect(navigate).toHaveBeenCalledWith('TripMap', { tripId: 42 });
 });
+
+it('keeps the inline map non-interactive, so it does not eat the page scroll', async () => {
+  // The counterpart to the full-screen map being pannable. This one sits in a
+  // ScrollView: a map that captures the drag is a page that will not scroll.
+  const view = await renderProgress();
+
+  let html = '';
+  const walk = (node: unknown): void => {
+    const n = node as { type?: unknown; props?: Record<string, unknown>; children?: unknown[] };
+    if (typeof n !== 'object' || n === null) return;
+    if (n.type === 'WebView') {
+      html = ((n.props?.source as { html?: string } | undefined)?.html) ?? '';
+    }
+    for (const child of n.children ?? []) walk(child);
+  };
+  walk(view.toJSON());
+
+  expect(html).toContain('interactive: false');
+});

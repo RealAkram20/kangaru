@@ -119,3 +119,61 @@ it('offers no hand-off for a trip with no coordinates', async () => {
 
   expect(queryByLabelText('Open in Maps')).toBeNull();
 });
+
+/** The HTML handed to the WebView, dug out of the rendered tree. */
+function mapHtml(tree: unknown): string {
+  let found = '';
+
+  const walk = (node: unknown): void => {
+    const n = node as { type?: unknown; props?: Record<string, unknown>; children?: unknown[] };
+
+    if (typeof n !== 'object' || n === null) {
+      return;
+    }
+
+    if (n.type === 'WebView') {
+      const source = n.props?.source as { html?: string } | undefined;
+      found = source?.html ?? '';
+    }
+
+    for (const child of n.children ?? []) {
+      walk(child);
+    }
+  };
+
+  walk(tree);
+
+  return found;
+}
+
+it('names every marker, rather than leaving three coloured dots', async () => {
+  // The complaint that produced this: "we cannot see where we are and where we
+  // are going". All three points were on screen the whole time — as a green
+  // ring, a red dot and a blue dot, with nothing saying which was which.
+  // `docs/screen-rules.md` §6 forbids meaning by colour alone, and the
+  // full-screen map has no rail beneath it to name the ends in words.
+  const view = await renderMap();
+  const html = mapHtml(view.toJSON());
+
+  expect(html).toContain('"Pickup"');
+  expect(html).toContain('"Drop-off"');
+  expect(html).toContain('"You"');
+
+  // The words reaching the document is not the same as the document drawing
+  // them, and Jest does not execute the WebView — so the mechanism is pinned
+  // too. Written after a mutation survived: deleting the line that writes the
+  // label into the element left the three strings sitting in the HTML as
+  // arguments to a call that no longer used them, and the assertions above
+  // passed happily.
+  expect(html).toContain('class="tag"');
+  expect(html).toContain('textContent = label');
+});
+
+it('lets the driver pan and zoom when the map has the whole screen', async () => {
+  // `interactive: false` is right for the 220pt panel — it sits in a
+  // ScrollView and a pannable map swallows the drag meant to scroll the page.
+  // On a full screen it meant a driver could not zoom in to see anything.
+  const view = await renderMap();
+
+  expect(mapHtml(view.toJSON())).toContain('interactive: true');
+});

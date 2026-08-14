@@ -61,8 +61,12 @@ export function PickupMap({
   fill?: boolean;
 }) {
   const html = useMemo(
-    () => (pickup === null ? null : mapDocument(pickup, dropoff, here)),
-    [pickup, dropoff, here],
+    // Interactive only when it fills the screen. The inline panel sits inside
+    // a ScrollView, where a pannable map swallows the drag that was meant to
+    // scroll the page — which is why this was false everywhere until a
+    // full-screen map needed to be zoomed into.
+    () => (pickup === null ? null : mapDocument(pickup, dropoff, here, fill)),
+    [pickup, dropoff, here, fill],
   );
 
   if (html === null) {
@@ -111,6 +115,7 @@ function mapDocument(
   pickup: Coordinates,
   dropoff: Coordinates | null,
   here: Coordinates | null,
+  interactive: boolean,
 ): string {
   const points = [pickup, ...(dropoff === null ? [] : [dropoff]), ...(here === null ? [] : [here])];
   const bounds = boundsFor(points);
@@ -118,8 +123,8 @@ function mapDocument(
   // JSON, not string concatenation. These are numbers from the network and
   // from a GPS chip, and interpolating them raw into a script tag is how a
   // NaN or a null becomes a syntax error that renders as a blank rectangle.
-  const marker = (point: Coordinates, className: string) =>
-    `addMarker(${JSON.stringify([point.lng, point.lat])}, ${JSON.stringify(className)});`;
+  const marker = (point: Coordinates, className: string, label: string) =>
+    `addMarker(${JSON.stringify([point.lng, point.lat])}, ${JSON.stringify(className)}, ${JSON.stringify(label)});`;
 
   return `<!doctype html>
 <html>
@@ -130,7 +135,17 @@ function mapDocument(
 <style>
   html, body, #map { margin: 0; padding: 0; height: 100%; width: 100%; background: ${colors.surfaceSunken}; }
   .maplibregl-ctrl-attrib, .maplibregl-ctrl-bottom-left { display: none; }
-  .pin { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+  .marker { display: flex; align-items: center; gap: 4px; }
+  /* Named, not just coloured. docs/screen-rules.md §6: never carry meaning
+     by colour alone — and on a full-screen map there is no rail underneath to
+     name the two ends, so the map has to name them itself. */
+  .tag {
+    font-family: -apple-system, Roboto, sans-serif; font-size: 11px; font-weight: 600;
+    line-height: 1; white-space: nowrap; padding: 4px 7px; border-radius: 999px;
+    background: ${colors.surface}; color: ${colors.textBody};
+    border: 1px solid ${colors.border};
+  }
+  .pin { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none; }
   .pin i { width: 12px; height: 12px; border-radius: 50%; display: block; border: 2.5px solid ${colors.onPrimary}; }
   /* Pickup and drop-off differ by *fill* as well as hue — a ring against a
      disc — so the two ends are still told apart by somebody who cannot
@@ -153,20 +168,25 @@ function mapDocument(
     center: ${JSON.stringify([pickup.lng, pickup.lat])},
     zoom: 13,
     attributionControl: false,
-    interactive: false
+    interactive: ${interactive ? 'true' : 'false'}
   });
+${interactive ? "  map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');" : ''}
 
-  function addMarker(lngLat, className) {
+  function addMarker(lngLat, className, label) {
     var el = document.createElement('div');
-    el.className = 'pin ' + className;
-    el.innerHTML = '<i></i>';
+    el.className = 'marker ' + className;
+    // The dot and its name travel together. Three coloured circles on a map
+    // are three coloured circles; the words are what make them a pickup, a
+    // drop-off and a driver.
+    el.innerHTML = '<span class="pin"><i></i></span><span class="tag"></span>';
+    el.querySelector('.tag').textContent = label;
     new maplibregl.Marker({ element: el }).setLngLat(lngLat).addTo(map);
   }
 
   map.on('load', function () {
-    ${marker(pickup, 'pickup')}
-    ${dropoff === null ? '' : marker(dropoff, 'dropoff')}
-    ${here === null ? '' : marker(here, 'here')}
+    ${marker(pickup, 'pickup', 'Pickup')}
+    ${dropoff === null ? '' : marker(dropoff, 'dropoff', 'Drop-off')}
+    ${here === null ? '' : marker(here, 'here', 'You')}
     ${
       bounds === null
         ? ''
