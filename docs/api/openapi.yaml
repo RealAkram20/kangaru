@@ -165,6 +165,131 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/auth/password/forgot:
+    post:
+      summary: >
+        Asks for an emailed reset code (ADR-0028 §2). Unauthenticated,
+        throttled 3/min/IP — below even auth's rate, because each hit can
+        send an email. Answers an identical 202 whether or not the address
+        belongs to anybody; 409 AUTH_METHOD_DISABLED while the owner has
+        the method off or SMTP unconfigured.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              additionalProperties: false
+              properties:
+                email: { type: string, format: email, maxLength: 190 }
+      responses:
+        '202':
+          $ref: '#/components/responses/MessageOnly'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/password/reset:
+    post:
+      summary: >
+        Exchanges the emailed code for a new password (ADR-0028 §2).
+        Throttled 5/min/IP; the code is single-use, expires in 15 minutes,
+        and five wrong guesses burn it. A wrong code and an unknown email
+        fail with the same sentence. Success revokes every token the
+        account holds — the caller signs in fresh.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code, password, password_confirmation]
+              additionalProperties: false
+              properties:
+                email: { type: string, format: email, maxLength: 190 }
+                code: { type: string, minLength: 6, maxLength: 6 }
+                password: { type: string, minLength: 12 }
+                password_confirmation: { type: string }
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOnly'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/auth/social:
+    post:
+      summary: >
+        "Continue with Google / Facebook" (ADR-0028 §3). Unauthenticated,
+        throttled 5/min/IP. The server verifies the provider proof itself
+        against the admin-stored credentials — audience included — and
+        resolves who the identity is here.
+      description: >
+        200 signed_in with a driver-scoped token for a linked identity or a
+        provider-verified email match on an account that can drive.
+        202 sign_up with the verified name and email for a stranger — no
+        principal is created; the app takes the two fields to the
+        application form (ADR-0027). 409 MFA_REQUIRED for accounts with a
+        second factor (social must not bypass it), 403 NOT_A_DRIVER for
+        staff accounts, 409 AUTH_METHOD_DISABLED while the owner has the
+        provider off, 401 SOCIAL_TOKEN_INVALID when the proof does not
+        verify — which check failed goes to the log, never the response.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, token, client]
+              additionalProperties: false
+              properties:
+                provider: { enum: [google, facebook] }
+                token:
+                  type: string
+                  maxLength: 8192
+                  description: Google ID token, or Facebook access token.
+                client: { enum: [driver] }
+      responses:
+        '200':
+          description: Signed in.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [status, user, token]
+                    additionalProperties: false
+                    properties:
+                      status: { enum: [signed_in] }
+                      user: { $ref: '#/components/schemas/User' }
+                      token: { type: string }
+        '202':
+          description: No account — apply. Nothing was created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [status, name, email]
+                    additionalProperties: false
+                    properties:
+                      status: { enum: [sign_up] }
+                      name: { type: string }
+                      email: { type: string, format: email }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/auth/mfa/enrol:
     post:
       summary: Begins TOTP enrolment — a fresh secret and its QR code.
@@ -362,6 +487,43 @@ paths:
                     additionalProperties: false
                     properties:
                       settings: { $ref: '#/components/schemas/PublicSettings' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/public/legal:
+    get:
+      summary: >
+        The Terms and Privacy notices, unauthenticated (ADR-0014, `legal`
+        group). Read by the Driver App's sign-up form, which asks for
+        consent to both before an account exists — so it cannot sit behind
+        one. Kept off /public/settings because these are long and rarely
+        wanted, and that endpoint is fetched on every page load.
+        Editable by Super Admin through PATCH /settings/legal.
+        Throttled 30/min/IP.
+      responses:
+        '200':
+          description: Both documents, as plain text.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [terms, privacy]
+                    additionalProperties: false
+                    properties:
+                      terms:
+                        type: string
+                        description: >
+                          Plain text, newline-separated. Empty only if an
+                          administrator has deliberately cleared it — the
+                          catalogue ships a short-form notice as its default.
+                      privacy: { type: string }
         default:
           $ref: '#/components/responses/Error'
 
@@ -1371,6 +1533,172 @@ paths:
           $ref: '#/components/responses/Error'
 
   # ------------------------------------------------------------------
+  # Driver applications (Modules/Drivers, ADR-0027)
+  # ------------------------------------------------------------------
+  /api/v1/driver-applications:
+    post:
+      summary: >
+        A rider applying to drive (ADR-0027 §5). Unauthenticated write,
+        throttled 5/min/IP — the Driver App's sign-up form posts here.
+      description: >
+        Writes an application and nothing else: no account, no driver
+        profile, no credential that can sign in. Deliberately answers
+        identically whether or not the email is already known — a duplicate
+        is refused at approval, in front of a human, not at submission in
+        front of a script. 202 with no body on success; an id would be a
+        handle for guessing at other people's applications, and there is no
+        status checker to use it on (§6).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, phone, email, password, password_confirmation, terms_accepted]
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                phone:
+                  type: string
+                  minLength: 9
+                  maxLength: 32
+                  description: >
+                    The number the office calls with the outcome — the only
+                    notification channel until ADR-0014 phase 3 lands SMTP.
+                email: { type: string, format: email, maxLength: 190 }
+                password:
+                  type: string
+                  minLength: 12
+                  description: >
+                    The applicant's own choice, hashed at submission and
+                    carried to the account at approval — never re-typed,
+                    never emailed, never known to the approver (§3).
+                password_confirmation: { type: string }
+                terms_accepted:
+                  description: >
+                    Consent to the two /public/legal notices. Must be
+                    affirmatively true; the accepted-at time is stamped
+                    server-side (DPPA 2019 wants consent recorded, and a
+                    client-supplied timestamp records nothing).
+                  enum: [true, 'true', 1, '1', 'yes', 'on']
+      responses:
+        '202':
+          $ref: '#/components/responses/MessageOnly'
+        default:
+          $ref: '#/components/responses/Error'
+    get:
+      summary: The applications queue, oldest first (ADR-0027). drivers.view.
+      parameters:
+        - { name: status, in: query, schema: { enum: [pending, approved, rejected] } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200':
+          description: Driver applications, page-paginated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [driver_applications]
+                    additionalProperties: false
+                    properties:
+                      driver_applications:
+                        type: array
+                        items: { $ref: '#/components/schemas/DriverApplication' }
+                  meta:
+                    type: object
+                    required: [page, per_page, total]
+                    additionalProperties: false
+                    properties:
+                      page: { type: integer }
+                      per_page: { type: integer }
+                      total: { type: integer }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/driver-applications/{driverApplication}:
+    parameters:
+      - { name: driverApplication, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: One application (ADR-0027). drivers.view.
+      responses:
+        '200':
+          $ref: '#/components/responses/DriverApplicationResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/driver-applications/{driverApplication}/approve:
+    parameters:
+      - { name: driverApplication, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: >
+        Approves an application (ADR-0027 §4): creates the driver, mints the
+        account with the applicant's own password, links them — one
+        transaction. Needs drivers.manage AND staff.manage, and the role
+        granted is checked against the caller's own (ADR-0004).
+      description: >
+        The reviewer supplies what the applicant could not be trusted to:
+        the licence they verified in person, and optionally the vehicle and
+        role. 409 DRIVER_APPLICATION_CLOSED if somebody decided it already;
+        409 DRIVER_ACCOUNT_CONFLICT if the email turned out to be an
+        account after all — the duplicate §5 deliberately let through,
+        surfacing in front of a human.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [license_number, license_expiry]
+              additionalProperties: false
+              properties:
+                license_number: { type: string, maxLength: 64 }
+                license_expiry: { type: string, format: date, description: Must be in the future. }
+                vehicle_id: { type: [integer, 'null'] }
+                role: { type: string, description: 'Role slug. Defaults to driver.' }
+      responses:
+        '201':
+          $ref: '#/components/responses/DriverResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/driver-applications/{driverApplication}/reject:
+    parameters:
+      - { name: driverApplication, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: >
+        Rejects an application, with a reason for the office (ADR-0027 §4).
+        Same permission as approving — turning applicants away is not a
+        lesser act. 409 DRIVER_APPLICATION_CLOSED if already decided.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason:
+                  type: string
+                  minLength: 5
+                  maxLength: 500
+                  description: >
+                    For the record, not the applicant — nothing sends it to
+                    them (§6 gives them no way to read it).
+      responses:
+        '200':
+          $ref: '#/components/responses/DriverApplicationResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
   # Availability (Modules/Fleet) — who and what is off the road (ADR-0017)
   # ------------------------------------------------------------------
   /api/v1/availability-blocks:
@@ -1976,6 +2304,86 @@ paths:
   # from Trip Started onward, so a driver waiting at a stage for work
   # reported nothing at all. These say "I am available, and I am here".
   # ------------------------------------------------------------------
+  /api/v1/me/stats:
+    get:
+      summary: >
+        The signed-in driver's own numbers, for the app's home screen.
+        Counted on read from trips and dispatch offers that already exist —
+        nothing is stored or estimated.
+      description: >
+        Rates are measured over a rolling 30-day window and are **null**
+        until there is something to divide by: a driver on their first
+        shift has no acceptance rate, and 0% would read as a failing grade
+        for having done nothing wrong.
+
+        `earnings_today_minor` and `wallet_balance_minor` come from the
+        driver's ledger (ADR-0029). Entries are raised only for walk-in
+        rides, which are the only trips carrying a fare (ADR-0026 §3) — a
+        corporate trip is invoiced to the client — so a driver running only
+        corporate work sees a zero balance, which is true.
+
+        `rating` is the mean of their last 50 passenger ratings (ADR-0030),
+        withheld until five exist.
+      responses:
+        '200':
+          description: The driver's statistics.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required:
+                      - trips_today
+                      - earnings_today_minor
+                      - wallet_balance_minor
+                      - currency
+                      - acceptance_rate
+                      - completion_rate
+                      - rating
+                      - rating_count
+                      - window_days
+                    additionalProperties: false
+                    properties:
+                      trips_today: { type: integer }
+                      earnings_today_minor:
+                        type: integer
+                        description: >
+                          The driver's own share of today's fares, from the
+                          ledger (ADR-0029 §5) — NOT the gross fare the
+                          passenger paid. Minor units, never a float.
+                      wallet_balance_minor:
+                        type: integer
+                        description: >
+                          The whole ledger summed. Negative is legitimate and
+                          means the driver is holding the platform's cash
+                          until they settle (ADR-0029 §5).
+                      currency: { type: string }
+                      acceptance_rate:
+                        type: ['number', 'null']
+                        description: Percentage 0–100, one decimal. Null when no offer has been answerable yet.
+                      completion_rate:
+                        type: ['number', 'null']
+                        description: Percentage 0–100, one decimal. Null when no trip has reached an ending yet.
+                      rating:
+                        type: ['number', 'null']
+                        description: >
+                          Mean of the last 50 ratings, one decimal. **Null
+                          until five ratings exist** (ADR-0030 §3): one
+                          three-star rating is not a 3.0, it is one person's
+                          afternoon.
+                      rating_count:
+                        type: integer
+                        description: How many ratings the score rests on — returned even while the score is withheld.
+                      window_days: { type: integer }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/me/duty:
     get:
       summary: The signed-in driver's own duty state.
@@ -3376,6 +3784,19 @@ components:
               message: { type: string }
               data: { $ref: '#/components/schemas/Driver' }
 
+    DriverApplicationResponse:
+      description: One driver application, as the office sees it (ADR-0027).
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/DriverApplication' }
+
     VehicleResponse:
       description: One vehicle.
       content:
@@ -3645,6 +4066,9 @@ components:
         - ORDERING_PAUSED
         - MAIL_DELIVERY_FAILED
         - DRIVER_ACCOUNT_CONFLICT
+        - DRIVER_APPLICATION_CLOSED
+        - AUTH_METHOD_DISABLED
+        - SOCIAL_TOKEN_INVALID
         - AVAILABILITY_ALREADY_ANSWERED
         - AUTOMATIC_DISPATCH_DISABLED
         - NO_DISPATCH_CANDIDATE
@@ -3917,6 +4341,11 @@ components:
         to a driver who then declines is given away for nothing, and this
         payload is what a push notification is built from — which puts it on
         a lock screen readable by whoever is holding the phone.
+
+
+        `order_requests.details` is never emitted wholesale for the same
+        reason — on a delivery it holds `sender_phone` and `recipient_phone`.
+        Only the keys in `package` and `payment` cross this boundary.
       type: object
       required:
         - id
@@ -3928,7 +4357,11 @@ components:
         - service_type
         - reference
         - pickup_distance_km
+        - trip_distance_km
         - reasons
+        - package
+        - payment
+        - estimated_fare
         - vehicle_id
       additionalProperties: false
       properties:
@@ -3948,14 +4381,134 @@ components:
         service_type: { type: ['string', 'null'] }
         reference: { type: ['string', 'null'] }
         pickup_distance_km:
-          description: Straight-line, not road distance — a ranking, not a promised ETA (ADR-0020 §3).
+          description: >
+            How far the driver is from the pickup. Straight-line, not road
+            distance — a ranking, not a promised ETA (ADR-0020 §3).
+          type: ['number', 'null']
+        trip_distance_km:
+          description: >
+            How far the job itself is, pickup to drop-off. The other half of
+            the same question: 0.4 km away is a good offer if the ride is
+            9 km and a poor one if it is 700 m.
+
+
+            Straight-line, like `pickup_distance_km`, and under the same
+            prohibition — **a client must not divide this by an assumed speed
+            to show an ETA.** ADR-0020 §3 declined to derive minutes from a
+            straight line by name, because real roads are longer than the
+            crow's flight and the invented number is the one that would need
+            defending.
+
+
+            Null whenever either end lacks coordinates, as an order taken
+            over the phone does.
           type: ['number', 'null']
         reasons:
           description: One sentence per scoring component, so a ranking stays auditable (ADR-0020 §4).
           type: array
           items: { type: string }
+        package:
+          description: >
+            What is being sent, on a delivery — null on any other service.
+
+
+            These two keys are an allow-list over `order_requests.details`,
+            not a projection of it. That column also holds `sender_phone` and
+            `recipient_phone`, which ADR-0024 §7 withholds until after the
+            accept; a new key added to the public order form must default to
+            not being here.
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/OfferPackage'
+        payment: { $ref: '#/components/schemas/OfferPayment' }
+        estimated_fare:
+          description: >
+            What the ride is estimated to fetch (ADR-0026 §2).
+
+
+            A **fare**, not driver earnings: there is no commission model on
+            this platform and settlement is deferred (ADR-0026 §3), so a
+            field named for the driver's take would become false in every
+            shipped build the day a platform cut is introduced.
+
+
+            Null when the offer carries no vehicle (so no category, so no
+            rate), when either end has no coordinates, when no public tariff
+            has been published, or when this category is not priced on it.
+            Null renders as no figure; a zero would read as a free ride.
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/WalkInFareEstimate'
         vehicle_id: { type: ['integer', 'null'] }
         vehicle_registration: { type: ['string', 'null'] }
+
+    OfferPackage:
+      type: object
+      required: [item_type, package_size]
+      additionalProperties: false
+      properties:
+        item_type:
+          enum: [documents, food, parcel, electronics, furniture, appliances, other, null]
+        package_size:
+          enum: [small, medium, large, heavy, null]
+
+    OfferPayment:
+      description: >
+        How the job settles, and which end settles it.
+
+
+        Allow-listed out of `order_requests.details` on the same terms as
+        `OfferPackage`: a decision input that identifies nobody. A driver
+        carrying no float declines a cash job, and on a parcel the person
+        ordering is often not the person paying — which is why `payer`
+        travels with the method rather than being assumed.
+
+
+        Unlike `package` this object is present on every service, because
+        every job is paid for. Both members are null whenever the person
+        ordering did not say, which is the common case: the public order form
+        marks both optional. **Null must render as no figure — never as
+        `cash`.** A driver who arrives expecting notes and is offered a
+        mobile-money transfer they cannot take has been told something the
+        platform never knew.
+      type: object
+      required: [payment_method, payer]
+      additionalProperties: false
+      properties:
+        payment_method:
+          enum: [cash, mobile_money, card, null]
+        payer:
+          description: Which end of a delivery settles the bill. Null on a ride, where there is only one end.
+          enum: [sender, receiver, null]
+
+    WalkInFareEstimate:
+      description: >
+        A price before anybody has driven anywhere (ADR-0026 §2).
+
+
+        Carries the distance it was computed from, not just the total: a
+        figure with no basis is one a passenger cannot sanity-check and a
+        dispatcher cannot explain, and the distance is the part that is
+        estimated.
+      type: object
+      required: [vehicle_category, distance_km, total_minor, currency, is_estimate, basis]
+      additionalProperties: false
+      properties:
+        vehicle_category: { type: string }
+        distance_km:
+          description: Great-circle kilometres. Under-reads against real roads, on purpose.
+          type: number
+        total_minor:
+          description: Minor units. UGX is zero-decimal, so this is whole shillings.
+          type: integer
+        currency: { type: string }
+        is_estimate:
+          description: >
+            Always true, and said in the payload rather than only in the UI —
+            a client rendering this has to be able to tell a quote from a
+            bill, and a flag beats every client remembering to add the word.
+          const: true
+        basis: { type: string }
 
     OfferPlace:
       type: object
@@ -4243,6 +4796,48 @@ components:
             the kind of absence.
           type: ['string', 'null']
 
+    DriverApplication:
+      description: >
+        A rider asking to drive (ADR-0027). Console-side only — the
+        applicant has no way to read their own row (§6). Never carries the
+        password hash: the model hides it, and once the application is
+        decided the column is cleared entirely.
+      type: object
+      required:
+        - id
+        - name
+        - phone
+        - email
+        - status
+        - status_label
+        - terms_accepted_at
+        - reviewed_at
+        - reviewed_by_user_id
+        - rejection_reason
+        - driver_id
+        - created_at
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        phone: { type: string }
+        email: { type: string, format: email }
+        status: { enum: [pending, approved, rejected] }
+        status_label: { type: string }
+        terms_accepted_at:
+          description: >
+            When the applicant agreed to the /public/legal notices — a
+            server-stamped time, not a client boolean, because the DPPA 2019
+            wants consent recorded and "true" records nothing.
+          $ref: '#/components/schemas/Timestamp'
+        reviewed_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        reviewed_by_user_id: { type: ['integer', 'null'] }
+        rejection_reason: { type: ['string', 'null'] }
+        driver_id:
+          description: The profile approval produced, once it has.
+          type: ['integer', 'null']
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+
     Driver:
       type: object
       required:
@@ -4330,10 +4925,44 @@ components:
         keys (none in phase 1) appear as {configured: bool}, never as
         values.
       type: object
-      required: [branding, regional, ordering, booking, mail, sms, payments]
+      required: [branding, legal, auth, regional, ordering, booking, mail, sms, payments]
       additionalProperties: false
       properties:
         branding: { $ref: '#/components/schemas/BrandingSettings' }
+        legal:
+          description: >
+            The Terms and Privacy notices the Driver App asks consent to.
+            Plain text, newline-separated, edited here and read publicly at
+            GET /public/legal — deliberately absent from PublicSettings,
+            which every page load fetches.
+          type: object
+          required: [terms, privacy]
+          additionalProperties: false
+          properties:
+            terms: { type: ['string', 'null'] }
+            privacy: { type: ['string', 'null'] }
+        auth:
+          description: >
+            Which ways into the Driver App are on (ADR-0028), and the
+            credentials they run on. The booleans are mirrored into
+            PublicSettings; the credentials never are, and the Facebook
+            secret is write-only.
+          type: object
+          required:
+            - password_reset_enabled
+            - google_enabled
+            - facebook_enabled
+            - google_client_ids
+            - facebook_app_id
+            - facebook_app_secret
+          additionalProperties: false
+          properties:
+            password_reset_enabled: { type: boolean }
+            google_enabled: { type: boolean }
+            facebook_enabled: { type: boolean }
+            google_client_ids: { type: ['string', 'null'] }
+            facebook_app_id: { type: ['string', 'null'] }
+            facebook_app_secret: { $ref: '#/components/schemas/SecretValue' }
         regional:
           type: object
           required: [currency, timezone, date_format]
@@ -4417,10 +5046,31 @@ components:
         The unauthenticated branding subset: catalogue keys flagged
         public only, asset paths as absolute URLs.
       type: object
-      required: [branding, regional, ordering]
+      required: [branding, auth, regional, ordering]
       additionalProperties: false
       properties:
         branding: { $ref: '#/components/schemas/BrandingSettings' }
+        auth:
+          description: >
+            Which sign-in methods the Driver App should offer (ADR-0028),
+            and the public identifiers it needs to start the native flows.
+            Client and app ids are public by design — they ship inside
+            every app binary; the Facebook app SECRET never crosses this
+            endpoint.
+          type: object
+          required:
+            - password_reset_enabled
+            - google_enabled
+            - facebook_enabled
+            - google_client_ids
+            - facebook_app_id
+          additionalProperties: false
+          properties:
+            password_reset_enabled: { type: boolean }
+            google_enabled: { type: boolean }
+            facebook_enabled: { type: boolean }
+            google_client_ids: { type: ['string', 'null'] }
+            facebook_app_id: { type: ['string', 'null'] }
         regional:
           type: object
           required: [currency]
@@ -4710,6 +5360,40 @@ components:
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
         updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
 
+    TripPlace:
+      description: >
+        One end of a journey, in prose and — where the platform has it — in
+        coordinates. See `Trip.pickup` for why the pair is all-or-nothing.
+      type: object
+      required: [label, latitude, longitude]
+      additionalProperties: false
+      properties:
+        label:
+          description: Always present; `trips.origin` and `trips.destination` are not nullable.
+          type: string
+        latitude: { type: ['number', 'null'] }
+        longitude: { type: ['number', 'null'] }
+
+    SettledFare:
+      description: >
+        A fare that has been charged, as against `WalkInFareEstimate`, which
+        is a quote (ADR-0026 §2).
+      type: object
+      required: [total_minor, currency, rate_card_version_id, computed_at, is_estimate]
+      additionalProperties: false
+      properties:
+        total_minor:
+          description: Minor units. UGX is zero-decimal, so this is whole shillings.
+          type: integer
+        currency: { type: ['string', 'null'] }
+        rate_card_version_id:
+          description: What priced it, so the figure can be re-derived years later.
+          type: ['integer', 'null']
+        computed_at: { type: ['string', 'null'], format: date-time }
+        is_estimate:
+          description: Always false. The counterpart of the always-true flag on WalkInFareEstimate.
+          enum: [false]
+
     Trip:
       type: object
       required:
@@ -4721,8 +5405,14 @@ components:
         - driver_id
         - origin
         - destination
+        - pickup
+        - dropoff
         - status
         - allowed_transitions
+        - pickup_wait_target_seconds
+        - fare
+        - estimated_fare
+        - payment
         - odometer_start
         - odometer_start_photo_path
         - odometer_end
@@ -4768,11 +5458,67 @@ components:
             - { enum: [null] }
         origin: { type: string }
         destination: { type: string }
+        pickup:
+          description: >
+            The same place as `origin`, with coordinates where the platform
+            has them. `origin` and `destination` are unchanged and stay —
+            every existing client reads them.
+
+
+            The coordinates come from the walk-in order behind the trip and
+            are null on every corporate trip, on any order a dispatcher keyed
+            in over the phone, and on any endpoint that did not eager-load
+            that relation. **Latitude and longitude are both present or both
+            null**; a half-resolved position is not a place, and defaulting
+            the missing half to zero puts a Kampala vehicle in the Atlantic
+            off Ghana — the swap ADR-0020 records this codebase hitting.
+          $ref: '#/components/schemas/TripPlace'
+        dropoff: { $ref: '#/components/schemas/TripPlace' }
         status: { $ref: '#/components/schemas/TripStatus' }
         allowed_transitions:
           description: What is legal from this state — not what this user may do.
           type: array
           items: { $ref: '#/components/schemas/TripStatus' }
+        pickup_wait_target_seconds:
+          type: integer
+          description: >
+            What the driver app's waiting ring fills against while a trip
+            sits at driver_arrived, from `dispatch.pickup_wait_target_seconds`.
+
+            **A display target, not a deadline.** Nothing on this platform
+            charges, bounds or ends a wait at the kerb: the rate card's
+            free_waiting_minutes bills the *in-trip* Waiting status only,
+            and a driver may not post no_show. Passing it changes no state,
+            so a client must not treat it as an expiry — the driver app
+            fills its ring to full and holds it there while the elapsed
+            figure keeps counting.
+          example: 300
+        payment:
+          description: >
+            How this job settles, for the driver carrying it — the same fact
+            `DispatchOffer.payment` puts on the offer card, served again
+            because an offer is answered in fifteen seconds and the drop-off
+            can be an hour later.
+
+            Read through an allow-list over `order_requests.details`; that
+            column also holds sender_phone and recipient_phone, which
+            ADR-0024 §7 withholds, so it is never emitted wholesale.
+
+            **Null is a real answer**, not an omission: a corporate trip is
+            invoiced to the client and has no per-trip settlement to collect.
+            Null too on any endpoint that did not load the order — every list
+            view. Members are individually nullable because both keys are
+            optional on the public order form; `cash` is never assumed.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [payment_method, payer]
+              properties:
+                payment_method:
+                  type: ['string', 'null']
+                  enum: [cash, mobile_money, card, null]
+                payer:
+                  type: ['string', 'null']
         odometer_start: { type: ['integer', 'null'] }
         odometer_start_photo_path: { type: ['string', 'null'] }
         odometer_end: { type: ['integer', 'null'] }
@@ -4797,6 +5543,39 @@ components:
             - { $ref: '#/components/schemas/ContactDetails' }
             - { enum: [null] }
         duration_minutes: { type: ['integer', 'null'] }
+        fare:
+          description: >
+            What was actually charged, once somebody drove it (ADR-0026 §2).
+
+
+            Null until `WalkInFareService::settle()` prices the completed
+            trip, and null forever on a corporate trip — a client's work is
+            invoiced, and there is no per-trip cash fare to show. Carries the
+            rate card version that priced it, because a total with no version
+            behind it is a figure nobody can defend in a dispute.
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/SettledFare'
+        estimated_fare:
+          description: >
+            What the trip is *expected* to fetch, before it is settled — the
+            same quote the driver accepted the job on.
+
+
+            A quote and a settlement are different things, which is why they
+            are different fields: `is_estimate` is `true` here and `false` on
+            `fare`, so no client has to infer which it holds from the key it
+            arrived under.
+
+
+            Null once `fare` is set, so no screen shows an estimate beside a
+            bill. **Also null wherever the trip's originating order request
+            was not eager-loaded** — a quote costs queries through Billing,
+            and `GET /trips` renders up to a page of trips that nobody is
+            reading a fare on. `GET /trips/{id}` loads it; the list does not.
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/WalkInFareEstimate'
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
         updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
 

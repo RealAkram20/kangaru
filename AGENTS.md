@@ -360,6 +360,8 @@ Every mutation to rate cards, contracts, invoices, payments, roles/permissions, 
 
 Design for enterprise users. Interfaces must be clean, spacious, accessible, responsive, and keyboard friendly. Consistency is more important than decoration.
 
+**Building a screen? Read `docs/screen-rules.md` first.** It is the checklist over this document and DESIGN.md, and it exists because two mistakes keep arriving disguised as faithful work: putting a number on screen the platform cannot produce, and showing data an ADR deliberately withholds. Those rules outrank any mockup — where the two disagree, raise it rather than resolving it silently.
+
 ## Accessibility
 
 Keyboard navigation, visible focus states, proper labels, color contrast, screen reader compatibility.
