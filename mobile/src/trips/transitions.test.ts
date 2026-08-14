@@ -3,6 +3,7 @@ import {
   activeTripRoute,
   driverActions,
   isInProgress,
+  isLiveLeg,
   isPickupPhase,
   isTripInProgress,
   isWaitingForPassenger,
@@ -259,5 +260,51 @@ describe('activeTripRoute', () => {
     );
 
     expect(pairs).toEqual([]);
+  });
+});
+
+describe('isLiveLeg', () => {
+  it('counts an accepted trip as live, which isInProgress does not', () => {
+    // The bug, in one assertion. A driver accepted a real offer, the trip
+    // landed in `accepted`, and HomeScreen — which picked its active trip with
+    // `isInProgress` — rendered no card at all. The passenger was waiting and
+    // the app looked idle.
+    expect(isLiveLeg('accepted')).toBe(true);
+    expect(isInProgress('accepted')).toBe(false);
+  });
+
+  it('covers every status that has a screen of its own', () => {
+    for (const status of [
+      'accepted',
+      'driver_en_route',
+      'driver_arrived',
+      'passenger_onboard',
+      'trip_started',
+      'waiting',
+      'trip_resumed',
+    ] as TripStatus[]) {
+      expect(isLiveLeg(status)).toBe(true);
+      expect(activeTripRoute(status)).not.toBe('TripDetail');
+    }
+  });
+
+  it('leaves anything the driver is not doing alone', () => {
+    for (const status of [
+      'assigned',
+      'rejected',
+      'no_show',
+      'trip_completed',
+      'cancelled',
+    ] as TripStatus[]) {
+      expect(isLiveLeg(status)).toBe(false);
+    }
+  });
+
+  it('does not widen isInProgress, which orders the list', () => {
+    // `ordering.ts` groups `assigned` and `accepted` as *upcoming*. A
+    // corporate trip accepted for four o'clock is not something the driver is
+    // doing at ten, and pinning it as in-progress would say otherwise.
+    expect(isInProgress('assigned')).toBe(false);
+    expect(isInProgress('accepted')).toBe(false);
   });
 });

@@ -18,7 +18,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { useDuty, useOffers, useSetDuty } from '../duty/queries';
 import type { TripsStackParams } from '../navigation/types';
 import { useSync } from '../offline/SyncProvider';
-import { activeTripRoute, isInProgress, statusLabel } from '../trips/transitions';
+import { activeTripRoute, isLiveLeg, statusLabel } from '../trips/transitions';
 import { useDriverStats, useTrips } from '../trips/queries';
 import { money, ratingNote, ratingValue, walletNote, walletValue } from '../trips/statsPresentation';
 import { TripMap } from '../trips/TripMap';
@@ -104,7 +104,10 @@ export function HomeScreen({ navigation }: Props) {
       iso !== null && new Date(iso).getTime() >= startOfDay.getTime();
 
     return {
-      active: trips.find((trip) => isInProgress(trip.status)) ?? null,
+      // `isLiveLeg`, not `isInProgress`: an offer just accepted sits in
+      // `accepted`, which the latter excludes — so the card vanished at the
+      // exact moment a passenger started waiting.
+      active: trips.find((trip) => isLiveLeg(trip.status)) ?? null,
       completedToday: trips
         .filter((trip) => trip.status === 'trip_completed' && isToday(trip.completed_at))
         // Newest first, which `trips.index` does not give: the server orders
@@ -193,26 +196,35 @@ export function HomeScreen({ navigation }: Props) {
         {/* Earnings takes the width because it is the number a driver opens the
             app for; the trip count rides beside it because it is one digit. */}
         <View style={styles.statRow}>
-          <View style={styles.statCardWide}>
-            {/*
-              "Earnings today" — and it is now literally true, which it was
-              not before. This tile used to sum the gross fare passengers paid
-              and was called "Fares today" for that reason: without a
-              commission model, calling a gross figure earnings would have
-              overstated a driver's take-home.
+          {/*
+            Pressable, and the tile a driver would naturally tap to see their
+            money now actually opens it. It was a plain `View` — the one place
+            on the home screen where the obvious gesture did nothing.
 
-              ADR-0029 settled the split. `earnings_today_minor` is the
-              driver's *own share*, summed from `fare_earned` ledger entries,
-              so the label finally means what it says (§5). The distinction
-              still matters — the gross figure is what the passenger paid, and
-              this is not it.
-            */}
+            "Earnings today" is literally true, which it was not before. This
+            tile used to sum the gross fare passengers paid and was called
+            "Fares today" for that reason: without a commission model, calling
+            a gross figure earnings would have overstated a driver's
+            take-home. ADR-0029 settled the split — `earnings_today_minor` is
+            the driver's *own share*, from `fare_earned` ledger entries (§5).
+
+            The Earnings screen measures the same "today" this tile does: both
+            take the day boundary from `settings.regional.timezone` via
+            `DriverEarningsService`, so the figure here and the figure there
+            are the same number rather than two readings of the word.
+          */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Earnings today. Opens your earnings."
+            onPress={() => navigation.navigate('Earnings')}
+            style={styles.statCardWide}
+          >
             <StatCardBody
               label="Earnings today"
               value={money(stats?.earnings_today_minor, stats?.currency)}
               icon={<ChartIcon color={colors.primary} size={20} strokeWidth={2.2} />}
             />
-          </View>
+          </Pressable>
 
           <View style={styles.statCardNarrow}>
             <StatCardBody
@@ -300,7 +312,15 @@ export function HomeScreen({ navigation }: Props) {
           conversation starts from, so it is stated rather than hidden behind
           an absolute value.
         */}
-        <View style={styles.walletCard}>
+        {/* Pressable, like the Earnings tile beside it. The balance answers
+            *what*; the statement behind it answers *why*, which is the only
+            question a driver actually has about this figure. */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Wallet balance ${walletValue(stats)}. ${walletNote(stats)}. Opens your wallet.`}
+          onPress={() => navigation.navigate('Wallet')}
+          style={styles.walletCard}
+        >
           <View style={styles.flex}>
             <Text style={styles.statLabel}>Wallet balance</Text>
             <Text style={styles.statValue}>
@@ -312,7 +332,7 @@ export function HomeScreen({ navigation }: Props) {
           <View style={styles.statIcon}>
             <WalletIcon color={colors.primary} size={20} strokeWidth={2} />
           </View>
-        </View>
+        </Pressable>
 
         <GoDutyButton
           onDuty={onDuty}

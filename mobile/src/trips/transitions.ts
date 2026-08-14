@@ -173,6 +173,35 @@ export function isTripInProgress(status: TripStatus): boolean {
   return status === 'trip_started' || status === 'waiting' || status === 'trip_resumed';
 }
 
+/**
+ * Whether the driver is on this trip *right now*.
+ *
+ * The union of the three live-leg predicates plus `passenger_onboard`, which
+ * belongs to the odometer — in other words, every status that has a screen of
+ * its own. It answers "what am I doing", where `isInProgress` answers "what is
+ * moving", and the two differ by exactly one status that matters.
+ *
+ * **`accepted` is here and is not in `isInProgress`, and that gap was a bug.**
+ * A driver accepted an offer, the trip landed in `accepted`, and `HomeScreen`
+ * — which picked its active trip with `isInProgress` — showed nothing at all.
+ * The passenger was waiting; the app looked idle. Found on a handset, by
+ * accepting a real offer.
+ *
+ * `isInProgress` is deliberately *not* widened to fix it. `ordering.ts` groups
+ * `assigned` and `accepted` as **upcoming** rather than in progress, and it is
+ * right to: a corporate trip accepted for four o'clock is not something the
+ * driver is doing at ten. Two questions, two predicates — the same reasoning
+ * `isPickupPhase` gives for not deriving itself from `isInProgress`.
+ */
+export function isLiveLeg(status: TripStatus): boolean {
+  return (
+    isPickupPhase(status) ||
+    isWaitingForPassenger(status) ||
+    status === 'passenger_onboard' ||
+    isTripInProgress(status)
+  );
+}
+
 /** Where `HomeScreen`'s active-trip card sends a driver, by status. */
 export type ActiveTripRoute =
   | 'Pickup'
