@@ -18,13 +18,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { useDuty, useOffers, useSetDuty } from '../duty/queries';
 import type { TripsStackParams } from '../navigation/types';
 import { useSync } from '../offline/SyncProvider';
-import {
-  isInProgress,
-  isPickupPhase,
-  isTripInProgress,
-  isWaitingForPassenger,
-  statusLabel,
-} from '../trips/transitions';
+import { activeTripRoute, isInProgress, statusLabel } from '../trips/transitions';
 import { useDriverStats, useTrips } from '../trips/queries';
 import { money, ratingNote, ratingValue, walletNote, walletValue } from '../trips/statsPresentation';
 import { TripMap } from '../trips/TripMap';
@@ -244,15 +238,26 @@ export function HomeScreen({ navigation }: Props) {
             // to screen, and `transitions.ts`, where the pair is defined
             // together so neither can quietly claim the other's status.
             onOpen={() => {
-              if (isPickupPhase(active.status)) {
-                navigation.navigate('Pickup', { tripId: active.id });
-              } else if (isWaitingForPassenger(active.status)) {
-                navigation.navigate('WaitingForPassenger', { tripId: active.id });
-              } else if (isTripInProgress(active.status)) {
-                navigation.navigate('TripInProgress', { tripId: active.id });
-              } else {
-                navigation.navigate('TripDetail', { tripId: active.id });
+              // The decision lives in `activeTripRoute`, not here, so it can
+              // be tested — this component has no test, and a
+              // `passenger_onboard` trip silently fell through to the record
+              // view for exactly that reason.
+              const route = activeTripRoute(active.status);
+
+              if (route === 'Odometer') {
+                // The opening reading, resumed where the driver left it. The
+                // only legal move from `passenger_onboard` is `trip_started`,
+                // and that transition cannot be posted without it.
+                navigation.navigate('Odometer', {
+                  tripId: active.id,
+                  to: 'trip_started',
+                  from: active.status,
+                });
+
+                return;
               }
+
+              navigation.navigate(route, { tripId: active.id });
             }}
           />
         )}

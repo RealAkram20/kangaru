@@ -1,5 +1,14 @@
 import type { Trip, TripStatus } from '../api/types';
-import { driverActions, isInProgress, shouldStreamGps, streamingTripId } from './transitions';
+import {
+  activeTripRoute,
+  driverActions,
+  isInProgress,
+  isPickupPhase,
+  isTripInProgress,
+  isWaitingForPassenger,
+  shouldStreamGps,
+  streamingTripId,
+} from './transitions';
 
 function tripWith(status: TripStatus, allowed: TripStatus[]): Trip {
   return {
@@ -15,6 +24,7 @@ function tripWith(status: TripStatus, allowed: TripStatus[]): Trip {
     dropoff: { label: 'Jinja', latitude: null, longitude: null },
     fare: null,
     estimated_fare: null,
+    earnings: null,
     status,
     allowed_transitions: allowed,
     pickup_wait_target_seconds: 300,
@@ -200,5 +210,54 @@ describe('isInProgress', () => {
     expect(isInProgress('assigned')).toBe(false);
     expect(isInProgress('accepted')).toBe(false);
     expect(isInProgress('trip_completed')).toBe(false);
+  });
+});
+
+describe('activeTripRoute', () => {
+  it('sends each live status to the screen that owns it', () => {
+    expect(activeTripRoute('accepted')).toBe('Pickup');
+    expect(activeTripRoute('driver_en_route')).toBe('Pickup');
+    expect(activeTripRoute('driver_arrived')).toBe('WaitingForPassenger');
+    expect(activeTripRoute('trip_started')).toBe('TripInProgress');
+    expect(activeTripRoute('waiting')).toBe('TripInProgress');
+    expect(activeTripRoute('trip_resumed')).toBe('TripInProgress');
+  });
+
+  it('sends passenger_onboard to the odometer, not to the record', () => {
+    // The gap this function was extracted to close. It fell through every
+    // predicate and landed on TripDetail — a page read at a standstill — when
+    // the only legal move from that state is `trip_started`, and the opening
+    // reading is the only thing standing in the way. Found on a real handset
+    // after a driver backed out of the odometer modal.
+    expect(activeTripRoute('passenger_onboard')).toBe('Odometer');
+  });
+
+  it('falls back to the record for anything with no live screen', () => {
+    expect(activeTripRoute('assigned')).toBe('TripDetail');
+    expect(activeTripRoute('trip_completed')).toBe('TripDetail');
+    expect(activeTripRoute('cancelled')).toBe('TripDetail');
+    expect(activeTripRoute('no_show')).toBe('TripDetail');
+  });
+
+  it('never sends one status to two screens', () => {
+    // The invariant `docs/agent-worklog.md` keeps as a table. Asserted here so
+    // widening a predicate cannot quietly take a status off another screen.
+    const live: TripStatus[] = [
+      'accepted',
+      'driver_en_route',
+      'driver_arrived',
+      'passenger_onboard',
+      'trip_started',
+      'waiting',
+      'trip_resumed',
+    ];
+
+    const pairs = live.filter(
+      (s) =>
+        [isPickupPhase(s), isWaitingForPassenger(s), isTripInProgress(s), s === 'passenger_onboard']
+          .filter(Boolean).length !== 1,
+    );
+
+    expect(pairs).toEqual([]);
   });
 });

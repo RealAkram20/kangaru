@@ -830,3 +830,146 @@ walk-in. The screen was reporting the truth about a trip that genuinely has
 none of those. **Seeing these screens populated needs a walk-in live trip with
 pins** — raised with the owner rather than changed unilaterally, because the
 live trip's nature is the seeder author's deliberate choice.
+
+---
+
+### 2026-08-15 — "Ride Complete" screen (driver app)
+
+**Status:** in progress.
+**Mockup:** driver app, immediately after the closing odometer. Green tick in a
+burst of confetti, "Great job!", then a card reading Fare `UGX 12,500` / Tip
+`+ UGX 2,000` / Your earnings `UGX 14,500` / Platform fee `− UGX 2,000` /
+Total `UGX 12,500`, a Wallet balance card at `UGX 135,000`, and two buttons:
+**Back Online** and **View Earnings**.
+
+**This screen does not take a status off anybody.** It is a destination pushed
+by the closing odometer, not a route on `TripStatus` — so the ownership table
+above is unchanged and `trip_completed` still belongs to `TripDetailScreen`.
+That split is deliberate: this is the *moment* a trip ended, read once, and
+`TripDetailScreen` is the *record*, read any time afterwards. Routing
+`trip_completed` here would mean opening a ride from last Tuesday's history and
+being congratulated for it.
+
+**Files I expect to own:**
+
+- `mobile/src/screens/RideCompleteScreen.tsx` + `.test.tsx`
+- `mobile/src/trips/completion.ts` + `completion.test.ts`
+- `backend/tests/Feature/Trips/TripEarningsTest.php`
+- `backend/Modules/Trips/Resources/TripResource.php` — **the `earnings` field
+  and its one private method only.** The pickup agent's `pickup`/`dropoff`/
+  `fare`/`estimated_fare` block and the waiting agent's
+  `pickup_wait_target_seconds` are untouched.
+- `docs/api/openapi.yaml` — `TripEarnings` and `Trip.earnings` only.
+
+**Files shared — the exact edits, none of them a rewrite:**
+
+- `mobile/src/api/types.ts` — one `TripEarnings` type, one field on `Trip`.
+- `mobile/src/navigation/types.ts` + `RootNavigator.tsx` — one route each.
+- `mobile/src/screens/OdometerScreen.tsx` — **two lines.** On
+  `to === 'trip_completed'` it replaces itself with this screen instead of
+  `goBack()`, which today drops the driver back onto a live-leg screen for a
+  trip that has just ended.
+- `mobile/src/offline/SyncProvider.tsx` — **one added line, and it is a bug
+  fix.** The flush invalidates `['trips']` and `['availability']` but not
+  `['driver-stats']`, so completing a trip left the home screen's Earnings
+  today and Wallet balance tiles stale until their 60s `staleTime` lapsed.
+- `backend/Modules/Trips/Models/Trip.php` — one `ledgerEntries()` relation.
+- `backend/Modules/Trips/Controllers/TripController.php` — `show()` eager-loads
+  it. **Deliberately not `index()`**, exactly as `orderRequest` is bounded.
+- Trip fixtures gaining `earnings: null`. If you add a required field to
+  `Trip`, expect to patch these — it has caused two collisions already.
+
+**Conflicts raised before building — six, and five of them are the mockup's
+money. The arithmetic on that card is not implementable as drawn.**
+
+- **No Tip row. The concept does not exist in this platform.** Not a column,
+  not an `InvoiceLineType`, not a `LedgerEntryKind`, not a field in
+  `order_requests.details`. A tip line would be `docs/screen-rules.md` §1 in
+  its purest form — a number nothing can produce. Building tips is a product
+  feature with a payment path behind it, not a row on a screen.
+- **The mockup's own totals do not reconcile.** It adds a 2,000 tip to a
+  12,500 fare, calls 14,500 "Your earnings", subtracts a 2,000 "Platform fee"
+  and lands on a "Total" of 12,500 — the fare it started from. It also labels
+  the *gross* figure as the driver's earnings, which is the exact confusion
+  `FareEstimate`'s docblock was written to prevent. And 2,000 is not the
+  platform's cut of 12,500: `billing.driver_commission_percent` is 20%, so it
+  would be 2,500.
+- **"Your earnings" had no HTTP surface at all, so I am adding one.** The
+  figure exists — `DriverLedgerService::recordCompletedTrip()` writes a
+  `fare_earned` entry keyed by `trip_id` at the rate in force at completion —
+  but nothing served it; the ledger was readable only in aggregate through
+  `GET /me/stats`. The two alternatives were both worse: showing the gross
+  fare and calling it earnings is a lie, and computing `fare × (100 −
+  percent)` on the handset duplicates a server rule into every shipped phone,
+  which is the audit agent's finding 5 verbatim. So `TripResource` gains an
+  `earnings` block read from the ledger. **The commission is not recomputed —
+  it is `gross − earned`,** which is what ADR-0029 §2 says it is.
+- **No "20%" printed beside the platform fee.** Same rule: the percent is not
+  in the payload, and a handset that states it goes on stating the old one
+  after the office changes it.
+- **"Back Online" is a fiction as drawn** — completing a trip does not take a
+  driver off duty, so there is nothing to come back from. `on_duty` is a real
+  togglable state, though, so the button does the honest version of the
+  mockup's intent: it reads **Go online** and actually posts duty on when the
+  driver *is* off duty, and **Back to work** when they are already on.
+- **"View Earnings" goes nowhere, because no earnings screen exists.** The
+  secondary button opens `TripDetail` — the record for the trip just finished
+  — which is a real destination and not the same one the primary button uses.
+
+**No confetti.** DESIGN.md §7 permits motion exactly here ("a tick on a
+completed verification") and this is the one genuinely occasional moment in
+the app, so the tick animates. The confetti does not: it is decoration with no
+reason (`docs/screen-rules.md` §5), and it is fifty-odd animated views on a
+handset that has been running GPS all day.
+
+**The state the mockup does not draw, and which a driver sees most often.**
+Completion goes through the outbox (ADR-0023), so at the instant this screen
+mounts the server usually has not settled the fare yet — `fare` and `earnings`
+are both null, and upcountry they may stay null for hours. The screen renders
+em dashes and says the trip is saved and waiting to be sent, then fills in by
+itself when the flush invalidates the cache. A screen that only knew how to
+draw the settled case would show a driver `UGX 0` for their morning.
+
+**Not built, deliberately:**
+
+- **Tips.** Above. Needs a payment path, an ADR and a customer-side surface.
+- **An Earnings screen.** "View Earnings" implies a statement view — a ledger
+  the driver can scroll. `driver_ledger_entries` would support one and no
+  endpoint exposes it. **This is the biggest gap this screen reveals** and it
+  is a whole feature, not a button.
+- **No rate-the-passenger prompt.** ADR-0030 runs the other way; the fourth
+  screen to refuse it.
+
+---
+
+### 2026-08-15 — Development environment: a live walk-in, and the missing public tariff
+
+**Not a code change.** Data and processes, recorded because two of the
+findings explain em dashes anyone testing will otherwise report as bugs.
+
+**There were no live trips at all.** The screen the owner photographed was
+React Query's persisted cache — the app is offline-first and stores the last
+answer in AsyncStorage, so it renders a trip that no longer exists. Worth
+knowing when a tester says "the app still shows X".
+
+**`php artisan serve` had died.** The console showed "Cannot reach the
+KangaruRide server"; nothing was listening on 8000. Restarted on
+`--host=0.0.0.0` so both the browser and the handset on the LAN reach it.
+
+**There was no public walk-in tariff, and that is why every walk-in fare was
+an em dash.** ADR-0026 §1 makes the platform tariff a rate card with
+`tenant_id` null and `is_default` true; `RateCardResolver::walkInTariff()`
+refuses rather than falling back to a client's negotiated prices, so with no
+such card *every* walk-in quote raised `RateCardNotConfiguredException` and
+`estimated_fare` came back null everywhere. One is now created through
+`RateCardService::create()` with six vehicle categories.
+
+**Nothing seeds it.** `DriverAppSeeder` populates the ledger and ratings but
+not the tariff, so a fresh database still cannot price a walk-in. Worth adding
+to that seeder — left to its author rather than done here.
+
+**The live demo trip** is now a walk-in with everything the screens read:
+pins at Acacia Mall → Kololo Airstrip, `payment` cash/receiver, a passenger
+contact, and an estimated fare of UGX 8,190. Left at `driver_en_route`, which
+is the earliest status `HomeScreen` pins as the active trip, so the demo opens
+one tap from `PickupScreen`.

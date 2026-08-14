@@ -173,6 +173,54 @@ export function isTripInProgress(status: TripStatus): boolean {
   return status === 'trip_started' || status === 'waiting' || status === 'trip_resumed';
 }
 
+/** Where `HomeScreen`'s active-trip card sends a driver, by status. */
+export type ActiveTripRoute =
+  | 'Pickup'
+  | 'WaitingForPassenger'
+  | 'Odometer'
+  | 'TripInProgress'
+  | 'TripDetail';
+
+/**
+ * The one function that decides which screen a live trip opens on.
+ *
+ * Extracted from `HomeScreen` so the decision can be tested — the branching
+ * lived inside a component with no component test, which is exactly where the
+ * gap below survived unnoticed.
+ *
+ * **`passenger_onboard` goes to the odometer, and that is the bug this fixes.**
+ * It fell through every predicate and landed on `TripDetail` — a record view,
+ * read at a standstill — when the only legal move from that state is
+ * `trip_started`, and the only thing standing between the driver and it is the
+ * opening reading. A driver who backs out of the odometer modal (or whose app
+ * is killed mid-capture) taps the active card again and is put back exactly
+ * where they left off, rather than on a page that reads like an audit trail
+ * with one button on it. Found on a real handset.
+ *
+ * `TripDetail` stays the answer for everything else, which is every status
+ * this app has no live screen for — and it is still reachable for all of them
+ * through Today's list.
+ */
+export function activeTripRoute(status: TripStatus): ActiveTripRoute {
+  if (isPickupPhase(status)) {
+    return 'Pickup';
+  }
+
+  if (isWaitingForPassenger(status)) {
+    return 'WaitingForPassenger';
+  }
+
+  if (status === 'passenger_onboard') {
+    return 'Odometer';
+  }
+
+  if (isTripInProgress(status)) {
+    return 'TripInProgress';
+  }
+
+  return 'TripDetail';
+}
+
 /**
  * Whether GPS should be streaming for a trip in this status.
  *
