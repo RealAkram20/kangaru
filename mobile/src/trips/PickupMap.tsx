@@ -44,11 +44,21 @@ export function PickupMap({
   pickup,
   dropoff,
   here,
+  fill = false,
 }: {
   pickup: Coordinates | null;
   dropoff: Coordinates | null;
   /** The driver's own position, when the handset has a fix. */
   here: Coordinates | null;
+  /**
+   * Take the whole space available instead of the inline 220pt panel.
+   *
+   * For `TripMapScreen`, which is the same map given the screen. A prop rather
+   * than a second component: everything that makes this hard — the MapLibre
+   * document, the bounds, the no-coordinates case — is identical, and the only
+   * difference is a height.
+   */
+  fill?: boolean;
 }) {
   const html = useMemo(
     () => (pickup === null ? null : mapDocument(pickup, dropoff, here)),
@@ -67,7 +77,7 @@ export function PickupMap({
   }
 
   return (
-    <View style={styles.frame}>
+    <View style={fill ? styles.fill : styles.frame}>
       <WebView
         style={styles.web}
         originWhitelist={['*']}
@@ -173,10 +183,15 @@ const styles = StyleSheet.create({
     // Taller than TripMap's 150: this one has to hold two or three markers
     // that can be kilometres apart and still show the streets between them.
     height: 220,
-    borderRadius: radius.md,
+  },
+  /**
+   * The same map given the whole screen. No border and no corner radius —
+   * a full-bleed map with a rounded outline reads as a card that failed to
+   * fit, and there is nothing beside it for the border to separate it from.
+   */
+  fill: {
+    flex: 1,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: colors.border,
     backgroundColor: colors.surfaceSunken,
   },
   web: {

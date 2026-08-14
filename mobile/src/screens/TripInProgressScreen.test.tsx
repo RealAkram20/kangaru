@@ -383,3 +383,15 @@ it('does not float the badge over the panel that replaces a missing map', async 
   expect(getByText(/No map for this trip/)).toBeTruthy();
   expect(getByText('straight line')).toBeTruthy();
 });
+
+it('opens the map inside the app rather than ejecting the driver to Google Maps', async () => {
+  // The complaint that produced `TripMapScreen`: tapping Navigate threw the
+  // driver out of the app mid-job, and getting back meant finding it again
+  // with a passenger in the car. The hand-off still exists — it is a button on
+  // that screen — but it is now a choice rather than the only option.
+  const { getByLabelText } = await renderProgress();
+
+  void fireEvent.press(getByLabelText('Navigate to Kololo Airstrip'));
+
+  expect(navigate).toHaveBeenCalledWith('TripMap', { tripId: 42 });
+});

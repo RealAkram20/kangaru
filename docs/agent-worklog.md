@@ -835,7 +835,12 @@ live trip's nature is the seeder author's deliberate choice.
 
 ### 2026-08-15 — "Ride Complete" screen (driver app)
 
-**Status:** in progress.
+**Status:** complete. 259/260 mobile tests, 145 Trips backend tests, `tsc
+--noEmit` and eslint clean across `mobile/src`, Pint and PHPStan level 8 clean
+on every file touched. Six guards proved by mutation and restored, and both
+states were rendered and read against the mockup — which found a defect no test
+had. **The one failing mobile test is another agent's**, see the note at the
+end of this entry.
 **Mockup:** driver app, immediately after the closing odometer. Green tick in a
 burst of confetti, "Great job!", then a card reading Fare `UGX 12,500` / Tip
 `+ UGX 2,000` / Your earnings `UGX 14,500` / Platform fee `− UGX 2,000` /
@@ -930,15 +935,96 @@ em dashes and says the trip is saved and waiting to be sent, then fills in by
 itself when the flush invalidates the cache. A screen that only knew how to
 draw the settled case would show a driver `UGX 0` for their morning.
 
+**What rendering caught that no test did.** Both states were drawn side by
+side, and the wallet card was wrong in the unconfirmed one. The balance is
+`SUM(amount_minor)` over the ledger, and **a trip the office has not received
+is not in that sum** — so finishing a 12,500 cash ride with 4,500 already owed
+showed 4,500 when the driver was in fact holding 17,000 of the office's money.
+It is the same staleness the home screen's tiles had, on the one screen where
+the driver is looking straight at the cash in question. The card now carries
+"Not counting this trip yet" while the trip is unconfirmed, and two tests pin
+it. Every test had asserted the figure the payload carried, which was correct
+— that is precisely why none of them caught it.
+
+**Seven mutations, all of which bite** (and all restored):
+
+| Mutation | Test that caught it |
+|---|---|
+| Driver gate dropped from `earnings` | never shows one driver what another earned |
+| `ledgerEntries` read without the loaded check | does not read the ledger on the trips list |
+| Fee recomputed from the live commission rate | reports the rate in force when the trip completed (**and** reads the credit back) |
+| `compactMoney` used for a settlement figure | shows the exact figure rather than the compact one |
+| Wallet caveat suppressed | warns the balance excludes the trip just finished |
+| Closing odometer `goBack()`s | sends the driver to the completion screen |
+| `Trip.earnings` deleted from `openapi.yaml` | **all 7** — every Feature round-trip is validated against the spec (ADR-0011), and `Trip` is `additionalProperties: false` |
+
+That last one is worth knowing if you have not hit it: `tests/Pest.php` wraps
+**every** HTTP round-trip in `Feature` with `ValidatesOpenApiContract`, so a
+response field missing from the spec fails the tests that happen to touch it
+rather than a separate contract suite. Adding a field to a resource without
+adding it to `openapi.yaml` turns the whole module red.
+
+**A test of mine that lied, and how.** `renderComplete(trip(), undefined)` was
+meant to exercise the wallet-not-loaded case; passing `undefined` to a
+parameter with a default value **re-triggers the default**, so it silently
+rendered a fully-loaded wallet and the test passed for the wrong reason. The
+helper now takes `null` and the comment says why.
+
+**`fireEvent` is asynchronous in this setup and an unawaited `changeText` does
+nothing.** It cost about twenty minutes on `OdometerScreen.test.tsx`: the field
+never updated, so the submit button stayed disabled, so the press was a no-op,
+and the test failed on an empty mock rather than on the behaviour. `void
+fireEvent.press(...)` is fine — a press needs no state to land first — but
+anything the next interaction depends on must be awaited. Worth knowing before
+the next screen test.
+
 **Not built, deliberately:**
 
 - **Tips.** Above. Needs a payment path, an ADR and a customer-side surface.
 - **An Earnings screen.** "View Earnings" implies a statement view — a ledger
   the driver can scroll. `driver_ledger_entries` would support one and no
   endpoint exposes it. **This is the biggest gap this screen reveals** and it
-  is a whole feature, not a button.
+  is a whole feature, not a button. The secondary button opens the trip record
+  instead.
 - **No rate-the-passenger prompt.** ADR-0030 runs the other way; the fourth
   screen to refuse it.
+- **No route or duration on the card.** The driver has just driven it; a
+  summary of the journey they finished thirty seconds ago is a row nobody
+  reads.
+- **`DriverLedgerService::recordSettlement()` still has no endpoint.** Noted
+  here because this screen makes the gap visible: the wallet says what a driver
+  owes and nothing in the platform can record them paying it. The office writes
+  those rows by hand. It was already true before this screen; it is just now
+  displayed twice.
+
+---
+
+**To whoever owns `TripInProgressScreen` — I found your files mid-edit and
+left them alone (rule 6).** `startedAtFrom` has gained a second argument,
+`startedAtFrom(events, trip?.started_at ?? null)`, and `progress.ts`,
+`progress.test.ts` and `TripInProgressScreen.tsx` are all modified in the
+working tree. One test of yours currently fails —
+`TripInProgressScreen.test.tsx:185`, *"renders em dashes rather than zeros when
+the platform cannot answer"* — because the fallback now fills the elapsed
+figure from `trip.started_at` when the timeline is empty, so there is one em
+dash where the test expects two. That looks like work in flight rather than a
+mistake and it is yours to finish; I have not touched it.
+
+**The only line I changed in your files is `earnings: null` in your test
+fixture**, which the new required field on `Trip` forced. Same mechanical patch
+that has caused two collisions on this branch already — six fixtures needed it
+this time (`outbox.test.ts`, `ordering.test.ts`, `transitions.test.ts`,
+`PickupScreen.test.tsx`, `TripInProgressScreen.test.tsx`,
+`WaitingForPassengerScreen.test.tsx`).
+
+**Also pre-existing and not mine:** `pint --test` fails on five committed,
+unmodified files — `Bookings/Models/OrderRequest.php`,
+`Customers/Routes/api.php`, `Dispatch/Services/DispatchOfferService.php`,
+`Fleet/Controllers/DriverPresenceController.php` and
+`tests/Feature/Drivers/DriverLedgerTest.php`. Mostly `line_ending`, which is a
+CRLF artifact of a Windows checkout and will not reproduce on CI's Linux
+runner. Reported rather than fixed: reformatting five files nobody asked me to
+touch would bury this change in noise.
 
 ---
 
@@ -973,3 +1059,50 @@ pins at Acacia Mall → Kololo Airstrip, `payment` cash/receiver, a passenger
 contact, and an estimated fare of UGX 8,190. Left at `driver_en_route`, which
 is the earliest status `HomeScreen` pins as the active trip, so the demo opens
 one tap from `PickupScreen`.
+
+---
+
+### 2026-08-15 — Navigate opens a map in the app (driver app)
+
+**Status:** done. 267 mobile tests, `tsc` and eslint clean, two guards proved
+by mutation.
+
+**The complaint, from the owner on a handset:** tapping *Navigate* threw the
+driver out of the app into Google Maps, and getting back meant finding the app
+again with a passenger in the car.
+
+`TripMapScreen` is the answer: the same MapLibre document given the whole
+screen, the same pins, the driver's live position, pinch to zoom. **The
+hand-off still exists** as an *Open in Maps* button — it is the right answer
+for actual guidance and always was — but it is now a choice rather than the
+only door. `PickupMap` gained a `fill` prop rather than a sibling component,
+because everything hard about it is identical and only the height differs.
+
+It points at the **drop-off** once the passenger is aboard and at the
+**pickup** before that. Sending a driver to a kerb they already left is the
+kind of small wrongness that makes an app feel inattentive, and it is asserted
+in both directions.
+
+**Turn-by-turn is deliberately not here.** It needs a navigation SDK —
+realistically Mapbox's — which is a metered paid service *and* a native
+module, so it cannot run in Expo Go and would need every handset rebuilt.
+Weeks of work and a permanent bill to be worse than the free app already on
+the driver's phone.
+
+**Still owed, and blocked on the owner: the route line.** They have chosen
+**Google Directions**. It is not built yet and should not be built quietly,
+for two reasons worth stating together:
+
+1. **The key must live server-side.** A Google key shipped in a mobile bundle
+   is extractable, and this one bills per request. The integration belongs
+   behind a backend endpoint that caches the polyline per order, not in the
+   handset.
+2. **It overturns ADR-0020 §3.** That section refused to show an ETA — but it
+   refused to *invent* one from a straight line, which is a different thing
+   from having a measured one. Real Directions data makes an honest ETA
+   possible for the first time, and that deserves an ADR rather than appearing
+   in a component.
+
+No key exists anywhere in this repo today (`frontend/.env.example` has an
+unset `VITE_GOOGLE_MAPS_API_KEY` placeholder for the *JS* map, and nothing
+server-side). Requested from the owner.

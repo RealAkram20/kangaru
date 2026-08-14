@@ -6,7 +6,6 @@ import type { Trip } from '../api/types';
 import type { TripsStackParams } from '../navigation/types';
 import { useSync } from '../offline/SyncProvider';
 import { dialPassenger } from '../trips/contact';
-import { openDirections } from '../trips/directions';
 import { PickupMap } from '../trips/PickupMap';
 import { located, toCoordinates } from '../trips/places';
 import { useTrip, useTripEvents } from '../trips/queries';
@@ -226,7 +225,7 @@ export function WaitingForPassengerScreen({ route, navigation }: Props) {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Navigate to ${trip.pickup.label}`}
-                onPress={() => void openDirections(pickupPoint, trip.pickup.label)}
+                onPress={() => navigation.navigate('TripMap', { tripId: trip.id })}
                 style={styles.navigate}
               >
                 <NavigationIcon color={colors.primaryText} size={18} strokeWidth={2} />

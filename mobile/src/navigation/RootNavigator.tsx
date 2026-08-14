@@ -15,6 +15,7 @@ import { HomeScreen } from '../screens/HomeScreen';
 import { PasswordScreen } from '../screens/PasswordScreen';
 import { OdometerScreen } from '../screens/OdometerScreen';
 import { PickupScreen } from '../screens/PickupScreen';
+import { RideCompleteScreen } from '../screens/RideCompleteScreen';
 import { SignInScreen } from '../screens/SignInScreen';
 import { SignUpScreen } from '../screens/SignUpScreen';
 import { TimeOffScreen } from '../screens/TimeOffScreen';
@@ -22,6 +23,7 @@ import { WelcomeScreen } from '../screens/WelcomeScreen';
 import { TodayScreen } from '../screens/TodayScreen';
 import { TripDetailScreen } from '../screens/TripDetailScreen';
 import { TripInProgressScreen } from '../screens/TripInProgressScreen';
+import { TripMapScreen } from '../screens/TripMapScreen';
 import { WaitingForPassengerScreen } from '../screens/WaitingForPassengerScreen';
 import { colors } from '../ui/theme';
 import type { AccountStackParams, RootTabParams, TripsStackParams } from './types';
@@ -143,7 +145,22 @@ function TripsNavigator() {
         component={TripInProgressScreen}
         options={{ headerShown: false }}
       />
+      <TripsStack.Screen
+        name="TripMap"
+        component={TripMapScreen}
+        options={{ headerShown: false }}
+      />
       <TripsStack.Screen name="TripDetail" component={TripDetailScreen} options={{ title: 'Trip' }} />
+      {/* Own header, as the three live-leg screens do. `gestureEnabled` is
+          off and there is no back arrow to the previous screen: behind this
+          is the live-leg screen for a trip that has just ended, and swiping
+          back to it offers an End trip button that 422s. Every exit goes
+          Home. */}
+      <TripsStack.Screen
+        name="RideComplete"
+        component={RideCompleteScreen}
+        options={{ headerShown: false, gestureEnabled: false }}
+      />
       <TripsStack.Screen
         name="Odometer"
         component={OdometerScreen}

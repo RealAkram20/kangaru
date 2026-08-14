@@ -8,7 +8,6 @@ import { usePosition } from '../location/usePosition';
 import type { TripsStackParams } from '../navigation/types';
 import { useSync } from '../offline/SyncProvider';
 import { dialPassenger } from '../trips/contact';
-import { openDirections } from '../trips/directions';
 import { PickupMap } from '../trips/PickupMap';
 import { located, greatCircleKm, toCoordinates } from '../trips/places';
 import {
@@ -246,7 +245,7 @@ export function TripInProgressScreen({ route, navigation }: Props) {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Navigate to ${trip.dropoff.label}`}
-                onPress={() => void openDirections(dropoff, trip.dropoff.label)}
+                onPress={() => navigation.navigate('TripMap', { tripId: trip.id })}
                 style={styles.navigate}
               >
                 <NavigationIcon color={colors.primaryText} size={18} strokeWidth={2} />

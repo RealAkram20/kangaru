@@ -48,7 +48,21 @@ export type TripsStackParams = {
    * while `TripDetail` is the record and is read at a standstill.
    */
   TripInProgress: { tripId: number };
+  /**
+   * The map, full screen. Where *Navigate* goes, so a driver checking the
+   * route does not lose the app with a passenger in the car.
+   */
+  TripMap: { tripId: number };
   TripDetail: { tripId: number };
+  /**
+   * The moment a trip ended: what it was worth, and where to go next.
+   *
+   * **Pushed by `Odometer` on the closing reading, never routed to from a
+   * `TripStatus`.** `trip_completed` stays with `TripDetail`, which is the
+   * record; this is the moment, and it is read once. Routing the status here
+   * would congratulate a driver for opening last Tuesday's ride.
+   */
+  RideComplete: { tripId: number };
   Odometer: {
     tripId: number;
     /** The transition this reading accompanies. */
