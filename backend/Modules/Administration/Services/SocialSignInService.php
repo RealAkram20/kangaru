@@ -33,9 +33,9 @@ class SocialSignInService
     /**
      * @param  array{provider_id: string, email: string, email_verified: bool, name: string}  $claims
      * @return array{kind: 'signed_in', user: User, token: string}
-     *         |array{kind: 'sign_up', name: string, email: string}
-     *         |array{kind: 'mfa_required'}
-     *         |array{kind: 'not_a_driver'}
+     *                                                             |array{kind: 'sign_up', name: string, email: string}
+     *                                                             |array{kind: 'mfa_required'}
+     *                                                             |array{kind: 'not_a_driver'}
      */
     public function resolve(string $provider, array $claims): array
     {
@@ -94,9 +94,9 @@ class SocialSignInService
 
     /**
      * @return array{kind: 'signed_in', user: User, token: string}
-     *         |array{kind: 'sign_up', name: string, email: string}
-     *         |array{kind: 'mfa_required'}
-     *         |array{kind: 'not_a_driver'}
+     *                                                             |array{kind: 'sign_up', name: string, email: string}
+     *                                                             |array{kind: 'mfa_required'}
+     *                                                             |array{kind: 'not_a_driver'}
      */
     private function signIn(User $user): array
     {
