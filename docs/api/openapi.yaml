@@ -1232,6 +1232,62 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/customer/trips/{trip}/rating:
+    post:
+      summary: >
+        The customer's verdict on a finished ride (ADR-0030 §1). One to five
+        stars, optional comment, written once and never editable.
+      description: >
+        Three conditions, all necessary: the trip's `customer_id` is the
+        caller, the trip is `trip_completed`, and no rating exists for it
+        yet. Rating before the end rates a journey that has not happened, and
+        rating a cancelled trip punishes a driver for a decision that may
+        have been the passenger's.
+
+
+        **Immutable** (§2). An editable rating is a lever over a driver, and
+        a mistaken one is corrected by an administrator with an audit trail
+        rather than by the passenger. There is deliberately no staff route to
+        write one: an office that can score its own drivers has a rating that
+        measures the office.
+
+
+        A trip belonging to another customer answers 404, not 403 — that a
+        row exists is itself information.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [stars]
+              additionalProperties: false
+              properties:
+                stars: { type: integer, minimum: 1, maximum: 5 }
+                comment: { type: ['string', 'null'], maxLength: 500 }
+      responses:
+        '201':
+          description: The rating, as recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [stars]
+                    additionalProperties: false
+                    properties:
+                      stars: { type: integer, minimum: 1, maximum: 5 }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/order-requests:
     get:
       summary: The dispatch desk's walk-in queue, oldest first (ADR-0012).
@@ -4925,7 +4981,7 @@ components:
         keys (none in phase 1) appear as {configured: bool}, never as
         values.
       type: object
-      required: [branding, legal, auth, regional, ordering, booking, mail, sms, payments]
+      required: [branding, legal, auth, regional, ordering, billing, booking, mail, sms, payments]
       additionalProperties: false
       properties:
         branding: { $ref: '#/components/schemas/BrandingSettings' }
@@ -4978,6 +5034,22 @@ components:
           properties:
             walk_in_enabled: { type: boolean }
             rate_limit_per_minute: { type: integer }
+        billing:
+          description: >
+            What the platform keeps from a walk-in fare (ADR-0029 §3). A
+            setting rather than a constant, because the rate is a commercial
+            decision the Super Admin makes and argues about — not one that
+            needs a deploy.
+
+
+            **Changing it never restates what a driver already earned.** The
+            rate in force at completion is written into the ledger entry's
+            description, so history is priced at the rate it happened under.
+          type: object
+          required: [driver_commission_percent]
+          additionalProperties: false
+          properties:
+            driver_commission_percent: { type: integer, minimum: 0, maximum: 100 }
         booking:
           type: object
           required: [approval_required, max_advance_days]
@@ -5511,14 +5583,12 @@ components:
             optional on the public order form; `cash` is never assumed.
           oneOf:
             - type: 'null'
-            - type: object
-              required: [payment_method, payer]
-              properties:
-                payment_method:
-                  type: ['string', 'null']
-                  enum: [cash, mobile_money, card, null]
-                payer:
-                  type: ['string', 'null']
+            # `$ref`, not a second inline copy of the same object. The copy
+            # was missing `additionalProperties: false`, which the spec lint
+            # refuses (ADR-0011: an undeclared response field would validate
+            # silently), and had `payer` as a bare string where the offer's
+            # version enumerates it. One shape, one definition.
+            - $ref: '#/components/schemas/OfferPayment'
         odometer_start: { type: ['integer', 'null'] }
         odometer_start_photo_path: { type: ['string', 'null'] }
         odometer_end: { type: ['integer', 'null'] }

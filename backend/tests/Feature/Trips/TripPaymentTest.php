@@ -55,16 +55,25 @@ function walkInTripWithPayment(array $details = []): array
 }
 
 it('tells the driver how the ride settles while they are still driving it', function () {
+    // `receiver`, not `passenger`. `StorePublicOrderRequest` validates
+    // `details.payer` as `Rule::in(['sender', 'receiver'])` — that form is
+    // the only writer of the column — so "passenger" is a value the platform
+    // cannot produce, and the spec enumerates the two that it can.
+    //
+    // The fixture said `passenger` and passed until the response was checked
+    // against `docs/api/openapi.yaml`, which is the whole argument for
+    // validating responses rather than only asserting on them: an assertion
+    // agrees with whatever the fixture invented.
     [$driverUser, $trip] = walkInTripWithPayment([
         'payment_method' => 'cash',
-        'payer' => 'passenger',
+        'payer' => 'receiver',
     ]);
 
     $this->actingAs($driverUser, 'sanctum')
         ->getJson("/api/v1/trips/{$trip->id}")
         ->assertOk()
         ->assertJsonPath('data.payment.payment_method', 'cash')
-        ->assertJsonPath('data.payment.payer', 'passenger');
+        ->assertJsonPath('data.payment.payer', 'receiver');
 });
 
 it('lets no other key of details ride along with the two it is allowed', function () {
