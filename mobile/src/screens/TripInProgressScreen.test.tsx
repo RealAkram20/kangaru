@@ -44,10 +44,12 @@ jest.mock('../offline/SyncProvider', () => ({
 const mockUseTrip = jest.fn();
 const mockUseTripEvents = jest.fn();
 const mockPosition = jest.fn();
+const mockUseTripRoute = jest.fn();
 
 jest.mock('../trips/queries', () => ({
   useTrip: (id: number) => mockUseTrip(id),
   useTripEvents: (id: number) => mockUseTripEvents(id),
+  useTripRoute: () => mockUseTripRoute(),
 }));
 
 jest.mock('../location/usePosition', () => ({
@@ -120,6 +122,7 @@ async function renderProgress(
   mockUseTrip.mockReturnValue({ data: value, isLoading: false });
   mockUseTripEvents.mockReturnValue({ data: events });
   mockPosition.mockReturnValue(here);
+  mockUseTripRoute.mockReturnValue({ data: null });
 
   const node: ReactElement = (
     <TripInProgressScreen

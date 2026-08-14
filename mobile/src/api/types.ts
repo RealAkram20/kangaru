@@ -106,6 +106,63 @@ export type TripPayment = {
   payer: string | null;
 };
 
+/**
+ * What the driver made on one completed trip.
+ *
+ * **`SettledFare` above is what the passenger paid; this is what is left of it
+ * for the driver.** The two differ by the platform's cut, and conflating them
+ * overstates a driver's income by the whole commission — which is why they are
+ * two fields rather than one with a caveat in a docblock.
+ *
+ * Read back from the ADR-0029 ledger entry that recorded the credit, never
+ * recomputed on the handset. `commission_minor` is `total_minor -
+ * earned_minor`, derived server-side from the two figures actually written, so
+ * it reports **the rate in force when the trip completed** rather than
+ * whatever the office has set today. The percentage itself is deliberately not
+ * in this payload: an app that displayed it would be stating a rule it does
+ * not own and would go on stating the old one after the rate changed.
+ */
+export type TripEarnings = {
+  /** The driver's share, in minor units. UGX is zero-decimal — whole shillings. */
+  earned_minor: number;
+  /** The platform's cut. Derived as `total_minor - earned_minor`, not from a rate. */
+  commission_minor: number;
+  /** The gross fare, repeated so the three figures arrive as one object. */
+  total_minor: number;
+  currency: string;
+  /** When the ledger credited it — not the instant the trip completed. */
+  recorded_at: string | null;
+};
+
+/**
+ * A road route between two points (ADR-0031).
+ *
+ * **Null is the ordinary answer**, not an error: no key configured, routing
+ * switched off, no signal, a provider quota rejection, or a trip taken over
+ * the phone with no coordinates. The map draws its dashed direct line in that
+ * case, which is what it drew before routing existed.
+ */
+export type TripRoute = {
+  /**
+   * Google's encoded polyline, decoded by the map document rather than here.
+   * An order of magnitude smaller than a point array on a handset's
+   * connection, which is the whole reason it travels in this shape.
+   */
+  polyline: string;
+  /** Road distance, not the crow's flight. */
+  distance_km: number;
+  /**
+   * **Null unless the provider supplied one.** ADR-0031 §6 forbids deriving a
+   * duration locally, whatever distance is in hand — that is the invention
+   * ADR-0020 §3 refused, wearing a better number. Null means the screen shows
+   * no minutes at all.
+   */
+  duration_seconds: number | null;
+  provider: 'google';
+  /** A forecast, never a promise of arrival. Travels with the figure. */
+  is_estimate: true;
+};
+
 export type Trip = {
   id: number;
   /** Null on a walk-in ride (ADR-0024 §1), which a customer owns instead. */
@@ -172,6 +229,20 @@ export type Trip = {
    * `GET /trips/{id}` carries it, which is what the pickup screen fetches.
    */
   estimated_fare: FareEstimate | null;
+  /**
+   * What this driver earned on it, and null far more often than it is set.
+   *
+   * Served to the trip's own driver alone — a dispatcher reading the board
+   * gets null here, and so does a corporate client, who must never see the
+   * platform's margin on their work. Null on the trips *list* too, which does
+   * not load the ledger.
+   *
+   * **Null also means "not confirmed yet", which is the common case on the
+   * completion screen.** Completion travels through the outbox, so the phone
+   * usually arrives before the server has credited anything. `RideComplete`
+   * renders an em dash and says so, then fills in when the flush lands.
+   */
+  earnings: TripEarnings | null;
   /**
    * Who to ring, and null far more often than not (ADR-0024 §7).
    *

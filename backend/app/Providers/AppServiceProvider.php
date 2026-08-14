@@ -64,6 +64,8 @@ use Modules\Trips\Events\TripCompleted;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Models\TripRating;
 use Modules\Trips\Policies\TripPolicy;
+use Modules\Trips\Routing\GoogleDirectionsProvider;
+use Modules\Trips\Routing\RouteProvider;
 use Modules\Trips\Support\ContactChannel;
 use Modules\Trips\Support\DatabaseLivePositionStore;
 use Modules\Trips\Support\DirectContactChannel;
@@ -89,6 +91,11 @@ class AppServiceProvider extends ServiceProvider
         // finding every place a number is rendered, which is exactly when
         // one gets missed.
         $this->app->bind(ContactChannel::class, DirectContactChannel::class);
+
+        // The routing vendor, behind the seam ADR-0031 §2 keeps for it. One
+        // implementation today; the settings group records which engine drew
+        // a route so "why does this line look wrong" has an answer.
+        $this->app->bind(RouteProvider::class, GoogleDirectionsProvider::class);
     }
 
     /**

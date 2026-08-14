@@ -46,6 +46,7 @@ export function PickupMap({
   here,
   fill = false,
   boarded = false,
+  routePolyline = null,
 }: {
   pickup: Coordinates | null;
   dropoff: Coordinates | null;
@@ -69,14 +70,26 @@ export function PickupMap({
    * screen read at a junction, a reason to turn the wrong way.
    */
   boarded?: boolean;
+  /**
+   * A road route from the server (ADR-0031), encoded as Google's polyline.
+   *
+   * When present it replaces the dashed direct lines entirely — a real road
+   * and a crow's-flight guess must never be on the map at once, because the
+   * driver cannot tell which one is which.
+   *
+   * Null is the ordinary case, not an error: no key, no signal, no
+   * coordinates. The dashed lines are what runs then, as they did before
+   * routing existed.
+   */
+  routePolyline?: string | null;
 }) {
   const html = useMemo(
     // Interactive only when it fills the screen. The inline panel sits inside
     // a ScrollView, where a pannable map swallows the drag that was meant to
     // scroll the page — which is why this was false everywhere until a
     // full-screen map needed to be zoomed into.
-    () => (pickup === null ? null : mapDocument(pickup, dropoff, here, fill, boarded)),
-    [pickup, dropoff, here, fill, boarded],
+    () => (pickup === null ? null : mapDocument(pickup, dropoff, here, fill, boarded, routePolyline)),
+    [pickup, dropoff, here, fill, boarded, routePolyline],
   );
 
   if (html === null) {
@@ -127,6 +140,7 @@ function mapDocument(
   here: Coordinates | null,
   interactive: boolean,
   boarded: boolean,
+  routePolyline: string | null,
 ): string {
   const points = [pickup, ...(dropoff === null ? [] : [dropoff]), ...(here === null ? [] : [here])];
   const bounds = boundsFor(points);
@@ -158,11 +172,13 @@ function mapDocument(
    */
   const legs: { from: Coordinates; to: Coordinates; tone: 'approach' | 'fare' }[] = [];
 
-  if (here !== null && !boarded) {
+  // A real road wins outright. Drawing both would put a measured line and a
+  // guess on one map with no way to tell them apart.
+  if (routePolyline === null && here !== null && !boarded) {
     legs.push({ from: here, to: pickup, tone: 'approach' });
   }
 
-  if (dropoff !== null) {
+  if (routePolyline === null && dropoff !== null) {
     // Once the passenger is aboard the driver is *on* this leg, so it is drawn
     // from where they actually are rather than from a kerb they have left.
     legs.push({ from: boarded && here !== null ? here : pickup, to: dropoff, tone: 'fare' });
@@ -226,6 +242,91 @@ function mapDocument(
   });
 ${interactive ? "  map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');" : ''}
 
+  // Google's encoded polyline, unpacked in the document rather than on the
+  // wire. The encoding is roughly a tenth the size of the equivalent point
+  // array, which on an upcountry connection is the difference between a route
+  // that arrives and one that times out — so it travels encoded and is
+  // decoded here, twenty lines from where it is drawn.
+  //
+  // Transcribed from the published algorithm: signed values, five decimal
+  // places, each coordinate a delta on the last.
+  function decodePolyline(encoded) {
+    var points = [];
+    var index = 0, lat = 0, lng = 0;
+
+    while (index < encoded.length) {
+      var shift = 0, result = 0, byte;
+
+      do {
+        byte = encoded.charCodeAt(index++) - 63;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20);
+
+      lat += ((result & 1) ? ~(result >> 1) : (result >> 1));
+
+      shift = 0;
+      result = 0;
+
+      do {
+        byte = encoded.charCodeAt(index++) - 63;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20);
+
+      lng += ((result & 1) ? ~(result >> 1) : (result >> 1));
+
+      // Longitude first: GeoJSON's order and MapLibre's, and the opposite of
+      // the lat/lng every other part of this app says. Uganda sits near the
+      // equator, so a swap here passes every range check and draws the route
+      // in the Indian Ocean.
+      points.push([lng / 1e5, lat / 1e5]);
+    }
+
+    return points;
+  }
+
+  function addRoute(encoded) {
+    var coordinates = decodePolyline(encoded);
+
+    if (coordinates.length < 2) { return; }
+
+    map.addSource('route', {
+      type: 'geojson',
+      data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coordinates } }
+    });
+
+    // A casing underneath, then the line. A single stroke over a pale basemap
+    // loses its edge against the road it is drawn on; the darker casing is
+    // what keeps it readable in sunlight, which is the condition this app is
+    // designed for.
+    map.addLayer({
+      id: 'route-casing',
+      type: 'line',
+      source: 'route',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-width': 9, 'line-color': '${colors.primaryPressed}', 'line-opacity': 0.55 }
+    });
+
+    map.addLayer({
+      id: 'route',
+      type: 'line',
+      source: 'route',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      // Solid, unlike the dashed direct line — and the difference is the
+      // claim. This one followed a road; that one did not.
+      paint: { 'line-width': 5, 'line-color': '${colors.primary}' }
+    });
+
+    // Framed on the route rather than on the pins: a road that loops around a
+    // lake leaves the box the two endpoints would have drawn.
+    var bounds = coordinates.reduce(function (box, point) {
+      return box.extend(point);
+    }, new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
+
+    map.fitBounds(bounds, { padding: 44, animate: false });
+  }
+
   function addLegs(features) {
     if (!features.length) { return; }
 
@@ -240,7 +341,11 @@ ${interactive ? "  map.addControl(new maplibregl.NavigationControl({ showCompass
       layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: {
         'line-width': 4,
-        'line-color': ['match', ['get', 'tone'], 'approach', '${colors.primary}', '${colors.danger}'],
+        // The leg being driven is the brand green; anything beyond it is
+        // muted. Red belongs to the drop-off *pin* — a red line on a road
+        // somebody is actively driving reads as a warning, which is how the
+        // first version of this looked on a handset.
+        'line-color': ['match', ['get', 'tone'], 'approach', '${colors.primary}', '${colors.borderStrong}'],
         // Dashes, never a solid stroke: see the legs docblock above. This is
         // a direct line, and it has to keep saying so at every zoom.
         'line-dasharray': [1.4, 1.4],
@@ -261,12 +366,13 @@ ${interactive ? "  map.addControl(new maplibregl.NavigationControl({ showCompass
   }
 
   map.on('load', function () {
+    ${routePolyline === null ? '' : `addRoute(${JSON.stringify(routePolyline)});`}
     addLegs(${JSON.stringify(legFeatures)});
     ${marker(pickup, 'pickup', 'Pickup')}
     ${dropoff === null ? '' : marker(dropoff, 'dropoff', 'Drop-off')}
     ${here === null ? '' : marker(here, 'here', 'You')}
     ${
-      bounds === null
+      bounds === null || routePolyline !== null
         ? ''
         : `map.fitBounds(${JSON.stringify(bounds)}, { padding: 28, animate: false });`
     }

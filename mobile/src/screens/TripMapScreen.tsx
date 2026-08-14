@@ -6,7 +6,7 @@ import { openDirections } from '../trips/directions';
 import { PickupMap } from '../trips/PickupMap';
 import { located, greatCircleKm, toCoordinates } from '../trips/places';
 import { usePosition } from '../location/usePosition';
-import { useTrip } from '../trips/queries';
+import { useTrip, useTripRoute } from '../trips/queries';
 import { formatKilometres } from '../duty/offerPresentation';
 import { Button, Notice, Screen, ScreenHeader } from '../ui/components';
 import { NavigationIcon } from '../ui/icons';
@@ -59,6 +59,11 @@ export function TripMapScreen({ route, navigation }: Props) {
   // single fix taken on open would freeze them at the door they came in by.
   const here = usePosition({ watch: true });
 
+  // Refetched when the driver has moved ~100 m, not on a clock — see
+  // `useTripRoute`. Null whenever routing is off, unconfigured or unreachable,
+  // which the map draws as its dashed direct line.
+  const { data: roadRoute } = useTripRoute(tripId, here);
+
   if (trip === undefined) {
     return (
       <Screen>
@@ -96,17 +101,39 @@ export function TripMapScreen({ route, navigation }: Props) {
       />
 
       <View style={styles.map}>
-        <PickupMap pickup={pickup} dropoff={dropoff} here={here} fill boarded={boarded} />
+        <PickupMap
+          pickup={pickup}
+          dropoff={dropoff}
+          here={here}
+          fill
+          boarded={boarded}
+          routePolyline={roadRoute?.polyline ?? null}
+        />
       </View>
 
       <View style={styles.footer}>
-        {away !== null && (
+        {(roadRoute ?? null) !== null ? (
           <View style={styles.distance}>
-            <Text style={styles.distanceValue}>{away}</Text>
-            {/* Said in words, as everywhere else this figure appears. A bare
-                kilometre count beside a map reads as road distance. */}
-            <Text style={styles.distanceCaption}>straight line — not the road distance</Text>
+            <Text style={styles.distanceValue}>{formatKilometres(roadRoute!.distance_km)}</Text>
+            {/*
+              Two different claims, and the caption is how a driver tells them
+              apart. This one followed a road; the fallback below did not.
+              Minutes appear only when the provider sent them — ADR-0031 §6
+              forbids deriving a duration here, whatever distance is in hand.
+            */}
+            <Text style={styles.distanceCaption}>
+              {roadRoute!.duration_seconds === null
+                ? 'by road'
+                : `by road · about ${Math.max(1, Math.round(roadRoute!.duration_seconds / 60))} min`}
+            </Text>
           </View>
+        ) : (
+          away !== null && (
+            <View style={styles.distance}>
+              <Text style={styles.distanceValue}>{away}</Text>
+              <Text style={styles.distanceCaption}>straight line — not the road distance</Text>
+            </View>
+          )
         )}
 
         {target !== null && (

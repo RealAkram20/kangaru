@@ -6,10 +6,12 @@ use Modules\Trips\Controllers\OdometerPhotoController;
 use Modules\Trips\Controllers\TripController;
 use Modules\Trips\Controllers\TripEventController;
 use Modules\Trips\Controllers\TripLocationController;
+use Modules\Trips\Controllers\TripRouteController;
 
 Route::apiResource('trips', TripController::class)->only(['index', 'show', 'store']);
 Route::post('trips/{trip}/transitions', [TripController::class, 'transition'])->name('trips.transitions.store');
 Route::get('trips/{trip}/events', [TripEventController::class, 'index'])->name('trips.events.index');
+Route::get('trips/{trip}/route', [TripRouteController::class, 'show'])->name('trips.route.show');
 
 // The dashboard photo captured with each odometer reading (PROJECT.md's
 // anchor-client requirement). Streamed behind auth rather than served from

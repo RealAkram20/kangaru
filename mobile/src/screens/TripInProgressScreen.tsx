@@ -2,7 +2,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import type { Coordinates, Trip } from '../api/types';
+import type { Coordinates, Trip, TripRoute } from '../api/types';
 import { estimatedFareLabel, formatKilometres, formatMoney } from '../duty/offerPresentation';
 import { usePosition } from '../location/usePosition';
 import type { TripsStackParams } from '../navigation/types';
@@ -17,7 +17,7 @@ import {
   tripPaymentLabel,
   waitingSecondsFrom,
 } from '../trips/progress';
-import { useTrip, useTripEvents } from '../trips/queries';
+import { useTrip, useTripEvents, useTripRoute } from '../trips/queries';
 import { statusLabel } from '../trips/transitions';
 import { elapsedSeconds, NO_VALUE } from '../trips/waiting';
 import { Button, Notice, Screen, ScreenHeader } from '../ui/components';
@@ -108,6 +108,7 @@ export function TripInProgressScreen({ route, navigation }: Props) {
   // definitionally moving for this screen's whole life, so a single fix would
   // be wrong within a minute and stay wrong — see `usePosition`.
   const here = usePosition({ watch: true });
+  const { data: roadRoute } = useTripRoute(tripId, here);
 
   const startedAt = startedAtFrom(events, trip?.started_at ?? null);
   const now = useTicker();
@@ -211,7 +212,7 @@ export function TripInProgressScreen({ route, navigation }: Props) {
       />
 
       <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
-        <MapPanel trip={trip} here={here} driving={driving} />
+        <MapPanel trip={trip} here={here} driving={driving} route={roadRoute ?? null} />
 
         {passenger !== null && (
           <DetailRow
@@ -321,16 +322,24 @@ function MapPanel({
   trip,
   here,
   driving,
+  route,
 }: {
   trip: Trip;
   here: Coordinates | null;
   driving: number | null;
+  route: TripRoute | null;
 }) {
   const pickup = located(trip.pickup) ? toCoordinates(trip.pickup) : null;
   const dropoff = located(trip.dropoff) ? toCoordinates(trip.dropoff) : null;
 
+  // The road when there is one, the crow's flight when there is not — and the
+  // caption below changes with it, because the two are different claims.
   const remaining =
-    here === null || dropoff === null ? null : formatKilometres(greatCircleKm(here, dropoff));
+    route !== null
+      ? formatKilometres(route.distance_km)
+      : here === null || dropoff === null
+        ? null
+        : formatKilometres(greatCircleKm(here, dropoff));
 
   // `PickupMap` draws a map only when there is a pickup pin, and renders a
   // short explanatory panel otherwise. The badge floats *over* a map and must
@@ -340,7 +349,13 @@ function MapPanel({
 
   return (
     <View>
-      <PickupMap pickup={pickup} dropoff={dropoff} here={here} boarded />
+      <PickupMap
+        pickup={pickup}
+        dropoff={dropoff}
+        here={here}
+        boarded
+        routePolyline={route?.polyline ?? null}
+      />
 
       <View
         style={mapped ? styles.badge : styles.badgeInline}
@@ -356,7 +371,7 @@ function MapPanel({
           map reads as road distance, and a driver who plans on it arrives
           late — the crow's flight under-reads every time.
         */}
-        <Text style={styles.badgeCaption}>straight line</Text>
+        <Text style={styles.badgeCaption}>{route === null ? 'straight line' : 'by road'}</Text>
 
         <View style={styles.badgeRule} />
 

@@ -2,11 +2,13 @@ import type { ApiClient } from './client';
 import type {
   AvailabilityBlock,
   AvailabilityKind,
+  Coordinates,
   CursorMeta,
   DispatchOffer,
   DriverPresence,
   Trip,
   TripEvent,
+  TripRoute,
   User,
 } from './types';
 
@@ -106,6 +108,30 @@ export async function fetchTrip(api: ApiClient, tripId: number): Promise<Trip> {
   const response = await api.request<Trip>(`/trips/${tripId}`);
 
   return response.data;
+}
+
+/**
+ * The road ahead, from where the driver is (ADR-0031).
+ *
+ * The key lives on the server and this endpoint is why — a Directions key in
+ * this bundle would be extractable, and it bills per request.
+ *
+ * `from` is optional: without a fix the server routes from the pickup, which
+ * is still the right line for a driver who has not moved yet.
+ */
+export async function fetchTripRoute(
+  api: ApiClient,
+  tripId: number,
+  from: Coordinates | null,
+): Promise<TripRoute | null> {
+  const query =
+    from === null ? '' : `?from_latitude=${from.lat}&from_longitude=${from.lng}`;
+
+  const response = await api.request<{ route: TripRoute | null }>(
+    `/trips/${tripId}/route${query}`,
+  );
+
+  return response.data.route;
 }
 
 export async function fetchTripEvents(api: ApiClient, tripId: number): Promise<TripEvent[]> {
@@ -474,6 +500,154 @@ export type DriverStats = {
   rating_count: number;
   window_days: number;
 };
+
+/** The span the earnings screen is showing. No `year` — see the server enum. */
+export type EarningsPeriod = 'day' | 'week' | 'month';
+
+/**
+ * Earnings grouped by the kind of job that produced them.
+ *
+ * `service_type` is `ride`, `delivery` or `self_drive` from the order request
+ * behind the trip — or **`other`**, meaning the trip has no order request and
+ * cannot be classified (a walk-in a dispatcher fulfilled by hand). It is a
+ * row rather than an omission so the breakdown always reconciles with the
+ * total above it.
+ *
+ * Deliberately a plain `string`, not a union. The server sends whatever
+ * `order_requests.service_type` holds, and that column is a `string(20)` fed
+ * partly by a public form — a union here would be a lie the compiler enforces.
+ * `serviceLabel` in `earnings/presentation.ts` is the one place that narrows
+ * it, and anything unrecognised renders as itself rather than as a crash.
+ */
+export type EarningsBreakdownRow = {
+  service_type: string;
+  trips: number;
+  earned_minor: number;
+};
+
+/**
+ * One bar of the trend chart.
+ *
+ * **The series is continuous and zero-filled** — every bucket between `from`
+ * and `to` is present, empty ones included. An hour with no entry is not
+ * unknown: the ledger is written at completion, so nothing completed in it and
+ * the driver earned exactly nothing. Dropping empty buckets would compress the
+ * axis and draw 3 AM beside 7 PM.
+ */
+export type EarningsTrendPoint = {
+  /** Local-time key, sorting chronologically: `YYYY-MM-DD HH:00` or `YYYY-MM-DD`. */
+  bucket: string;
+  earned_minor: number;
+};
+
+/**
+ * What a driver earned over a day, a week or a month.
+ *
+ * Hand-transcribed from `docs/api/openapi.yaml` like everything else in this
+ * file — see `DriverStats` above for the drift that cost a live bug.
+ *
+ * **There is no `tips_minor`, no `bonuses_minor` and no online-hours figure,
+ * and their absence is deliberate rather than pending.** None of the three
+ * exists anywhere on this platform. `on_trip_minutes` is time *driving*, which
+ * is a different and smaller thing than time online — the platform keeps no
+ * duty history to measure the latter from.
+ */
+export type DriverEarnings = {
+  period: EarningsPeriod;
+  /**
+   * The zone the boundaries and bucket keys are in, from the platform's
+   * regional settings. Served rather than assumed, so the chart is labelled in
+   * the fleet's day rather than the handset's — a driver near a border must
+   * not see their day move.
+   */
+  timezone: string;
+  from: string;
+  /** **Exclusive.** The window is half-open `[from, to)`. */
+  to: string;
+  currency: string;
+  /** The driver's own share, in minor units. Never the gross fare. */
+  total_minor: number;
+  trips: number;
+  /**
+   * Minutes spent on trips, or null when no trip in the window carries both
+   * timestamps. **Not online hours** — see the type docblock.
+   */
+  on_trip_minutes: number | null;
+  breakdown: EarningsBreakdownRow[];
+  trend: EarningsTrendPoint[];
+};
+
+export async function fetchDriverEarnings(
+  api: ApiClient,
+  period: EarningsPeriod,
+): Promise<DriverEarnings> {
+  const response = await api.request<DriverEarnings>(`/me/earnings?period=${period}`);
+
+  return response.data;
+}
+
+/**
+ * One movement in a driver's account (ADR-0029 §2) — a row of the wallet
+ * statement.
+ *
+ * Hand-transcribed from `docs/api/openapi.yaml`, like everything else here.
+ *
+ * **There is no tip, bonus, withdrawal or top-up kind, and there never was.**
+ * The four kinds below are the whole vocabulary. A screen showing any of the
+ * other four would be inventing a transaction type.
+ */
+export type DriverLedgerEntry = {
+  id: number;
+  kind: 'fare_earned' | 'cash_collected' | 'settlement' | 'adjustment';
+  /** The kind in words, from the server's own enum, so nothing re-spells them. */
+  kind_label: string;
+  /**
+   * **Signed, and the sign is the meaning**: positive means the platform owes
+   * the driver, negative means the driver owes the platform. Minor units —
+   * UGX is zero-decimal, so whole shillings, and never divide.
+   *
+   * Direction must not be inferred from `kind`: `settlement` legitimately
+   * runs both ways, which is why ADR-0029 §2 replaced a one-way `payout`.
+   */
+  amount_minor: number;
+  currency: string;
+  /**
+   * Server-written prose, and load-bearing rather than decorative: ADR-0029
+   * §3 records the commission rate in force *at completion* in this string,
+   * which is what lets an old row show the rate that actually applied to it.
+   */
+  description: string;
+  trip_id: number | null;
+  /**
+   * `ride`, `delivery` or `self_drive` — so a row can read "Ride earnings"
+   * rather than the generic "Fare earned". Null on a settlement, and on a
+   * walk-in a dispatcher fulfilled by hand; the app falls back to
+   * `kind_label`, which is always true.
+   */
+  service_type: string | null;
+  created_at: string | null;
+};
+
+/** A page of the statement, with the cursor for the next one. */
+export type DriverLedgerPage = {
+  entries: DriverLedgerEntry[];
+  /** Opaque; null on the last page. */
+  nextCursor: string | null;
+};
+
+export async function fetchDriverLedger(
+  api: ApiClient,
+  cursor: string | null,
+): Promise<DriverLedgerPage> {
+  // `CursorMeta` and the `query` option, same as `fetchTrips` — one cursor
+  // shape and one place that spells it, rather than a second hand-built URL.
+  const response = await api.request<DriverLedgerEntry[], CursorMeta>('/me/ledger-entries', {
+    query: { cursor: cursor ?? undefined },
+  });
+
+  // `meta` is optional on the envelope, so this cannot assume it arrived.
+  return { entries: response.data, nextCursor: response.meta?.cursor.next ?? null };
+}
 
 export async function fetchDriverStats(api: ApiClient): Promise<DriverStats> {
   const response = await api.request<DriverStats>('/me/stats');

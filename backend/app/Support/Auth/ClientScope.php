@@ -85,6 +85,9 @@ final class ClientScope
                 'trips.index',
                 'trips.show',
                 'trips.events.index',
+                // The road ahead (ADR-0031). Read-only, and null far more
+                // often than not — no key, no signal, no pins.
+                'trips.route.show',
                 'trips.transitions.store',
                 'trips.odometer-photo.show',
 

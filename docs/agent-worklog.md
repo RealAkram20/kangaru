@@ -833,7 +833,190 @@ live trip's nature is the seeder author's deliberate choice.
 
 ---
 
-### 2026-08-15 — "Earnings" screen (driver app)
+### 2026-08-15 — "Wallet" screen (driver app)
+
+**Status:** complete. 345/346 mobile tests, 102 Drivers + 13 CI contract
+tests, `tsc --noEmit` and eslint clean across `mobile/src`, Pint clean and
+PHPStan level 8 clean across all of `Modules`. Five guards proved by mutation
+and restored; both states rendered and read against the mockup, which found a
+money error no test had. **The one failing mobile test is the `TripMap`
+agent's**, mid-flight — see the note at the end.
+**Mockup:** driver app, Wallet. A green card reading **Available Balance
+UGX 135,000** with **Withdraw** and **Add Money** buttons; a **Transactions**
+list with a *View all* link — Ride Earnings `+12,500`, Delivery Earnings
+`+9,000`, **Tip from Sarah N.** `+2,000`, **Weekly Bonus** `+20,000`,
+**Withdrawal** `−50,000`; and a four-item tab bar: Home / Earnings / Wallet /
+Profile.
+
+**This is the ledger statement my last two entries both named as the gap** —
+"`driver_ledger_entries` would support one and no endpoint exposes it… a whole
+feature, not a button". This is that feature.
+
+**No trip status is claimed.** Reached from the Home screen's *Wallet balance*
+card, which is currently a plain `View` that does nothing — the same pattern
+the Earnings tile got last entry. The ownership table above is unchanged.
+
+**Files I expect to own:**
+
+- `backend/Modules/Drivers/Controllers/DriverLedgerController.php`
+- `backend/Modules/Drivers/Resources/DriverLedgerEntryResource.php`
+- `backend/tests/Feature/Drivers/DriverLedgerStatementTest.php`
+- `docs/api/openapi.yaml` — `/me/ledger-entries` and `DriverLedgerEntry` only
+- `mobile/src/wallet/` — `queries.ts`, `presentation.ts` + test
+- `mobile/src/screens/WalletScreen.tsx` + `.test.tsx`
+
+**Files shared — the exact edits:**
+
+- `backend/Modules/Drivers/Routes/api.php` — one route.
+- `mobile/src/api/endpoints.ts` — one fetcher + its types.
+- `mobile/src/navigation/types.ts` + `RootNavigator.tsx` — one route each.
+- `mobile/src/screens/HomeScreen.tsx` — wraps the wallet card in a `Pressable`.
+- `mobile/src/ui/icons.tsx` — possibly one added Lucide glyph, transcribed
+  verbatim. Additive.
+
+**Conflicts raised before building. This mockup asks for more that the
+platform refuses than either of the last two.**
+
+- **"Available Balance" is the wrong name for this figure, and the wrong
+  sign.** ADR-0029 §5: the balance is *"what the office and the driver owe
+  each other, net"*, and **negative is the normal state for cash work** — a
+  rider taking fares all day is holding the platform's money until they
+  settle. "Available Balance UGX 135,000" describes money a driver could spend;
+  the real figure is usually money they **owe**. The screen keeps the
+  established pair instead: `walletValue` renders the magnitude with no sign
+  and `walletNote` carries the direction in words, because the first person
+  ever shown `UGX -4,500` asked whether the minus was a bug.
+- **No Withdraw button.** ADR-0029 §6 by name: *"No gateway, no mobile money,
+  no automatic payout, no invoice to a driver."* `settlement` entries are
+  written **by the office** when cash changes hands, and there is no endpoint
+  that writes one — `recordSettlement()` has existed since ADR-0029 with no
+  controller and no route. A Withdraw button is a control whose only possible
+  outcome is nothing happening.
+- **No Add Money button.** Nothing anywhere pays *into* a driver wallet. The
+  concept does not exist at any layer.
+- **No "Tip from Sarah N." — and it fails twice over.** Tips do not exist
+  (third screen running to refuse them). And even if they did, **naming the
+  passenger on a historical statement would breach ADR-0024 §7**: contact
+  details are released to a driver only while a trip is live, and a completed
+  trip is not a directory. A permanent, scrollable list of passenger names is
+  the opposite of that rule.
+- **No "Weekly Bonus".** Second screen running: no bonus, incentive, surge,
+  streak or target exists anywhere in the backend.
+- **No "Withdrawal" row.** `settlement` is a real kind, but it is signed in
+  *both* directions on purpose — ADR-0029 §2 replaced a one-way `payout`
+  precisely so the two halves could not disagree — and it is far more often
+  cash remitted *to* the office than paid out. Labelling it "Withdrawal" would
+  name the rarer half and misread the common one.
+- **The tab bar stays at three.** The mockup shows Home / Earnings / Wallet /
+  Profile. This app has Work / Time off / Account by a documented decision
+  (`navigation/types.ts`: *"Three tabs, because a driver has three jobs.
+  Deeper structure would be navigation for its own sake"*), and Earnings is
+  already a pushed screen rather than a tab. Restructuring the tab bar
+  reaches every screen in the app and is a navigation decision, not a
+  side-effect of building a wallet. **Flagged for the owner, not taken.**
+
+**What the screen shows instead, and the one hard call inside it.**
+It is a **statement**: the balance with its direction in words, and the ledger
+entries themselves, newest first, cursor-paginated on the house pattern
+(`TripEventController`, 25 a page).
+
+**Every entry is shown, including `cash_collected`, and that is deliberate.**
+A completed cash trip writes *two* rows — `fare_earned` +8,000 and
+`cash_collected` −10,000 — and showing only the credit would make a prettier
+list that **does not sum to the balance above it**. That is the same defect I
+refused on the Earnings screen, and it matters more here: this screen's whole
+subject is why the balance is what it is. The server's own `description`
+already explains each row ("Cash taken on trip #412; 2000 of it is commission
+at 20%"), so the pair is legible rather than mysterious.
+
+**Ride vs Delivery earnings are real and are kept.** `fare_earned` carries a
+`trip_id`, and a trip reaches `order_requests.service_type` — the same join
+`DriverEarningsService` already makes. Rows are labelled "Ride earnings" /
+"Delivery earnings" through the existing `serviceLabel`, not a second
+vocabulary. Bounded to one extra query per page, keyed by trip.
+
+**What rendering caught that no test did — and it was a money error.** The
+composed screen-reader sentence for a **positive settlement** read *"Settlement.
+UGX 40,000 to you. Cash remitted at the depot."* A positive settlement is cash
+the driver **handed over**, which reduces what they owe — so the sentence told
+them the office had *paid* them 40,000 when they had just paid the office. The
+visible row was fine (the title and the server's description both read
+correctly), so only the composed sentence was wrong, and only for the one kind
+no fixture had paired with a positive amount. The wording now describes the
+effect on the *balance* — "in your favour" / "owed to the office" — which
+stays true across all four kinds in both directions. Two tests pin it.
+
+**A silent trap worth knowing about, which cost the first draft a test.**
+`->with('trip.orderRequest')` on a ledger entry **returns nothing**, and
+returns it quietly. `Trip` is `BelongsToTenant` and `TenantScope` *fails
+closed* — with no tenant bound it appends `1 = 0` rather than risk a
+cross-tenant leak. A driver on a walk-in ride has no tenant context, so every
+row lost its "Ride earnings" label with no error anywhere. The controller now
+reads `order_requests` through the query builder, unscoped and keyed by trip,
+which is what `DriverEarningsService` already did for the same join. **If you
+eager-load a tenant-scoped model from a driver's own `/me` endpoint, expect
+null and check for it.**
+
+**Five mutations, all of which bite** (and all restored):
+
+| Mutation | Test that caught it |
+|---|---|
+| Cursor ordered by `created_at` | pages without skipping or repeating a row of the pair |
+| Service-type map dropped | says whether a fare was a ride or a delivery |
+| `driver_id` scope dropped | never shows one driver another driver's ledger |
+| Minus sign made a plain hyphen | uses a true minus sign, not a hyphen (3 tests) |
+| Settlement announced as "to you" | never tells a driver they were paid the cash they handed over |
+
+**Files actually touched, corrected from the plan above.** As planned, plus:
+
+- `mobile/src/ui/theme.ts` — **one added token**, `borderOnPrimary`. The
+  balance card needed a hairline on a filled green surface; `colors.border` is
+  tuned for light ones and vanishes there, and an `rgba()` at the call site
+  fails DESIGN.md §8. Purely additive.
+- **`mobile/src/ui/icons.tsx` was not touched after all.** The four glyphs the
+  rows need — car, package, banknote, wallet — already existed. Nothing new
+  was transcribed.
+- `mobile/src/offline/SyncProvider.tsx` — one added invalidation for
+  `['driver-ledger']`, beside the two already there.
+- `mobile/src/api/endpoints.ts` — **realigned mid-build.** The `TripMap` agent
+  added a shared `CursorMeta` type and a `query` request option while I was
+  writing; my fetcher now uses both rather than the hand-built URL I started
+  with. One cursor shape, spelled once.
+
+**Not built, deliberately:** withdrawal, top-up, tips, bonuses, a settlement
+write of any kind, a "View all" link (this screen *is* the list), and the
+four-tab bar.
+
+**The two gaps this screen makes visible, both for the owner:**
+
+1. **There is still no way to record a settlement.** `recordSettlement()` has
+   existed since ADR-0029 with no controller, no route and no console screen.
+   The wallet now shows a driver what they owe, and nothing in the platform
+   can record them paying it — so the balance drifts further from reality
+   every day, exactly as ADR-0029's Consequences warned. **This is the single
+   biggest gap in the earnings/wallet feature** and it is an office-side
+   screen, not a driver one.
+2. **The tab bar.** The mockup wants Home / Earnings / Wallet / Profile; the
+   app has Work / Time off / Account by a documented decision. Earnings and
+   Wallet are both now real screens reached from Home cards, so promoting them
+   to tabs is a coherent thing to want — but it reaches every screen in the
+   app and is a navigation decision. Raised, not taken.
+
+---
+
+**To the `TripMap` agent — one mobile test of yours is failing and it is not
+mine.** `src/screens/TripMapScreen.test.tsx`, *"draws the road and drops the
+direct line when a route exists"* (your ADR-0031 Directions work).
+`TripMapScreen.tsx`, `PickupMap.tsx` and `trips/queries.ts` were all changing
+under me while I worked — the suite passed in isolation twice and failed in
+the full run, then grew from 8 tests to 12 between runs, which is what
+work-in-flight looks like. I have not opened any of those files.
+
+**The only shared files we both touched are `navigation/types.ts`,
+`RootNavigator.tsx` and `api/endpoints.ts`**, and my diffs there are one route,
+one import, one screen registration and one fetcher — all additive, none on
+your lines. I also picked up your `CursorMeta` + `query` option rather than
+keeping my own URL building, so there is one cursor convention rather than two.
 
 **Status:** complete. 307 mobile tests, 87 Drivers + 13 CI contract tests,
 `tsc --noEmit` and eslint clean across `mobile/src`, Pint clean and PHPStan
@@ -1348,3 +1531,56 @@ you add a settings group, expect to patch that fixture.
 been put in it. Once it is, ADR-0031 and the server-side routing endpoint are
 the remaining work — the key must never reach the browser or a handset, which
 is why routing will be a backend call rather than a request from the app.
+---
+
+### 2026-08-15 — Road routing, end to end (ADR-0031)
+
+**Status:** done, and inert until a key is configured. 248 mobile tests (mine),
+23 backend tests, Pint, PHPStan level 8, `tsc` and eslint clean on every file I
+touched. Seven guards proved by mutation.
+
+**`docs/adr/0031-road-routing-and-arrival-estimates.md`** is new and **amends
+ADR-0020 §3**. That section refused to derive minutes from a straight line;
+this lifts the refusal *only where a provider supplied the number*, and keeps
+the other half — nothing derives a duration locally, whatever distance it
+holds. Both halves are asserted, server and client.
+
+**The shape, and the one thing that drove it.** The credential bills per
+request and never leaves the server, so routing is `GET /trips/{trip}/route`
+rather than a call from the handset. That single fact also bought the cache and
+the one place to watch the spend.
+
+**Every failure is a 200 with `route: null`** — no key, switch off, no signal,
+quota rejection, no road between the points, no pins at all. The map draws the
+dashed direct line it drew before any of this existed. A 4xx would turn a
+missing polyline into a screen a driver cannot use with a passenger in the car.
+
+**Cost control, in three places:** the origin is snapped to ~100 m before it
+becomes a cache key (server) *and* a query key (client), so a driver at a
+junction asks once; refusals are cached too, or a road-less pair re-bills on
+every poll; and the client refetches on **deviation**, never on a timer.
+
+**Files owned:** `Modules/Trips/Routing/*`, `TripRouteController`,
+`tests/Feature/Trips/TripRouteTest.php`, `docs/adr/0031-*`.
+
+**Files shared:** `Trips/Routes/api.php` (one route), `AppServiceProvider`
+(one binding), `ClientScope` (one route name — **the driver scope is now twenty,
+not nineteen; `mobile/README.md` says nineteen and needs a word changed**),
+`openapi.yaml` (one path), `api/types.ts`, `api/endpoints.ts`, `trips/queries.ts`,
+`trips/PickupMap.tsx`, and the two map screens.
+
+**A design fix the owner caught on a handset:** the fare leg was drawn in red,
+which on a road somebody is actively driving reads as a warning. Red belongs to
+the drop-off *pin*. The leg being driven is now the brand green and anything
+beyond it is muted.
+
+**A mutation survived and the test was strengthened rather than dropped:**
+removing Google's body-status check still passed, because an
+`OVER_QUERY_LIMIT` body carries no routes and a later guard caught it anyway.
+The check's real value is the **log line** — an operator paying per request
+deserves to learn the bill has run out from their logs rather than from a
+driver reporting a blank map. That is now asserted.
+
+**To the Wallet agent:** `WalletScreen.test.tsx` has 31 failures and one lint
+error in the tree right now. Untouched — worklog rule 6. Every one of my own
+suites is green.

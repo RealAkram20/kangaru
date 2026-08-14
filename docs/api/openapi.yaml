@@ -2494,6 +2494,57 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/me/ledger-entries:
+    get:
+      summary: >
+        The signed-in driver's wallet statement — their ledger, row by row,
+        newest first.
+      description: >
+        The rows behind `wallet_balance_minor` on `/me/stats`. That field says
+        *what* the balance is; this says **why**.
+
+        **Every entry is served, `cash_collected` included.** A completed cash
+        trip writes a pair — `fare_earned` positive and `cash_collected`
+        negative — and the pairing is what makes the balance mean anything
+        (ADR-0029 §2). Serving only the credits would produce a prettier list
+        that does not sum to the balance it sits under.
+
+        **Read-only, and there is no counterpart write.** ADR-0029 §6 keeps
+        the platform recording money rather than moving it: no gateway, no
+        payout, no top-up. `settlement` rows are the office's to write.
+
+        Cursor-paginated at 25, ordered by `id` descending — not by
+        `created_at`, because the pair written at completion shares a
+        timestamp to the second and a cursor over a non-unique ordering can
+        skip or repeat a row across pages.
+
+        403 `NOT_A_DRIVER` when the account has no driver profile.
+      parameters:
+        - $ref: '#/components/parameters/cursor'
+      responses:
+        '200':
+          description: A page of ledger entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DriverLedgerEntry' }
+                  meta:
+                    type: object
+                    required: [cursor]
+                    additionalProperties: false
+                    properties:
+                      cursor: { $ref: '#/components/schemas/Cursor' }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/me/duty:
     get:
       summary: The signed-in driver's own duty state.
@@ -2989,6 +3040,91 @@ paths:
                     additionalProperties: false
                     properties:
                       cursor: { $ref: '#/components/schemas/Cursor' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}/route:
+    get:
+      summary: The road between the driver and the drop-off (ADR-0031).
+      description: >
+        A road-following route from the driver's position — or from the pickup
+        when they have not sent one — to the trip's drop-off.
+
+
+        **`route` is null far more often than not, and null is always a 200.**
+        No key configured, routing switched off, no network, a provider quota
+        rejection, two points with no road between them, or a trip taken over
+        the phone with no coordinates at all. Clients draw the dashed direct
+        line they drew before routing existed; a 4xx here would turn a missing
+        polyline into a screen a driver cannot use with a passenger in the car.
+
+
+        The credential never leaves the server (ADR-0031 §1), which is why this
+        is an endpoint rather than a call the app makes: a Directions key bills
+        per request, and one extracted from a mobile bundle is somebody else's
+        traffic on this operator's invoice.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+        - name: from_latitude
+          in: query
+          required: false
+          description: Where to route from. Defaults to the pickup when absent.
+          schema: { type: number, minimum: -90, maximum: 90 }
+        - name: from_longitude
+          in: query
+          required: false
+          schema: { type: number, minimum: -180, maximum: 180 }
+      responses:
+        '200':
+          description: The route, or null when none can be drawn.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [route]
+                    additionalProperties: false
+                    properties:
+                      route:
+                        oneOf:
+                          - type: 'null'
+                          - type: object
+                            required: [polyline, distance_km, duration_seconds, provider, is_estimate]
+                            additionalProperties: false
+                            properties:
+                              polyline:
+                                type: string
+                                description: >
+                                  Google's encoded polyline. Passed through
+                                  rather than decoded server-side — an order of
+                                  magnitude smaller than a point array on a
+                                  handset's connection, and the map library
+                                  decodes it anyway.
+                              distance_km:
+                                type: number
+                                description: Road distance, not the crow's flight.
+                              duration_seconds:
+                                type: ['integer', 'null']
+                                description: >
+                                  **Null unless the provider supplied one.**
+                                  ADR-0031 §6 forbids deriving a duration
+                                  locally, whatever distance is in hand — that
+                                  is the invention ADR-0020 §3 refused, wearing
+                                  a better number. A client with null shows no
+                                  minutes at all.
+                              provider: { enum: [google] }
+                              is_estimate:
+                                enum: [true]
+                                description: >
+                                  A forecast, never a promise of arrival. The
+                                  flag travels with the figure so a client
+                                  cannot forget the rule.
         default:
           $ref: '#/components/responses/Error'
 
@@ -5545,6 +5681,67 @@ components:
         is_estimate:
           description: Always false. The counterpart of the always-true flag on WalkInFareEstimate.
           enum: [false]
+
+    DriverLedgerEntry:
+      description: >
+        One movement in a driver's account (ADR-0029 §2). Append-only: nothing
+        is updated and nothing is deleted, and a correction is a new
+        `adjustment` that reverses an old row.
+      type: object
+      required:
+        - id
+        - kind
+        - kind_label
+        - amount_minor
+        - currency
+        - description
+        - trip_id
+        - service_type
+        - created_at
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        kind:
+          type: string
+          enum: [fare_earned, cash_collected, settlement, adjustment]
+          description: >
+            `fare_earned` — the driver's share of a completed fare.
+            `cash_collected` — the gross fare they took in hand, negative
+            because they are holding the platform's money until they settle.
+            `settlement` — money that actually moved, in either direction.
+            `adjustment` — a correction.
+        kind_label:
+          type: string
+          description: The kind in words, from `LedgerEntryKind::label()`, so no client re-spells them.
+        amount_minor:
+          type: integer
+          description: >
+            **Signed, from the driver's point of view**: positive means the
+            platform owes them, negative means they owe the platform. Minor
+            units — UGX is zero-decimal, so whole shillings.
+
+            The sign is the meaning and must not be inferred from `kind`:
+            `settlement` legitimately runs both ways.
+        currency: { type: string }
+        description:
+          type: string
+          description: >
+            Server-written prose, and load-bearing rather than decorative —
+            ADR-0029 §3 records the commission rate in force at completion in
+            this string, which is what lets an old row show the rate that
+            actually applied to it.
+        trip_id:
+          type: ['integer', 'null']
+          description: Null on anything not raised by a trip — a settlement, for instance.
+        service_type:
+          type: ['string', 'null']
+          description: >
+            `ride`, `delivery` or `self_drive`, from the order request behind
+            the trip, so a statement can say "Ride earnings" rather than the
+            generic "Fare earned". Null when there is no trip, or no order
+            request behind it (a walk-in a dispatcher fulfilled by hand) — the
+            client falls back to `kind_label`, which is always true.
+        created_at: { type: ['string', 'null'], format: date-time }
 
     EarningsPeriod:
       description: >

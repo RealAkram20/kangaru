@@ -5,9 +5,10 @@ import {
   fetchDriverStats,
   fetchTrip,
   fetchTripEvents,
+  fetchTripRoute,
   fetchTrips,
 } from '../api/endpoints';
-import type { Trip } from '../api/types';
+import type { Coordinates, Trip } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
 import { TRIP_POLL_INTERVAL_MS } from '../config';
 import { orderTripsForToday } from './ordering';
@@ -69,6 +70,50 @@ export function useTripEvents(tripId: number) {
     queryFn: () => fetchTripEvents(api, tripId),
     networkMode: 'offlineFirst',
     gcTime: 24 * 60 * 60 * 1000,
+  });
+}
+
+/**
+ * The road ahead, refetched when the driver has actually moved (ADR-0031 §5).
+ *
+ * ## The query key is the cost control
+ *
+ * `here` is **snapped to roughly a hundred metres** before it enters the key,
+ * which is what makes this deviation-driven rather than timer-driven. React
+ * Query refetches when the key changes, so a driver sitting at a junction —
+ * whose GPS jitters by a few metres a second — keeps one cached answer, and a
+ * driver who has genuinely moved gets a new one.
+ *
+ * The arithmetic is why. At roughly $5 per 1,000 requests, a thirty-second
+ * timer over a thirty-minute trip is sixty requests, about $0.30 a trip, and a
+ * hundred trips a day is some $900 a month — for a route that does not change
+ * while a driver waits at a light. The snap is the same precision the server
+ * caches on, so the two agree about what "moved" means.
+ *
+ * `retry: false`: a route is decoration over a map that already works. Failing
+ * three times to draw a line costs three billed requests and buys nothing, and
+ * `null` is the answer the map is built for anyway.
+ */
+export function useTripRoute(tripId: number, here: Coordinates | null) {
+  const { api } = useAuth();
+
+  // Rounded *outside* the key so the value sent matches the value keyed on —
+  // keying on a snapped pair and then sending the raw one would make the
+  // client's cache and the server's disagree about which question was asked.
+  const snapped =
+    here === null
+      ? null
+      : { lat: Number(here.lat.toFixed(3)), lng: Number(here.lng.toFixed(3)) };
+
+  return useQuery({
+    queryKey: ['trips', tripId, 'route', snapped?.lat ?? null, snapped?.lng ?? null],
+    queryFn: () => fetchTripRoute(api, tripId, snapped),
+    networkMode: 'offlineFirst',
+    // The road does not move; the traffic on it does, and the duration is the
+    // half that goes stale. Matches the server's own TTL.
+    staleTime: 5 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
+    retry: false,
   });
 }
 

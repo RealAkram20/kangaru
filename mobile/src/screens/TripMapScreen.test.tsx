@@ -19,9 +19,13 @@ const METRICS = {
 
 const mockUseTrip = jest.fn();
 const mockPosition = jest.fn();
+const mockUseTripRoute = jest.fn();
 const mockOpenDirections = jest.fn();
 
-jest.mock('../trips/queries', () => ({ useTrip: (id: number) => mockUseTrip(id) }));
+jest.mock('../trips/queries', () => ({
+  useTrip: (id: number) => mockUseTrip(id),
+  useTripRoute: () => mockUseTripRoute(),
+}));
 jest.mock('../location/usePosition', () => ({ usePosition: () => mockPosition() }));
 jest.mock('../trips/directions', () => ({
   openDirections: (...args: unknown[]) => mockOpenDirections(...args),
@@ -77,7 +81,13 @@ async function renderMap(value: Trip = trip()) {
   );
 }
 
-beforeEach(() => mockOpenDirections.mockClear());
+beforeEach(() => {
+  mockOpenDirections.mockClear();
+  // No route by default — the state this app ships in, with no key
+  // configured. Set here rather than inside the render helper, which would
+  // overwrite whatever a test had just asked for.
+  mockUseTripRoute.mockReturnValue({ data: null });
+});
 
 it('points at the drop-off once the passenger is aboard', async () => {
   const { getByText } = await renderMap();
@@ -191,4 +201,59 @@ it('joins the points with a dashed line, never a solid one', async () => {
 
   expect(html).toContain("'line-dasharray'");
   expect(html).toContain('LineString');
+});
+
+// ── The real road, when there is one ──────────────────────────────────────
+
+const ROAD = {
+  polyline: 'a~l~Fjk~uOwHJy@P',
+  distance_km: 6.1,
+  duration_seconds: 780,
+  provider: 'google' as const,
+  is_estimate: true as const,
+}
+
+it('draws the road and drops the direct line when a route exists', async () => {
+  // Never both. A measured road and a crow's-flight guess on one map is two
+  // lines a driver cannot tell apart.
+  mockUseTripRoute.mockReturnValue({ data: ROAD })
+
+  const view = await renderMap();
+  const html = mapHtml(view.toJSON());
+
+  expect(html).toContain('addRoute(');
+  expect(html).toContain(ROAD.polyline);
+
+  // The dash *styling* is always in the document — it is a paint block in a
+  // function definition. What changes is whether any direct-line features are
+  // handed to it, so that is what this asserts.
+  expect(html).toContain('addLegs([])');
+});
+
+it('states the road distance, not the straight line, once routed', async () => {
+  mockUseTripRoute.mockReturnValue({ data: ROAD });
+
+  const { getByText, queryByText } = await renderMap();
+
+  expect(getByText('6.1 km')).toBeTruthy();
+  expect(queryByText(/straight line/)).toBeNull();
+});
+
+it('shows minutes only because the provider sent them', async () => {
+  mockUseTripRoute.mockReturnValue({ data: ROAD });
+
+  const { getByText } = await renderMap();
+
+  expect(getByText('by road · about 13 min')).toBeTruthy();
+});
+
+it('shows no minutes at all when the provider sent none', async () => {
+  // ADR-0031 §6, and the half of ADR-0020 §3 that is not lifted: the app never
+  // derives a duration, whatever distance it is holding.
+  mockUseTripRoute.mockReturnValue({ data: { ...ROAD, duration_seconds: null } });
+
+  const { getByText, queryByText } = await renderMap();
+
+  expect(getByText('by road')).toBeTruthy();
+  expect(queryByText(/min/)).toBeNull();
 });
