@@ -177,3 +177,18 @@ it('lets the driver pan and zoom when the map has the whole screen', async () =>
 
   expect(mapHtml(view.toJSON())).toContain('interactive: true');
 });
+
+it('joins the points with a dashed line, never a solid one', async () => {
+  // The interim until Google Directions lands, and the fallback for ever
+  // after: Directions needs a network, and this app is built for a country
+  // where a driver loses signal for whole stretches of a trip.
+  //
+  // Dashed is the map convention for "as the crow flies". A solid line is the
+  // thing the standing rule forbids — something a driver would follow — and
+  // the dash is what keeps this from becoming that.
+  const view = await renderMap();
+  const html = mapHtml(view.toJSON());
+
+  expect(html).toContain("'line-dasharray'");
+  expect(html).toContain('LineString');
+});

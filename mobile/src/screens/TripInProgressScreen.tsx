@@ -340,7 +340,7 @@ function MapPanel({
 
   return (
     <View>
-      <PickupMap pickup={pickup} dropoff={dropoff} here={here} />
+      <PickupMap pickup={pickup} dropoff={dropoff} here={here} boarded />
 
       <View
         style={mapped ? styles.badge : styles.badgeInline}

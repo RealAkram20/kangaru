@@ -45,6 +45,7 @@ export function PickupMap({
   dropoff,
   here,
   fill = false,
+  boarded = false,
 }: {
   pickup: Coordinates | null;
   dropoff: Coordinates | null;
@@ -59,14 +60,23 @@ export function PickupMap({
    * difference is a height.
    */
   fill?: boolean;
+  /**
+   * Whether the passenger is already in the car.
+   *
+   * Decides which legs are still ahead of the driver, and therefore which get
+   * a line: the approach to the pickup is drawn only until they make it.
+   * Drawing a leg somebody has already driven is clutter at best and, on a
+   * screen read at a junction, a reason to turn the wrong way.
+   */
+  boarded?: boolean;
 }) {
   const html = useMemo(
     // Interactive only when it fills the screen. The inline panel sits inside
     // a ScrollView, where a pannable map swallows the drag that was meant to
     // scroll the page — which is why this was false everywhere until a
     // full-screen map needed to be zoomed into.
-    () => (pickup === null ? null : mapDocument(pickup, dropoff, here, fill)),
-    [pickup, dropoff, here, fill],
+    () => (pickup === null ? null : mapDocument(pickup, dropoff, here, fill, boarded)),
+    [pickup, dropoff, here, fill, boarded],
   );
 
   if (html === null) {
@@ -116,6 +126,7 @@ function mapDocument(
   dropoff: Coordinates | null,
   here: Coordinates | null,
   interactive: boolean,
+  boarded: boolean,
 ): string {
   const points = [pickup, ...(dropoff === null ? [] : [dropoff]), ...(here === null ? [] : [here])];
   const bounds = boundsFor(points);
@@ -125,6 +136,49 @@ function mapDocument(
   // NaN or a null becomes a syntax error that renders as a blank rectangle.
   const marker = (point: Coordinates, className: string, label: string) =>
     `addMarker(${JSON.stringify([point.lng, point.lat])}, ${JSON.stringify(className)}, ${JSON.stringify(label)});`;
+
+  /**
+   * The legs still ahead of the driver, as straight lines.
+   *
+   * **Dashed, and that is the whole argument.** This platform has no routing
+   * engine, so these are direct lines between two points and not roads — the
+   * standing rule against drawing a route is a rule against drawing something
+   * a driver would *follow*. A dashed line is the map convention for "as the
+   * crow flies": it joins the dots so the relationship between them is legible
+   * at a glance, without ever looking like a road to take. A solid line here
+   * would be the thing the rule forbids; this is the thing the rule was
+   * protecting against having to forbid.
+   *
+   * The caption under the map says "straight line — not the road distance" in
+   * words, so the claim is made twice and never only in a stroke style.
+   *
+   * Green is the approach to the pickup, red is the fare itself — the same two
+   * colours the pins already use, so the line inherits a meaning the driver
+   * has already learned rather than introducing a third vocabulary.
+   */
+  const legs: { from: Coordinates; to: Coordinates; tone: 'approach' | 'fare' }[] = [];
+
+  if (here !== null && !boarded) {
+    legs.push({ from: here, to: pickup, tone: 'approach' });
+  }
+
+  if (dropoff !== null) {
+    // Once the passenger is aboard the driver is *on* this leg, so it is drawn
+    // from where they actually are rather than from a kerb they have left.
+    legs.push({ from: boarded && here !== null ? here : pickup, to: dropoff, tone: 'fare' });
+  }
+
+  const legFeatures = legs.map((leg) => ({
+    type: 'Feature' as const,
+    properties: { tone: leg.tone },
+    geometry: {
+      type: 'LineString' as const,
+      coordinates: [
+        [leg.from.lng, leg.from.lat],
+        [leg.to.lng, leg.to.lat],
+      ],
+    },
+  }));
 
   return `<!doctype html>
 <html>
@@ -172,6 +226,29 @@ function mapDocument(
   });
 ${interactive ? "  map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');" : ''}
 
+  function addLegs(features) {
+    if (!features.length) { return; }
+
+    map.addSource('legs', { type: 'geojson', data: { type: 'FeatureCollection', features: features } });
+
+    // Under the markers, added first. A line drawn over a pin hides the thing
+    // the line exists to connect.
+    map.addLayer({
+      id: 'legs',
+      type: 'line',
+      source: 'legs',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        'line-width': 4,
+        'line-color': ['match', ['get', 'tone'], 'approach', '${colors.primary}', '${colors.danger}'],
+        // Dashes, never a solid stroke: see the legs docblock above. This is
+        // a direct line, and it has to keep saying so at every zoom.
+        'line-dasharray': [1.4, 1.4],
+        'line-opacity': 0.9
+      }
+    });
+  }
+
   function addMarker(lngLat, className, label) {
     var el = document.createElement('div');
     el.className = 'marker ' + className;
@@ -184,6 +261,7 @@ ${interactive ? "  map.addControl(new maplibregl.NavigationControl({ showCompass
   }
 
   map.on('load', function () {
+    addLegs(${JSON.stringify(legFeatures)});
     ${marker(pickup, 'pickup', 'Pickup')}
     ${dropoff === null ? '' : marker(dropoff, 'dropoff', 'Drop-off')}
     ${here === null ? '' : marker(here, 'here', 'You')}

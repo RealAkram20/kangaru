@@ -96,7 +96,7 @@ export function TripMapScreen({ route, navigation }: Props) {
       />
 
       <View style={styles.map}>
-        <PickupMap pickup={pickup} dropoff={dropoff} here={here} fill />
+        <PickupMap pickup={pickup} dropoff={dropoff} here={here} fill boarded={boarded} />
       </View>
 
       <View style={styles.footer}>
