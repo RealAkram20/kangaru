@@ -21,11 +21,10 @@ import {
 import { useTrip, useTripEvents } from '../trips/queries';
 import { statusLabel } from '../trips/transitions';
 import { elapsedSeconds, NO_VALUE } from '../trips/waiting';
-import { Button, Notice, Screen } from '../ui/components';
+import { Button, Notice, Screen, ScreenHeader } from '../ui/components';
 import { DetailRow, GLYPH, Stat, StatRow } from '../ui/facts';
 import {
   BanknoteIcon,
-  ChevronLeftIcon,
   NavigationIcon,
   PauseIcon,
   PhoneIcon,
@@ -202,37 +201,15 @@ export function TripInProgressScreen({ route, navigation }: Props) {
     <Screen>
       <SyncBanner />
 
-      <View style={styles.header}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-          onPress={() => navigation.goBack()}
-          hitSlop={10}
-          style={styles.back}
-        >
-          <ChevronLeftIcon color={colors.text} size={26} strokeWidth={2.2} />
-        </Pressable>
-
-        <View style={styles.headerText}>
-          <Text style={styles.title} numberOfLines={1}>
-            {TITLE}
-          </Text>
-          {/*
-            Only when it adds something. `statusLabel` renders both
-            `trip_started` and `trip_resumed` as "Trip in progress", which is
-            the title verbatim — and a subtitle that repeats its own heading
-            is a line a driver learns to stop reading, which costs the one
-            case that matters: `waiting` says "Waiting", and a paused trip is
-            exactly the state somebody glancing at this screen needs told.
-            Caught by rendering the screen, not by a test.
-          */}
-          {statusLabel(trip.status) !== TITLE && (
-            <Text style={styles.status} numberOfLines={1}>
-              {statusLabel(trip.status)}
-            </Text>
-          )}
-        </View>
-      </View>
+      <ScreenHeader
+        title={TITLE}
+        // Only when it adds something. `statusLabel` renders both
+        // `trip_started` and `trip_resumed` as "Trip in progress", which is
+        // the title verbatim; `waiting` renders "Waiting", and a paused trip
+        // is exactly the state somebody glancing at this screen needs told.
+        subtitle={statusLabel(trip.status) === TITLE ? null : statusLabel(trip.status)}
+        onBack={() => navigation.goBack()}
+      />
 
       <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
         <MapPanel trip={trip} here={here} driving={driving} />
@@ -356,12 +333,18 @@ function MapPanel({
   const remaining =
     here === null || dropoff === null ? null : formatKilometres(greatCircleKm(here, dropoff));
 
+  // `PickupMap` draws a map only when there is a pickup pin, and renders a
+  // short explanatory panel otherwise. The badge floats *over* a map and must
+  // not float over that panel — on a real handset it landed on top of the
+  // sentence and cut it in half. Found on a device, not in a test.
+  const mapped = pickup !== null;
+
   return (
     <View>
       <PickupMap pickup={pickup} dropoff={dropoff} here={here} />
 
       <View
-        style={styles.badge}
+        style={mapped ? styles.badge : styles.badgeInline}
         accessible
         accessibilityLabel={
           `${remaining === null ? 'Distance to the drop-off is not available.' : `${remaining} to the drop-off, straight line.`} ` +
@@ -512,6 +495,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     // A hairline rather than a shadow: the map beneath is pale and a drop
     // shadow on a light-on-light panel reads as a smudge on a phone in sun.
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  /**
+   * The same panel when there is no map to float over: in the flow, full
+   * width, and reading as a row of two facts rather than as a card that has
+   * come loose from something.
+   */
+  badgeInline: {
+    marginTop: spacing.sm,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    alignItems: 'center',
     borderWidth: 1,
     borderColor: colors.border,
   },

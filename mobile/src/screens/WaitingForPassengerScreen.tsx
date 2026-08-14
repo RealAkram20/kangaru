@@ -20,9 +20,9 @@ import {
   waitingAnnouncement,
 } from '../trips/waiting';
 import { WaitingRing } from '../trips/WaitingRing';
-import { Button, Notice, Screen } from '../ui/components';
+import { Button, Notice, Screen, ScreenHeader } from '../ui/components';
 import { DetailRow, GLYPH } from '../ui/facts';
-import { ChevronLeftIcon, MapPinIcon, NavigationIcon, PhoneIcon, UserIcon } from '../ui/icons';
+import { MapPinIcon, NavigationIcon, PhoneIcon, UserIcon } from '../ui/icons';
 import { SyncBanner } from '../ui/SyncBanner';
 import { colors, radius, spacing, typography } from '../ui/theme';
 
@@ -162,26 +162,11 @@ export function WaitingForPassengerScreen({ route, navigation }: Props) {
     <Screen>
       <SyncBanner />
 
-      <View style={styles.header}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-          onPress={() => navigation.goBack()}
-          hitSlop={10}
-          style={styles.back}
-        >
-          <ChevronLeftIcon color={colors.text} size={26} strokeWidth={2.2} />
-        </Pressable>
-
-        <View style={styles.headerText}>
-          <Text style={styles.title} numberOfLines={1}>
-            Waiting for Passenger
-          </Text>
-          <Text style={styles.status} numberOfLines={1}>
-            {statusLabel(trip.status)}
-          </Text>
-        </View>
-      </View>
+      <ScreenHeader
+        title="Waiting for Passenger"
+        subtitle={statusLabel(trip.status)}
+        onBack={() => navigation.goBack()}
+      />
 
       <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
         {/*

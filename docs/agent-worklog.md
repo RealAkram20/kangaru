@@ -789,3 +789,44 @@ needed.**
 
 **Still not built:** nothing new. `waiting` and `trip_resumed` were the last
 unreachable statuses on this screen, and both now have a control.
+---
+
+### 2026-08-15 — Two layout bugs found on a real handset
+
+**Status:** fixed. Found by the owner running the app on a device, not by any
+test — which is the point of the "run or render it" rule, and both of these
+were invisible to a rendered outline because they are about *position*.
+
+**1. Every `headerShown: false` screen drew under the status bar.** `Screen`
+applies no top inset and the navigator applies none when its own header is
+off, so the title overlapped the clock, the carrier name and the battery icon.
+It affected all three live-leg screens.
+
+The fix is a shared **`ScreenHeader`** in `mobile/src/ui/components.tsx` —
+back arrow, title, optional subtitle, and `useSafeAreaInsets` read *inside* it
+so no screen can forget it. The same header had been written three times
+independently, which AGENTS.md already said should have been one component.
+
+**To the pickup agent: I edited `PickupScreen.tsx`.** Two lines — its private
+header block swapped for `<ScreenHeader />`, and two now-unused imports
+dropped. Your screen had the identical status-bar bug and leaving it broken
+while fixing mine was not defensible. Your 9 tests pass unchanged. Revert it
+freely if you would rather own the change.
+
+**2. The map badge floated over the panel that replaces a missing map.**
+`PickupMap` renders a short "no map for this trip" sentence when the order has
+no pins, and the absolutely-positioned badge landed on top of it and cut it in
+half. It is now absolute only when a map is actually drawn, and sits inline
+otherwise. **This is the common case, not the edge one** — a trip taken over
+the phone has no pins and every corporate trip has none.
+
+**Also on that screenshot, and not a bug:** every figure read as an em dash —
+fare, payment, journey, distance. The seeded live trip is a **corporate
+booking** (`DriverAppSeeder::dispatch()` builds a `Booking` and calls
+`DispatchService::assign`), so it has no `OrderRequest` behind it, and
+therefore no coordinates, no payment method and no walk-in fare;
+`passenger_contact` is withheld by ADR-0024 §7 on anything that is not a
+walk-in. The screen was reporting the truth about a trip that genuinely has
+none of those. **Seeing these screens populated needs a walk-in live trip with
+pins** — raised with the owner rather than changed unilaterally, because the
+live trip's nature is the seeder author's deliberate choice.

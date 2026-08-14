@@ -12,6 +12,8 @@ import {
   type ViewStyle,
 } from 'react-native';
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 import { CheckIcon, ChevronLeftIcon, EyeIcon, EyeOffIcon } from './icons';
 import { colors, FIELD_HEIGHT, MIN_TOUCH_HEIGHT, motion, radius, spacing, typography } from './theme';
 
@@ -353,6 +355,74 @@ export function BackButton({ onPress, topInset }: { onPress: () => void; topInse
   );
 }
 
+/**
+ * The header on a screen that draws its own — back arrow, title, and a status
+ * line when it says something the title does not.
+ *
+ * ## Why this is shared, and why it is not `BackButton`
+ *
+ * Three screens grew the same header independently — `PickupScreen`,
+ * `WaitingForPassengerScreen` and `TripInProgressScreen`, all registered with
+ * `headerShown: false` because each has its own. AGENTS.md: *"If a component
+ * appears more than once, convert it into a reusable component."*
+ *
+ * `BackButton` above is the auth flow's arrow and is deliberately absolute and
+ * title-less: those screens are illustrations with a form on them and have no
+ * header row to sit in. This is a row, and it reserves its own height.
+ *
+ * ## The bug it exists to fix
+ *
+ * **The status bar.** `Screen` applies no top inset, and the navigator applies
+ * none either when `headerShown` is false — so all three screens drew their
+ * title *underneath* the clock and the battery icon. It is invisible in a
+ * simulator with a short status bar and unmissable on a real handset, which is
+ * where it was found: the title overlapped the carrier name and the time.
+ *
+ * The inset is read here rather than passed in, so no screen can forget it.
+ */
+export function ScreenHeader({
+  title,
+  subtitle = null,
+  onBack,
+}: {
+  title: string;
+  /**
+   * Rendered only when non-null. Callers pass null rather than the title
+   * again: a subtitle that repeats its own heading is a line a driver learns
+   * to skip, which costs the cases where it carries something — "Waiting" on
+   * a held trip, for one.
+   */
+  subtitle?: string | null;
+  onBack: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+
+  return (
+    <View style={[styles.headerRow, { paddingTop: insets.top + spacing.sm }]}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Back"
+        onPress={onBack}
+        hitSlop={10}
+        style={styles.headerBack}
+      >
+        <ChevronLeftIcon color={colors.text} size={26} strokeWidth={2.2} />
+      </Pressable>
+
+      <View style={styles.headerText}>
+        <Text style={styles.headerTitle} numberOfLines={1}>
+          {title}
+        </Text>
+        {subtitle !== null && (
+          <Text style={styles.headerSubtitle} numberOfLines={1}>
+            {subtitle}
+          </Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
 /** A word inside a sentence that is tappable. Green, per DESIGN.md §3. */
 export function TextLink({ label, onPress }: { label: string; onPress: () => void }) {
   return (
@@ -468,6 +538,31 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.sm,
+    gap: spacing.sm,
+  },
+  headerBack: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: -spacing.sm,
+  },
+  headerText: {
+    flex: 1,
+  },
+  headerTitle: {
+    ...typography.heading,
+    color: colors.primaryText,
+  },
+  headerSubtitle: {
+    ...typography.caption,
+    color: colors.textMuted,
   },
   button: {
     minHeight: FIELD_HEIGHT,

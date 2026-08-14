@@ -348,3 +348,20 @@ it('calls the badge figure elapsed, not driving, because it includes the pauses'
   expect(getByText('elapsed')).toBeTruthy();
   expect(queryByText('driving')).toBeNull();
 });
+
+it('does not float the badge over the panel that replaces a missing map', async () => {
+  // On a real handset the absolutely-positioned badge landed on top of the
+  // "no map for this trip" sentence and cut it in half. A trip taken over the
+  // phone has no pins, and every corporate trip has none — so this is the
+  // common case, not the edge one.
+  const { getByText } = await renderProgress(
+    trip({
+      pickup: { label: 'Acacia Mall', latitude: null, longitude: null },
+      dropoff: { label: 'Kololo Airstrip', latitude: null, longitude: null },
+    }),
+  );
+
+  // Both still render, and the badge is no longer absolute.
+  expect(getByText(/No map for this trip/)).toBeTruthy();
+  expect(getByText('straight line')).toBeTruthy();
+});

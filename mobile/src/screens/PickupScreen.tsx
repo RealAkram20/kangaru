@@ -12,10 +12,9 @@ import { PickupMap } from '../trips/PickupMap';
 import { greatCircleKm, located, toCoordinates } from '../trips/places';
 import { useTrip } from '../trips/queries';
 import { driverActions, statusLabel, type TripAction } from '../trips/transitions';
-import { Button, Notice, Screen } from '../ui/components';
+import { Button, Notice, Screen, ScreenHeader } from '../ui/components';
 import { DetailRow, GLYPH, RouteRail, Stat, StatRow } from '../ui/facts';
 import {
-  ChevronLeftIcon,
   NavigationIcon,
   PhoneIcon,
   RouteIcon,
@@ -132,26 +131,11 @@ export function PickupScreen({ route, navigation }: Props) {
     <Screen>
       <SyncBanner />
 
-      <View style={styles.header}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-          onPress={() => navigation.goBack()}
-          hitSlop={10}
-          style={styles.back}
-        >
-          <ChevronLeftIcon color={colors.text} size={26} strokeWidth={2.2} />
-        </Pressable>
-
-        <View style={styles.headerText}>
-          <Text style={styles.title} numberOfLines={1}>
-            Pickup passenger
-          </Text>
-          <Text style={styles.status} numberOfLines={1}>
-            {statusLabel(trip.status)}
-          </Text>
-        </View>
-      </View>
+      <ScreenHeader
+        title="Pickup passenger"
+        subtitle={statusLabel(trip.status)}
+        onBack={() => navigation.goBack()}
+      />
 
       <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
         <MapPanel trip={trip} here={here} />
