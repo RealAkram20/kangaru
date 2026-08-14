@@ -2440,6 +2440,60 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/me/earnings:
+    get:
+      summary: >
+        The signed-in driver's earnings over a day, a week or a month —
+        the app's earnings screen.
+      description: >
+        Read from `driver_ledger_entries` (ADR-0029), which holds the
+        driver's share **as it was written at completion**. Nothing is
+        recomputed from `billing.driver_commission_percent`, so changing that
+        rate never restates what a driver already earned (ADR-0029 §3).
+
+        Separate from `/me/stats` rather than a fatter payload on it: stats is
+        polled by the home screen, while this is opened deliberately, takes a
+        period, and carries a chart series.
+
+        **Boundaries are the driver's local day**, from
+        `settings.regional.timezone` (default `Africa/Kampala`) — not UTC. The
+        window is half-open `[from, to)`; an inclusive upper bound would drop
+        an entry written in the period's final second.
+
+        **`breakdown` always sums to `total_minor`.** Entries whose trip has
+        no order request behind it — a walk-in a dispatcher fulfilled by hand
+        — are classified `other` rather than dropped, because a breakdown that
+        does not add up to the figure above it is the worst defect a money
+        screen can carry.
+
+        **There are no tips and no bonuses in this payload because neither
+        exists on this platform**, and no online-hours figure because
+        `driver_presence` is overwritten on every duty toggle and keeps no
+        history. `on_trip_minutes` is the measured neighbour — time driving,
+        not time available.
+      parameters:
+        - in: query
+          name: period
+          required: false
+          description: Defaults to `day`. An unrecognised value is a 422, not a silent fallback.
+          schema:
+            $ref: '#/components/schemas/EarningsPeriod'
+      responses:
+        '200':
+          description: The driver's earnings for the period.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DriverEarnings' }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/me/duty:
     get:
       summary: The signed-in driver's own duty state.
@@ -5057,6 +5111,32 @@ components:
           properties:
             approval_required: { type: boolean }
             max_advance_days: { type: integer }
+        maps:
+          description: >
+            Road routing for the driver app's maps (ADR-0031 pending). The
+            maps themselves are MapLibre against CARTO's free tiles and need
+            no key; this group is only about the route line, the road distance
+            and the arrival estimate.
+
+
+            `api_key` is a **secret**: encrypted at rest, never returned by
+            this endpoint, and masked in audit (ADR-0014 §3). It is
+            deliberately not in the public subset — Directions bills per
+            request, so a key in a browser bundle or a handset is somebody
+            else's traffic on this operator's invoice. Routing is served by
+            the backend for that reason.
+
+
+            `routing_enabled` defaults to **false** so that configuring a key
+            never silently starts a bill, and is a separate switch so the
+            spend can be stopped without destroying the credential.
+          type: object
+          required: [routing_enabled, routing_provider, api_key]
+          additionalProperties: false
+          properties:
+            routing_enabled: { type: boolean }
+            routing_provider: { enum: [google] }
+            api_key: { $ref: '#/components/schemas/SecretValue' }
         mail:
           type: object
           required: [enabled, host, port, username, password, encryption, from_address, from_name]
@@ -5466,6 +5546,181 @@ components:
           description: Always false. The counterpart of the always-true flag on WalkInFareEstimate.
           enum: [false]
 
+    EarningsPeriod:
+      description: >
+        The span a driver reads their earnings over. No `year`: a driver does
+        not read an annual chart on a phone, and the trend would be unreadable.
+      type: string
+      enum: [day, week, month]
+
+    EarningsBreakdownRow:
+      description: >
+        Earnings grouped by the kind of job that produced them.
+
+        `service_type` is `ride`, `delivery` or `self_drive` from the order
+        request behind the trip — or **`other`**, which means the trip has no
+        order request and cannot be classified: a walk-in a dispatcher
+        fulfilled by hand. It is a row rather than an omission so the
+        breakdown always reconciles with `total_minor`.
+
+        Rows are ordered by `earned_minor` descending, and only kinds with
+        earnings appear — a driver who took no deliveries gets no delivery row
+        rather than a zero one.
+      type: object
+      required: [service_type, trips, earned_minor]
+      additionalProperties: false
+      properties:
+        service_type:
+          type: string
+          description: '`ride` | `delivery` | `self_drive` | `other`. Not an enum — see above.'
+        trips: { type: integer }
+        earned_minor:
+          type: integer
+          description: The driver's share, in minor units. UGX is zero-decimal, so whole shillings.
+
+    EarningsTrendPoint:
+      description: >
+        One bar of the trend chart.
+
+        **Zero-filled and continuous** — every bucket in `[from, to)` is
+        present, including the empty ones. That is not the banned "zero
+        standing in for unknown": the ledger is written at completion, so no
+        entry in an hour is positive evidence that nothing was completed in
+        it. Omitting empty buckets would compress the axis and draw 3 AM
+        beside 7 PM as though the hours between had not happened.
+
+        `bucket` is a local-time key that sorts chronologically —
+        `YYYY-MM-DD HH:00` for a day, `YYYY-MM-DD` for a week or month.
+      type: object
+      required: [bucket, earned_minor]
+      additionalProperties: false
+      properties:
+        bucket: { type: string }
+        earned_minor: { type: integer }
+
+    DriverEarnings:
+      description: >
+        A driver's earnings for one period. See `GET /api/v1/me/earnings` for
+        what is deliberately absent and why.
+      type: object
+      required:
+        - period
+        - timezone
+        - from
+        - to
+        - currency
+        - total_minor
+        - trips
+        - on_trip_minutes
+        - breakdown
+        - trend
+      additionalProperties: false
+      properties:
+        period: { $ref: '#/components/schemas/EarningsPeriod' }
+        timezone:
+          type: string
+          description: >
+            The zone the boundaries and bucket keys are expressed in, from
+            `settings.regional.timezone`. Served rather than assumed so a
+            client labels the axis in the fleet's day, not the handset's.
+        from:
+          type: string
+          format: date-time
+          description: Inclusive start of the period, in the timezone above.
+        to:
+          type: string
+          format: date-time
+          description: '**Exclusive** end. The window is half-open `[from, to)`.'
+        currency:
+          type: string
+          description: >
+            ISO 4217, read off the entries rather than assumed. Falls back to
+            `settings.regional.currency` when the period is empty — a zero
+            still has to say what it is denominated in.
+        total_minor:
+          type: integer
+          description: >
+            The sum of the driver's `fare_earned` entries in the window. Their
+            own share, never the gross fare the passenger paid.
+        trips:
+          type: integer
+          description: Distinct trips that produced earnings in the window.
+        on_trip_minutes:
+          type: ['integer', 'null']
+          description: >
+            Minutes spent **on trips** — summed `completed_at − started_at`
+            over the period's completed trips.
+
+            **This is not "online hours" and must not be labelled as such.**
+            Time spent waiting for an offer is not counted, and the platform
+            cannot count it: `driver_presence` holds one overwritten row per
+            driver and keeps no duty history.
+
+            Null, not zero, when no trip in the window carries both
+            timestamps — `0m` beside a non-zero earnings total is a
+            contradiction.
+        breakdown:
+          type: array
+          items: { $ref: '#/components/schemas/EarningsBreakdownRow' }
+        trend:
+          type: array
+          items: { $ref: '#/components/schemas/EarningsTrendPoint' }
+
+    TripEarnings:
+      description: >
+        What the driver made on one completed trip, read back from the
+        ADR-0029 ledger that recorded it — never recomputed from the
+        commission rate.
+
+        `SettledFare` above is what the *passenger* paid. This is what is left
+        of it for the driver, and the two differ by the platform's cut.
+
+        **Served to the trip's own driver and to nobody else.** A dispatcher
+        holding `trips.view.all` sees the board but not what a driver takes
+        home, and a corporate client must never see the platform's margin on
+        their work. It is also absent from every list endpoint, where the
+        ledger relation is deliberately not loaded.
+
+        **Null is a real answer.** Null on every corporate trip, which carries
+        no per-trip fare and so raises no ledger pair (ADR-0029 §4), and null
+        in the window between a completion arriving and the listener crediting
+        it. A client renders that as "not confirmed yet" — never as a zero.
+      type: object
+      required: [earned_minor, commission_minor, total_minor, currency, recorded_at]
+      additionalProperties: false
+      properties:
+        earned_minor:
+          description: >
+            The driver's share, in minor units — the `fare_earned` entry
+            exactly as it was written. UGX is zero-decimal, so whole
+            shillings.
+          type: integer
+        commission_minor:
+          description: >
+            The platform's cut, derived as `total_minor - earned_minor`.
+
+            Derived rather than stored, because ADR-0029 §2 deliberately
+            writes no `commission` entry — pairing one with the credit
+            double-counts the money. Deriving it from the two figures actually
+            recorded means this reports the rate in force *at completion*,
+            whatever `billing.driver_commission_percent` says today.
+
+            The percent itself is deliberately not served. A client that
+            displayed it would be stating a rule it does not own, and would go
+            on stating the old one after the office changed it.
+          type: integer
+        total_minor:
+          description: >
+            The gross fare, repeated from `Trip.fare.total_minor` so the three
+            figures a driver reconciles arrive as one object rather than as
+            two independently-nullable blocks.
+          type: integer
+        currency: { type: string }
+        recorded_at:
+          description: When the ledger credited it, which is not the same instant the trip completed.
+          type: ['string', 'null']
+          format: date-time
+
     Trip:
       type: object
       required:
@@ -5485,6 +5740,7 @@ components:
         - fare
         - estimated_fare
         - payment
+        - earnings
         - odometer_start
         - odometer_start_photo_path
         - odometer_end
@@ -5589,6 +5845,15 @@ components:
             # silently), and had `payer` as a bare string where the offer's
             # version enumerates it. One shape, one definition.
             - $ref: '#/components/schemas/OfferPayment'
+        earnings:
+          description: >
+            The driver's own share of this trip. Served to that driver alone,
+            only where the ledger relation was loaded (`GET /trips/{trip}`,
+            never a list), and null until the completion has been credited.
+            See `TripEarnings`.
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/TripEarnings'
         odometer_start: { type: ['integer', 'null'] }
         odometer_start_photo_path: { type: ['string', 'null'] }
         odometer_end: { type: ['integer', 'null'] }

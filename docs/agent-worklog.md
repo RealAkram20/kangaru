@@ -833,6 +833,184 @@ live trip's nature is the seeder author's deliberate choice.
 
 ---
 
+### 2026-08-15 — "Earnings" screen (driver app)
+
+**Status:** complete. 307 mobile tests, 87 Drivers + 13 CI contract tests,
+`tsc --noEmit` and eslint clean across `mobile/src`, Pint clean and PHPStan
+level 8 clean across all of `Modules`. Six guards proved by mutation and
+restored; both states rendered and read against the mockup, which found a
+defect no test had.
+**Mockup:** driver app, Earnings. Day/Week/Month tabs; "Today's earnings
+UGX 85,000"; rows for Rides `6 / UGX 60,000`, Deliveries `3 / UGX 18,000`,
+Tips `UGX 7,000`, Bonuses `UGX 0`, Online hours `7h 20m`; an hourly "Earnings
+trend" bar chart from 12 AM to 12 AM; and a "See earnings details" row.
+
+**This is the gap my own "Ride Complete" entry below named** — "no endpoint
+exposes the ledger; **this is the biggest gap this screen reveals** and it is a
+whole feature, not a button". This is that feature.
+
+**No trip status is claimed.** Reached from the Home screen's *Earnings today*
+tile, which is currently a plain `View` that does nothing. The ownership table
+above is unchanged.
+
+**Files I expect to own:**
+
+- `backend/Modules/Drivers/Services/DriverEarningsService.php`
+- `backend/Modules/Drivers/Controllers/DriverEarningsController.php`
+- `backend/Modules/Drivers/Requests/DriverEarningsRequest.php`
+- `backend/Modules/Drivers/Enums/EarningsPeriod.php`
+- `backend/tests/Feature/Drivers/DriverEarningsTest.php`
+- `docs/api/openapi.yaml` — `/me/earnings`, `DriverEarnings`,
+  `EarningsBreakdownRow`, `EarningsTrendPoint` only
+- `mobile/src/earnings/` — `queries.ts`, `presentation.ts` + test,
+  `EarningsChart.tsx`
+- `mobile/src/screens/EarningsScreen.tsx` + `.test.tsx`
+
+**Files shared — the exact edits:**
+
+- `backend/Modules/Drivers/Routes/api.php` — one route.
+- `mobile/src/api/endpoints.ts` — one fetcher + its types.
+- `mobile/src/navigation/types.ts` + `RootNavigator.tsx` — one route each.
+  **Both are being edited right now by the `TripMap` agent** — my diff is
+  additive and does not touch their lines.
+- `mobile/src/screens/HomeScreen.tsx` — makes the *Earnings today* tile
+  pressable and routes it here. Nobody is in that file as I write this.
+
+**Conflicts raised before building. Three of the mockup's five money rows
+cannot be built, and one of them is banned by name.**
+
+- **No Tips row.** Second screen running to refuse it: tips do not exist
+  anywhere on this platform — not a column, not an `InvoiceLineType`, not a
+  `LedgerEntryKind`, not a key in `order_requests.details`. The only match for
+  "tip" in the whole backend is the word inside an unrelated test name.
+- **No Bonuses row, and `UGX 0` is the specific thing `docs/screen-rules.md`
+  §1 forbids** — "A zero is not a substitute for unknown. `UGX 0` reads as a
+  free ride." The mockup prints a hard zero for a feature that does not exist:
+  no bonus, no incentive, no surge, no streak, no target anywhere in the
+  backend. A permanent `UGX 0` row teaches a driver the platform pays no
+  bonuses; an absent row says nothing untrue.
+- **No "Online hours", and this one is not merely missing — the data is
+  actively destroyed.** `driver_presence` is **one row per driver, overwritten**
+  (`DatabaseDriverPresenceStore::setDuty()` is an `upsert` keyed on
+  `driver_id`), and its migration argues the case in its own docblock: *"A
+  snapshot, not a log … Keeping a presence history would be a second 500M-row
+  table answering a question nobody has."* `driver_shift_windows` is a
+  **roster** — weekday + start/end time, no dates, no actuals — so totalling it
+  would report the schedule as if it were the timesheet.
+  **This is the one row that is buildable, and it is the owner's call, not
+  mine:** it needs a duty-event table written on every toggle, forever, against
+  a migration that explicitly refused presence history. Flagged rather than
+  built.
+- **Instead of "Online hours" the screen shows "Time on trips"**, summed
+  `completed_at − started_at` over the period's completed trips. It is
+  measured, it is already stored, and it is the honest neighbour of the figure
+  the mockup wanted — a driver can put it beside the total and get a real rate
+  per driving hour. It is **not** online time and the screen does not call it
+  that: waiting for offers is not counted, and the label says "on trips".
+- **The Rides/Deliveries split is real but needed building.** `service_type`
+  (`ride` / `delivery` / `self_drive`) lives on `order_requests`, is indexed,
+  and reaches a trip through `orderRequest`. Nothing joined it to the ledger
+  before. **There is also a fourth case the mockup has no row for:** a trip
+  with no order request behind it — a walk-in a dispatcher fulfilled by hand —
+  which cannot be classified at all. It gets its own row rather than being
+  dropped, because **a breakdown that does not sum to the total is the worst
+  bug a money screen can have.** A test asserts the sum.
+- **"See earnings details" is not built.** It is the one row on the mockup
+  whose destination is undefined — details of what? The breakdown and the
+  chart on this screen *are* the detail; the next honest surface below it is a
+  scrollable statement of individual ledger entries, which is another endpoint
+  and another screen. Recorded as a gap rather than wired to a placeholder.
+
+**A correctness bug this screen exposed, and which is fixed here.**
+`DriverStatsService` computes "today" with `Carbon::now()->startOfDay()` while
+`config/app.php` sets the app timezone to **UTC** — so a driver's day currently
+rolls over at **03:00 Kampala time**, and an evening shift's last two hours land
+on yesterday's total. Invisible on a home-screen tile, unmissable on a screen
+whose whole subject is *which day*. Both the new endpoint and
+`earnings_today_minor` now take their boundaries from
+`settings.regional.timezone` (default `Africa/Kampala`, admin-settable, which
+is also what AGENTS.md's international-ready rule asks for). Making only the
+new screen correct would have put two different figures under the same word
+"today" in one app.
+
+**A second timezone bug, found by the tests rather than by reading.** Laravel
+binds a `Carbon` to SQL by **formatting** it in its own timezone rather than
+converting — so a boundary of `2026-08-16 00:00+03:00` reaches the database as
+the string `2026-08-16 00:00:00` and is compared against a UTC column. The
+window silently becomes the UTC day, three hours out, with every figure still
+looking plausible. `->utc()` on every bound instant is the fix, and it is
+commented at both call sites.
+
+**What makes this worth recording:** the two tests that cross a local midnight
+failed, and the ones that do not cross one **passed for the wrong reason** —
+their windows were shifted too, but the fixtures happened to fall inside the
+shifted window anyway. A suite without a boundary-crossing case would have gone
+green over a live bug.
+
+**What rendering caught that no test did.** The chart's composed screen-reader
+sentence read *"Busiest was 2026-08-15 16:00"* — a database key spoken aloud to
+the one person who cannot see the chart it indexes. A sighted user never sees
+those keys, so nothing else could have surfaced it. There is now a
+`bucketLabel` ("4 PM", "15 Aug") with its own tests, including the
+`FinancialPeriod::label` rule of falling back to the raw key rather than
+printing an invented date.
+
+**A test of mine that was wrong about the rules.** I first asserted the screen
+never prints `UGX 0`, and it does — for a *loaded* period with no work. That is
+correct and the assertion was not: `docs/screen-rules.md` §1 bans a zero
+standing in for a figure the platform **does not have**, and a day that loaded
+with no completed trips is a known zero with a sentence under it saying so. The
+banned case is the mockup's `UGX 0` against Bonuses, which stood for a feature
+that does not exist. The suite now pins both halves of that distinction
+separately, which is a better test than the one I set out to write.
+
+**Six mutations, all of which bite** (and all restored):
+
+| Mutation | Test that caught it |
+|---|---|
+| `->utc()` dropped from the period boundary | 7 tests, incl. both local-midnight cases |
+| `cash_collected` left in the earnings sum | 12 tests — the total goes deeply negative |
+| Unclassifiable earnings dropped from the breakdown | always has a breakdown that adds up to the total |
+| Trend stops zero-filling empty buckets | 4 tests — the continuous-series cases |
+| Chart divides by a peak of zero | draws a flat chart rather than NaN heights |
+| Heading fixed to "Today's earnings" | renames the total when the tab changes |
+
+**Files actually touched, corrected from the plan above.** As planned, plus:
+
+- `backend/Modules/Drivers/Services/DriverStatsService.php` — the timezone fix,
+  and its class docblock, which still claimed the platform had no rating and no
+  wallet balance. Both statements outlived the code by a day; ADR-0030 and
+  ADR-0029 added exactly those, and this class serves both.
+- `backend/database/seeders/DriverAppSeeder.php` — **not planned, and a real
+  consequence.** Its two "today" demo rides were placed with `subHours`, which
+  is UTC-relative: with a local day boundary they fall into yesterday whenever
+  the seeder runs shortly after local midnight, making the demo home screen
+  read `UGX 0` and `DriverAppSeederTest` fail by wall-clock. They are now
+  placed *inside* the elapsed part of the local day. The older four still use
+  `hoursAgo` — no boundary sits between them and now.
+- `backend/Modules/Drivers/README.md`, `mobile/README.md` — the new endpoint,
+  the navigation tree, and six rows on the mutation table.
+
+**Not built, deliberately:** tips, bonuses, an online-hours log, a ledger
+statement screen, and any payout/settlement action — ADR-0029 §6 puts all of
+the last group out of scope by name.
+
+**The one row that is buildable and is the owner's to decide.** "Online hours"
+needs a duty-event table written on every toggle, forever, against a migration
+whose docblock explicitly refused presence history (*"a second 500M-row table
+answering a question nobody has"*). That is a storage-cost and product call,
+not an agent's, so it is flagged rather than built. If the answer is yes, the
+honest shape is an append-only `driver_duty_events` row per transition and a
+sum of the closed intervals; `on_trip_minutes` can then sit beside it as the
+*driving* half, and the pair gives a utilisation figure neither gives alone.
+
+**To the `TripMap` agent:** we were in `navigation/types.ts` and
+`RootNavigator.tsx` at the same time. My diff is one route and one import in
+each, additive, and does not touch your `TripMap` lines. I read
+`TripMapScreen.tsx` and `PickupMap.tsx` as yours and did not open either.
+
+---
+
 ### 2026-08-15 — "Ride Complete" screen (driver app)
 
 **Status:** complete. 259/260 mobile tests, 145 Trips backend tests, `tsc
@@ -1106,3 +1284,67 @@ for two reasons worth stating together:
 No key exists anywhere in this repo today (`frontend/.env.example` has an
 unset `VITE_GOOGLE_MAPS_API_KEY` placeholder for the *JS* map, and nothing
 server-side). Requested from the owner.
+
+---
+
+### 2026-08-15 — A home in System Settings for the Google Directions key
+
+**Status:** done. 24 backend settings tests, 364 frontend tests, Pint, PHPStan
+level 8, `tsc` and eslint clean. Five guards proved by mutation. Nobody has claimed `Modules/Administration` settings or
+`SystemSettingsPage`; say so and I will hand it back.
+
+**Why settings rather than an env var.** The owner asked for it there, and it
+is the better home: ADR-0014 §3 already makes a catalogued key `secret`, which
+means encrypted at rest via Laravel's `encrypted` cast, **never returned by
+GET** (the API answers `configured: true|false` instead), and masked as `***`
+on both sides of every audit row. An env var gets none of that, has to be
+edited on the server, and needs a deploy to change.
+
+**Files I expect to own:**
+
+- `backend/tests/Feature/Administration/MapsSettingsTest.php`
+
+**Files shared — the exact edits:**
+
+- `backend/Modules/Administration/Services/SettingsService.php` — one new
+  `maps` group in `CATALOGUE`, and a `routingConfigured()` accessor beside
+  `mailConfigured()`.
+- `docs/api/openapi.yaml` — the `maps` group on the settings schemas.
+- `frontend/src/pages/SystemSettingsPage.tsx` — one card, built from the
+  existing `SecretField` and save machinery.
+
+**Two decisions worth stating before the code.**
+
+**The key is `secret`, never `public`.** It bills per request, so a leaked key
+is somebody else's traffic on this operator's invoice. It must never reach the
+browser bundle or the driver app — which is also why routing will be a backend
+endpoint rather than a call from the handset.
+
+**`routing_enabled` defaults to `false`.** Not because the feature is risky,
+but because it *costs money per request* — roughly $5 per 1,000. A toggle
+beside the key lets an operator stop the spend without deleting the credential,
+and defaulting it off means configuring a key never silently starts a bill.
+
+
+**Closed.** The `maps` group ships with `routing_enabled` (default **false**),
+`routing_provider` (`google`, an enum of one so the second is a value rather
+than a schema change) and `api_key` (**secret**). `routingConfigured()` sits
+beside `mailConfigured()` and answers both halves — the read of the key itself
+has to live in the service, because `all()` deliberately never returns it.
+
+**What the mutation pass proved, since these guard a billable credential:**
+dropping `secret` from the key fails five tests (it starts coming back in the
+API response and stops being encrypted at rest); defaulting the switch to
+`true` fails the one that says configuring a key must not start a bill;
+ignoring the switch in `routingConfigured()` fails the pair test; rendering the
+key as an ordinary input instead of `SecretField` fails the console test; and
+removing the cost warning fails its own.
+
+**One thing I broke and fixed:** `SystemSettingsPage.test.tsx`'s fixture had no
+`maps`, so the new card crashed the existing page tests until it was added. If
+you add a settings group, expect to patch that fixture.
+
+**Still blocked on the owner: the key itself.** The box exists now; nothing has
+been put in it. Once it is, ADR-0031 and the server-side routing endpoint are
+the remaining work — the key must never reach the browser or a handset, which
+is why routing will be a backend call rather than a request from the app.

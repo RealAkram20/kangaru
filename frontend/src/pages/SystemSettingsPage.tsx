@@ -77,6 +77,12 @@ interface Settings {
     api_key: SecretValue
     api_secret: SecretValue
   }
+  maps: {
+    routing_enabled: boolean
+    routing_provider: 'google'
+    /** Write-only: the API answers whether a key exists, never what it is. */
+    api_key: SecretValue
+  }
   payments: {
     mtn_momo_api_user: string | null
     mtn_momo_api_key: SecretValue
@@ -160,6 +166,7 @@ export function SystemSettingsPage() {
       <BrandingCard branding={settings.branding} onSaved={setSettings} />
       <OrderingCard ordering={settings.ordering} onSaved={setSettings} />
       <BookingCard booking={settings.booking} onSaved={setSettings} />
+      <MapsCard maps={settings.maps} onSaved={setSettings} />
       <RegionalCard regional={settings.regional} onSaved={setSettings} />
       <LegalCard legal={settings.legal} onSaved={setSettings} />
       <AuthMethodsCard auth={settings.auth} mailEnabled={settings.mail.enabled} onSaved={setSettings} />
@@ -533,6 +540,84 @@ function OrderingCard({
             style={{ maxWidth: 120 }}
           />
         </FormField>
+
+        <SaveButton state={state} />
+      </form>
+    </Card>
+  )
+}
+
+/**
+ * Road routing for the Driver App's maps (`maps` group).
+ *
+ * **The maps themselves need no key.** They are MapLibre against CARTO's free
+ * tiles, and they draw Kampala with or without anything on this card. What is
+ * configured here is *routing*: the line that follows real roads, the road
+ * distance, and the arrival estimate that comes with it. Saying so on the card
+ * matters — an operator who thinks the map is broken without a key will go and
+ * buy one they did not need.
+ *
+ * **The key is write-only.** It is stored encrypted and never sent back, so
+ * this form can say whether one exists and nothing more (ADR-0014 §3). That is
+ * stricter than it looks for a *maps* key: Directions bills per request, so a
+ * key that leaks into a browser bundle is somebody else's traffic on this
+ * operator's invoice, and there is nothing to reset that does not also break
+ * the feature.
+ *
+ * **The switch is separate from the key, and starts off.** Configuring a
+ * credential must never silently start a bill, and stopping the spend must not
+ * mean destroying the credential and having to find it again.
+ */
+function MapsCard({ maps, onSaved }: { maps: Settings['maps']; onSaved: (s: Settings) => void }) {
+  const [enabled, setEnabled] = useState(maps.routing_enabled)
+  const [apiKey, setApiKey] = useState('')
+  const { state, errors, message, setMessage, save } = useSave('maps', onSaved)
+
+  return (
+    <Card
+      title="Maps and routing"
+      subtitle="Road routing for the Driver App. The maps themselves are free and need nothing here — this is the route line, the road distance and the arrival estimate."
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          void save(
+            withSecrets(
+              { routing_enabled: enabled, routing_provider: 'google' },
+              { api_key: apiKey },
+            ),
+          )
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
+      >
+        {message !== null && (
+          <Alert tone="error" title="Maps and routing" onDismiss={() => setMessage(null)}>
+            {message}
+          </Alert>
+        )}
+
+        <Alert tone="info" title="This one costs money per trip">
+          Google charges for every route it calculates, so this is the one setting on
+          this page with a running cost attached. Leave it off until you are ready to
+          pay for it — the app falls back to a direct line between the two points and
+          says so on screen, and the driver&rsquo;s own maps app is still one tap away.
+        </Alert>
+
+        <Checkbox
+          label="Calculate routes with Google"
+          hint="Off keeps the key stored but makes no requests, so the spend stops without you having to find the credential again."
+          checked={enabled}
+          onChange={(e) => setEnabled(e.target.checked)}
+        />
+
+        <SecretField
+          label="Google Directions API key"
+          htmlFor="settings-maps-api-key"
+          secret={maps.api_key}
+          value={apiKey}
+          onChange={setApiKey}
+          error={errors.api_key}
+        />
 
         <SaveButton state={state} />
       </form>

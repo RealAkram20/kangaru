@@ -51,6 +51,11 @@ const SETTINGS = {
     api_key: { configured: false },
     api_secret: { configured: false },
   },
+  maps: {
+    routing_enabled: false,
+    routing_provider: 'google' as const,
+    api_key: { configured: false },
+  },
   payments: {
     mtn_momo_api_user: null,
     mtn_momo_api_key: { configured: true },
@@ -73,6 +78,42 @@ describe('SystemSettingsPage', () => {
     expect(await screen.findByLabelText(/app name/i)).toHaveValue('KangaruRide')
     expect(screen.getByLabelText(/^currency/i)).toHaveValue('UGX')
     expect(screen.getByLabelText(/timezone/i)).toHaveValue('Africa/Kampala')
+  })
+
+  it('never renders the stored Google key, only whether one exists', async () => {
+    // Directions bills per request, so a key that reaches the browser bundle
+    // is somebody else's traffic on this operator's invoice — and unlike a
+    // password there is nothing to reset that does not also break the feature.
+    // The API answers `configured` and nothing more (ADR-0014 §3); this proves
+    // the card is built for that shape rather than expecting a value.
+    get.mockResolvedValue({
+      data: {
+        data: {
+          settings: {
+            ...SETTINGS,
+            maps: { ...SETTINGS.maps, routing_enabled: true, api_key: { configured: true } },
+          },
+        },
+      },
+    })
+
+    render(<SystemSettingsPage />)
+
+    // Scoped to this field rather than to the hint text, which the payments
+    // card also shows for its own configured secret.
+    const field = await screen.findByLabelText(/google directions api key/i)
+
+    expect(field).toHaveValue('')
+    expect(field).toHaveAttribute('placeholder', '••••••••')
+    expect(field).toHaveAttribute('type', 'password')
+  })
+
+  it('warns that routing costs money, on the one setting that does', async () => {
+    get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+
+    render(<SystemSettingsPage />)
+
+    expect(await screen.findByText(/costs money per trip/i)).toBeInTheDocument()
   })
 
   it('treats a 403 as an answer, not an error', async () => {

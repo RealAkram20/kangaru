@@ -112,6 +112,39 @@ class SettingsService
                 'rules' => ['required', 'integer', 'min:0', 'max:100'],
             ],
         ],
+        /**
+         * Maps and routing (ADR-0031 pending).
+         *
+         * The driver app draws its maps with MapLibre against CARTO's free
+         * tiles and needs no key for that — this group is only about
+         * **routing**: the road-following line between two points, the road
+         * distance, and the arrival estimate that comes with it.
+         *
+         * `api_key` is `secret`, which is not a formality. Google bills
+         * Directions per request, so a leaked key is somebody else's traffic
+         * on this operator's invoice. Being secret means it is encrypted at
+         * rest, never returned by GET, and masked in audit (ADR-0014 §3) —
+         * and it is emphatically **not** `public`, so it can never reach the
+         * browser bundle or a handset. Routing is therefore a server-side
+         * endpoint rather than a call from the app.
+         *
+         * `routing_enabled` defaults to **false**, and the default is the
+         * point: configuring a key must never silently start a bill. It is a
+         * separate switch from the key so an operator can stop the spend
+         * without destroying the credential, and turn it back on without
+         * finding it again.
+         */
+        'maps' => [
+            'routing_enabled' => ['default' => false, 'rules' => ['required', 'boolean']],
+            'routing_provider' => [
+                'default' => 'google',
+                // Named rather than assumed. Nothing else is implemented
+                // today, and an enum with one member is how the second one
+                // gets added without a schema change.
+                'rules' => ['required', 'in:google'],
+            ],
+            'api_key' => ['default' => null, 'rules' => ['nullable', 'string', 'max:255'], 'secret' => true],
+        ],
         'booking' => [
             // On by default: approval is a control, and controls default
             // on. Switching it off makes BookingService auto-approve on
@@ -256,6 +289,25 @@ class SettingsService
      * Whether the platform can actually send email right now: the switch is
      * on and the transport has enough fields to try.
      */
+    /**
+     * Whether road routing can actually be asked for.
+     *
+     * Both halves, and the `secret()` read is why this lives here rather than
+     * in a caller: `all()` deliberately never returns the key, so nothing
+     * outside this service can tell a configured provider from an empty one.
+     *
+     * Callers treat `false` as "draw the direct line instead" rather than as
+     * an error. A dropped key or a switched-off toggle must degrade the map,
+     * never break the screen — a driver with a passenger in the car needs the
+     * addresses far more than they need the polyline.
+     */
+    public function routingConfigured(): bool
+    {
+        $maps = $this->all()['maps'];
+
+        return $maps['routing_enabled'] === true && ! blank($this->secret('maps', 'api_key'));
+    }
+
     public function mailConfigured(): bool
     {
         $mail = $this->all()['mail'];
