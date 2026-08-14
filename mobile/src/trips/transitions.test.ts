@@ -9,6 +9,7 @@ import {
   isWaitingForPassenger,
   shouldStreamGps,
   streamingTripId,
+  tripDestination,
 } from './transitions';
 
 function tripWith(status: TripStatus, allowed: TripStatus[]): Trip {
@@ -306,5 +307,45 @@ describe('isLiveLeg', () => {
     // doing at ten, and pinning it as in-progress would say otherwise.
     expect(isInProgress('assigned')).toBe(false);
     expect(isInProgress('accepted')).toBe(false);
+  });
+});
+
+describe('tripDestination', () => {
+  it('never sends a live trip to the record view', () => {
+    // The whole point. Today's list sent every trip to `TripDetail`, so
+    // tapping a live job landed a driver on an odometer table of em dashes
+    // with a "Start trip" button on a trip whose passenger was already
+    // aboard. Reported from a handset as "wrong and misleading".
+    for (const status of [
+      'accepted',
+      'driver_en_route',
+      'driver_arrived',
+      'passenger_onboard',
+      'trip_started',
+      'waiting',
+      'trip_resumed',
+    ] as TripStatus[]) {
+      expect(tripDestination(status, 42).screen).not.toBe('TripDetail');
+    }
+  });
+
+  it('carries the odometer its transition, which a bare trip id cannot', () => {
+    const to = tripDestination('passenger_onboard', 42);
+
+    expect(to).toEqual({
+      screen: 'Odometer',
+      params: { tripId: 42, to: 'trip_started', from: 'passenger_onboard' },
+    });
+  });
+
+  it('keeps the record for trips that are over, or never started', () => {
+    // `TripDetail` is not removed and should not be — the timeline and the
+    // odometer pair are exactly what a finished trip is read for.
+    for (const status of ['assigned', 'trip_completed', 'cancelled', 'no_show'] as TripStatus[]) {
+      expect(tripDestination(status, 42)).toEqual({
+        screen: 'TripDetail',
+        params: { tripId: 42 },
+      });
+    }
   });
 });

@@ -7,7 +7,7 @@ import { DutyBar } from '../duty/DutyBar';
 import { OfferCard } from '../duty/OfferCard';
 import { useAcceptOffer, useDeclineOffer, useDuty, useOffers } from '../duty/queries';
 import { useSync } from '../offline/SyncProvider';
-import { isInProgress, statusLabel } from '../trips/transitions';
+import { isInProgress, statusLabel, tripDestination } from '../trips/transitions';
 import { useTrips } from '../trips/queries';
 import { Card, Empty, Notice, Screen, StatusPill } from '../ui/components';
 import { SyncBanner } from '../ui/SyncBanner';
@@ -96,7 +96,16 @@ export function TodayScreen({ navigation }: Props) {
           )
         }
         renderItem={({ item }) => (
-          <TripRow trip={item} onPress={() => navigation.navigate('TripDetail', { tripId: item.id })} />
+          <TripRow
+            trip={item}
+            // Not `TripDetail` for everything. A live job opens on the screen
+            // that owns its status; the record is for trips that are over.
+            onPress={() => {
+              const to = tripDestination(item.status, item.id);
+
+              navigation.navigate(to.screen, to.params as never);
+            }}
+          />
         )}
       />
     </Screen>

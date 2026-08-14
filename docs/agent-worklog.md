@@ -833,6 +833,84 @@ live trip's nature is the seeder author's deliberate choice.
 
 ---
 
+### 2026-08-15 — Settlement requests, and the transactions screen (driver app)
+
+**Status:** in progress. Follows the Wallet entry below; **the owner ruled on
+the two forks it raised**, so this builds what that entry deliberately left
+out.
+
+**The owner's two decisions:**
+
+1. **Withdraw and Deposit become requests the office acts on** — not a payment
+   gateway. Withdraw is "Request a payout", Deposit is "Declare a remittance"
+   (*I have handed cash to the office*). Each writes a request row; the office
+   confirms it, and **the confirmation is what writes the `settlement` ledger
+   entry**. No gateway, no mobile money, no subscription.
+   **This needs a superseding ADR** — AGENTS.md: *"A decision with an ADR
+   requires a superseding ADR"* — because ADR-0029 §6 rules payout out by
+   name. `docs/adr/0032-driver-settlement-requests.md`.
+   **It does not overturn §6's principle, it completes it.** §6's actual
+   sentence is that the platform *"records that it happened rather than making
+   it happen"*. A request is a record of somebody asking; money still moves in
+   cash at the depot, and the ledger still only learns about it when a human
+   confirms.
+2. **A real date picker** — `@react-native-community/datetimepicker`, the
+   Expo-supported one. Free and open source, so no subscription; native date
+   UI on both platforms.
+
+**And the shape the owner described:** the Wallet screen shows the balance,
+the two buttons, and the **most recent few** movements with a **View all**;
+*View all* opens a full **Transactions** screen carrying the
+**Today / This week / Custom** filter and the picker.
+
+**Files I expect to own:**
+
+- `docs/adr/0032-driver-settlement-requests.md`
+- `backend/database/migrations/*_create_driver_settlement_requests_table.php`
+- `backend/Modules/Drivers/Models/DriverSettlementRequest.php`
+- `backend/Modules/Drivers/Enums/SettlementRequestKind.php`, `…Status.php`
+- `backend/Modules/Drivers/Services/DriverSettlementRequestService.php`
+- `backend/Modules/Drivers/Controllers/DriverSettlementRequestController.php`
+  (driver) and `SettlementRequestController.php` (office)
+- `backend/Modules/Drivers/Requests/StoreSettlementRequest.php`
+- `backend/Modules/Drivers/Resources/DriverSettlementRequestResource.php`
+- `backend/Modules/Drivers/Policies/DriverSettlementRequestPolicy.php`
+- `backend/tests/Feature/Drivers/DriverSettlementRequestTest.php`
+- `mobile/src/wallet/` — `settlementQueries.ts`, `settlement.ts` + test
+- `mobile/src/screens/TransactionsScreen.tsx` + `.test.tsx`
+- `mobile/src/wallet/SettlementSheet.tsx`
+
+**Files shared — the exact edits:**
+
+- `backend/Modules/Drivers/Controllers/DriverLedgerController.php` — `from`
+  and `to` filters. Mine from the entry below.
+- `backend/Modules/Drivers/Routes/api.php` — five routes.
+- `backend/app/Providers/AppServiceProvider.php` — one policy registration.
+- `mobile/package.json` — **one dependency**, per the owner's decision.
+- `mobile/src/api/endpoints.ts`, `navigation/types.ts`, `RootNavigator.tsx`,
+  `screens/WalletScreen.tsx` (mine).
+
+**Decisions I am taking without asking, and the rule behind each:**
+
+- **Confirming is gated on `drivers.manage`**, not a new permission. Adding a
+  `drivers.settle` case touches the permission census and every role
+  definition; reusing the permission that already governs a driver's record is
+  the smaller diff. **Noted as a refinement**: money confirmation arguably
+  belongs with Finance, and when that role separates this is the seam.
+- **A driver may hold one open request per kind.** Two pending payout requests
+  are not two payouts, they are one driver asking twice — and a queue full of
+  duplicates is a queue the office stops reading.
+- **Confirming writes the ledger entry through
+  `DriverLedgerService::recordSettlement()`**, never by writing a row. The
+  entry is then whatever that service says it is, and the sign convention
+  stays in one place.
+- **A request is never a balance.** The wallet total keeps coming from the
+  ledger alone; a pending request changes nothing until it is confirmed, and
+  the screen says so. Otherwise a driver could "request" their way out of
+  what they owe.
+
+---
+
 ### 2026-08-15 — "Wallet" screen (driver app)
 
 **Status:** complete. 345/346 mobile tests, 102 Drivers + 13 CI contract
@@ -1584,3 +1662,29 @@ driver reporting a blank map. That is now asserted.
 **To the Wallet agent:** `WalletScreen.test.tsx` has 31 failures and one lint
 error in the tree right now. Untouched — worklog rule 6. Every one of my own
 suites is green.
+
+---
+
+### 2026-08-15 — `TripDetail` no longer appears mid-trip
+
+**Status:** done. 255 mobile tests (mine), `tsc` and eslint clean, two guards
+proved by mutation.
+
+**Reported from a handset as "wrong and misleading", and it was.** A driver on
+a trip with the passenger already aboard was landing on the record view: an
+odometer table of two em dashes, a **Start trip** button on a journey that had
+already started, and no map, route, fare or payment anywhere.
+
+**The leak was `TodayScreen`.** It sent *every* trip to `TripDetail`
+regardless of status. `HomeScreen` had been taught to route by status; the
+list had not, and one tap from the list undid it.
+
+The decision now lives in one place — `tripDestination(status, tripId)` in
+`transitions.ts` — and returns the screen **and its parameters**, because one
+destination needs more than a trip id and a caller that has to remember which
+one is a caller that will forget. Both screens call it.
+
+**`TripDetailScreen` is deliberately *not* deleted.** It is the record, and it
+is the right screen for a finished, cancelled or unanswered trip, where the
+timeline and the odometer pair are the entire point. What changed is that no
+status with a screen of its own can reach it — asserted for all seven.

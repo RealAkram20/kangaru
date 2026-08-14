@@ -18,7 +18,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { useDuty, useOffers, useSetDuty } from '../duty/queries';
 import type { TripsStackParams } from '../navigation/types';
 import { useSync } from '../offline/SyncProvider';
-import { activeTripRoute, isLiveLeg, statusLabel } from '../trips/transitions';
+import { isLiveLeg, statusLabel, tripDestination } from '../trips/transitions';
 import { useDriverStats, useTrips } from '../trips/queries';
 import { money, ratingNote, ratingValue, walletNote, walletValue } from '../trips/statsPresentation';
 import { TripMap } from '../trips/TripMap';
@@ -250,26 +250,10 @@ export function HomeScreen({ navigation }: Props) {
             // to screen, and `transitions.ts`, where the pair is defined
             // together so neither can quietly claim the other's status.
             onOpen={() => {
-              // The decision lives in `activeTripRoute`, not here, so it can
-              // be tested — this component has no test, and a
-              // `passenger_onboard` trip silently fell through to the record
-              // view for exactly that reason.
-              const route = activeTripRoute(active.status);
+              // One decision, shared with Today's list — see `tripDestination`.
+              const to = tripDestination(active.status, active.id);
 
-              if (route === 'Odometer') {
-                // The opening reading, resumed where the driver left it. The
-                // only legal move from `passenger_onboard` is `trip_started`,
-                // and that transition cannot be posted without it.
-                navigation.navigate('Odometer', {
-                  tripId: active.id,
-                  to: 'trip_started',
-                  from: active.status,
-                });
-
-                return;
-              }
-
-              navigation.navigate(route, { tripId: active.id });
+              navigation.navigate(to.screen, to.params as never);
             }}
           />
         )}

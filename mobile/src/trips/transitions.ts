@@ -251,6 +251,43 @@ export function activeTripRoute(status: TripStatus): ActiveTripRoute {
 }
 
 /**
+ * Where a tap on a trip goes — the screen *and* its parameters.
+ *
+ * `activeTripRoute` answers which screen; this answers the whole question,
+ * because one of the destinations needs more than a trip id and a caller that
+ * has to remember which one is a caller that will forget.
+ *
+ * **Both `HomeScreen` and `TodayScreen` route through this, and the second one
+ * is why it exists.** Today's list sent *every* trip to `TripDetail`
+ * regardless of status, so tapping a live job landed a driver on the record
+ * view — an odometer table of em dashes, a "Start trip" button on a trip whose
+ * passenger was already aboard, and no map, route or fare anywhere. Reported
+ * from a handset as "wrong and misleading", which it was.
+ *
+ * `TripDetail` is not removed and should not be: it is the record, and it is
+ * the right screen for a finished, cancelled or unanswered trip, where the
+ * timeline and the odometer pair are the whole point. It is simply no longer
+ * reachable for a status that has a screen of its own.
+ */
+export function tripDestination(
+  status: TripStatus,
+  tripId: number,
+):
+  | { screen: 'Odometer'; params: { tripId: number; to: 'trip_started'; from: TripStatus } }
+  | { screen: Exclude<ActiveTripRoute, 'Odometer'>; params: { tripId: number } } {
+  const screen = activeTripRoute(status);
+
+  if (screen === 'Odometer') {
+    // The opening reading, resumed where the driver left it. The only legal
+    // move from `passenger_onboard` is `trip_started`, and that transition
+    // cannot be posted without it.
+    return { screen, params: { tripId, to: 'trip_started', from: status } };
+  }
+
+  return { screen, params: { tripId } };
+}
+
+/**
  * Whether GPS should be streaming for a trip in this status.
  *
  * Bounded at `trip_started`, not at `driver_en_route`, and the narrower window
