@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use Modules\Customers\Controllers\CustomerAuthController;
 use Modules\Customers\Controllers\CustomerOrderRequestController;
 use Modules\Customers\Controllers\CustomerRideController;
+use Modules\Trips\Controllers\TripRatingController;
 
 /*
 |--------------------------------------------------------------------------
@@ -66,5 +67,12 @@ Route::prefix('customer')->group(function () {
         // driver's side of the same idea.
         Route::post('/rides/active/cancellation', [CustomerRideController::class, 'cancel'])
             ->name('customer.rides.cancel');
+
+        // Rating the ride once it is over (ADR-0030 §1). Keyed by trip id
+        // unlike the endpoints above, and safely: the controller refuses any
+        // trip whose customer_id is not this token's, so an id guessed from
+        // elsewhere resolves to a 404 rather than somebody else's journey.
+        Route::post('/trips/{trip}/rating', [TripRatingController::class, 'store'])
+            ->name('customer.trips.rating.store');
     });
 });

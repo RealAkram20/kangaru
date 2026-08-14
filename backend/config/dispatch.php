@@ -181,4 +181,39 @@ return [
 
     'offer_retry_window_minutes' => (int) max(1, (int) env('DISPATCH_OFFER_RETRY_WINDOW_MINUTES', 30)),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Waiting at the pickup
+    |--------------------------------------------------------------------------
+    |
+    | How long a driver is expected to stand at a pickup before the wait is
+    | worth someone's attention. The driver app draws its waiting ring
+    | against this.
+    |
+    | **This is a display target and nothing else, and the distinction is the
+    | whole reason for this comment.** Nothing in this platform charges,
+    | bounds or ends a wait at the kerb:
+    |
+    | - `free_waiting_minutes` and `per_waiting_minute_minor` on the rate
+    |   card bill the *in-trip* Waiting status. `WaitingTimeCalculator` opens
+    |   a period on a transition **into** `TripStatus::WAITING`, which the
+    |   state graph only permits after Trip Started — so none of it can
+    |   describe a driver waiting for a passenger to come out.
+    | - No status follows from this elapsing. The driver cannot post
+    |   `no_show` (`TripPolicy::DRIVER_JOURNEY_STATES` withholds it) and
+    |   nothing sweeps a trip that sits at Driver Arrived.
+    |
+    | So passing it must not read as a deadline anywhere: the app's ring
+    | fills to full and then *stays* full while the figure keeps counting.
+    | Whoever gives this number a consequence — a no-show, a waiting charge,
+    | a fee — is making a commercial decision that needs its own ADR, and
+    | they should find this paragraph first.
+    |
+    | Five minutes is a starting point chosen against nothing but common
+    | practice, and it is a setting rather than a literal so that arguing
+    | with it costs an env var instead of a release.
+    */
+
+    'pickup_wait_target_seconds' => (int) max(1, (int) env('DISPATCH_PICKUP_WAIT_TARGET_SECONDS', 300)),
+
 ];

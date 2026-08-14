@@ -75,6 +75,66 @@ Returns `201` with the created Trip. A Corporate Admin may raise and approve
 bookings but never dispatch the fleet, so `dispatch` mirrors
 `TripPolicy::create` rather than the Bookings desk roles.
 
+### What a driver is shown before accepting (ADR-0024 §3)
+
+| Method | Path | Policy |
+|---|---|---|
+| GET | `/api/v1/me/offers` | none — `/me/`, so the driver *is* the token |
+| POST | `/api/v1/me/offers/{id}/acceptance` | scoped lookup; another driver's id 404s |
+| POST | `/api/v1/me/offers/{id}/decline` | the same |
+
+`DispatchOfferResource` renders a decision, not a record, and everything on
+it earns its place against a fifteen-second clock: where the job starts, how
+far away that is, how far the job itself runs, what is being sent, how it
+settles, and what it is estimated to fetch.
+
+**Two rules govern what may go on it, and both are easy to break by
+accident.**
+
+*Nothing that identifies anybody.* ADR-0024 §7 releases the passenger's name
+and number only after the accept, and this payload is also what a push
+notification is built from — so it reaches a lock screen. The trap is
+`order_requests.details`: on a delivery it holds `sender_phone` and
+`recipient_phone`, and a resource emitting that column under a field called
+`details` would leak two numbers without looking wrong in review.
+`DispatchOfferResource::PACKAGE_FIELDS` and `PAYMENT_FIELDS` are allow-lists
+for exactly that reason — a key added to the public order form defaults to
+*not* shipping, and `allowed()` is the single place that column is read, so
+the complete set of keys that can escape is four names in one screen.
+`DriverOfferPayloadTest` asserts over the whole encoded body rather than
+over one path, so a leak through some future field fails too.
+
+`payment` carries `payment_method` and `payer` and is present on every
+service, because every job is paid for — unlike `package`, which is null on
+a ride because a ride genuinely has no parcel. Both members are null
+whenever the person ordering did not say, which is the common case, and
+**`cash` is not a permitted default.** A driver who reads "Cash", arrives
+with no float and is offered a mobile-money transfer they cannot take has
+been told something the platform never knew.
+
+*No number the platform cannot stand behind.* `pickup_distance_km` and
+`trip_distance_km` are both great-circle (ADR-0020 §3) and neither may be
+turned into an ETA by a client — real roads are longer than the crow's
+flight, and the invented figure is the one that would need defending.
+`estimated_fare` comes from `WalkInFareService::quote()` against the public
+tariff (ADR-0026 §2) and is named a **fare, not earnings**: there is no
+commission model and settlement is deferred (ADR-0026 §3), so a field named
+for the driver's take would become false in every shipped build the day a
+platform cut is introduced.
+
+`estimated_fare` is null whenever it cannot be computed honestly — no
+vehicle, no coordinates, no published tariff, or a category nobody has
+priced. The last two arrive as `RateCardNotConfiguredException` and are
+**caught here rather than propagated**, because this is a list a driver polls
+every few seconds: an unpriced boda should cost that driver a figure on one
+card, not their whole offer list to a 500. The loud failure ADR-0026 asks for
+still happens at completion, where money actually changes hands.
+
+It costs two queries per offer, and ADR-0024 §4's sequential waves mean a
+driver holds one at a time. If the wave size is ever raised far enough for
+that to show in the poll's latency, resolve the tariff version once per
+request — do not drop the figure.
+
 ### What an allocation does to a dispatch (ADR-0009)
 
 Since ADR-0009 the pool is no longer flat. For a booking belonging to

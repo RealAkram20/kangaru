@@ -63,6 +63,40 @@ deleting a trip would break the audit trail, so it isn't exposed.
 | POST | `/api/v1/trips/{id}/transitions` | `transition` — role- and target-status-dependent, see `TripPolicy` |
 | GET | `/api/v1/trips/{id}/events` | `view` (on the parent trip) — the append-only timeline, cursor-paginated |
 
+### What `TripResource` serves beyond the columns
+
+Three additions the driver app's pickup screen reads, all on `show`:
+
+**`pickup` and `dropoff`** repeat `origin`/`destination` with coordinates
+attached. Those two string fields are unchanged and stay — AGENTS.md allows
+additive changes within a version and no removals. The coordinates come from
+the walk-in order behind the trip (`Trip::orderRequest()`, a `hasOne` against
+the `order_requests.trip_id` the accept path already writes — there is no
+column on `trips` and no migration). They are null on every corporate trip and
+on anything a dispatcher keyed in over the phone.
+
+**Latitude and longitude are served together or not at all.** Half a position
+is not a place, and the tempting client-side fix for a missing half is `?? 0`
+— which at Uganda's latitude is the Atlantic off Ghana, the same spot ADR-0020
+records a latitude/longitude swap landing a vehicle.
+
+**`fare` and `estimated_fare` are different claims and are different fields.**
+`fare` is what `WalkInFareService::settle()` charged, with the rate card
+version that priced it; `estimated_fare` is a quote from the public tariff
+(ADR-0026 §2). `is_estimate` is `false` on one and `true` on the other, so no
+client infers which it holds from the key it arrived under. The quote stops
+the moment a real fare exists, so nothing shows an estimate beside a bill.
+
+**`estimated_fare` is bounded to `show` on purpose.** A quote costs two or
+three queries through `RateCardResolver`, and this resource also renders
+`GET /trips` — an unbounded quote would be a query per row on a dispatch
+board. The controller eager-loads `orderRequest` on `show` and not on `index`,
+and the field follows; `TripPlacesAndFareTest` asserts both halves. If a list
+ever genuinely needs the figure, memoise the tariff version per request inside
+Billing rather than removing this guard — and note that making
+`RateCardResolver` `scoped` is not free, because a version held across an
+invoice run could be a stale one.
+
 ## Trip lifecycle
 
 ```

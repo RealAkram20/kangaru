@@ -8,6 +8,7 @@ use Database\Seeders\DriverAppSeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Support\Facades\Hash;
 use Modules\Drivers\Models\Driver;
+use Modules\Drivers\Services\DriverStatsService;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
 
@@ -47,7 +48,7 @@ it('produces a driver account that can actually sign in on the driver app', func
     // requires, because that is what the mobile app sends.
     $response = $this->postJson('/api/v1/auth/login', [
         'email' => 'driver@kangaruride.test',
-        'password' => 'driver-demo-password',
+        'password' => 'password',
         'client' => ClientScope::DRIVER,
     ]);
 
@@ -100,8 +101,16 @@ it('seeds finished trips carrying both odometer readings', function () {
 
     $driver = Driver::query()->whereHas('user', fn ($q) => $q->where('email', 'driver@kangaruride.test'))->sole();
 
+    // Scoped to the *corporate* trips, which is what this test has always
+    // been about: PROJECT.md's odometer criteria are a client's, and a client
+    // trip is the only kind that carries a tenant. The walk-in rides seeded
+    // alongside them are settled by fare and never see an odometer — they are
+    // covered separately below, and folding them in here would have meant
+    // either weakening these assertions or asserting a count that says
+    // nothing.
     $completed = Trip::allTenants()
         ->where('driver_id', $driver->id)
+        ->whereNotNull('tenant_id')
         ->where('status', TripStatus::TRIP_COMPLETED->value)
         ->get();
 
@@ -117,6 +126,52 @@ it('seeds finished trips carrying both odometer readings', function () {
             ->and($trip->started_at)->not->toBeNull()
             ->and($trip->completed_at)->not->toBeNull();
     });
+});
+
+it('seeds the earnings, wallet and rating the home screen renders', function () {
+    seedDriverAppPlatform();
+
+    (new DriverAppSeeder)->run();
+
+    $driver = Driver::query()->whereHas('user', fn ($q) => $q->where('email', 'driver@kangaruride.test'))->sole();
+
+    $stats = app(DriverStatsService::class)->forDriver($driver);
+
+    // Three figures that were permanent em dashes until ADR-0029 and ADR-0030
+    // landed, and that stayed em dashes afterwards because nothing seeded the
+    // two tables behind them. This asserts the demo shows a populated screen.
+    expect($stats['earnings_today_minor'])->toBeGreaterThan(0);
+    expect($stats['rating'])->not->toBeNull();
+    expect($stats['rating_count'])->toBeGreaterThanOrEqual(5);
+
+    // **Negative, and that is the assertion.** Each cash ride leaves the driver
+    // holding the whole fare and owing the commission (ADR-0029 §5), so a
+    // part-remittance lands below zero. An earlier draft remitted enough to
+    // push this positive — the office owing the driver — which cash rides
+    // alone cannot produce, and which rendered perfectly while being
+    // impossible.
+    expect($stats['wallet_balance_minor'])->toBeLessThan(0);
+});
+
+it('is re-runnable without stacking demo rides or colliding on the vehicle', function () {
+    seedDriverAppPlatform();
+
+    (new DriverAppSeeder)->run();
+    (new DriverAppSeeder)->run();
+
+    $driver = Driver::query()->whereHas('user', fn ($q) => $q->where('email', 'driver@kangaruride.test'))->sole();
+
+    // Six walk-in rides, not twelve. The first guard here was on the ledger
+    // entries rather than the trips, which opened on a cleared ledger and
+    // piled up a second set — then died on `vehicles.registration_number`
+    // being unique. Both failures needed a *second* run to appear.
+    $walkIns = Trip::allTenants()
+        ->where('driver_id', $driver->id)
+        ->whereNull('tenant_id')
+        ->whereNotNull('fare_minor')
+        ->count();
+
+    expect($walkIns)->toBe(6);
 });
 
 /**
@@ -190,7 +245,7 @@ it('puts the documented password back after someone has changed it', function ()
 
     $this->postJson('/api/v1/auth/login', [
         'email' => 'driver@kangaruride.test',
-        'password' => 'driver-demo-password',
+        'password' => 'password',
         'client' => ClientScope::DRIVER,
     ])->assertOk();
 });

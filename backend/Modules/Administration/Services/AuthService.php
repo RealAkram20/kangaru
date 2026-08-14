@@ -126,8 +126,11 @@ class AuthService
      * `personal_access_tokens` during an incident needs to know which
      * device a row is for, and every one of them used to say "api".
      */
-    private function issueToken(User $user, string $client): string
+    public function issueToken(User $user, string $client): string
     {
+        // Public since ADR-0028: the social sign-in path mints its tokens
+        // here too, so a Google login can never end up with a differently
+        // scoped token than a password login for the same client.
         return $user->createToken($client, ClientScope::abilitiesFor($client))->plainTextToken;
     }
 

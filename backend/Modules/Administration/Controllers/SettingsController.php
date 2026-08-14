@@ -7,7 +7,6 @@ use App\Http\Controllers\Controller;
 use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Validator;
 use Modules\Administration\Models\Setting;
 use Modules\Administration\Services\SettingsService;
@@ -79,9 +78,7 @@ class SettingsController extends Controller
 
         $validated = $request->validate(['to' => ['nullable', 'email']]);
 
-        $mail = $this->settings->all()['mail'];
-
-        if ($mail['enabled'] !== true || blank($mail['host']) || blank($mail['from_address'])) {
+        if (! $this->settings->mailConfigured()) {
             return ApiResponse::error(
                 ErrorCode::VALIDATION_FAILED,
                 'Fill in and save the mail settings first: at least host and from address, with mail enabled.',
@@ -93,19 +90,17 @@ class SettingsController extends Controller
         $to = $validated['to'] ?? $this->settings->get('branding', 'contact_email');
 
         try {
-            Mail::build([
-                'transport' => 'smtp',
-                'host' => $mail['host'],
-                'port' => $mail['port'],
-                'username' => $mail['username'] ?: null,
-                'password' => $this->settings->secret('mail', 'password'),
-                'encryption' => $mail['encryption'] === 'tls' ? 'tls' : null,
-                'timeout' => 10,
-            ])->raw(
+            // The same mailer every real send uses (the reset codes of
+            // ADR-0028 among them) — so a green test here vouches for the
+            // path that matters, not for a lookalike.
+            ['mailer' => $mailer, 'from_address' => $from, 'from_name' => $fromName] =
+                $this->settings->smtpMailer();
+
+            $mailer->raw(
                 'This is a test email from your KangaruRide platform settings. If you are reading it, SMTP is configured correctly.',
-                function ($message) use ($mail, $to) {
+                function ($message) use ($from, $fromName, $to) {
                     $message->to($to)
-                        ->from($mail['from_address'], $mail['from_name'] ?: null)
+                        ->from($from, $fromName)
                         ->subject('KangaruRide test email');
                 },
             );

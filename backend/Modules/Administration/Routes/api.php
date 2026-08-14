@@ -3,9 +3,12 @@
 use Illuminate\Support\Facades\Route;
 use Modules\Administration\Controllers\AuditLogController;
 use Modules\Administration\Controllers\AuthController;
+use Modules\Administration\Controllers\PasswordResetController;
+use Modules\Administration\Controllers\PublicLegalController;
 use Modules\Administration\Controllers\PublicSettingsController;
 use Modules\Administration\Controllers\RoleController;
 use Modules\Administration\Controllers\SettingsController;
+use Modules\Administration\Controllers\SocialAuthController;
 use Modules\Administration\Controllers\UserController;
 
 // The branding subset, unauthenticated (ADR-0014 §5): the landing page,
@@ -16,9 +19,34 @@ Route::get('/public/settings', [PublicSettingsController::class, 'index'])
     ->middleware('throttle:30,1')
     ->name('public.settings');
 
+// The Terms and Privacy notices the Driver App's sign-up form requires
+// consent to (ADR-0014, `legal` group). Unauthenticated of necessity: it is
+// read on the one screen that exists before anybody has an account.
+Route::get('/public/legal', [PublicLegalController::class, 'index'])
+    ->middleware('throttle:30,1')
+    ->name('public.legal');
+
 Route::post('/auth/login', [AuthController::class, 'login'])
     ->middleware('throttle:5,1')
     ->name('auth.login');
+
+// Forgot-password by emailed code (ADR-0028 §2). Unauthenticated: the
+// caller's whole problem is that they cannot authenticate. The forgot leg
+// is throttled below even auth's rate — each hit can send an email, and
+// outbound mail is the resource being defended.
+Route::post('/auth/password/forgot', [PasswordResetController::class, 'forgot'])
+    ->middleware('throttle:3,1')
+    ->name('auth.password.forgot');
+Route::post('/auth/password/reset', [PasswordResetController::class, 'reset'])
+    ->middleware('throttle:5,1')
+    ->name('auth.password.reset');
+
+// "Continue with Google / Facebook" (ADR-0028 §3). Unauthenticated — it IS
+// authentication — and throttled at the login rate, because that is what it
+// is.
+Route::post('/auth/social', [SocialAuthController::class, 'store'])
+    ->middleware('throttle:5,1')
+    ->name('auth.social');
 Route::post('/auth/logout', [AuthController::class, 'logout'])
     ->middleware('auth:sanctum')
     ->name('auth.logout');

@@ -2,8 +2,10 @@
 
 namespace Modules\Administration\Services;
 
+use Illuminate\Contracts\Mail\Mailer;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Modules\Administration\Models\Setting;
@@ -37,6 +39,58 @@ class SettingsService
             'logo_path' => ['default' => null, 'rules' => ['nullable', 'string', 'max:255'], 'public' => true],
             'favicon_path' => ['default' => null, 'rules' => ['nullable', 'string', 'max:255'], 'public' => true],
         ],
+        // The two documents the Driver App's sign-up form requires consent
+        // to. They live here rather than as pages on a marketing site so the
+        // owner can correct them without a deploy — the same reason every
+        // other knob in this catalogue exists.
+        //
+        // Deliberately NOT flagged `public`. The branding subset is fetched on
+        // every landing-page load and every app cold start; a full terms
+        // document pasted in by an administrator would ride along with it,
+        // and on the connections this platform is built for that is a real
+        // cost paid by people who never opened the document. They are served
+        // instead by `GET /public/legal`, which is fetched only when somebody
+        // taps the link.
+        //
+        // The defaults below are a genuine short-form notice rather than
+        // lorem ipsum: an unconfigured deployment must still show a driver
+        // something true about what they are agreeing to.
+        'legal' => [
+            'terms' => [
+                'default' => "By creating a KangaruRide driver account you agree to:\n\n1. Provide accurate personal, licence and vehicle information, and to keep it current.\n2. Hold a valid driving licence and any permit your vehicle class requires, and to produce them on request.\n3. Carry out accepted trips and deliveries with reasonable care, and to record opening and closing odometer readings honestly.\n4. Use the app only for work KangaruRide has assigned to you.\n5. Accept that your account may be suspended for unsafe conduct, dishonest readings, or lapsed documents.\n\nKangaruRide agrees to pay for completed work at the rates published to you, and to give reasonable notice of any change to them.\n\nThis is a short-form notice. A full agreement will be provided before your account is activated.",
+                'rules' => ['nullable', 'string', 'max:40000'],
+            ],
+            'privacy' => [
+                'default' => "KangaruRide collects your name, phone number, email address, licence and vehicle details so that we can offer you work, dispatch you to it, and pay you for it.\n\nWhile you are on duty the app records your location, so that dispatch can offer you nearby work and so that a completed trip's distance can be checked against your odometer readings. Location is not recorded while you are off duty.\n\nWe share what we must with the client whose trip you are carrying out — typically your name, phone number and vehicle registration — and with nobody else, except where the law requires it.\n\nYou may ask us what we hold about you, ask us to correct it, and ask us to delete it when it is no longer needed for a trip record or a tax obligation. Write to the contact address published in the app.\n\nThis is a short-form notice, issued under Uganda's Data Protection and Privacy Act, 2019. A full policy will be provided before your account is activated.",
+                'rules' => ['nullable', 'string', 'max:40000'],
+            ],
+        ],
+        // ADR-0028: which ways into the Driver App are on, and the
+        // credentials they run on. The three booleans are public because the
+        // app renders its welcome screen from them — fail-closed, so a flag
+        // the phone cannot fetch is a button that does not exist. The
+        // credentials are not public and the Facebook secret is write-only.
+        //
+        // Saving `google_enabled: true` with no client ids is legal and
+        // inert: the catalogue validates shape, and the auth endpoints
+        // refuse with AUTH_METHOD_DISABLED until the prerequisites hold.
+        'auth' => [
+            'password_reset_enabled' => ['default' => false, 'rules' => ['required', 'boolean'], 'public' => true],
+            'google_enabled' => ['default' => false, 'rules' => ['required', 'boolean'], 'public' => true],
+            'facebook_enabled' => ['default' => false, 'rules' => ['required', 'boolean'], 'public' => true],
+            // Comma-separated OAuth2 audiences: the Android, iOS and web
+            // client ids this deployment's apps sign in with. The server
+            // refuses a Google token minted for anybody else's app.
+            //
+            // Public, and safely so: client ids and app ids are public
+            // identifiers by design — they ship inside every app binary —
+            // and the phone needs them to *start* the native flow. The
+            // secret half (the Facebook app secret below) never leaves the
+            // server.
+            'google_client_ids' => ['default' => '', 'rules' => ['nullable', 'string', 'max:2000'], 'public' => true],
+            'facebook_app_id' => ['default' => '', 'rules' => ['nullable', 'string', 'max:100'], 'public' => true],
+            'facebook_app_secret' => ['default' => null, 'rules' => ['nullable', 'string', 'max:255'], 'secret' => true],
+        ],
         'regional' => [
             'currency' => ['default' => 'UGX', 'rules' => ['required', 'string', 'size:3'], 'public' => true],
             'timezone' => ['default' => 'Africa/Kampala', 'rules' => ['required', 'string', 'timezone:all', 'max:64']],
@@ -48,6 +102,15 @@ class SettingsService
         'ordering' => [
             'walk_in_enabled' => ['default' => true, 'rules' => ['required', 'boolean'], 'public' => true],
             'rate_limit_per_minute' => ['default' => 3, 'rules' => ['required', 'integer', 'min:1', 'max:60']],
+        ],
+        // ADR-0029 §3: what the platform keeps from a walk-in fare. The rate
+        // in force at completion is written into the ledger entry, so
+        // changing this never restates what a driver already earned.
+        'billing' => [
+            'driver_commission_percent' => [
+                'default' => 20,
+                'rules' => ['required', 'integer', 'min:0', 'max:100'],
+            ],
         ],
         'booking' => [
             // On by default: approval is a control, and controls default
@@ -166,9 +229,69 @@ class SettingsService
         return $out;
     }
 
+    /**
+     * The two consent documents, for the unauthenticated reader.
+     *
+     * Separate from `publicSubset()` on purpose — see the `legal` group's
+     * note in the catalogue. These are long, and they are wanted rarely.
+     *
+     * @return array{terms: string, privacy: string}
+     */
+    public function legalDocuments(): array
+    {
+        $all = $this->all();
+
+        return [
+            'terms' => (string) ($all['legal']['terms'] ?? ''),
+            'privacy' => (string) ($all['legal']['privacy'] ?? ''),
+        ];
+    }
+
     public function get(string $group, string $key): mixed
     {
         return $this->all()[$group][$key] ?? null;
+    }
+
+    /**
+     * Whether the platform can actually send email right now: the switch is
+     * on and the transport has enough fields to try.
+     */
+    public function mailConfigured(): bool
+    {
+        $mail = $this->all()['mail'];
+
+        return $mail['enabled'] === true && ! blank($mail['host']) && ! blank($mail['from_address']);
+    }
+
+    /**
+     * A mailer built from the stored SMTP settings, plus the from-address it
+     * must send as.
+     *
+     * Built at send time, never at boot (ADR-0014's `mail` note: a boot-time
+     * read would make `migrate` on a fresh database depend on the table it
+     * is about to create). One code path for the settings screen's test
+     * send and every real mail the platform sends, so "the test email
+     * worked" and "the reset email works" can never drift apart.
+     *
+     * @return array{mailer: Mailer, from_address: string, from_name: ?string}
+     */
+    public function smtpMailer(): array
+    {
+        $mail = $this->all()['mail'];
+
+        return [
+            'mailer' => Mail::build([
+                'transport' => 'smtp',
+                'host' => $mail['host'],
+                'port' => $mail['port'],
+                'username' => $mail['username'] ?: null,
+                'password' => $this->secret('mail', 'password'),
+                'encryption' => $mail['encryption'] === 'tls' ? 'tls' : null,
+                'timeout' => 10,
+            ]),
+            'from_address' => (string) $mail['from_address'],
+            'from_name' => $mail['from_name'] ?: null,
+        ];
     }
 
     /**

@@ -99,6 +99,34 @@ enum ErrorCode: string
     case DRIVER_ACCOUNT_CONFLICT = 'DRIVER_ACCOUNT_CONFLICT';
 
     /**
+     * Somebody already approved or rejected this driver application
+     * (ADR-0027 §4). 409 for the same reason as the two codes either side
+     * of it: the request is well formed and the world has moved, and the
+     * reviewer fixes it by refreshing rather than by editing a field.
+     *
+     * Worth more here than elsewhere, because the thing a lost race would
+     * otherwise produce is a second account and a second driver profile for
+     * one person.
+     */
+    case DRIVER_APPLICATION_CLOSED = 'DRIVER_APPLICATION_CLOSED';
+
+    /**
+     * The sign-in method the caller asked for is switched off, or its
+     * prerequisites are not configured (ADR-0028 §1). 409 rather than 404:
+     * the endpoint exists, the platform's owner has it turned off, and the
+     * caller's fix is the settings screen rather than a different URL.
+     */
+    case AUTH_METHOD_DISABLED = 'AUTH_METHOD_DISABLED';
+
+    /**
+     * The Google/Facebook proof did not verify — wrong audience, expired,
+     * or the provider refused it (ADR-0028 §3). Never distinguishes which,
+     * to the caller: the detail goes to the log, where it helps an
+     * operator instead of an attacker.
+     */
+    case SOCIAL_TOKEN_INVALID = 'SOCIAL_TOKEN_INVALID';
+
+    /**
      * Somebody already approved or declined this request for time off
      * (ADR-0017 §6). 409, not 422: the request is well formed and the
      * caller fixes it by looking at the answer that exists, not by editing

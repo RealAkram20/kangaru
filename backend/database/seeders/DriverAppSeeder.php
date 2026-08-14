@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Enums\UserRole;
+use App\Models\Customer;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
@@ -14,10 +15,12 @@ use Modules\Bookings\Models\Booking;
 use Modules\Dispatch\Services\DispatchService;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Services\DriverAccountService;
+use Modules\Drivers\Services\DriverLedgerService;
 use Modules\Fleet\Support\DriverPresence;
 use Modules\Fleet\Support\DriverPresenceStore;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
+use Modules\Trips\Models\TripRating;
 use Modules\Trips\Services\TripStateMachine;
 use Modules\Vehicles\Models\Vehicle;
 use RuntimeException;
@@ -57,15 +60,36 @@ class DriverAppSeeder extends Seeder
     /**
      * The demo driver's sign-in.
      *
-     * The password contains "demo" for the same practical reason the TOTP
-     * secret in `DatabaseSeeder` contains "DEMO": gitleaks' default rules skip
-     * secrets carrying a stopword, and this file is meant to be committed and
-     * read. The environment guard below is what actually makes it safe; the
-     * stopword only keeps the scanner from crying wolf about it.
+     * ## Why it is this short
+     *
+     * It is typed by hand, on a phone keyboard, every time somebody tests the
+     * driver app — which is the whole reason this seeder exists. The previous
+     * value, `driver-demo-password`, was twenty characters of thumb-typing
+     * before every run.
+     *
+     * ## Why it is safe to commit
+     *
+     * **`refuseOutsideDevelopment()` is what makes this safe, not the
+     * password's strength.** Nothing else does, and nothing else should be
+     * relied on: a credential committed to a repository is a known credential
+     * whatever it says, so the only real control is refusing to mint it where
+     * it would matter.
+     *
+     * ## Why gitleaks does not fire on it
+     *
+     * The scanner's `generic-api-key` rule needs entropy of 3.5 bits per
+     * character; "password" measures 2.75, and it is also on gitleaks' own
+     * default stopword list. Both point the same way, and it is a *weaker*
+     * trigger than the value it replaces — that one leant on the same
+     * "password" stopword plus "demo", exactly as `DatabaseSeeder`'s TOTP
+     * secret leans on "DEMO".
+     *
+     * This was reasoned rather than run: gitleaks is not installed here and
+     * could not be fetched. CI is the check that actually counts.
      */
     private const ACCOUNT_EMAIL = 'driver@kangaruride.test';
 
-    private const ACCOUNT_PASSWORD = 'driver-demo-password';
+    private const ACCOUNT_PASSWORD = 'password';
 
     /**
      * A second driver, free and on duty, so automatic dispatch has somebody
@@ -111,9 +135,177 @@ class DriverAppSeeder extends Seeder
             app(TenantContext::class)->set(null);
         }
 
+        $this->seedEarningsAndRatings($driver);
+
         $onDuty = $this->freeDriverOnDuty();
 
         $this->report($driver, $onDuty);
+    }
+
+    /**
+     * Walk-in rides this driver already finished, so the home screen has
+     * something to show.
+     *
+     * ## Why this is real data and not a fixture
+     *
+     * The home screen renders earnings, wallet balance and rating from
+     * `GET /me/stats`. On a freshly seeded database all three are empty —
+     * not because the app is wrong, but because nothing seeded
+     * `driver_ledger_entries` (ADR-0029) or `trip_ratings` (ADR-0030).
+     *
+     * The tempting shortcut is a fixture in the app behind a flag.
+     * `docs/screen-rules.md` §1 forbids it, and the practical reason is
+     * better than the principle: a flag that shows invented money is a flag
+     * that ships. Seeding the database instead means the screen is driven by
+     * the real payload down the real endpoint — which is also the only thing
+     * that would have caught the bug where the app read a field the server
+     * had renamed and printed `undefined NaN` where the money goes.
+     *
+     * ## Why walk-ins specifically
+     *
+     * Neither figure can come from the corporate trips seeded above, and that
+     * is the platform working correctly rather than a gap:
+     *
+     * - **The ledger only records fares the platform priced** (ADR-0029 §4).
+     *   A corporate trip is invoiced to the client and carries no
+     *   `fare_minor`; inventing one would double-bill them.
+     * - **Only a customer may rate** (ADR-0030 §1), and a corporate trip has
+     *   no customer — the passenger is the client's business.
+     *
+     * ## What the numbers come out as
+     *
+     * Entries are written by `DriverLedgerService::recordCompletedTrip()`,
+     * never by hand, so the commission split is whatever that service says it
+     * is and a change to the rule changes this demo data with it.
+     *
+     * Note the balance lands **negative**, and that is correct rather than a
+     * seeding mistake: the passenger handed over the whole fare in cash, so
+     * the driver holds the platform's money until they settle (ADR-0029 §5).
+     * One settlement is recorded so the wallet shows a remittance having
+     * happened rather than a single unbroken debt.
+     *
+     * Six rated rides, because ADR-0030 §3 withholds the score below five —
+     * five would sit exactly on the boundary and make a passing screen look
+     * like a coincidence.
+     */
+    private function seedEarningsAndRatings(Driver $driver): void
+    {
+        // Re-runnable, like everything else here — and the *trips* are what
+        // that question has to be asked about, not the ledger entries.
+        //
+        // Guarding on `driver_ledger_entries` was the first attempt and it
+        // was wrong in a way only a second run exposes: clear the ledger to
+        // re-test and the guard opens, but the trips and the vehicle from the
+        // previous run are still there, so it piles up six more rides and
+        // then dies on the vehicle's unique registration. The trips are
+        // written first, so they are the honest record of "this already ran".
+        $alreadySeeded = Trip::query()
+            ->withoutGlobalScopes()
+            ->where('driver_id', $driver->getKey())
+            ->whereNull('tenant_id')
+            ->whereNotNull('fare_minor')
+            ->exists();
+
+        if ($alreadySeeded) {
+            return;
+        }
+
+        $customer = Customer::factory()->create([
+            'first_name' => 'Sarah',
+            'last_name' => 'Nakato',
+        ]);
+
+        // Look first, then fall back to the factory — not `firstOrCreate`.
+        //
+        // `registration_number` is unique, so a plain `create` turns any
+        // partially-cleaned database into a seeder that cannot run at all.
+        // But `firstOrCreate`'s second argument is a bare attribute list, and
+        // `vehicles.make` is NOT NULL with no default: it inserts a row the
+        // schema rejects. That passed here and failed in CI, because locally
+        // the vehicle already existed and only the *found* branch ever ran —
+        // the created branch was written, shipped and never executed once.
+        //
+        // Going through the factory keeps the columns a vehicle needs in the
+        // one place that knows them, which is the same reason every other
+        // vehicle in this file comes from it.
+        $vehicle = Vehicle::query()->firstWhere('registration_number', 'UDD 004D')
+            ?? Vehicle::factory()->create([
+                'category' => 'sedan',
+                'registration_number' => 'UDD 004D',
+            ]);
+
+        $ledger = app(DriverLedgerService::class);
+        $realNow = now();
+
+        // Two today so "Earnings today" is not zero, and four spread over the
+        // preceding days so the rating has enough behind it. `rating` is the
+        // mean of the recent 50 (§4), so the older ones count towards the
+        // score without touching today's earnings.
+        $rides = [
+            ['hoursAgo' => 2, 'fare' => 12_500, 'stars' => 5, 'from' => 'Acacia Mall', 'to' => 'Kololo Airstrip'],
+            ['hoursAgo' => 4, 'fare' => 8_000, 'stars' => 5, 'from' => 'Garden City', 'to' => 'Ntinda'],
+            ['hoursAgo' => 27, 'fare' => 21_000, 'stars' => 4, 'from' => 'Entebbe Road', 'to' => 'Munyonyo'],
+            ['hoursAgo' => 30, 'fare' => 6_500, 'stars' => 5, 'from' => 'Wandegeya', 'to' => 'Makerere'],
+            ['hoursAgo' => 51, 'fare' => 15_000, 'stars' => 4, 'from' => 'Kabalagala', 'to' => 'Nakawa'],
+            ['hoursAgo' => 74, 'fare' => 9_500, 'stars' => 5, 'from' => 'Bugolobi', 'to' => 'Kampala Road'],
+        ];
+
+        foreach ($rides as $ride) {
+            $at = $realNow->copy()->subHours($ride['hoursAgo']);
+
+            $trip = Trip::factory()
+                ->forCustomer($customer)
+                ->forDriver($driver)
+                ->forVehicle($vehicle)
+                ->create([
+                    'origin' => $ride['from'],
+                    'destination' => $ride['to'],
+                    'status' => TripStatus::TRIP_COMPLETED,
+                    'started_at' => $at->copy()->subMinutes(25),
+                    'completed_at' => $at,
+                    // What `WalkInFareService::settle()` would have written at
+                    // completion. Whole shillings — UGX is zero-decimal, and
+                    // this is exactly the figure the app must not divide.
+                    'fare_minor' => $ride['fare'],
+                    'fare_currency' => 'UGX',
+                    'fare_computed_at' => $at,
+                ]);
+
+            // Stamped at the trip's own moment, so "earnings today" counts the
+            // two that happened today rather than all six.
+            Carbon::setTestNow($at);
+            $ledger->recordCompletedTrip($trip);
+            Carbon::setTestNow();
+
+            TripRating::query()->create([
+                'trip_id' => $trip->getKey(),
+                'customer_id' => $customer->getKey(),
+                'driver_id' => $driver->getKey(),
+                'stars' => $ride['stars'],
+            ]);
+        }
+
+        // Yesterday's cash handed in. Positive because it reduces what the
+        // driver owes (ADR-0029 §5).
+        //
+        // **10,000, and the size is the point.** Each ride nets the driver
+        // `earned - fare`, which is exactly minus the commission — they took
+        // the whole fare in cash and owe the platform its cut. Across these
+        // six that is 14,500, so a part-remittance leaves the balance a few
+        // thousand short and the wallet reads "you are holding the office's
+        // cash". That is the state ADR-0029 §5 calls the ordinary one for a
+        // driver taking cash all day.
+        //
+        // The first draft remitted 40,000 and pushed the balance to +25,500 —
+        // the office owing the driver, which cash rides alone cannot produce.
+        // It rendered fine and was quietly impossible, which is the sort of
+        // demo figure that teaches somebody the wrong thing about the screen.
+        $ledger->recordSettlement(
+            $driver,
+            10_000,
+            $this->dispatcher(),
+            'Cash remitted at the depot',
+        );
     }
 
     /**

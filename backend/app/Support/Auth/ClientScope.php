@@ -104,6 +104,11 @@ final class ClientScope
                 'me.offers.acceptance.store',
                 'me.offers.decline.store',
 
+                // Their own numbers, for the home screen: trips and fares
+                // today, acceptance and completion rate. Counted from rows
+                // that already exist; nothing here is another driver's.
+                'me.stats.show',
+
                 // Going on duty, and saying where they are (ADR-0024 §2).
                 // The app cannot be offered work without these, and the
                 // fail-closed rule above is why they have to be named: they

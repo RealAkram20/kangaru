@@ -15,8 +15,10 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Bookings\Models\Booking;
+use Modules\Bookings\Models\OrderRequest;
 use Modules\Drivers\Models\Driver;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Vehicles\Models\Vehicle;
@@ -47,6 +49,13 @@ use Modules\Vehicles\Models\Vehicle;
  * @property string|null $gps_distance_km
  * @property bool $distance_variance_flagged
  * @property bool|null $cancellation_charge_applicable
+ * @property int|null $fare_minor Whole shillings — UGX is zero-decimal. Null
+ *                                until `WalkInFareService::settle()` prices the completed trip, and null
+ *                                forever on a corporate trip, which is invoiced instead (ADR-0026 §2).
+ * @property string|null $fare_currency
+ * @property int|null $fare_rate_card_version_id What priced it, so the figure
+ *                                               can be re-derived years later when somebody disputes it.
+ * @property CarbonInterface|null $fare_computed_at
  * @property CarbonInterface|null $started_at
  * @property CarbonInterface|null $completed_at
  * @property CarbonInterface $created_at
@@ -261,5 +270,30 @@ class Trip extends Model
     public function events(): HasMany
     {
         return $this->hasMany(TripEvent::class)->orderBy('created_at');
+    }
+
+    /**
+     * The walk-in order this trip was born from (ADR-0024 §3), or null.
+     *
+     * **A `hasOne` against `order_requests.trip_id`, not a column on this
+     * table.** The link already existed in that direction — `DispatchOffer
+     * Service` writes it on the accept, and the race check reads it — so
+     * adding `trips.order_request_id` would have been a second edge for the
+     * same fact, and the two would disagree the first time one was written
+     * without the other.
+     *
+     * What it is *for* is the coordinates. A trip carries `origin` and
+     * `destination` as prose, because that is all a dispatcher keying one in
+     * has; the order request behind a walk-in carries latitude and longitude
+     * as well, and a driver's pickup screen cannot draw a map or measure a
+     * leg from a street name. Null on every corporate trip, and null on a
+     * walk-in that a dispatcher fulfilled by hand — both of which render as
+     * a screen with no map rather than a map of nowhere.
+     *
+     * @return HasOne<OrderRequest, $this>
+     */
+    public function orderRequest(): HasOne
+    {
+        return $this->hasOne(OrderRequest::class, 'trip_id');
     }
 }

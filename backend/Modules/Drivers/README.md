@@ -44,6 +44,22 @@ Standard REST resource, all behind `auth:sanctum` + `tenant` middleware:
 | DELETE | `/api/v1/drivers/{id}` | `delete` — `drivers.manage` |
 | POST | `/api/v1/drivers/{id}/account` | `manageAccount` — `drivers.manage` **and** `staff.manage` (ADR-0016) |
 | DELETE | `/api/v1/drivers/{id}/account` | `manageAccount` — same pair |
+| GET | `/api/v1/me/stats` | None — the driver is the token. `403 NOT_A_DRIVER` for an account with no driver profile |
+
+`me/stats` feeds the app's home screen and is counted on read, never stored:
+trips and fares completed today, plus acceptance and completion rate over a
+rolling 30 days. Rates are **null** rather than zero until there is something
+to divide by — a first-shift driver shown "0%" reads it as a failing grade for
+having done nothing wrong.
+
+Two judgement calls the arithmetic makes, both fixed by tests. `superseded`
+offers are excluded from acceptance: that status means dispatch pulled the
+offer back, and counting it would penalise a driver for being slower than a
+machine — `expired` *is* counted, because an offer that rang out is a
+passenger left waiting. And `fares_today_minor` sums `fare_minor`, which only
+walk-in rides carry (ADR-0026 §3); a corporate trip is invoiced to the client.
+It is therefore cash taken, deliberately **not** called earnings — there is no
+commission model yet, so no such figure exists.
 
 The account sub-resource takes one of two mutually exclusive bodies:
 `{email, password, role?, name?}` mints a login, `{user_id}` adopts an
@@ -51,6 +67,31 @@ existing unlinked one. `409 DRIVER_ACCOUNT_CONFLICT` if either the profile
 or the account is already spoken for. `DELETE` is idempotent and revokes
 every token the account holds — see ADR-0016 §5 for why that matters more
 than the link itself.
+
+### Driver applications (ADR-0027)
+
+The queue riders put themselves in from the Driver App's sign-up form. An
+application is **not** an account: until a reviewer approves it, the
+applicant has no credentials on the platform at all.
+
+| Method | Path | Auth |
+|---|---|---|
+| POST | `/api/v1/driver-applications` | none — throttled 5/min/IP, in this module's `Routes/public.php` |
+| GET | `/api/v1/driver-applications` | `viewAny` — `drivers.view`. Oldest first; `?status=` filter |
+| GET | `/api/v1/driver-applications/{id}` | `view` — `drivers.view` |
+| POST | `/api/v1/driver-applications/{id}/approve` | `decide` — `drivers.manage` **and** `staff.manage`, role checked against the caller's own (ADR-0004) |
+| POST | `/api/v1/driver-applications/{id}/reject` | `decide` — same pair; takes a required `reason` |
+
+The public POST deliberately answers `202` identically whether or not the
+email is already known — refusing duplicates at submission would be an
+oracle for "does this person drive for KangaruRide" (ADR-0027 §5). The
+duplicate surfaces at approval as `409 DRIVER_ACCOUNT_CONFLICT`. Approval
+creates the driver, mints the account with the password the applicant chose
+at submission (hashed at the edge, cleared from the row once decided), and
+links them in one transaction through `DriverAccountService`. There is no
+public status checker (§6), and nobody is notified automatically — the
+office phones the number the form collected. Notification hangs off SMTP,
+which is ADR-0014 phase 3.
 
 ## Notes
 

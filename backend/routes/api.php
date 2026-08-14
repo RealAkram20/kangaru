@@ -19,6 +19,11 @@ Route::prefix('v1')->group(function () {
     // assume a user or a tenant.
     require base_path('Modules/Bookings/Routes/public.php');
 
+    // Unauthenticated by design (ADR-0027): a rider applying to drive, from
+    // the Driver App's sign-up form. It writes an application and nothing
+    // else — no account exists until somebody in the office approves it.
+    require base_path('Modules/Drivers/Routes/public.php');
+
     // The customer surface (ADR-0013). Deliberately outside the staff
     // middleware group below: customers have no tenant, and their guard
     // (`auth:customer`) is applied inside the module's own route file so

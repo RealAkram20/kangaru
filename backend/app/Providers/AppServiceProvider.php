@@ -40,7 +40,11 @@ use Modules\Clients\Models\Company;
 use Modules\Clients\Policies\CompanyPolicy;
 use Modules\Customers\Policies\CustomerPolicy;
 use Modules\Dispatch\Models\DispatchOffer;
+use Modules\Drivers\Listeners\CreditDriverForCompletedTrip;
 use Modules\Drivers\Models\Driver;
+use Modules\Drivers\Models\DriverApplication;
+use Modules\Drivers\Models\DriverLedgerEntry;
+use Modules\Drivers\Policies\DriverApplicationPolicy;
 use Modules\Drivers\Policies\DriverPolicy;
 use Modules\Fleet\Models\AvailabilityBlock;
 use Modules\Fleet\Models\DriverShiftWindow;
@@ -58,6 +62,7 @@ use Modules\Reports\Enums\ReportType;
 use Modules\Reports\Events\ReportExportCompleted;
 use Modules\Trips\Events\TripCompleted;
 use Modules\Trips\Models\Trip;
+use Modules\Trips\Models\TripRating;
 use Modules\Trips\Policies\TripPolicy;
 use Modules\Trips\Support\ContactChannel;
 use Modules\Trips\Support\DatabaseLivePositionStore;
@@ -143,6 +148,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(AuditLog::class, AuditLogPolicy::class);
         Gate::policy(Vehicle::class, VehiclePolicy::class);
         Gate::policy(Driver::class, DriverPolicy::class);
+        Gate::policy(DriverApplication::class, DriverApplicationPolicy::class);
         Gate::policy(Trip::class, TripPolicy::class);
         Gate::policy(Booking::class, BookingPolicy::class);
         Gate::policy(OrderRequest::class, OrderRequestPolicy::class);
@@ -183,6 +189,11 @@ class AppServiceProvider extends ServiceProvider
         // Laravel's event discovery scans app/Listeners by convention and
         // would never look under Modules\.
         Event::listen(TripCompleted::class, SettleWalkInFare::class);
+        // **After** SettleWalkInFare, and the order is load-bearing: the
+        // fare does not exist until that listener has priced the trip, and
+        // the ledger pair is idempotent so a premature run would credit
+        // nothing and never retry (ADR-0029 §2).
+        Event::listen(TripCompleted::class, CreditDriverForCompletedTrip::class);
 
         Event::listen(BookingApproved::class, [SendBookingDecisionNotification::class, 'approved']);
         Event::listen(BookingRejected::class, [SendBookingDecisionNotification::class, 'rejected']);
@@ -211,7 +222,19 @@ class AppServiceProvider extends ServiceProvider
             'user' => User::class,
             'vehicle' => Vehicle::class,
             'driver' => Driver::class,
+            // ADR-0027's applications queue. Approving one mints a principal
+            // and rejecting one ends somebody's application — both are
+            // decisions the office may be asked to account for.
+            'driver_application' => DriverApplication::class,
+            // ADR-0029's ledger. Every entry is money owed to or by a person,
+            // and a correction is a new row rather than an edit — so the audit
+            // trail and the ledger tell the same story from two directions.
+            'driver_ledger_entry' => DriverLedgerEntry::class,
             'trip' => Trip::class,
+            // ADR-0030. A rating cannot be edited or withdrawn, so the only
+            // mutation an audit trail will ever see here is an administrator
+            // deleting one — which is exactly the act worth recording.
+            'trip_rating' => TripRating::class,
             'booking' => Booking::class,
             'rate_card' => RateCard::class,
             'rate_card_version' => RateCardVersion::class,
