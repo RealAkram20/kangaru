@@ -1,6 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 
-import { fetchAvailabilityRequests, fetchTrip, fetchTripEvents, fetchTrips } from '../api/endpoints';
+import {
+  fetchAvailabilityRequests,
+  fetchDriverStats,
+  fetchTrip,
+  fetchTripEvents,
+  fetchTrips,
+} from '../api/endpoints';
 import type { Trip } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
 import { TRIP_POLL_INTERVAL_MS } from '../config';
@@ -74,5 +80,22 @@ export function useAvailabilityRequests() {
     queryFn: () => fetchAvailabilityRequests(api),
     networkMode: 'offlineFirst',
     gcTime: 24 * 60 * 60 * 1000,
+  });
+}
+
+/**
+ * The home screen's numbers.
+ *
+ * Refetched on the same rhythm as the trip list rather than polled: these
+ * move when a trip finishes or an offer is answered, both of which already
+ * invalidate their own caches.
+ */
+export function useDriverStats() {
+  const { api } = useAuth();
+
+  return useQuery({
+    queryKey: ['driver-stats'],
+    queryFn: () => fetchDriverStats(api),
+    staleTime: 60_000,
   });
 }

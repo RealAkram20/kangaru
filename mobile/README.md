@@ -53,12 +53,35 @@ navigation for its own sake.
 
 ```
 Work ─────── Today (trip list)
-        └── Trip detail
-        └── Odometer         ← modal
+        └── Pickup               ← accepted, driver_en_route
+        └── Waiting for passenger ← driver_arrived
+        └── Trip in progress     ← trip_started, waiting, trip_resumed
+        └── Trip detail          ← the record, and every terminal state
+        └── Odometer             ← modal; owns passenger_onboard
 Time off
 Account ──── session, sync state, and the parked queue
         └── Change password
 ```
+
+**One trip status belongs to exactly one screen**, and the live leg is split
+across three of them rather than folded into Trip detail. The reason is that
+they answer different questions at different moments: *Pickup* answers "where
+is it and how far" while driving, *Waiting for passenger* answers "how long
+have I been standing here", *Trip in progress* answers "how far still, and how
+long so far", and *Trip detail* is the record — odometer, timeline, every
+legal transition — read at a standstill. Folding them together would give the
+busiest moments in the app the layout of an audit trail.
+
+Two of those live screens draw a distance and neither draws a duration to go.
+There is no routing engine here, and ADR-0020 §3 declined to derive minutes
+from a straight line by name — so every distance says "straight line" on the
+screen in words, and the driver's own maps app answers the part this platform
+cannot (`src/trips/directions.ts`).
+
+`isPickupPhase`, `isWaitingForPassenger` and `isTripInProgress` in
+`src/trips/transitions.ts` implement the split and are defined next to each
+other so none can quietly claim another's status. `docs/agent-worklog.md` holds the same map in one
+table, because more than one agent builds these screens at once.
 
 Odometer capture is a **modal**, not a step inside the detail screen: it is a
 form completed or abandoned as a unit, and backing out must leave the trip

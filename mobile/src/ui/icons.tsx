@@ -1,0 +1,543 @@
+import Svg, { Circle, Line, Path, Polygon, Polyline, Rect } from 'react-native-svg';
+
+import { colors } from './theme';
+
+/**
+ * The icon set, drawn rather than installed.
+ *
+ * `@expo/vector-icons` would have been one line, and was not taken: it pulls
+ * several full icon fonts into the bundle to render the handful of glyphs this
+ * app actually uses, and a missing glyph in an icon font renders as a tofu box
+ * rather than as nothing — the same failure the tab bar already works around
+ * by refusing icons outright (see RootNavigator). Vectors cannot miss.
+ *
+ * ## The geometry is Lucide's, and that is a platform decision
+ *
+ * Every path below is transcribed from `lucide-react`, the set the web app
+ * imports — see DESIGN.md § Icons, which makes Lucide the platform's single
+ * icon vocabulary. The two apps therefore draw the *same shapes*, which is
+ * the whole point: a driver's bell and a dispatcher's bell are one icon, and
+ * a screenshot from either app belongs to the same product.
+ *
+ * **The web app can animate these and this one cannot.** Animate UI — the
+ * animated Lucide set the frontend uses — is React DOM, Tailwind and Motion;
+ * none of that exists under React Native. Redrawing by hand is not a
+ * workaround chosen over the library, it is the only honest option here, and
+ * matching Lucide's geometry is what keeps the difference invisible.
+ *
+ * **Transcribe, never approximate.** The paths are lifted verbatim from
+ * `frontend/node_modules/lucide-react/dist/esm/icons/<name>.mjs`. Eyeballing
+ * a shape is how the two apps drifted the first time, when this file was on
+ * Feather's geometry and the web app was on Lucide's — close enough that
+ * nobody noticed, different enough to be wrong.
+ *
+ * Lucide draws on a 24-unit grid with round caps and joins, which is why
+ * `Outline` and `strokeProps` are shared by every glyph.
+ */
+
+type IconProps = {
+  size?: number;
+  color?: string;
+  /**
+   * Lucide draws at 2. This app defaults to 1.7 and that is deliberate: the
+   * form fields want a finer line at their size, and DESIGN.md § Icons allows
+   * the native app its own weight precisely because the *shape* is what has
+   * to match, not the stroke. Pass 2 to sit at Lucide's own weight.
+   */
+  strokeWidth?: number;
+};
+
+const base = ({ size = 20, color = colors.placeholder, strokeWidth = 1.7 }: IconProps) => ({
+  size,
+  color,
+  strokeWidth,
+});
+
+function Outline({
+  size,
+  children,
+}: {
+  size: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      {children}
+    </Svg>
+  );
+}
+
+const strokeProps = (color: string, strokeWidth: number) => ({
+  stroke: color,
+  strokeWidth,
+  strokeLinecap: 'round' as const,
+  strokeLinejoin: 'round' as const,
+});
+
+export function UserIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" {...strokeProps(color, strokeWidth)} />
+      <Circle cx="12" cy="7" r="4" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+export function PhoneIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384"
+        {...strokeProps(color, strokeWidth)}
+      />
+    </Outline>
+  );
+}
+
+export function MailIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7" {...strokeProps(color, strokeWidth)} />
+      <Rect x="2" y="4" width="20" height="16" rx="2" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+export function LockIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Rect x="3" y="11" width="18" height="11" rx="2" ry="2" {...strokeProps(color, strokeWidth)} />
+      <Path d="M7 11V7a5 5 0 0 1 10 0v4" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+export function EyeIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Circle cx="12" cy="12" r="3" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+export function EyeOffIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" {...strokeProps(color, strokeWidth)} />
+      <Path
+        d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path d="m2 2 20 20" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+export function CheckIcon({ size = 16, color = colors.onPrimary, strokeWidth = 2.6 }: IconProps) {
+  return (
+    <Outline size={size}>
+      <Path d="M20 6 9 17l-5-5" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+export function ChevronLeftIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="m15 18-6-6 6-6" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * The two brand marks are reproduced to their owners' guidelines — exact
+ * colours, unmodified geometry. They are the one place in this file that is
+ * not Lucide and not ours to adjust.
+ */
+export function GoogleMark({ size = 20 }: { size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 48 48">
+      <Path
+        fill="#4285F4"
+        d="M45.12 24.5c0-1.56-.14-3.06-.4-4.5H24v8.51h11.84c-.51 2.75-2.06 5.08-4.39 6.64v5.52h7.11c4.16-3.83 6.56-9.47 6.56-16.17z"
+      />
+      <Path
+        fill="#34A853"
+        d="M24 46c5.94 0 10.92-1.97 14.56-5.33l-7.11-5.52c-1.97 1.32-4.49 2.1-7.45 2.1-5.73 0-10.58-3.87-12.31-9.07H4.34v5.7C7.96 41.07 15.4 46 24 46z"
+      />
+      <Path
+        fill="#FBBC05"
+        d="M11.69 28.18C11.25 26.86 11 25.45 11 24s.25-2.86.69-4.18v-5.7H4.34C2.85 17.09 2 20.45 2 24s.85 6.91 2.34 9.88l7.35-5.7z"
+      />
+      <Path
+        fill="#EA4335"
+        d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2 15.4 2 7.96 6.93 4.34 14.12l7.35 5.7c1.73-5.2 6.58-9.07 12.31-9.07z"
+      />
+    </Svg>
+  );
+}
+
+export function FacebookMark({ size = 20 }: { size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Circle cx="12" cy="12" r="12" fill="#1877F2" />
+      <Path
+        fill="#FFFFFF"
+        d="M16.671 15.47l.532-3.47h-3.328v-2.25c0-.949.465-1.874 1.956-1.874h1.513V4.922s-1.374-.235-2.686-.235c-2.741 0-4.533 1.662-4.533 4.669V12H7.078v3.47h3.047v8.385a12.09 12.09 0 003.75 0V15.47h2.796z"
+      />
+    </Svg>
+  );
+}
+
+export function MenuIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="M4 12h16" {...strokeProps(color, strokeWidth)} />
+      <Path d="M4 6h16" {...strokeProps(color, strokeWidth)} />
+      <Path d="M4 18h16" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+export function BellIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="M10.268 21a2 2 0 0 0 3.464 0" {...strokeProps(color, strokeWidth)} />
+      <Path
+        d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"
+        {...strokeProps(color, strokeWidth)}
+      />
+    </Outline>
+  );
+}
+
+export function ChevronRightIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="m9 18 6-6-6-6" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/** Lucide `chart-column`. Today's takings are a trend, not a balance. */
+export function ChartIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="M3 3v16a2 2 0 0 0 2 2h16" {...strokeProps(color, strokeWidth)} />
+      <Path d="M18 17V9" {...strokeProps(color, strokeWidth)} />
+      <Path d="M13 17V5" {...strokeProps(color, strokeWidth)} />
+      <Path d="M8 17v-3" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/** Lucide `wallet`. */
+export function WalletIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/** Lucide `circle-check-big`. */
+export function CheckCircleIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="M21.801 10A10 10 0 1 1 17 3.335" {...strokeProps(color, strokeWidth)} />
+      <Path d="m9 11 3 3L22 4" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `star`, filled rather than stroked: a star reads as a rating only
+ * when solid, and the fill colour is the theme's one warm token.
+ */
+export function StarIcon({ size = 20, color = colors.star }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path
+        fill={color}
+        d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"
+      />
+    </Svg>
+  );
+}
+
+/** Lucide `shield`. */
+export function ShieldIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+        {...strokeProps(color, strokeWidth)}
+      />
+    </Outline>
+  );
+}
+
+/** Lucide `gauge`. Duty: the driver is running or they are not. */
+export function GaugeIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="m12 14 4-4" {...strokeProps(color, strokeWidth)} />
+      <Path d="M3.34 19a10 10 0 1 1 17.32 0" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/** Lucide `briefcase`. Trips done — this counts work, not correctness. */
+export function BagIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" {...strokeProps(color, strokeWidth)} />
+      <Rect width="20" height="14" x="2" y="6" rx="2" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/** Lucide `shield-check`. A standing kept, for the rate tiles. */
+export function ShieldCheckIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path d="m9 12 2 2 4-4" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `navigation`. How far the driver is from the pickup.
+ *
+ * A heading arrow rather than a pin, because the figure beside it is a
+ * *distance from here* — the pin is the place, this is the leg to it.
+ */
+/**
+ * Lucide `camera`. A dashboard photo was captured with an odometer reading.
+ *
+ * Added to replace a 📷 that was standing in for it. DESIGN.md § Icons bans
+ * emoji as interface iconography outright, and the reason is not taste: an
+ * emoji is drawn by the *platform's* font, so it is a different picture on
+ * every handset in the fleet, it ignores the theme colour it is given, and it
+ * does not scale with the type around it. A vector does all three.
+ */
+export function CameraIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Circle cx="12" cy="13" r="3" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+export function NavigationIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Polygon points="3 11 22 2 13 21 11 13 3 11" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `square`. Stop — the End trip button.
+ *
+ * The transport-control stop glyph, which is what the mockup drew and what
+ * every media control on the handset already uses for "end this". A red
+ * button carries the weight; the square says *what kind* of action it is, and
+ * `docs/screen-rules.md` forbids meaning by colour alone — the label says
+ * "End trip" and the glyph agrees with it.
+ *
+ * Filled rather than outlined, unlike every other icon in this file. An
+ * outlined square on a filled button reads as an empty checkbox, which on the
+ * one control that ends a billable journey is the wrong thing to suggest.
+ */
+export function SquareIcon({ size = 16, color = colors.onPrimary }: IconProps) {
+  return (
+    <Outline size={size}>
+      <Rect x="3" y="3" width="18" height="18" rx="2" fill={color} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `map-pin`. A place, as against the leg to it.
+ *
+ * Paired with `NavigationIcon` and deliberately not interchangeable with it:
+ * the pin marks *where the pickup is*, the arrow is *travelling there*. The
+ * waiting screen shows both in one row — the pin labelling the address, the
+ * arrow on the button that hands it to a maps app — and using one glyph for
+ * both would make the button look like a repeat of the label rather than an
+ * action on it.
+ */
+export function MapPinIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Circle cx="12" cy="10" r="3" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/** Lucide `route`. The job itself, pickup to drop-off. */
+export function RouteIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Circle cx="6" cy="19" r="3" {...strokeProps(color, strokeWidth)} />
+      <Path
+        d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Circle cx="18" cy="5" r="3" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/** Lucide `package`. What is being sent, on a delivery. */
+export function PackageIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path d="M12 22V12" {...strokeProps(color, strokeWidth)} />
+      <Polyline points="3.29 7 12 12 20.71 7" {...strokeProps(color, strokeWidth)} />
+      <Path d="m7.5 4.27 9 5.15" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/** Lucide `car`. A ride, as against a parcel. */
+export function CarIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Circle cx="7" cy="17" r="2" {...strokeProps(color, strokeWidth)} />
+      <Path d="M9 17h6" {...strokeProps(color, strokeWidth)} />
+      <Circle cx="17" cy="17" r="2" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/** Lucide `banknote`. Settlement in cash. */
+export function BanknoteIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Rect width="20" height="12" x="2" y="6" rx="2" {...strokeProps(color, strokeWidth)} />
+      <Circle cx="12" cy="12" r="2" {...strokeProps(color, strokeWidth)} />
+      <Path d="M6 12h.01M18 12h.01" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/** Lucide `smartphone`. Settlement by mobile money. */
+export function SmartphoneIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Rect width="14" height="20" x="5" y="2" rx="2" ry="2" {...strokeProps(color, strokeWidth)} />
+      <Path d="M12 18h.01" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/** Lucide `credit-card`. Settlement by card. */
+export function CreditCardIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Rect width="20" height="14" x="2" y="5" rx="2" {...strokeProps(color, strokeWidth)} />
+      <Line x1="2" x2="22" y1="10" y2="10" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `x`. Declining a job.
+ *
+ * Paired with a word, never standing alone: DESIGN.md § Icons is explicit
+ * that a glyph carries meaning only alongside a label.
+ */
+export function XIcon({ size = 16, color = colors.danger, strokeWidth = 2.4 }: IconProps) {
+  return (
+    <Outline size={size}>
+      <Path d="M18 6 6 18" {...strokeProps(color, strokeWidth)} />
+      <Path d="m6 6 12 12" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}

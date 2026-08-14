@@ -23,7 +23,7 @@ export function SyncBanner() {
     return null;
   }
 
-  const tone = parked.length > 0 ? colors.danger : online ? colors.surfaceRaised : colors.offline;
+  const tone = parked.length > 0 ? colors.danger : online ? colors.surfaceSunken : colors.offline;
 
   return (
     <View accessibilityRole="alert" style={[styles.banner, { backgroundColor: tone }]}>

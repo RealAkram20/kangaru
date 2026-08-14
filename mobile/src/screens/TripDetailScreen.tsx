@@ -1,12 +1,14 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useState } from 'react';
-import { Alert, Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import type { ContactDetails, TripStatus } from '../api/types';
+import type { TripStatus } from '../api/types';
+import { dialPassenger } from '../trips/contact';
 import { useSync } from '../offline/SyncProvider';
 import { driverActions, shouldStreamGps, statusLabel, type TripAction } from '../trips/transitions';
 import { useTrip, useTripEvents } from '../trips/queries';
 import { Button, Card, Field, Notice, Screen, StatusPill } from '../ui/components';
+import { CameraIcon } from '../ui/icons';
 import { SyncBanner } from '../ui/SyncBanner';
 import { colors, spacing, typography } from '../ui/theme';
 import type { TripsStackParams } from '../navigation/types';
@@ -143,7 +145,7 @@ export function TripDetailScreen({ route, navigation }: Props) {
             <Button
               label={`Call ${passenger.name}`}
               tone="neutral"
-              onPress={() => void callPassenger(passenger)}
+              onPress={() => void dialPassenger(passenger)}
             />
           </Card>
         )}
@@ -215,10 +217,29 @@ function OdometerLine({
   return (
     <View style={styles.odometerLine}>
       <Text style={styles.meta}>{label}</Text>
-      <Text style={styles.odometerValue}>
-        {value === null ? '—' : `${value.toLocaleString()} km`}
-        {photo !== null && ' 📷'}
-      </Text>
+
+      <View style={styles.odometerReading}>
+        <Text style={styles.odometerValue}>
+          {value === null ? '—' : `${value.toLocaleString()} km`}
+        </Text>
+
+        {/*
+          A vector, where a 📷 used to be. DESIGN.md § Icons bans emoji as
+          interface iconography — an emoji is drawn by the platform's own font,
+          so it differs on every handset, ignores the colour it is given and
+          does not scale with its type.
+
+          Labelled rather than left as a bare glyph: an icon carries meaning
+          only alongside an accessible name, and "there is a photo of this
+          reading" is the whole point of the mark on a screen an auditor
+          reads.
+        */}
+        {photo !== null && (
+          <View accessible accessibilityLabel="Dashboard photo captured">
+            <CameraIcon color={colors.textMuted} size={16} />
+          </View>
+        )}
+      </View>
     </View>
   );
 }
@@ -231,28 +252,6 @@ function formatMoment(value: string | null): string {
   const parsed = Date.parse(value);
 
   return Number.isNaN(parsed) ? '' : new Date(parsed).toLocaleString();
-}
-
-/**
- * Dials the passenger.
- *
- * `tel:` rather than anything cleverer. It hands off to the dialler the
- * driver already knows, works with whatever SIM and network they have, and
- * costs this app no permission — an in-app calling stack would need one, and
- * would still end up placing an ordinary call.
- *
- * A failure here is silent on purpose: the only realistic cause is a handset
- * with no dialler, which is not a state a driver can act on, and the number
- * is on screen above the button either way.
- */
-async function callPassenger(contact: ContactDetails): Promise<void> {
-  const url = `tel:${contact.phone.replace(/\s+/g, '')}`;
-
-  try {
-    await Linking.openURL(url);
-  } catch {
-    // Nothing useful to say. The number is rendered above.
-  }
 }
 
 const styles = StyleSheet.create({
@@ -292,6 +291,11 @@ const styles = StyleSheet.create({
   },
   actions: {
     gap: spacing.sm + 4,
+  },
+  odometerReading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs + 2,
   },
   odometerLine: {
     flexDirection: 'row',

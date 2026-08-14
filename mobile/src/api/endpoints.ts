@@ -297,3 +297,186 @@ export async function registerDevice(
 export async function unregisterDevice(api: ApiClient, token: string): Promise<void> {
   await api.request(`/me/devices/${encodeURIComponent(token)}`, { method: 'DELETE' });
 }
+
+/** The two consent notices, as plain text (ADR-0014, `legal` group). */
+export type LegalDocuments = {
+  terms: string;
+  privacy: string;
+};
+
+/**
+ * The Terms and Privacy notices shown on the sign-up form.
+ *
+ * The one call in this file that is not on ADR-0022's allow-list, and does not
+ * need to be: `GET /public/legal` carries no auth middleware at all. It could
+ * not — a document somebody must agree to *before* they have an account cannot
+ * sit behind having one.
+ *
+ * The office edits both from the settings screen, so the wording reaching a
+ * driver is whatever the owner last saved rather than whatever shipped in the
+ * binary.
+ */
+export async function fetchLegalDocuments(api: ApiClient): Promise<LegalDocuments> {
+  const response = await api.request<LegalDocuments>('/public/legal');
+
+  return response.data;
+}
+
+/**
+ * Applies to drive for KangaruRide (ADR-0027).
+ *
+ * Like `fetchLegalDocuments`, unauthenticated and off ADR-0022's allow-list
+ * by nature: this is the one form a person reaches before they are anybody.
+ *
+ * A 202 means *received*, not *approved* — no account exists until the
+ * office reviews the application, which is why nothing is returned and the
+ * screen must not attempt a sign-in afterwards. The server deliberately
+ * answers the same way whether or not the email is already known.
+ */
+export async function submitDriverApplication(
+  api: ApiClient,
+  input: {
+    name: string;
+    phone: string;
+    email: string;
+    password: string;
+    confirmation: string;
+    /** Consent to the /public/legal notices. The server refuses without it. */
+    termsAccepted: boolean;
+  },
+): Promise<void> {
+  await api.request('/driver-applications', {
+    method: 'POST',
+    body: {
+      name: input.name,
+      phone: input.phone,
+      email: input.email,
+      password: input.password,
+      password_confirmation: input.confirmation,
+      terms_accepted: input.termsAccepted,
+    },
+  });
+}
+
+/** Which ways in the owner has switched on (ADR-0028 §1). */
+export type AuthMethods = {
+  password_reset_enabled: boolean;
+  google_enabled: boolean;
+  facebook_enabled: boolean;
+  /** Public identifiers the native flows start with — never secrets. */
+  google_client_ids: string | null;
+  facebook_app_id: string | null;
+};
+
+/**
+ * The welcome screen's shape, from the server's mouth.
+ *
+ * Fail-closed by construction: a phone that cannot fetch this renders no
+ * social buttons and no reset link, because a method the owner may have
+ * turned off must not be resurrected by a stale client. The query layer
+ * caches it like everything else, so "this morning's answer" is the worst
+ * case, not "none".
+ */
+export async function fetchAuthMethods(api: ApiClient): Promise<AuthMethods> {
+  const response = await api.request<{ settings: { auth: AuthMethods } }>('/public/settings');
+
+  return response.data.settings.auth;
+}
+
+/**
+ * Asks for an emailed reset code (ADR-0028 §2).
+ *
+ * A 202 deliberately says nothing about whether the address exists — the
+ * screen's copy must not pretend otherwise.
+ */
+export async function forgotPassword(api: ApiClient, email: string): Promise<void> {
+  await api.request('/auth/password/forgot', { method: 'POST', body: { email } });
+}
+
+/** Exchanges the emailed code for a new password. Revokes every session. */
+export async function resetPassword(
+  api: ApiClient,
+  input: { email: string; code: string; password: string; confirmation: string },
+): Promise<void> {
+  await api.request('/auth/password/reset', {
+    method: 'POST',
+    body: {
+      email: input.email,
+      code: input.code,
+      password: input.password,
+      password_confirmation: input.confirmation,
+    },
+  });
+}
+
+export type SocialSignInResult =
+  | { status: 'signed_in'; user: User; token: string }
+  /** No account: take the verified fields to the application form (ADR-0027). */
+  | { status: 'sign_up'; name: string; email: string };
+
+/**
+ * Hands the provider's proof to the server (ADR-0028 §3), which verifies it
+ * against the admin-stored credentials and answers who this identity is
+ * here. Refusals arrive as ApiError with stable codes: AUTH_METHOD_DISABLED,
+ * SOCIAL_TOKEN_INVALID, MFA_REQUIRED, NOT_A_DRIVER.
+ */
+export async function socialSignIn(
+  api: ApiClient,
+  input: { provider: 'google' | 'facebook'; token: string },
+): Promise<SocialSignInResult> {
+  const response = await api.request<SocialSignInResult>('/auth/social', {
+    method: 'POST',
+    body: { provider: input.provider, token: input.token, client: 'driver' },
+  });
+
+  return response.data;
+}
+
+/**
+ * The driver's own numbers, counted server-side from trips, offers, the
+ * ledger (ADR-0029) and their ratings (ADR-0030).
+ *
+ * **This type drifted from the contract once and nothing caught it**, which is
+ * worth a line here because it will happen again. `fares_today_minor` and
+ * `fares_currency` were renamed server-side to `earnings_today_minor` and
+ * `currency`; this file kept the old names, so `stats.fares_today_minor` was
+ * `undefined` at runtime and the home screen rendered `undefined NaN` where a
+ * driver's money goes. TypeScript cannot help — every type in this file is
+ * *hand-transcribed* from `docs/api/openapi.yaml`, which is the authority.
+ * When a payload changes, this is the second place to edit.
+ */
+export type DriverStats = {
+  trips_today: number;
+  /**
+   * The driver's **own share** of today's fares, from the ledger (ADR-0029
+   * §5) — not the gross figure the passenger paid. Minor units; UGX is
+   * zero-decimal, so these are whole shillings and must not be divided.
+   */
+  earnings_today_minor: number;
+  /**
+   * The whole ledger summed. **Negative is legitimate** and means the driver
+   * is holding the platform's cash until they settle — the honest reading,
+   * and the one a settlement conversation starts from.
+   */
+  wallet_balance_minor: number;
+  currency: string;
+  /** 0–100, or null until there is something to divide by. */
+  acceptance_rate: number | null;
+  completion_rate: number | null;
+  /**
+   * Mean of the last 50 ratings, one decimal — **null until five exist**
+   * (ADR-0030 §3). One three-star rating is not a 3.0; it is one person's
+   * afternoon, and publishing it as a score invites a driver to read a single
+   * bad interaction as a permanent standing.
+   */
+  rating: number | null;
+  /** How many ratings the score rests on. Served even while the score is withheld. */
+  rating_count: number;
+  window_days: number;
+};
+
+export async function fetchDriverStats(api: ApiClient): Promise<DriverStats> {
+  const response = await api.request<DriverStats>('/me/stats');
+
+  return response.data;
+}

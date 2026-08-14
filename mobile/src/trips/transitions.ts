@@ -109,6 +109,71 @@ export function isInProgress(status: TripStatus): boolean {
 }
 
 /**
+ * Whether the driver is still *driving to* the passenger.
+ *
+ * The window `PickupScreen` owns: the job is theirs, and they have not got
+ * there yet. **It ends at `driver_en_route`, not at `driver_arrived`** — see
+ * `isWaitingForPassenger` below, and `docs/agent-worklog.md`, which holds the
+ * one map of status to screen. The driver's own "I've arrived" press is the
+ * handoff between the two.
+ *
+ * `accepted` is included and `assigned` is not. An `assigned` trip is one the
+ * driver has not answered — the decision surface for that is `OfferScreen`,
+ * and sending them to a pickup map for a job they have not taken would be the
+ * app assuming an answer.
+ *
+ * Deliberately **not** derived from `isInProgress`: that one exists to decide
+ * what to pin to the top of `HomeScreen`, and it starts at `driver_en_route`.
+ * Two questions, two predicates — collapsing them would mean one of the two
+ * screens quietly changing the day the other's rule did.
+ */
+export function isPickupPhase(status: TripStatus): boolean {
+  return status === 'accepted' || status === 'driver_en_route';
+}
+
+/**
+ * Whether the driver is at the kerb, waiting for the passenger to appear.
+ *
+ * One status, and it is `WaitingForPassengerScreen`'s. Kept beside
+ * `isPickupPhase` rather than inlined at the call site because the pair is
+ * the seam between two screens: read together, it is obvious that the drive
+ * ends exactly where the wait begins, and that no status belongs to both.
+ *
+ * **Not to be confused with `TripStatus.waiting`**, which is a billable
+ * in-trip pause after `trip_started` — a different thing at a different point
+ * in the journey, and the reason this predicate is named for the passenger
+ * rather than for the waiting.
+ */
+export function isWaitingForPassenger(status: TripStatus): boolean {
+  return status === 'driver_arrived';
+}
+
+/**
+ * Whether the passenger is in the car and the journey is running.
+ *
+ * The third and last of the live-leg predicates, kept beside the other two so
+ * the whole split reads in one place: the drive to the passenger, the wait at
+ * the kerb, then the ride. `docs/agent-worklog.md` holds the same map as a
+ * table, and no status appears in more than one of the three.
+ *
+ * **`passenger_onboard` is deliberately absent.** It is the gap between the
+ * doors closing and the odometer being read, and `OdometerScreen` owns it —
+ * "Start Trip" on the waiting screen queues that transition and pushes
+ * straight to the reading, which posts `trip_started` on its way out. Adding
+ * it here would put a screen in front of the form a driver is mid-way
+ * through.
+ *
+ * **`waiting` here is not the kerb.** `TripStatus.waiting` is a billable pause
+ * *during* a journey — a passenger who asks the driver to hold outside a shop
+ * — and `WaitingTimeCalculator` charges for it. The wait for somebody to come
+ * out and get in is `driver_arrived`, above, and is charged for by nothing.
+ * The two are one word and two different facts.
+ */
+export function isTripInProgress(status: TripStatus): boolean {
+  return status === 'trip_started' || status === 'waiting' || status === 'trip_resumed';
+}
+
+/**
  * Whether GPS should be streaming for a trip in this status.
  *
  * Bounded at `trip_started`, not at `driver_en_route`, and the narrower window

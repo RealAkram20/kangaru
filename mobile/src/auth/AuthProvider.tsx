@@ -26,6 +26,12 @@ type AuthValue = {
   user: User | null;
   api: ApiClient;
   signIn: (email: string, password: string) => Promise<SignInOutcome>;
+  /**
+   * Accepts a session minted somewhere other than the password form —
+   * today, `/auth/social` (ADR-0028 §3). The token is the same
+   * driver-scoped kind `signIn` stores; only the door differs.
+   */
+  adoptSession: (user: User, token: string) => Promise<void>;
   signOut: () => Promise<void>;
   /**
    * Drops the session without calling the server.
@@ -175,6 +181,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [api],
   );
 
+  const adoptSession = useCallback(async (nextUser: User, token: string) => {
+    setCurrentToken(token);
+    await writeSession(token, nextUser);
+    setUser(nextUser);
+  }, []);
+
   const signOut = useCallback(async () => {
     // Before the token is discarded, because unregistering needs it.
     //
@@ -215,8 +227,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ ready, user, api, signIn, signOut, signOutLocally }),
-    [ready, user, api, signIn, signOut, signOutLocally],
+    () => ({ ready, user, api, signIn, adoptSession, signOut, signOutLocally }),
+    [ready, user, api, signIn, adoptSession, signOut, signOutLocally],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

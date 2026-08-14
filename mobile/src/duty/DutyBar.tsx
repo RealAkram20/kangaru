@@ -124,7 +124,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   barOn: {
-    backgroundColor: colors.surfaceRaised,
+    backgroundColor: colors.successTint,
     borderColor: colors.success,
   },
   barOff: {

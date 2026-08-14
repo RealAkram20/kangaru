@@ -3,11 +3,14 @@ import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persi
 import { QueryClient } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { StatusBar } from 'expo-status-bar';
+import { View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AuthProvider } from './src/auth/AuthProvider';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { SyncProvider } from './src/offline/SyncProvider';
+import { useBrandFonts } from './src/ui/fonts';
+import { colors } from './src/ui/theme';
 
 /**
  * The read cache is persisted to AsyncStorage, and only the read cache.
@@ -38,9 +41,20 @@ const persister = createAsyncStoragePersister({
 });
 
 export default function App() {
+  const fontsReady = useBrandFonts();
+
+  // Held on a blank brand-coloured screen rather than rendered in the system
+  // face and reflowed a beat later. Sora and Inter have different metrics to
+  // Roboto, so painting first would move every heading on the screen once the
+  // real faces land — and the first thing a driver would see the app do is
+  // twitch.
+  if (!fontsReady) {
+    return <View style={{ flex: 1, backgroundColor: colors.background }} />;
+  }
+
   return (
     <SafeAreaProvider>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <PersistQueryClientProvider
         client={queryClient}
         persistOptions={{ persister, maxAge: 24 * 60 * 60 * 1000 }}
