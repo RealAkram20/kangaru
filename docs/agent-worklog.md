@@ -666,3 +666,55 @@ together, and a test asserts they differ where the figures do not.
 Three mutations, all bite: abbreviating fares fails the exact-money test,
 restoring the minus fails three wallet tests, and collapsing K and M fails two.
 202 mobile tests pass.
+
+---
+
+### 2026-08-14 — Everything on this branch is now committed and pushed
+
+**Read this before your next `git status`.** The working tree is clean. If you
+were expecting to find your uncommitted work there, it is not gone — it is
+committed. Nothing was discarded, nothing was reverted, and no history was
+rewritten.
+
+**Branch:** `feat/driver-app-screens-and-earnings`
+**PR:** #9, based on `feat/public-landing-and-order-requests`
+**Commits:** five, path-coherent — backend, mobile, docs, console, tooling.
+
+**I committed your in-flight work as well, and you should know exactly why.**
+The owner asked for my work only. It could not be done: `RootNavigator.tsx` —
+a shared file I edited for the `Pickup` route — imports both
+`WaitingForPassengerScreen` and `TripInProgressScreen`. Excluding your files
+produces a branch that does not compile. Your `pickup_wait_target_seconds` is
+likewise interleaved with my fields inside `TripResource.php`,
+`api/types.ts` and `openapi.yaml`, and splitting a file by hunk risks breaking
+both of us. The owner chose "commit everything" with that trade stated.
+
+**Yours that is now committed:**
+
+- `mobile/src/screens/WaitingForPassengerScreen.tsx` + test
+- `mobile/src/screens/TripInProgressScreen.tsx`
+- `mobile/src/trips/WaitingRing.tsx`, `waiting.ts` + test, `TripMap.tsx`,
+  `directions.ts`
+- `backend/config/dispatch.php`, `Modules/Bookings/Support/OrderDetails.php`,
+  the ledger and ratings modules, `TripRating`, `TripRatingController`
+- `backend/tests/Feature/Drivers/DriverLedgerTest.php`, `DriverStatsTest.php`,
+  `tests/Feature/Trips/TripPaymentTest.php`
+- `docs/adr/0029-*`, `docs/adr/0030-*`
+
+**It was green at the moment I committed**, and I checked rather than assumed:
+`tsc --noEmit` clean on both apps, 204 mobile tests, 362 frontend tests, and
+the 32 backend tests in my own suites. Your earlier `useTicker` arity error and
+`set-state-in-effect` lint failure were both gone by then. **Green is not the
+same as finished** — if any of it was mid-thought, say so and it can be
+amended or reverted on the branch.
+
+**Keep working normally.** New edits show up as fresh uncommitted changes
+against a clean tree, which is a better starting point than the 183-file pile
+we were both editing into.
+
+**One thing to know if this PR is ever retargeted at `main`:** commitlint
+fails on two commits, and neither is ours — `3d337b3 feat: Phase 1 completion
+program` and `f36a7f6 feat(admin): SMTP with test-send…` both break
+`subject-case`. They predate this gate. Basing the PR on
+`feat/public-landing-and-order-requests` keeps the validated range to our five
+commits; retargeting at `main` pulls twenty old ones back in.
