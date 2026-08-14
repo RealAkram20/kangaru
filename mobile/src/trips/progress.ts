@@ -39,8 +39,38 @@ import { momentOfTransition } from './waiting';
  * would tell a driver forty minutes into a journey that they had just pulled
  * away.
  */
-export function startedAtFrom(events: TripEvent[] | undefined): number | null {
-  return momentOfTransition(events, 'trip_started');
+export function startedAtFrom(
+  events: TripEvent[] | undefined,
+  startedAt: string | null = null,
+): number | null {
+  const fromTimeline = momentOfTransition(events, 'trip_started');
+
+  if (fromTimeline !== null) {
+    return fromTimeline;
+  }
+
+  // The column, when the timeline cannot answer.
+  //
+  // **This fallback is the fix for a real em dash on a real handset.** The
+  // timeline arrives in a *second* request, and the app is offline-first — so
+  // a screen opened straight after the odometer renders against a cache taken
+  // when the trip was still `passenger_onboard`, which has no `trip_started`
+  // row in it. The clock showed a dash on a trip that was visibly running.
+  //
+  // `trips.started_at` is stamped on the same transition, arrives with the
+  // trip itself, and is therefore never a request behind. It is *mutable*,
+  // which is why the timeline is still preferred and asked first: AGENTS.md
+  // requires waiting-time **billing** to come from `trip_events` and nothing
+  // else. This figure bills nothing — it tells a driver how long they have
+  // been going — so a column that is always there beats a timeline that is
+  // sometimes a beat late.
+  if (startedAt === null) {
+    return null;
+  }
+
+  const parsed = Date.parse(startedAt);
+
+  return Number.isNaN(parsed) ? null : parsed;
 }
 
 /**

@@ -200,3 +200,30 @@ describe('waitingSecondsFrom', () => {
     expect(waitingSecondsFrom(events, NOW)).toBe(0);
   });
 });
+
+describe('startedAtFrom — the column fallback', () => {
+  const STARTED = '2026-08-14T21:58:25Z';
+
+  it('prefers the timeline, which is the billing-grade source', () => {
+    const events = [event('trip_started', STARTED)];
+
+    // A different, wrong column value proves which one won.
+    expect(startedAtFrom(events, '2020-01-01T00:00:00Z')).toBe(Date.parse(STARTED));
+  });
+
+  it('falls back to started_at when the timeline has not caught up', () => {
+    // The real failure: the timeline arrives in a second request, and a screen
+    // opened straight after the odometer renders against a cache taken when
+    // the trip was still `passenger_onboard` — no `trip_started` row in it. The
+    // clock showed an em dash on a trip that was visibly running.
+    expect(startedAtFrom([event('passenger_onboard', '2026-08-14T21:48:46Z')], STARTED)).toBe(
+      Date.parse(STARTED),
+    );
+    expect(startedAtFrom(undefined, STARTED)).toBe(Date.parse(STARTED));
+  });
+
+  it('is still null when neither source can answer', () => {
+    expect(startedAtFrom(undefined, null)).toBeNull();
+    expect(startedAtFrom([], 'not a date')).toBeNull();
+  });
+});

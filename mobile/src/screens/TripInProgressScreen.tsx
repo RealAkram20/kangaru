@@ -110,7 +110,7 @@ export function TripInProgressScreen({ route, navigation }: Props) {
   // be wrong within a minute and stay wrong — see `usePosition`.
   const here = usePosition({ watch: true });
 
-  const startedAt = startedAtFrom(events);
+  const startedAt = startedAtFrom(events, trip?.started_at ?? null);
   const now = useTicker();
 
   if (isLoading && trip === undefined) {
