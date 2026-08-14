@@ -6,6 +6,7 @@ import type { Coordinates, Trip } from '../api/types';
 import { estimatedFareLabel, formatKilometres, formatMoney } from '../duty/offerPresentation';
 import { usePosition } from '../location/usePosition';
 import type { TripsStackParams } from '../navigation/types';
+import { useSync } from '../offline/SyncProvider';
 import { dialPassenger } from '../trips/contact';
 import { openDirections } from '../trips/directions';
 import { PickupMap } from '../trips/PickupMap';
@@ -15,6 +16,7 @@ import {
   formatTripDuration,
   startedAtFrom,
   tripPaymentLabel,
+  waitingSecondsFrom,
 } from '../trips/progress';
 import { useTrip, useTripEvents } from '../trips/queries';
 import { statusLabel } from '../trips/transitions';
@@ -25,7 +27,9 @@ import {
   BanknoteIcon,
   ChevronLeftIcon,
   NavigationIcon,
+  PauseIcon,
   PhoneIcon,
+  PlayIcon,
   RouteIcon,
   SquareIcon,
   UserIcon,
@@ -98,6 +102,9 @@ export function TripInProgressScreen({ route, navigation }: Props) {
   const { tripId } = route.params;
   const { data: trip, isLoading } = useTrip(tripId);
   const { data: events } = useTripEvents(tripId);
+  const { queueTransition } = useSync();
+
+  const [busy, setBusy] = useState(false);
 
   // Watching, unlike every other screen in this app. The driver is
   // definitionally moving for this screen's whole life, so a single fix would
@@ -129,6 +136,44 @@ export function TripInProgressScreen({ route, navigation }: Props) {
   const dropoff = located(trip.dropoff) ? toCoordinates(trip.dropoff) : null;
 
   const driving = startedAt === null ? null : elapsedSeconds(startedAt, now);
+
+  const paused = trip.status === 'waiting';
+
+  /**
+   * Total time this trip has spent on hold, including the pause running now.
+   *
+   * Null rather than zero when the timeline has not arrived — the same rule
+   * every other figure on this screen follows. A `00:00` on a trip that has
+   * been held twice would understate a charge the passenger will see.
+   */
+  const waited = events === undefined ? null : waitingSecondsFrom(events, now);
+
+  /**
+   * Holding the trip, and picking it up again.
+   *
+   * **Both are billable acts**, which is the whole reason this screen has the
+   * control at all rather than leaving a driver to explain a wait afterwards:
+   * `WalkInFareService::settle()` runs `TripPricingEngine`, which prices a
+   * `WAITING` line from the periods these two transitions open and close.
+   *
+   * **Deliberately no confirmation dialog**, and the reasoning is arithmetic
+   * rather than taste. `WaitingTimeCalculator` truncates the total to whole
+   * minutes once, at the end — so a mis-tap corrected within seconds bills
+   * nothing at all. A confirmation on a reversible, zero-cost mistake is a
+   * dialog a driver dismisses without reading, which is how a confirmation
+   * stops protecting the case that matters.
+   *
+   * Queued through the outbox like every other transition. Worth knowing that
+   * `waiting ⇄ trip_resumed` is the lifecycle's **only cycle**, and therefore
+   * the one place a blind replay is accepted rather than 409'd — it would
+   * write a second `trip_events` row and bill the pause twice. ADR-0023's
+   * reconciliation is what prevents that, and nothing here re-implements it.
+   */
+  const hold = async (to: 'waiting' | 'trip_resumed') => {
+    setBusy(true);
+    await queueTransition({ tripId: trip.id, from: trip.status, to });
+    setBusy(false);
+  };
 
   /**
    * Ending the trip is the odometer, not a transition.
@@ -236,13 +281,52 @@ export function TripInProgressScreen({ route, navigation }: Props) {
 
         <Facts trip={trip} />
 
-        <View style={styles.actions}>
-          <Button
-            label="End trip"
-            tone="danger"
-            onPress={end}
-            icon={<SquareIcon color={colors.onPrimary} size={16} strokeWidth={2.4} />}
+        {paused && (
+          <Notice
+            tone="info"
+            message={
+              waited === null
+                ? 'This trip is on hold. Waiting time is recorded on the trip and priced by the tariff.'
+                : `On hold for ${formatTripDuration(waited)}. Waiting time is recorded on the trip and priced by the tariff.`
+            }
           />
+        )}
+
+        <View style={styles.actions}>
+          {/*
+            Two modes, not one mode with an extra button, and the graph is why.
+            `TripStatus::WAITING` allows exactly one exit — `TRIP_RESUMED` —
+            so **End trip is not reachable from a paused trip**. Rendering it
+            anyway would 422 through the outbox, minutes later, after the
+            driver had put the phone down and walked away from a journey they
+            believed was finished.
+          */}
+          {paused ? (
+            <Button
+              label="Resume trip"
+              tone="primary"
+              busy={busy}
+              onPress={() => void hold('trip_resumed')}
+              icon={<PlayIcon size={16} />}
+            />
+          ) : (
+            <>
+              <Button
+                label="Pause trip"
+                tone="neutral"
+                busy={busy}
+                onPress={() => void hold('waiting')}
+                icon={<PauseIcon size={16} />}
+              />
+              <Button
+                label="End trip"
+                tone="danger"
+                busy={busy}
+                onPress={end}
+                icon={<SquareIcon size={16} />}
+              />
+            </>
+          )}
         </View>
       </ScrollView>
     </Screen>
@@ -297,7 +381,10 @@ function MapPanel({
         <Text style={styles.badgeValue}>
           {driving === null ? NO_VALUE : formatTripDuration(driving)}
         </Text>
-        <Text style={styles.badgeCaption}>driving</Text>
+        {/* "elapsed", not "driving": this is wall-clock from `trip_started`
+            and includes every pause, so on a held trip the two differ by
+            exactly the time the passenger is being charged for. */}
+        <Text style={styles.badgeCaption}>elapsed</Text>
       </View>
     </View>
   );

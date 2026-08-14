@@ -33,6 +33,13 @@ const STARTED_AT = '2026-08-14T09:18:00.000Z';
 
 jest.mock('../ui/SyncBanner', () => ({ SyncBanner: () => null }));
 
+// `mock` prefix required: Jest hoists the factory below above this line.
+const mockQueueTransition = jest.fn(async () => undefined);
+
+jest.mock('../offline/SyncProvider', () => ({
+  useSync: () => ({ queueTransition: mockQueueTransition, sync: jest.fn() }),
+}));
+
 // `mock` prefix required: Jest hoists the factories above these declarations.
 const mockUseTrip = jest.fn();
 const mockUseTripEvents = jest.fn();
@@ -125,6 +132,7 @@ async function renderProgress(
 
 beforeEach(() => {
   navigate.mockClear();
+  mockQueueTransition.mockClear();
   jest.useFakeTimers();
   // 14 minutes 2 seconds into the journey.
   jest.setSystemTime(new Date(Date.parse(STARTED_AT) + 842_000));
@@ -138,7 +146,7 @@ it('shows how long the driver has been driving, counted from the timeline', asyn
   const { getByText } = await renderProgress();
 
   expect(getByText('14:02')).toBeTruthy();
-  expect(getByText('driving')).toBeTruthy();
+  expect(getByText('elapsed')).toBeTruthy();
 });
 
 it('shows distance to the drop-off and says it is a straight line', async () => {
@@ -251,4 +259,92 @@ it('still says so when the trip is paused, because that is worth telling', async
   const { getByText } = await renderProgress(trip({ status: 'waiting' }));
 
   expect(getByText('Waiting')).toBeTruthy();
+});
+
+// ── Pause and resume ──────────────────────────────────────────────────────
+
+function pausedTrip() {
+  return trip({ status: 'waiting' });
+}
+
+/** A trip started, then held five minutes ago and still held. */
+function heldEvents(): TripEvent[] {
+  return [
+    startEvent(),
+    {
+      id: 7,
+      trip_id: 42,
+      from_status: 'trip_started',
+      to_status: 'waiting',
+      user_id: 3,
+      notes: null,
+      created_at: new Date(Date.parse(STARTED_AT) + 542_000).toISOString(),
+    },
+  ];
+}
+
+it('offers Pause on a running trip, beside End trip', async () => {
+  const { getByLabelText } = await renderProgress();
+
+  expect(getByLabelText('Pause trip')).toBeTruthy();
+  expect(getByLabelText('End trip')).toBeTruthy();
+});
+
+it('queues the hold rather than posting it, because a trip pauses in a dead zone', async () => {
+  const { getByLabelText } = await renderProgress();
+
+  void fireEvent.press(getByLabelText('Pause trip'));
+
+  expect(mockQueueTransition).toHaveBeenCalledWith({ tripId: 42, from: 'trip_started', to: 'waiting' });
+});
+
+it('withdraws End trip while the trip is held, because the graph forbids it', async () => {
+  // `TripStatus::WAITING` allows exactly one exit — TRIP_RESUMED. Offering
+  // End trip here would 422 through the outbox minutes later, after the driver
+  // had walked away from a journey they believed was finished. This is the
+  // load-bearing assertion of the pause feature.
+  const { getByLabelText, queryByLabelText } = await renderProgress(pausedTrip(), heldEvents());
+
+  expect(getByLabelText('Resume trip')).toBeTruthy();
+  expect(queryByLabelText('End trip')).toBeNull();
+  expect(queryByLabelText('Pause trip')).toBeNull();
+});
+
+it('resumes from the held state', async () => {
+  const { getByLabelText } = await renderProgress(pausedTrip(), heldEvents());
+
+  void fireEvent.press(getByLabelText('Resume trip'));
+
+  expect(mockQueueTransition).toHaveBeenCalledWith({ tripId: 42, from: 'waiting', to: 'trip_resumed' });
+});
+
+it('says how long the trip has been held, and that the time is priced', async () => {
+  // A driver who pauses without knowing it is billable cannot answer the
+  // passenger who asks why the fare moved.
+  const { getByText } = await renderProgress(pausedTrip(), heldEvents());
+
+  expect(
+    getByText(
+      'On hold for 05:00. Waiting time is recorded on the trip and priced by the tariff.',
+    ),
+  ).toBeTruthy();
+});
+
+it('states no free allowance, which is a server threshold this build cannot know', async () => {
+  // `free_waiting_minutes` lives on the rate card version and is in no
+  // payload. Printing a number here would be wrong the day the office
+  // changes it, on every handset already in the field.
+  const { queryByText } = await renderProgress(pausedTrip(), heldEvents());
+
+  expect(queryByText(/free/i)).toBeNull();
+  expect(queryByText(/\d+\s*minutes?\s*(free|included)/i)).toBeNull();
+});
+
+it('calls the badge figure elapsed, not driving, because it includes the pauses', async () => {
+  // Found by rendering the held state: the badge said "driving" beside a
+  // notice saying the trip was on hold, and the figure includes every pause.
+  const { getByText, queryByText } = await renderProgress(pausedTrip(), heldEvents());
+
+  expect(getByText('elapsed')).toBeTruthy();
+  expect(queryByText('driving')).toBeNull();
 });

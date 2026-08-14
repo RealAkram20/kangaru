@@ -82,10 +82,17 @@ function pad(value: number): string {
  *
  * Composed here rather than left to the badge, because `1`, `:`, `04` and
  * `:`, `09` linearise into a string of numbers that means nothing spoken.
+ *
+ * **"Elapsed", not "driving".** The figure is wall-clock from the
+ * `trip_started` row and includes every pause — so on a trip held outside a
+ * shop for five minutes, calling it driving time overstates the driving by
+ * exactly the amount the passenger is being charged waiting for. Found by
+ * rendering the held state and reading the badge beside the hold notice, not
+ * by a test.
  */
 export function durationAnnouncement(seconds: number | null): string {
   if (seconds === null) {
-    return 'Trip time is not available yet.';
+    return 'Elapsed trip time is not available yet.';
   }
 
   const hours = Math.floor(seconds / 3600);
@@ -103,7 +110,82 @@ export function durationAnnouncement(seconds: number | null): string {
     parts.push(`${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`);
   }
 
-  return `Driving for ${parts.join(' ')}.`;
+  return `Elapsed trip time ${parts.join(' ')}.`;
+}
+
+/**
+ * How long this trip has spent paused, in whole seconds.
+ *
+ * **A deliberate transcription of `WaitingTimeCalculator::secondsFor`**, which
+ * is what the passenger is actually billed from, and the transcription is the
+ * point: a driver watching one number while the invoice is computed from
+ * another is how a waiting charge becomes an argument nobody can settle. The
+ * server's version is authoritative; this one exists so the figure on the
+ * screen is the same figure, derived the same way from the same rows.
+ *
+ * The algorithm, matched line for line:
+ *
+ * - A period **opens** on a transition *into* `waiting`.
+ * - It **closes** on the next transition of any kind. Not specifically on
+ *   `trip_resumed` — that is the only exit the graph allows today, and
+ *   assuming it would silently run a period on forever the day another is
+ *   added.
+ * - Only the **first** of consecutive `waiting` events opens a period.
+ *   `waiting → waiting` is not legal, but treating a repeat as a restart
+ *   would drop the time in between, and a duplicate is exactly what
+ *   ADR-0023 says a blind replay of this cycle produces.
+ *
+ * ## The one difference from the server, and why
+ *
+ * A period still open — the trip is paused *right now* — is measured against
+ * `now` here and **excluded entirely** on the server. That is not drift.
+ * The server is answering "what is billable", and an unfinished pause is not
+ * billable yet; it cannot even reach billing, because only a completed trip
+ * is priced. This is answering "how long have I been sitting here", which is
+ * a question with an answer while it is still happening. The two agree to the
+ * second the moment the driver resumes.
+ *
+ * Events are taken in the order given. `TripEventController` orders by `id`
+ * ascending, which is the same tiebreak the server applies after `created_at`
+ * — and `created_at` has second granularity, so two transitions in one second
+ * would otherwise pair a period's end with its own start.
+ */
+export function waitingSecondsFrom(events: TripEvent[] | undefined, now: number): number {
+  if (events === undefined) {
+    return 0;
+  }
+
+  let seconds = 0;
+  let waitingSince: number | null = null;
+
+  for (const event of events) {
+    const at = event.created_at === null ? NaN : Date.parse(event.created_at);
+
+    if (Number.isNaN(at)) {
+      continue;
+    }
+
+    if (event.to_status === 'waiting') {
+      waitingSince ??= at;
+
+      continue;
+    }
+
+    if (waitingSince !== null) {
+      seconds += Math.max(0, Math.floor((at - waitingSince) / 1000));
+      waitingSince = null;
+    }
+  }
+
+  // The open period, if the trip is paused as this is read. Clamped for the
+  // same reason `elapsedSeconds` is: the timestamps are the server's and
+  // `now` is the handset's, and a phone whose clock has drifted behind would
+  // otherwise subtract from a total the driver has genuinely accrued.
+  if (waitingSince !== null) {
+    seconds += Math.max(0, Math.floor((now - waitingSince) / 1000));
+  }
+
+  return seconds;
 }
 
 /**

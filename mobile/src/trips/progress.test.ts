@@ -4,6 +4,7 @@ import {
   formatTripDuration,
   startedAtFrom,
   tripPaymentLabel,
+  waitingSecondsFrom,
 } from './progress';
 
 function event(to: TripEvent['to_status'], createdAt: string | null): TripEvent {
@@ -73,17 +74,17 @@ describe('durationAnnouncement', () => {
   it('speaks hours and minutes, and drops the seconds', () => {
     // A screen reader re-announcing a second every second is unusable; the
     // question asked out loud is "roughly how long have I been driving".
-    expect(durationAnnouncement(4_209)).toBe('Driving for 1 hour 10 minutes.');
-    expect(durationAnnouncement(842)).toBe('Driving for 14 minutes.');
-    expect(durationAnnouncement(7_200)).toBe('Driving for 2 hours.');
+    expect(durationAnnouncement(4_209)).toBe('Elapsed trip time 1 hour 10 minutes.');
+    expect(durationAnnouncement(842)).toBe('Elapsed trip time 14 minutes.');
+    expect(durationAnnouncement(7_200)).toBe('Elapsed trip time 2 hours.');
   });
 
   it('still says something for a trip under a minute old', () => {
-    expect(durationAnnouncement(20)).toBe('Driving for 0 minutes.');
+    expect(durationAnnouncement(20)).toBe('Elapsed trip time 0 minutes.');
   });
 
   it('says so plainly when there is no figure', () => {
-    expect(durationAnnouncement(null)).toBe('Trip time is not available yet.');
+    expect(durationAnnouncement(null)).toBe('Elapsed trip time is not available yet.');
   });
 });
 
@@ -108,5 +109,94 @@ describe('tripPaymentLabel', () => {
     // build has never seen is a real possibility rather than a hypothetical.
     expect(tripPaymentLabel(payment({ payment_method: 'applepay' }))).toBeNull();
     expect(tripPaymentLabel(payment({ payment_method: 'airtel_money' }))).toBeNull();
+  });
+});
+
+describe('waitingSecondsFrom', () => {
+  const NOW = Date.parse('2026-08-14T10:00:00Z');
+
+  it('is zero on a trip that has never been paused', () => {
+    expect(waitingSecondsFrom([event('trip_started', '2026-08-14T09:18:00Z')], NOW)).toBe(0);
+    expect(waitingSecondsFrom(undefined, NOW)).toBe(0);
+  });
+
+  it('closes a period on trip_resumed, the one exit the graph allows today', () => {
+    const events = [
+      event('trip_started', '2026-08-14T09:18:00Z'),
+      event('waiting', '2026-08-14T09:30:00Z'),
+      event('trip_resumed', '2026-08-14T09:34:00Z'),
+    ];
+
+    expect(waitingSecondsFrom(events, NOW)).toBe(240);
+  });
+
+  it('closes a period on any transition, not only on trip_resumed', () => {
+    // `waiting -> cancelled` is not legal today, and that is the point: the
+    // timeline is data, and a reader that waits specifically for
+    // `trip_resumed` runs the period on forever the day the lifecycle gains a
+    // second exit. `WaitingTimeCalculator` says so in its own comment and this
+    // mirrors it.
+    //
+    // Written after a mutation survived: the case above uses `trip_resumed`
+    // as the next event, so narrowing the code to `trip_resumed` passed it.
+    // The test was named for a behaviour it never exercised.
+    const events = [
+      event('waiting', '2026-08-14T09:30:00Z'),
+      event('cancelled', '2026-08-14T09:33:00Z'),
+    ];
+
+    expect(waitingSecondsFrom(events, NOW)).toBe(180);
+  });
+
+  it('sums every period across a trip held more than once', () => {
+    const events = [
+      event('trip_started', '2026-08-14T09:18:00Z'),
+      event('waiting', '2026-08-14T09:30:00Z'),
+      event('trip_resumed', '2026-08-14T09:34:00Z'),
+      event('waiting', '2026-08-14T09:40:00Z'),
+      event('trip_resumed', '2026-08-14T09:41:30Z'),
+    ];
+
+    expect(waitingSecondsFrom(events, NOW)).toBe(240 + 90);
+  });
+
+  it('counts the pause that is still running, measured against now', () => {
+    // The one deliberate difference from WaitingTimeCalculator, which excludes
+    // an open period because it is not billable yet. This answers "how long
+    // have I been sitting here", which has an answer while it is happening.
+    const events = [
+      event('trip_started', '2026-08-14T09:18:00Z'),
+      event('waiting', '2026-08-14T09:55:00Z'),
+    ];
+
+    expect(waitingSecondsFrom(events, NOW)).toBe(300);
+  });
+
+  it('does not let a consecutive waiting event restart the period', () => {
+    // waiting -> waiting is not legal, but a blind replay of the one cycle in
+    // the lifecycle produces exactly this row (ADR-0023). Treating the repeat
+    // as a restart would silently drop the four minutes in between.
+    const events = [
+      event('waiting', '2026-08-14T09:30:00Z'),
+      event('waiting', '2026-08-14T09:34:00Z'),
+      event('trip_resumed', '2026-08-14T09:40:00Z'),
+    ];
+
+    expect(waitingSecondsFrom(events, NOW)).toBe(600);
+  });
+
+  it('clamps a handset clock that is behind the server rather than subtracting', () => {
+    const events = [event('waiting', '2026-08-14T10:05:00Z')];
+
+    expect(waitingSecondsFrom(events, NOW)).toBe(0);
+  });
+
+  it('skips an event the app cannot place in time', () => {
+    const events = [
+      event('waiting', null),
+      event('trip_resumed', '2026-08-14T09:40:00Z'),
+    ];
+
+    expect(waitingSecondsFrom(events, NOW)).toBe(0);
   });
 });

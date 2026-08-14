@@ -718,3 +718,74 @@ program` and `f36a7f6 feat(admin): SMTP with test-send…` both break
 `subject-case`. They predate this gate. Basing the PR on
 `feat/public-landing-and-order-requests` keeps the validated range to our five
 commits; retargeting at `main` pulls twenty old ones back in.
+
+---
+
+### 2026-08-14 — Pause and resume, on the trip in progress (driver app)
+
+**Status:** complete. 219 mobile tests, `tsc --noEmit`, eslint, six guards
+proved by mutation and restored, and both modes rendered and read. No backend
+change and no contract change — the whole feature is transitions the lifecycle
+already allowed.
+
+The gap my own previous entry named — `waiting` and
+`trip_resumed` were legal from that screen and it offered no way to reach
+them, so a driver asked to wait outside a shop had no honest option.
+
+**Why it needed its own pass rather than two more buttons.** Pausing starts a
+**billable** meter: `WalkInFareService::settle()` runs `TripPricingEngine`,
+which emits a `WAITING` line priced from `WaitingTimeCalculator` less the rate
+card's `free_waiting_minutes`. A control that quietly charges a passenger is
+not a control to add on the way past.
+
+**The graph constraint that shapes the screen.** `TripStatus::WAITING` allows
+exactly one exit: `TRIP_RESUMED`. **`trip_completed` is not reachable from
+`waiting`**, so a paused trip must not offer End trip — it would 422 after the
+driver had put the phone down. The screen therefore has two distinct modes
+rather than one mode with an extra button.
+
+**Files owned:**
+
+- `mobile/src/trips/progress.ts` + `progress.test.ts` — adding
+  `waitingSecondsFrom`, which mirrors `WaitingTimeCalculator::secondsFor`
+- `mobile/src/screens/TripInProgressScreen.tsx` + `.test.tsx`
+
+**Files shared — expected to be none.** No backend change, no contract change,
+no new route, no new icon unless the pause glyph is missing.
+
+**Deliberately not duplicated: the free waiting allowance.** `free_waiting_minutes`
+lives on the rate card version and is **not in any payload**. Stating "X
+minutes free" on the screen would be the exact defect the audit agent recorded
+under their finding 5 — a server threshold hardcoded into every shipped
+handset, wrong the day the office changes it.
+
+
+**What the mutation pass and the render pass each caught, because both were
+needed.**
+
+- **A mutation survived**, which meant a test was lying. `waitingSecondsFrom`
+  narrowed to close a period only on `trip_resumed` still passed a test named
+  *"closes a period on the next transition, whatever it is"* — because that
+  test's next transition **was** `trip_resumed`. There is now a second case
+  using a different exit, and the narrowing fails it.
+- **Rendering the held state caught a label nothing tested.** The badge read
+  `14:02 / driving` directly beside a notice saying the trip was on hold. That
+  figure is wall-clock from `trip_started` and **includes every pause**, so on
+  a trip held five minutes it overstated driving by exactly the time the
+  passenger is being charged waiting for. It now reads `elapsed`, and the
+  screen-reader sentence says "Elapsed trip time" rather than "Driving for".
+
+**Two things deliberately absent from the hold control:**
+
+- **No confirmation dialog.** `WaitingTimeCalculator` truncates to whole
+  minutes once at the end, so a mis-tap corrected in seconds bills nothing. A
+  confirmation on a reversible zero-cost mistake is one a driver learns to
+  dismiss unread, which is how confirmations stop protecting the cases that
+  matter.
+- **No money figure for the wait.** The screen shows the *duration* held and
+  says it is priced by the tariff. Pricing it on the handset would mean
+  duplicating `free_waiting_minutes` and `per_waiting_minute_minor`, neither
+  of which is in any payload.
+
+**Still not built:** nothing new. `waiting` and `trip_resumed` were the last
+unreachable statuses on this screen, and both now have a control.

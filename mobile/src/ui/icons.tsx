@@ -396,6 +396,39 @@ export function NavigationIcon(props: IconProps) {
 }
 
 /**
+ * Lucide `pause` and `play`. Holding a trip, and picking it up again.
+ *
+ * The transport-control pair, filled for the same reason `SquareIcon` is: they
+ * sit inside buttons, and an outlined pause on a filled ground reads as two
+ * empty boxes. Filled shapes at this size also survive the sunlight these are
+ * read in, where a 1.7pt stroke does not.
+ *
+ * They are a **pair on purpose**. Pausing and resuming are one control in two
+ * states, and a driver who has learned that the two bars mean "hold" reads the
+ * triangle as "carry on" without being told — which is worth more here than on
+ * most screens, because the button beside them ends a billable journey.
+ */
+export function PauseIcon({ size = 16, color = colors.textBody }: IconProps) {
+  return (
+    <Outline size={size}>
+      <Rect x="14" y="3" width="5" height="18" rx="1" fill={color} />
+      <Rect x="5" y="3" width="5" height="18" rx="1" fill={color} />
+    </Outline>
+  );
+}
+
+export function PlayIcon({ size = 16, color = colors.onPrimary }: IconProps) {
+  return (
+    <Outline size={size}>
+      <Path
+        d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"
+        fill={color}
+      />
+    </Outline>
+  );
+}
+
+/**
  * Lucide `square`. Stop — the End trip button.
  *
  * The transport-control stop glyph, which is what the mockup drew and what

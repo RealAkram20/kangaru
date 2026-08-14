@@ -72,6 +72,15 @@ long so far", and *Trip detail* is the record — odometer, timeline, every
 legal transition — read at a standstill. Folding them together would give the
 busiest moments in the app the layout of an audit trail.
 
+Trip in progress is also where a journey is **held and picked up again**.
+Pausing is billable — `WalkInFareService::settle()` prices a `WAITING` line
+from the periods those transitions open and close — so the screen says how
+long the trip has been held and that the time is priced, and shows no money
+figure of its own, because the rate card's free allowance is in no payload.
+While a trip is held, **End trip is withdrawn**: `TripStatus::WAITING` allows
+only `TRIP_RESUMED`, and offering completion there would 422 through the
+outbox minutes after the driver walked away.
+
 Two of those live screens draw a distance and neither draws a duration to go.
 There is no routing engine here, and ADR-0020 §3 declined to derive minutes
 from a straight line by name — so every distance says "straight line" on the
