@@ -114,8 +114,27 @@ describe('walletValue', () => {
     );
   });
 
-  it('shortens a large balance', () => {
-    expect(walletValue(stats({ wallet_balance_minor: -145_600 }))).toBe('UGX 145.6K');
+  /**
+   * **Reversed, and the codebase's own rule is why.** This read *"shortens a
+   * large balance"* and expected `UGX 145.6K`.
+   *
+   * `compactMoney` permits itself only on "a glanceable total" and refuses
+   * itself on "the number a driver accepts a job for and gets paid", because a
+   * `K` hides up to a hundred shillings. A **balance** is the second kind: it
+   * is what a driver takes to the depot and reconciles against the office's
+   * figure, and a settlement conversation that starts from a rounded number
+   * starts from an argument.
+   *
+   * Reading the wallet mockup is what surfaced it — the card draws
+   * *UGX 135,000* in full.
+   */
+  it('shows a large balance exactly, because it is reconciled and not glanced at', () => {
+    expect(walletValue(stats({ wallet_balance_minor: -145_600 }))).toBe('UGX 145,600');
+    expect(walletValue(stats({ wallet_balance_minor: 135_000 }))).toBe('UGX 135,000');
+
+    // Still no sign — the direction is `walletNote`'s job, and now the
+    // wallet card's heading too.
+    expect(walletValue(stats({ wallet_balance_minor: -145_600 }))).not.toContain('-');
   });
 
   it('does not claim a balance before one has loaded', () => {

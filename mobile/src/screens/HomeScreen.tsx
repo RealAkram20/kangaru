@@ -26,10 +26,10 @@ import { usePressScale } from '../ui/components';
 import {
   BagIcon,
   BellIcon,
-  ChartIcon,
   ChevronRightIcon,
   GaugeIcon,
   MenuIcon,
+  ReceiptIcon,
   ShieldCheckIcon,
   StarIcon,
   WalletIcon,
@@ -37,7 +37,7 @@ import {
 import { SyncBanner } from '../ui/SyncBanner';
 import { colors, MIN_TOUCH_HEIGHT, radius, spacing, typography } from '../ui/theme';
 
-type Props = NativeStackScreenProps<TripsStackParams, 'Home'>;
+type Props = NativeStackScreenProps<TripsStackParams, 'TripsHome'>;
 
 /**
  * The driver's home.
@@ -125,7 +125,7 @@ export function HomeScreen({ navigation }: Props) {
           accessibilityRole="button"
           accessibilityLabel="Menu"
           hitSlop={8}
-          onPress={() => navigation.getParent()?.navigate('Account')}
+          onPress={() => navigation.getParent()?.navigate('Profile')}
           style={styles.topBarButton}
         >
           <MenuIcon color={colors.text} size={24} strokeWidth={2} />
@@ -216,13 +216,20 @@ export function HomeScreen({ navigation }: Props) {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Earnings today. Opens your earnings."
-            onPress={() => navigation.navigate('Earnings')}
+            // `getParent()`, because Earnings is a **tab** now rather than a
+            // screen pushed onto this stack. The tile still works and still
+            // lands in the same place; what changed is that the driver can
+            // also reach it from the bar without coming through Home.
+            onPress={() => navigation.getParent()?.navigate('Earnings')}
             style={styles.statCardWide}
           >
             <StatCardBody
               label="Earnings today"
               value={money(stats?.earnings_today_minor, stats?.currency)}
-              icon={<ChartIcon color={colors.primary} size={20} strokeWidth={2.2} />}
+              // `ReceiptIcon`, matching the Earnings tab's glyph. It was
+              // `ChartIcon`, which left two pictures meaning "earnings" one
+              // scroll apart — DESIGN.md § Icons wants one vocabulary.
+              icon={<ReceiptIcon color={colors.primary} size={20} strokeWidth={2.2} />}
             />
           </Pressable>
 
@@ -302,7 +309,9 @@ export function HomeScreen({ navigation }: Props) {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Wallet balance ${walletValue(stats)}. ${walletNote(stats)}. Opens your wallet.`}
-          onPress={() => navigation.navigate('Wallet')}
+          // A tab now, like Earnings above — see that tile for why this is
+          // `getParent()`.
+          onPress={() => navigation.getParent()?.navigate('Wallet')}
           style={styles.walletCard}
         >
           <View style={styles.flex}>
@@ -327,6 +336,7 @@ export function HomeScreen({ navigation }: Props) {
         <CompletedToday
           trips={completedToday}
           onOpen={(id) => navigation.navigate('TripDetail', { tripId: id })}
+          onSeeAll={() => navigation.navigate('TripsHistory')}
         />
       </ScrollView>
     </View>
@@ -555,13 +565,27 @@ function GoDutyButton({
   );
 }
 
-/** The day's finished work, newest first — what the driver has to show for it. */
+/**
+ * The day's finished work, newest first — what the driver has to show for it.
+ *
+ * **The way into the trip history**, which is why *See all* is here rather
+ * than on a card of its own: this section is already the question "what have I
+ * done", and the history is the same question over a longer window. A separate
+ * tile for it would be a second door to one room.
+ *
+ * The link is on the empty state too. A driver who has finished nothing *today*
+ * is exactly the one most likely to want last week — and a screen that only
+ * offers the door once there is something behind it hides it from the person
+ * looking for it.
+ */
 function CompletedToday({
   trips,
   onOpen,
+  onSeeAll,
 }: {
   trips: Trip[];
   onOpen: (tripId: number) => void;
+  onSeeAll: () => void;
 }) {
   if (trips.length === 0) {
     return (
@@ -569,13 +593,17 @@ function CompletedToday({
         <Text style={styles.emptyTodayText}>
           No trips finished today yet. Completed work will appear here.
         </Text>
+        <SeeAllTrips onPress={onSeeAll} />
       </View>
     );
   }
 
   return (
     <View style={styles.todaySection}>
-      <Text style={styles.sectionTitle}>Earlier today</Text>
+      <View style={styles.sectionHead}>
+        <Text style={styles.sectionTitle}>Earlier today</Text>
+        <SeeAllTrips onPress={onSeeAll} />
+      </View>
 
       {trips.map((trip) => (
         <Pressable
@@ -601,6 +629,27 @@ function CompletedToday({
         </Pressable>
       ))}
     </View>
+  );
+}
+
+/**
+ * The way to the full history. Matches the wallet's *View all* exactly — same
+ * words, same chevron, same green — because they are the same gesture on two
+ * screens, and two spellings of one control is how an app starts feeling like
+ * several.
+ */
+function SeeAllTrips({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="View all trips"
+      onPress={onPress}
+      hitSlop={10}
+      style={styles.viewAll}
+    >
+      <Text style={styles.viewAllLabel}>View all</Text>
+      <ChevronRightIcon color={colors.primaryText} size={18} strokeWidth={2.2} />
+    </Pressable>
   );
 }
 
@@ -925,7 +974,21 @@ const styles = StyleSheet.create({
   sectionTitle: {
     ...typography.bodyStrong,
     color: colors.text,
+  },
+  sectionHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: spacing.sm,
+  },
+  viewAll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  viewAllLabel: {
+    ...typography.captionStrong,
+    color: colors.primaryText,
   },
   todaySection: {
     marginTop: spacing.sm,
@@ -958,6 +1021,8 @@ const styles = StyleSheet.create({
   emptyToday: {
     marginTop: spacing.sm,
     padding: spacing.md,
+    alignItems: 'center',
+    gap: spacing.sm,
   },
   emptyTodayText: {
     ...typography.caption,

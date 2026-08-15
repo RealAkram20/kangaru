@@ -1,66 +1,49 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { useAuth } from '../auth/AuthProvider';
-import { useSync } from '../offline/SyncProvider';
+import type { ProfileStackParams } from '../navigation/types';
 import type { OutboxItem } from '../offline/outboxTypes';
-import { Button, Card, Empty, Screen } from '../ui/components';
-import { SyncBanner } from '../ui/SyncBanner';
-import { colors, spacing, typography } from '../ui/theme';
-import type { AccountStackParams } from '../navigation/types';
+import { useSync } from '../offline/SyncProvider';
+import { Button, Card, Empty, Screen, ScreenHeader } from '../ui/components';
+import { colors, radius, spacing, typography } from '../ui/theme';
 
-type Props = NativeStackScreenProps<AccountStackParams, 'AccountHome'>;
+type Props = NativeStackScreenProps<ProfileStackParams, 'SyncQueue'>;
 
 /**
- * The account, and — more importantly — the parked queue.
+ * What is waiting to reach the office, and what is stuck.
  *
- * Parked items are the one thing in this app that need a person, so they get a
- * screen rather than a toast. ADR-0023 §6: an item that cannot be sent keeps
- * its payload and is shown, never dropped. A driver whose closing odometer was
- * refused has to be able to read the number back to the office over the phone,
- * which means it has to still be here.
+ * **This is the half of `AccountScreen` that had to survive its replacement.**
+ * ADR-0023 §6: an item the server refused keeps its payload and is *shown*,
+ * never dropped — a driver whose closing odometer was rejected has to be able
+ * to read the number back to the office over the phone, which means it has to
+ * still be here.
+ *
+ * It gained a screen rather than staying inline for one reason: the profile
+ * screen's mockup is a menu, and burying a queue that matters at the bottom of
+ * a scroll is how it stops being read. The row that opens this turns red and
+ * counts, so it is *louder* when it matters and quiet when it does not — which
+ * inline could not be.
+ *
+ * Parked items are the only thing in this app that need a person. Everything
+ * else the outbox holds is a normal delay and needs no attention at all.
  */
-export function AccountScreen({ navigation }: Props) {
-  const { user, signOut } = useAuth();
+export function SyncQueueScreen({ navigation }: Props) {
   const { pending, parked, bufferedPings, dismissParked, sync, online } = useSync();
-
-  const confirmSignOut = () => {
-    const warning =
-      pending > 0
-        ? `${pending} ${pending === 1 ? 'update is' : 'updates are'} still waiting to send. They stay on this phone and will go out when you sign in again.`
-        : 'You will need your password to sign back in.';
-
-    Alert.alert('Sign out?', warning, [
-      { text: 'Stay signed in', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: () => void signOut() },
-    ]);
-  };
 
   return (
     <Screen>
-      <SyncBanner />
+      <ScreenHeader
+        title="Updates & sync"
+        subtitle={online ? null : 'No connection'}
+        onBack={() => navigation.goBack()}
+      />
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
         <Card>
-          <Text style={styles.name}>{user?.name ?? 'Driver'}</Text>
-          <Text style={styles.meta}>{user?.email}</Text>
-          <Text style={styles.meta}>{user?.role_label}</Text>
-          <View style={styles.action}>
-            {/* Accounts arrive with a password an administrator typed into a
-                console (ADR-0016). This is the only way it becomes theirs. */}
-            <Button
-              label="Change password"
-              tone="neutral"
-              onPress={() => navigation.navigate('ChangePassword')}
-            />
-          </View>
-        </Card>
-
-        <Card>
-          <Text style={styles.sectionTitle}>Sync</Text>
           <Row label="Connection" value={online ? 'Online' : 'No connection'} />
           <Row label="Updates waiting" value={String(pending)} />
           <Row label="GPS points waiting" value={String(bufferedPings)} />
+
           <View style={styles.action}>
             <Button label="Try to send now" tone="neutral" onPress={() => void sync()} />
           </View>
@@ -75,10 +58,6 @@ export function AccountScreen({ navigation }: Props) {
             <ParkedCard key={item.id} item={item} onDismiss={() => void dismissParked(item.id)} />
           ))
         )}
-
-        <View style={styles.action}>
-          <Button label="Sign out" tone="danger" onPress={confirmSignOut} />
-        </View>
       </ScrollView>
     </Screen>
   );
@@ -117,7 +96,7 @@ function describe(item: OutboxItem): string {
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <View style={styles.row}>
+    <View style={styles.row} accessible accessibilityLabel={`${label}: ${value}`}>
       <Text style={styles.meta}>{label}</Text>
       <Text style={styles.rowValue}>{value}</Text>
     </View>
@@ -125,18 +104,15 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
-  content: {
+  body: {
     padding: spacing.md,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xl,
     gap: spacing.md,
-  },
-  name: {
-    ...typography.heading,
-    color: colors.text,
   },
   meta: {
     ...typography.caption,
     color: colors.textMuted,
-    marginTop: spacing.xs,
   },
   sectionTitle: {
     ...typography.heading,
@@ -168,7 +144,7 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     backgroundColor: colors.background,
     padding: spacing.sm,
-    borderRadius: 8,
+    borderRadius: radius.sm,
     marginVertical: spacing.sm,
   },
 });

@@ -15,6 +15,7 @@ function trip(id: number, status: TripStatus, createdAt: string | null): Trip {
     dropoff: { label: 'Gulu', latitude: null, longitude: null },
     fare: null,
     estimated_fare: null,
+    earnings: null,
     status,
     allowed_transitions: [],
     pickup_wait_target_seconds: 300,

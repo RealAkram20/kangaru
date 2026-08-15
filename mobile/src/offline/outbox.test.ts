@@ -30,6 +30,7 @@ const KAMPALA_TRIP: Trip = {
   dropoff: { label: 'Entebbe', latitude: null, longitude: null },
   fare: null,
   estimated_fare: null,
+  earnings: null,
   status: 'trip_started',
   allowed_transitions: ['waiting', 'trip_completed'],
   pickup_wait_target_seconds: 300,

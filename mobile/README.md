@@ -37,8 +37,8 @@ that none of them is lost because a driver was in a dead zone in Nakasongola.
 
 ## Dependencies
 
-The nineteen route names in `App\Support\Auth\ClientScope::routesFor('driver')`
-and nothing else. A driver token gets `403 TOKEN_SCOPE_EXCEEDED` on anything
+The **thirty-eight** route names in
+`App\Support\Auth\ClientScope::routesFor('driver')` and nothing else. A driver token gets `403 TOKEN_SCOPE_EXCEEDED` on anything
 outside them (ADR-0022), and the list is fail-closed, so endpoints added later
 start shut.
 
@@ -48,20 +48,70 @@ start shut.
 
 ### Navigation
 
-Three tabs, because a driver has three jobs. Deeper structure would be
-navigation for its own sake.
+**Four tabs: Home, Earnings, Wallet, Profile.**
 
 ```
-Work ─────── Today (trip list)
+Home ─────── Today (trip list)
         └── Pickup               ← accepted, driver_en_route
         └── Waiting for passenger ← driver_arrived
         └── Trip in progress     ← trip_started, waiting, trip_resumed
+        └── Trip map             ← full-screen, from Navigate
+        └── Trips history        ← finished work, by day; All/Rides/Deliveries
         └── Trip detail          ← the record, and every terminal state
         └── Odometer             ← modal; owns passenger_onboard
-Time off
-Account ──── session, sync state, and the parked queue
+        └── Ride complete        ← pushed by the closing odometer, not a status
+Earnings ─── day / week / month
+Wallet ───── balance, settlement requests, recent movements
+        └── Transactions         ← the wallet's View all; Today/Week/Custom
+Profile ──── who the driver is: rating, vehicle, member since, documents
+        └── Documents            ← ADR-0033; upload, and what the office said
+        └── Time off
         └── Change password
+        └── Updates & sync       ← the outbox, and the parked queue
 ```
+
+**`Time off` had no way in until the profile screen landed.** It lost its tab
+when the bar went to four and never gained a row — registered on the stack,
+navigated to by nothing. Worth knowing as a shape of bug: a route that
+compiles, type-checks and is unreachable.
+
+**The parked queue moved to its own screen and did not get quieter.** ADR-0023
+§6 requires a refused update to keep its payload and be *shown*; the profile row
+that opens it turns red and counts when something is stuck, so it is louder
+when it matters and silent when it is not — which it could not be at the bottom
+of a scroll.
+
+This replaced three tabs — Work / Time off / Account — and the reasoning on
+both sides is worth keeping. The old argument was *"three tabs, because a
+driver has three jobs; deeper structure would be navigation for its own sake —
+this app has six screens."* It was right when it was written. The app no longer
+has six screens: Earnings, Wallet, Transactions and Trips history are all real
+surfaces, and the first two were reachable only by tapping a card on Home, so a
+driver checking what they had made went through a screen about what they were
+doing next. Three separate mockups asked for the four-tab bar and two agents
+flagged it before the owner took it.
+
+**Time off is what the fourth slot cost**, and it moved under Profile: a driver
+requests leave occasionally and checks their money daily.
+
+Two consequences to know about:
+
+- **Each tab is its own stack**, so switching tabs does not unwind where the
+  driver was. Coming back to Wallet from Home still shows the statement they
+  had open.
+- **A tab root's back arrow goes somewhere explicit, never `goBack()`.**
+  `goBack()` on a stack root is a *silent no-op*, so an arrow wired to it would
+  look live, be tapped, and do nothing. The mockups draw one on every tab root
+  and a driver arriving from a Home card expects it, so Earnings, Wallet and
+  Profile each pass `navigation.getParent()?.navigate('Home')` instead —
+  which always does something, wherever the driver came from. `ScreenHeader`'s
+  `onBack` stays optional for a header that genuinely has nowhere to go.
+
+The tab bar also has **icons** now, where it deliberately had none. The old
+objection was about icon *fonts*, where a missing glyph renders as a tofu box;
+these are vectors from `ui/icons.tsx` on Lucide geometry, and a vector cannot
+miss. None of them animates — DESIGN.md § Icons keeps navigation chrome static,
+and these are the glyphs a driver sees more often than any others.
 
 **One trip status belongs to exactly one screen**, and the live leg is split
 across three of them rather than folded into Trip detail. The reason is that
@@ -98,6 +148,162 @@ exactly as it was. The password form is a pushed screen rather than a modal for
 the opposite reason — it is a thing a driver may reasonably start, go and check
 with the office, and come back to.
 
+**Ride complete is the one screen that is not routed from a `TripStatus`.** The
+closing odometer `replace`s itself with it, and `trip_completed` still belongs
+to Trip detail — this is the *moment* a job ended, read once, while Trip detail
+is the *record*, read any time after. Routing the status here would
+congratulate a driver for opening last Tuesday's ride. Every exit from it goes
+Home rather than back, because behind it is the live-leg screen for a trip that
+has just finished, where End trip would 422 out of the outbox.
+
+**Wallet** is reached from the home screen's *Wallet balance* card, and is the
+statement behind that figure: the balance answers *what*, these rows answer
+*why*. Cursor-paginated over `GET /me/ledger-entries`.
+
+The balance card is **not** the mockup's "Available Balance", and it has no
+Withdraw or Add Money button. ADR-0029 §5 makes this figure *"what the office
+and the driver owe each other, net"*, and negative is the **normal** state for
+cash work — "available" describes money you could spend, and this is usually
+money you owe. §6 rules out the platform moving money at all, so both buttons
+had nowhere to go. The card keeps `walletValue` (magnitude, no sign) beside
+`walletNote` (direction in words), plus a line explaining why a driver holding
+cash fares owes the office.
+
+**Both halves of a completed trip are listed.** A cash trip writes
+`fare_earned` and `cash_collected`, and showing only the credit would make a
+list that does not sum to the balance above it. Tips and bonuses are absent
+because neither exists; a passenger is never named on a historical row
+(ADR-0024 §7 releases contact details only while a trip is live).
+
+**The two buttons raise settlement requests** (ADR-0032) — *"I've paid the
+office"* and *"Request a payout"*, not Withdraw and Add Money. Neither moves
+money: cash changes hands at the depot, and the office confirming the request
+is what writes the ledger entry. **A pending request changes no balance**, and
+every one says so on screen. The button for a kind that already has one open is
+disabled rather than hidden, with the open request shown beneath it.
+
+The sheet is deliberately **not** routed through the offline outbox, unlike
+every trip transition. The outbox is right for a record of something that
+already happened; this is a *message to a person*, and a queued one is worse
+than a refused one — the driver walks away believing the office has been told.
+
+**Transactions** is the wallet's *View all*: the whole statement with
+**Today / This week / Custom** and a native date picker
+(`@react-native-community/datetimepicker`, the Expo-supported one — free, so no
+subscription). **The filtering is server-side**, and that is not an
+optimisation: the ledger is paginated, so a client-side filter could only ever
+search what happened to be scrolled into memory, and a driver picking a date
+outside it would be told there was nothing — the most confident possible way to
+be wrong about somebody's money. Both ends are whole local days and `to` is
+inclusive, so picking one day returns that day rather than nothing.
+
+**Earnings** is reached from the home screen's *Earnings today* tile, which
+until now was a plain `View` that did nothing — the one place on that screen
+where the obvious gesture had no effect. Day / Week / Month over
+`GET /me/earnings`, a total, a breakdown by service type, time on trips, and a
+hand-drawn `react-native-svg` bar chart (no charting dependency: the app
+already carries SVG for its icons and rings). Three of the mockup's five money
+rows are absent because the platform has no such data — tips, bonuses, and
+online hours — and a fourth row the mockup had no place for, **Other work**, is
+present so the breakdown adds up to the total above it. The screen shows a
+warning instead of a sum if it ever does not.
+
+**Trips history** is every job the driver has finished, from `GET /me/trips`,
+grouped by day and filtered by **All / Rides / Deliveries**. Reached from the
+home screen's *Earlier today* section, whose *View all* is the same control the
+wallet uses.
+
+Three things about it worth knowing:
+
+- **The green figure is what the driver earned, not what the passenger paid.**
+  The owner chose it on reconciliation: adding this list up must land on the
+  total the Earnings screen shows, and that screen totals `fare_earned`. A
+  backend test asserts the two agree.
+- **Cancelled and no-show trips are in the list**, with `—` where the money
+  goes and the status in words. The mockup had only paid work; a driver who
+  drove to a pickup and was cancelled on has spent the time, and nothing else
+  in the app lists that trip. Never `UGX 0`.
+- **The day headings come from the server**, in the fleet's timezone, with
+  `today` and `yesterday` in `meta`. Computing them on the handset would file
+  an evening's trips under the wrong heading — the same UTC-boundary bug the
+  earnings work found, on the one screen where the heading is the whole point.
+  When the server sends neither, the heading is a date rather than a guess.
+
+The **filter goes to the server**, for the reason the Transactions date filter
+does: the list is cursor-paginated, so a client-side filter would show "three
+deliveries" out of twenty-five loaded rows and imply that was all of them.
+
+**The wallet card is the mockup's now**, and the two things that made the old
+one different are preserved rather than dropped:
+
+- **"Available Balance" is the heading only when the money is available.** The
+  balance is normally what a driver *owes* (ADR-0029 §5), and "Available" over
+  that figure describes money they could spend. So the heading carries the
+  direction — the mockup's words in credit, **"Balance you owe"** otherwise.
+  That is also what replaced the explaining paragraph the owner asked to
+  remove: direction still lives in words, directly above the number, never in
+  a sign or a colour alone.
+- **The buttons say Withdraw and Add Money**, which ADR-0032 §1 had
+  deliberately refused. The *mechanism* is unchanged — both raise a request the
+  office answers — and read against the balance the words are accurate:
+  `payout` moves it down, `remittance` moves it up. What they must not imply is
+  immediacy, so the button's accessibility hint and the sheet both say nothing
+  is transferred by this app.
+
+**The balance is no longer compacted.** It went through `compactMoney` and
+rendered 135,000 as `UGX 135K`; the mockup draws it in full, and reading it
+that way showed the compact form was already against this codebase's own rule —
+`compactMoney` permits itself on "a glanceable total" and refuses itself on
+money somebody reconciles. A balance is the second kind. Today's earnings and
+the trip count beside it stay compact.
+
+**Wallet rows are two lines, Transactions rows are three.** The mockup's row is
+title and time; the server's explanation is the third line and is where
+ADR-0029 §3 freezes the commission rate that applied, so it is not deleted from
+the app — the wallet is the glance, Transactions is the record.
+`StatementRow`'s `compact` prop is that split.
+
+**"Withdrawal" is a row again, named by the sign.** The earlier refusal was
+half right: one word for a *kind* that runs both ways names the rarer half. A
+negative settlement is a withdrawal and a positive one is cash handed over, and
+neither is mislabelled.
+
+**Tips and bonuses are real now** (ADR-0034), and three screens' docblocks
+saying they did not exist have been corrected rather than left to rot.
+
+A driver declares a tip from **Ride complete** — the moment they were handed
+the cash, and the only moment that needs no trip picker, which is how a
+declaration lands on the wrong job. It is a button, not a prompt: most trips
+carry no tip, and a screen that asks after every one is a screen whose
+question stops being read.
+
+The sheet says two things before a figure is typed: the office confirms it, so
+**the balance moves then and not now**; and **commission applies at the usual
+rate**, because the owner ruled tips commissionable and a driver who learns
+that from their balance instead has been ambushed by a rule. It does **not**
+print the rate — that is a runtime setting, and a handset that stated it would
+go on stating the old number.
+
+Rows say **"Tip"**, never "Tip from Sarah N.". A declaration says *"Tip on trip
+#412"*. ADR-0024 §7 releases a passenger's details only while a trip is live,
+and a wallet statement is permanent and scrollable — the server sends no name
+for the app to print. The glyphs are Lucide `hand-coins` and `award`, not the
+mockup's star: a star means a **rating** in this product, and reusing it for
+money would invert it platform-wide.
+
+Bonuses arrive on their own, from a scheduled weekly award. The app never
+learns the target or the amount — only the credit that was actually made.
+
+Ride complete states three figures — the fare, the platform's fee and what is left — all
+read back from the ADR-0029 ledger entry that recorded the credit, with the fee
+derived server-side as `gross − earned` so it reports the rate **in force when
+the trip completed**. The commission percentage is deliberately not served: it
+is a runtime setting, and a handset that printed it would go on printing the
+old one. Most of the time the driver arrives before the server does —
+completion is queued through the outbox — so the ordinary state is a sentence
+saying the trip is saved and will be sent, and a wallet balance flagged as not
+yet counting this trip.
+
 **Changing the password is the one write that does not go through the outbox.**
 It re-authenticates with the current password, and `PATCH /auth/password`
 revokes every token including the caller's — so a queued credential change would
@@ -132,7 +338,7 @@ guarantee rests on two things that only work together:
 2. **An unknown outcome is reconciled, never replayed.** `GET /trips/{id}`, then
    compare: at the target means it landed; at the `expected_from` recorded when
    the driver tapped means it did not; anything else needs a person, so the item
-   is **parked** with its payload intact and shown on the Account screen.
+   is **parked** with its payload intact and shown on Profile → Updates & sync.
 
 Plus **head-of-line blocking per trip**, which is not an optimisation: an item
 behind a stalled one must not overtake it, or the stalled item's `expected_from`
@@ -212,6 +418,62 @@ The mutations run and killed:
 | Password min-length / confirmation / different-from-current | the three `passwordProblem` tests |
 | Trip grouping / sort direction | four ordering tests |
 | `streamingTripId` falls back to first trip | streams for nothing when no trip is live |
+| Driver gate dropped from `Trip.earnings` | never shows one driver what another earned |
+| Ledger loaded on the trips list | does not read the ledger on the trips list |
+| Fee recomputed from the live rate | reports the rate in force when the trip completed |
+| `compactMoney` used for a settlement | shows the exact figure rather than the compact one |
+| Wallet "not counting this trip yet" suppressed | warns that the balance excludes the trip just finished |
+| Closing odometer `goBack`s | sends the driver to the completion screen |
+| Earnings boundary bound without `->utc()` | counts a late-evening trip in the driver's day (7 tests) |
+| Unclassifiable earnings dropped from the breakdown | always has a breakdown that adds up to the total |
+| Trend stops zero-filling empty buckets | serves a continuous 24-hour series |
+| `cash_collected` left in the earnings sum | totals the driver share and excludes the cash-collected side |
+| Chart divides by a peak of zero | draws a flat chart rather than NaN heights |
+| Earnings heading fixed to "Today's earnings" | renames the total when the tab changes |
+| Ledger cursor ordered by `created_at` | pages without skipping or repeating a row of the pair |
+| Ledger service-type map dropped | says whether a fare was a ride or a delivery |
+| Ledger `driver_id` scope dropped | never shows one driver another driver's ledger |
+| Row minus sign made a hyphen | uses a true minus sign, not a hyphen |
+| Settlement announced as "to you" | never tells a driver they were paid the cash they handed over |
+| Confirm's idempotency guard removed | pays exactly once however many times confirm is pressed |
+| `ledgerSign()` inverted | writes one settlement entry when the office confirms a remittance |
+| Ledger date filter measured in UTC | narrows to a range, measured in the driver's local day |
+| `parseAmount` multiplies by 100 | never multiplies by a hundred, because UGX is zero-decimal |
+| Today's range drops its inclusive end | asks the server for today, at both ends of the day |
+| `rowTitle` narrowed to `service_type` | a tip keeps its own name instead of becoming "Ride earnings" |
+| Tip button reworded to "Add a tip" | reports a tip rather than sounding like it creates one |
+| Commission rate printed in the tip sheet | never prints a rate, which is a runtime setting |
+| Tip sheet stops saying "not now" | says the balance moves on confirmation (2 tests) |
+| Tip row stops naming its trip | names the trip, never the passenger |
+| Tip/bonus breakdown labels deleted | names them in the plural, like every other row (2 tests) |
+| "Available Balance" printed over a debt | says the balance is owed, in the heading (2 tests) |
+| Balance compacted back to `UGX 135K` | shows a large balance exactly (2 tests) |
+| Every settlement called a withdrawal | names a settlement by its direction |
+| Sheet stops saying nothing is transferred | never lets a short label imply the money moved (3 tests) |
+| Today's time back to 24-hour | says "Today" with a 12-hour time (2 tests) |
+| A tip routed through `recordSettlement` | writes the pair, so the driver owes the commission (4 backend tests) |
+| No commission taken on a tip | never credits the gross tip (3 backend tests) |
+| Tip's cash half written positive | the net of the pair is the commission |
+| Tip's trip-ownership check dropped | refuses a tip declared against another driver's trip |
+| `bonus_enabled` ignored | awards nothing while the scheme is switched off (22 tests) |
+| Double-award guard removed | never pays a week twice, however often the command runs |
+| Bonus week bound without `->utc()` | counts a trip into the fleet's week, not UTC's |
+| Bonus command awards the week in progress | names the week that has just closed |
+| Bonus target ignored | does not credit a driver who fell short |
+| History money divided by 100 | does not divide a zero-decimal currency (2 tests) |
+| History renders `UGX 0` for a missing figure | em dash rather than a zero, screen and helper (2 tests) |
+| Day heading computed from `new Date()` | uses the server's day keys, not the handset's clock |
+| 12-hour clock by a bare modulus | gets midnight and noon right |
+| Rows inside a day left in cursor order | re-sorts by `happened_at` within a section |
+| Status never printed beside a route | cancelled rows say so in words (2 tests) |
+| Every ending coloured as a caution | colours an ending by DESIGN.md §3 |
+| Cancellation left to colour and an em dash | announces "Cancelled. No earnings recorded." |
+| History tenant scope left on | serves a walk-in trip (12 of 16 backend tests) |
+| `cash_collected` summed into a history row | reads the credit, not the cash held (3 backend tests) |
+| History day computed in UTC | files a row under the fleet's local day |
+| Live trips let into the history | includes the cancelled ones and excludes the live ones |
+| History chip filter ignored | filters to one kind of job, in SQL |
+| History cursor ordered by `completed_at` | pages without skipping or repeating a trip |
 
 One of those mutations found a **false green in the test suite itself**:
 `(await store.pending())[0]?.inflightAt` is `undefined` when the row was parked
@@ -295,7 +557,7 @@ and the two an emulator fakes worst.
 4. **Drive 2 km with the trip live, then complete it.** Check the console: the
    trip should carry both readings, a `gps_distance_km` close to the odometer
    span, and no variance flag.
-5. **Change the password** from Account. Every device signs out, including this
+5. **Change the password** from Profile. Every device signs out, including this
    one. Re-run the seeder to get the documented password back.
 
 ### Verified against the running backend

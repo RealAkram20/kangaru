@@ -112,6 +112,27 @@ jest.mock('react-native-webview', () => {
 });
 
 /**
+ * The date picker as a plain element.
+ *
+ * A native module (ADR-0032's transactions filter uses it for a custom
+ * range), so under Jest it has no view manager and throws on render. Mocked
+ * as a named element rather than as `null`, so a test can still assert the
+ * picker *opened* — which is the only thing about it worth asserting from
+ * here; the calendar itself is the platform's.
+ */
+jest.mock('@react-native-community/datetimepicker', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const React = require('react');
+
+  const DateTimePicker = (props: Record<string, unknown>) =>
+    React.createElement('DateTimePicker', props);
+
+  DateTimePicker.displayName = 'DateTimePicker';
+
+  return { __esModule: true, default: DateTimePicker };
+});
+
+/**
  * `react-native-svg` as plain views.
  *
  * Not a convenience: the real module reaches for `processColor` off the

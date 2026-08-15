@@ -14,7 +14,7 @@ import {
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { CheckIcon, ChevronLeftIcon, EyeIcon, EyeOffIcon } from './icons';
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, EyeIcon, EyeOffIcon } from './icons';
 import { colors, FIELD_HEIGHT, MIN_TOUCH_HEIGHT, motion, radius, spacing, typography } from './theme';
 
 /**
@@ -393,21 +393,38 @@ export function ScreenHeader({
    * a held trip, for one.
    */
   subtitle?: string | null;
-  onBack: () => void;
+  /**
+   * What the arrow does. Optional so a header can be drawn without one.
+   *
+   * **Not necessarily `goBack()`.** A tab root has nothing on its own stack to
+   * pop, and `goBack()` there is a *silent no-op* — a control that looks live,
+   * is tapped, and does nothing. That is not a reason to drop the arrow (the
+   * mockups draw one on the tab roots, and a driver arriving from a Home card
+   * expects it); it is a reason for those screens to pass an explicit
+   * destination instead. `WalletScreen` and `EarningsScreen` both navigate to
+   * the Home tab.
+   *
+   * When it is omitted the title stays flush left rather than keeping the
+   * arrow's gutter, so a header without one does not read as a pushed screen
+   * missing its control.
+   */
+  onBack?: (() => void) | undefined;
 }) {
   const insets = useSafeAreaInsets();
 
   return (
     <View style={[styles.headerRow, { paddingTop: insets.top + spacing.sm }]}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Back"
-        onPress={onBack}
-        hitSlop={10}
-        style={styles.headerBack}
-      >
-        <ChevronLeftIcon color={colors.text} size={26} strokeWidth={2.2} />
-      </Pressable>
+      {onBack !== undefined && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          onPress={onBack}
+          hitSlop={10}
+          style={styles.headerBack}
+        >
+          <ChevronLeftIcon color={colors.text} size={26} strokeWidth={2.2} />
+        </Pressable>
+      )}
 
       <View style={styles.headerText}>
         <Text style={styles.headerTitle} numberOfLines={1}>
@@ -420,6 +437,85 @@ export function ScreenHeader({
         )}
       </View>
     </View>
+  );
+}
+
+/**
+ * A row in a settings-style list: glyph, label, a value, and a chevron.
+ *
+ * Shared because it appears six times on the profile screen alone, which is
+ * AGENTS.md's rule twice over. It is deliberately *not* `DetailRow` from
+ * `ui/facts.tsx`: that one states a fact and is not tappable, and folding the
+ * two together would give every fact on every screen a chevron that goes
+ * nowhere.
+ *
+ * **The value carries a tone, and never a tone alone.** `docs/screen-rules.md`
+ * §6: colour must not be the only thing carrying meaning, so a caller passing
+ * `tone="danger"` is also passing the word that says why. Nothing here draws a
+ * coloured dot with no label beside it.
+ */
+export function MenuRow({
+  icon,
+  label,
+  value = null,
+  tone = 'muted',
+  onPress,
+  announcement,
+  showsChevron = true,
+}: {
+  icon: ReactNode;
+  label: string;
+  /** The right-hand word — a state, a count, or null for a plain row. */
+  value?: string | null;
+  tone?: 'good' | 'warning' | 'danger' | 'muted';
+  onPress: () => void;
+  /**
+   * One composed sentence for a screen reader, instead of the label and the
+   * value being read as two disconnected fragments.
+   */
+  announcement?: string;
+  /**
+   * Off for a row whose action happens in place — signing out opens a dialog
+   * rather than a screen, and a chevron would promise somewhere to go.
+   */
+  showsChevron?: boolean;
+}) {
+  const press = usePressScale();
+
+  const valueColor =
+    tone === 'good'
+      ? colors.primaryText
+      : tone === 'danger'
+        ? colors.danger
+        : tone === 'warning'
+          ? colors.warning
+          : colors.textMuted;
+
+  return (
+    <Animated.View style={{ transform: [{ scale: press.scale }] }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={announcement ?? (value === null ? label : `${label}. ${value}`)}
+        onPress={onPress}
+        onPressIn={press.onPressIn}
+        onPressOut={press.onPressOut}
+        style={styles.menuRow}
+      >
+        <View style={styles.menuIcon}>{icon}</View>
+
+        <Text style={styles.menuLabel} numberOfLines={1}>
+          {label}
+        </Text>
+
+        {value !== null && (
+          <Text style={[styles.menuValue, { color: valueColor }]} numberOfLines={1}>
+            {value}
+          </Text>
+        )}
+
+        {showsChevron && <ChevronRightIcon color={colors.textMuted} size={20} strokeWidth={2.2} />}
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -545,6 +641,35 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingBottom: spacing.sm,
     gap: spacing.sm,
+  },
+  menuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm + 4,
+    // Above the 44pt platform floor, like everything tappable in this app.
+    minHeight: MIN_TOUCH_HEIGHT,
+    paddingVertical: spacing.sm,
+  },
+  menuIcon: {
+    width: 24,
+    alignItems: 'center',
+  },
+  menuLabel: {
+    ...typography.bodyStrong,
+    color: colors.text,
+    // The label yields first: "Documents" truncating to "Docum…" is
+    // recoverable, "1 needs atten…" is the half that matters.
+    flexShrink: 2,
+    flexGrow: 1,
+  },
+  menuValue: {
+    ...typography.captionStrong,
+    fontSize: 15,
+    // Shrinkable, at half the label's rate. `flexShrink: 0` read as "the
+    // value is protected" and was really "the value overflows the row": a
+    // localised label and a localised value together exceed a 360dp screen,
+    // and something has to give. This gives, reluctantly.
+    flexShrink: 1,
   },
   headerBack: {
     width: 44,

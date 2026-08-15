@@ -92,6 +92,34 @@ export const colors = {
    */
   onNavyMuted: '#979DA9',
   borderOnNavy: '#293348',
+
+  /**
+   * A hairline on a filled green surface — the wallet balance card.
+   *
+   * White at low alpha rather than a solid tint, because it has to sit on
+   * `primaryCta` and read as a divider rather than as a second colour. It is
+   * a token rather than an `rgba()` at the call site for the reason DESIGN.md
+   * §8 gives: raw colour values in component code fail review, and the next
+   * green surface should reach for this instead of inventing its own alpha.
+   *
+   * `borderOnNavy` is the counterpart for the dark chrome and is *not*
+   * interchangeable — it is opaque, and on green it would read as a smudge.
+   */
+  borderOnPrimary: 'rgba(255, 255, 255, 0.28)',
+
+  /**
+   * The dim behind a modal sheet.
+   *
+   * Navy rather than black, so the screen behind reads as *dimmed* rather
+   * than as switched off — the sheet sits over content the driver still needs
+   * (the balance a settlement request concerns), and a black scrim makes the
+   * page look gone rather than waiting.
+   *
+   * A token for DESIGN.md §8's reason: raw colour values in component code
+   * fail review, and the next sheet should reach for this rather than pick
+   * its own alpha.
+   */
+  scrim: 'rgba(0, 16, 40, 0.45)',
 };
 
 export const spacing = {

@@ -1,5 +1,5 @@
 import type { DriverStats } from '../api/endpoints';
-import { compactMoney } from '../duty/offerPresentation';
+import { compactMoney, formatMoney } from '../duty/offerPresentation';
 
 /**
  * Turning `GET /me/stats` into the words on the home screen.
@@ -60,7 +60,25 @@ export function walletValue(stats: DriverStats | undefined): string {
     return '—';
   }
 
-  return money(Math.abs(stats.wallet_balance_minor), stats.currency);
+  /*
+   * **`formatMoney`, not `compactMoney`** — exact, never "UGX 135K".
+   *
+   * This used to go through `money()` above, which compacts, and the mockup is
+   * what surfaced it: the balance card draws *UGX 135,000* in full. Reading it
+   * that way, the compact form was already against this codebase's own rule.
+   * `compactMoney`'s docblock permits itself only on "a glanceable total" and
+   * refuses itself on "the number a driver accepts a job for and gets paid",
+   * because a `K` hides up to a hundred shillings and an `M` up to ten
+   * thousand.
+   *
+   * A balance is squarely the second kind. It is the figure a driver takes to
+   * the depot and reconciles against the office's, and a settlement
+   * conversation that starts from a rounded number starts from an argument.
+   *
+   * The trip *count* and the day's *earnings* beside it stay compact — those
+   * are glances, and nobody settles up against them.
+   */
+  return formatMoney(Math.abs(stats.wallet_balance_minor), stats.currency);
 }
 
 /**
@@ -114,6 +132,40 @@ export function ratingNote(stats: DriverStats | undefined): string | undefined {
  * from. A bare "-UGX 40,000" is ambiguous about direction to anybody who has
  * not read the ADR, and this is a figure skimmed at arm's length.
  */
+/**
+ * The heading over the balance figure — and the thing that makes
+ * **"Available Balance"** safe to print.
+ *
+ * The mockup's card reads *Available Balance / UGX 135,000* with nothing else
+ * on it. Taken literally that is a claim this platform usually cannot make:
+ * ADR-0029 §5 makes the balance *"what the office and the driver owe each
+ * other, net"*, and for cash work it is normally money the driver **owes**.
+ * "Available" over that figure describes money they could spend, which is the
+ * opposite.
+ *
+ * So the **heading carries the direction** instead of a sentence underneath.
+ * In credit it is the mockup's, exactly; in debt it says so in the one place a
+ * driver cannot miss, which is directly above the number. That keeps the card
+ * as drawn for the state the mockup draws, keeps it true for the state a
+ * driver is usually in, and satisfies the rule the explainer paragraph used to
+ * satisfy — direction in words, never in a sign or a colour alone
+ * (AGENTS.md § Accessibility).
+ *
+ * `walletNote` still exists and is still rendered on the *home* screen card,
+ * where there is room for a sentence. This is the compact form.
+ */
+export function walletHeading(stats: DriverStats | undefined): string {
+  if (stats === undefined) {
+    return 'Wallet balance';
+  }
+
+  if (stats.wallet_balance_minor === 0) {
+    return 'Wallet balance';
+  }
+
+  return stats.wallet_balance_minor > 0 ? 'Available Balance' : 'Balance you owe';
+}
+
 export function walletNote(stats: DriverStats | undefined): string {
   if (stats === undefined) {
     return 'Not loaded yet';

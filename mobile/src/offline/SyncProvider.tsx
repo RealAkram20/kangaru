@@ -136,6 +136,21 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       // Something the server now knows about that this app's cache does not.
       await queryClient.invalidateQueries({ queryKey: ['trips'] });
       await queryClient.invalidateQueries({ queryKey: ['availability'] });
+      // A completed trip moves money: `DriverLedgerService` credits the
+      // driver's share and records the cash they are holding. Without this,
+      // the home screen's Earnings today and Wallet balance tiles — and the
+      // completion screen's wallet card — kept showing pre-trip figures until
+      // their 60-second `staleTime` happened to lapse.
+      await queryClient.invalidateQueries({ queryKey: ['driver-stats'] });
+      // And the earnings screen, which reads the same ledger over a period.
+      // All three tabs share the key prefix, so one call covers them.
+      await queryClient.invalidateQueries({ queryKey: ['driver-earnings'] });
+      // And the wallet statement — a completed trip writes two ledger rows,
+      // which are exactly what that screen lists.
+      await queryClient.invalidateQueries({ queryKey: ['driver-ledger'] });
+      // And the trip history, where the trip that just flushed is the newest
+      // row. Every chip shares the key prefix, so one call covers all three.
+      await queryClient.invalidateQueries({ queryKey: ['trip-history'] });
       setState((previous) => ({ ...previous, lastSyncedAt: Date.now() }));
     }
 

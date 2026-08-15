@@ -9,28 +9,43 @@ import { OfferPresenter } from '../duty/OfferPresenter';
 import { PresenceController } from '../duty/PresenceController';
 import { PushRegistrar } from '../push/PushRegistrar';
 import { GpsController } from '../location/GpsController';
-import { AccountScreen } from '../screens/AccountScreen';
+import { DocumentsScreen } from '../screens/DocumentsScreen';
+import { EarningsScreen } from '../screens/EarningsScreen';
 import { ForgotPasswordScreen } from '../screens/ForgotPasswordScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import { PasswordScreen } from '../screens/PasswordScreen';
 import { OdometerScreen } from '../screens/OdometerScreen';
 import { PickupScreen } from '../screens/PickupScreen';
+import { ProfileScreen } from '../screens/ProfileScreen';
 import { RideCompleteScreen } from '../screens/RideCompleteScreen';
 import { SignInScreen } from '../screens/SignInScreen';
 import { SignUpScreen } from '../screens/SignUpScreen';
+import { SyncQueueScreen } from '../screens/SyncQueueScreen';
 import { TimeOffScreen } from '../screens/TimeOffScreen';
 import { WelcomeScreen } from '../screens/WelcomeScreen';
 import { TodayScreen } from '../screens/TodayScreen';
 import { TripDetailScreen } from '../screens/TripDetailScreen';
 import { TripInProgressScreen } from '../screens/TripInProgressScreen';
+import { TransactionsScreen } from '../screens/TransactionsScreen';
 import { TripMapScreen } from '../screens/TripMapScreen';
 import { WaitingForPassengerScreen } from '../screens/WaitingForPassengerScreen';
+import { WalletScreen } from '../screens/WalletScreen';
+import { HouseIcon, ReceiptIcon, UserIcon, WalletIcon } from '../ui/icons';
 import { colors } from '../ui/theme';
-import type { AccountStackParams, RootTabParams, TripsStackParams } from './types';
+import { TripsHistoryScreen } from '../screens/TripsHistoryScreen';
+import type {
+  EarningsStackParams,
+  ProfileStackParams,
+  RootTabParams,
+  TripsStackParams,
+  WalletStackParams,
+} from './types';
 
 const Tabs = createBottomTabNavigator<RootTabParams>();
 const TripsStack = createNativeStackNavigator<TripsStackParams>();
-const AccountStack = createNativeStackNavigator<AccountStackParams>();
+const EarningsStack = createNativeStackNavigator<EarningsStackParams>();
+const WalletStack = createNativeStackNavigator<WalletStackParams>();
+const ProfileStack = createNativeStackNavigator<ProfileStackParams>();
 
 const theme = {
   ...DefaultTheme,
@@ -129,7 +144,7 @@ function TripsNavigator() {
     >
       {/* Home has its own top bar — brand, notifications, avatar — so the
           navigator's header would be a second one stacked above it. */}
-      <TripsStack.Screen name="Home" component={HomeScreen} options={{ headerShown: false }} />
+      <TripsStack.Screen name="TripsHome" component={HomeScreen} options={{ headerShown: false }} />
       <TripsStack.Screen name="Today" component={TodayScreen} options={{ title: "Today's work" }} />
       <TripsStack.Screen name="Pickup" component={PickupScreen} options={{ headerShown: false }} />
       {/* Own header, same as Pickup — the navigator's would stack a second
@@ -148,6 +163,13 @@ function TripsNavigator() {
       <TripsStack.Screen
         name="TripMap"
         component={TripMapScreen}
+        options={{ headerShown: false }}
+      />
+      {/* Own header, like the live-leg screens — the navigator's would stack
+          a second title bar above it. */}
+      <TripsStack.Screen
+        name="TripsHistory"
+        component={TripsHistoryScreen}
         options={{ headerShown: false }}
       />
       <TripsStack.Screen name="TripDetail" component={TripDetailScreen} options={{ title: 'Trip' }} />
@@ -173,25 +195,82 @@ function TripsNavigator() {
   );
 }
 
-function AccountNavigator() {
+/**
+ * The Earnings tab. A stack of one, so every tab has the same shape and the
+ * next screen below it is a line rather than a restructure.
+ *
+ * `headerShown: false` because `EarningsScreen` draws its own `ScreenHeader`
+ * — and that header now has **no back arrow**, because this is a tab root and
+ * there is nothing behind it. `goBack()` on a stack root is a silent no-op, so
+ * an arrow here would look live, be tapped, and do nothing.
+ */
+function EarningsNavigator() {
   return (
-    <AccountStack.Navigator
+    <EarningsStack.Navigator screenOptions={{ headerShown: false }}>
+      <EarningsStack.Screen name="EarningsHome" component={EarningsScreen} />
+    </EarningsStack.Navigator>
+  );
+}
+
+/**
+ * The Wallet tab. `Transactions` keeps its back arrow — unlike the tab root
+ * above it, there genuinely is something behind it.
+ */
+function WalletNavigator() {
+  return (
+    <WalletStack.Navigator screenOptions={{ headerShown: false }}>
+      <WalletStack.Screen name="WalletHome" component={WalletScreen} />
+      <WalletStack.Screen name="Transactions" component={TransactionsScreen} />
+    </WalletStack.Navigator>
+  );
+}
+
+/**
+ * The Profile tab: the account, the password form, and — since the bar went to
+ * four — time off.
+ *
+ * Time off is the slot the fourth tab cost, and it is the right one to have
+ * spent: a driver requests leave occasionally and checks their money daily.
+ * It keeps a pushed screen with a real header, so nothing about it got harder
+ * than one extra tap.
+ */
+function ProfileNavigator() {
+  return (
+    <ProfileStack.Navigator
       screenOptions={{
         headerStyle: { backgroundColor: colors.surface },
         headerTintColor: colors.text,
       }}
     >
-      <AccountStack.Screen
-        name="AccountHome"
-        component={AccountScreen}
-        options={{ title: 'Account' }}
+      {/* Own header, like the tab roots beside it — the navigator's would
+          stack a second title bar above the screen's own. */}
+      <ProfileStack.Screen
+        name="ProfileHome"
+        component={ProfileScreen}
+        options={{ headerShown: false }}
       />
-      <AccountStack.Screen
+      <ProfileStack.Screen
+        name="TimeOff"
+        component={TimeOffScreen}
+        options={{ title: 'Time off' }}
+      />
+      <ProfileStack.Screen
         name="ChangePassword"
         component={PasswordScreen}
         options={{ title: 'Change password' }}
       />
-    </AccountStack.Navigator>
+      {/* ADR-0033. Both draw their own `ScreenHeader`, as `ProfileHome` does. */}
+      <ProfileStack.Screen
+        name="Documents"
+        component={DocumentsScreen}
+        options={{ headerShown: false }}
+      />
+      <ProfileStack.Screen
+        name="SyncQueue"
+        component={SyncQueueScreen}
+        options={{ headerShown: false }}
+      />
+    </ProfileStack.Navigator>
   );
 }
 
@@ -221,24 +300,66 @@ export function RootNavigator() {
         <Tabs.Navigator
           screenOptions={{
             headerShown: false,
-            // Labels only, and the empty icon slot is deliberate rather than an
-            // omission: without it React Navigation reserves space and renders
-            // a placeholder, which on a device with no icon font resolves to a
-            // missing-glyph box. Three tabs with one-word names do not need
-            // pictures, and a wrong picture is worse than none.
-            tabBarIcon: () => null,
             // No explicit height or bottom padding: the navigator adds the
             // safe-area inset itself, and overriding the height made the
             // labels sit underneath Android's gesture bar.
             tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
             tabBarActiveTintColor: colors.primary,
             tabBarInactiveTintColor: colors.textMuted,
-            tabBarLabelStyle: { fontSize: 15, fontWeight: '700' },
+            tabBarLabelStyle: { fontSize: 13, fontWeight: '600' },
+            tabBarItemStyle: { paddingVertical: 4 },
           }}
         >
-          <Tabs.Screen name="Work" component={TripsNavigator} options={{ title: 'Work' }} />
-          <Tabs.Screen name="TimeOff" component={TimeOffScreen} options={{ title: 'Time off' }} />
-          <Tabs.Screen name="Account" component={AccountNavigator} options={{ title: 'Account' }} />
+          {/*
+            Icons, where this bar deliberately had none.
+
+            The old comment argued that "three tabs with one-word names do not
+            need pictures, and a wrong picture is worse than none" — and the
+            worry behind it was real but specific: it was about **icon fonts**,
+            where a missing glyph renders as a tofu box. These are vectors from
+            `ui/icons.tsx`, drawn on Lucide's geometry, and a vector cannot miss
+            — the worst it can do is draw nothing.
+
+            With four tabs the labels also got shorter and closer together, and
+            a glyph is what makes a bar scannable at a glance from a cradle
+            rather than read word by word.
+
+            **None of them animates**, per DESIGN.md § Icons: navigation chrome
+            stays static in both apps, and these are the icons a driver sees
+            more often than any others in the product.
+          */}
+          <Tabs.Screen
+            name="Home"
+            component={TripsNavigator}
+            options={{
+              title: 'Home',
+              tabBarIcon: ({ color }) => <HouseIcon color={color} size={24} strokeWidth={2} />,
+            }}
+          />
+          <Tabs.Screen
+            name="Earnings"
+            component={EarningsNavigator}
+            options={{
+              title: 'Earnings',
+              tabBarIcon: ({ color }) => <ReceiptIcon color={color} size={24} strokeWidth={2} />,
+            }}
+          />
+          <Tabs.Screen
+            name="Wallet"
+            component={WalletNavigator}
+            options={{
+              title: 'Wallet',
+              tabBarIcon: ({ color }) => <WalletIcon color={color} size={24} strokeWidth={2} />,
+            }}
+          />
+          <Tabs.Screen
+            name="Profile"
+            component={ProfileNavigator}
+            options={{
+              title: 'Profile',
+              tabBarIcon: ({ color }) => <UserIcon color={color} size={24} strokeWidth={2} />,
+            }}
+          />
         </Tabs.Navigator>
 
         {/* Last, and outside the navigator on purpose. A job has a

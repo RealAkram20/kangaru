@@ -99,6 +99,22 @@ export function OdometerScreen({ route, navigation }: Props) {
     }
 
     setBusy(false);
+
+    // The closing reading ends the job, so it does not go back — behind this
+    // modal is the live-leg screen for a trip that has just finished, and
+    // returning there offers an End trip button that 422s out of the outbox.
+    // `replace`, not `navigate`: the odometer form must not sit in the stack
+    // behind the completion screen, or the back gesture reopens a reading
+    // that has already been queued.
+    //
+    // The opening reading still goes back, because there the trip carries on
+    // and the screen behind it is the right place to land.
+    if (to === 'trip_completed') {
+      navigation.replace('RideComplete', { tripId });
+
+      return;
+    }
+
     navigation.goBack();
   };
 

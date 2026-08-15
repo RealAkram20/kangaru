@@ -523,6 +523,136 @@ export function CarIcon(props: IconProps) {
   );
 }
 
+/**
+ * Lucide `house`. The Home tab.
+ *
+ * Transcribed verbatim, arc commands and all — the roof is one path with two
+ * `a 2 2` corners and the doorway is a second. Redrawing it as a triangle on a
+ * square, which is the obvious hand approximation, is exactly the drift
+ * DESIGN.md § Icons was written to stop.
+ */
+export function HouseIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path
+        d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
+        {...strokeProps(color, strokeWidth)}
+      />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `receipt`. Earnings — the tab, and the Home screen's tile.
+ *
+ * The mockup draws a receipt for earnings, and `ChartIcon` was already doing
+ * that job on the Home tile. Rather than run two glyphs for one idea — which
+ * DESIGN.md § Icons calls out by name — both now use this one.
+ *
+ * The long third path is the torn bottom edge and is copied character for
+ * character: it is a run of eleven alternating `1.3` arcs, and eyeballing it
+ * produces a shape that is recognisably not Lucide's.
+ */
+export function ReceiptIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="M12 17V7" {...strokeProps(color, strokeWidth)} />
+      <Path
+        d="M16 8h-6a2 2 0 0 0 0 4h4a2 2 0 0 1 0 4H8"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path
+        d="M4 3a1 1 0 0 1 1-1 1.3 1.3 0 0 1 .7.2l.933.6a1.3 1.3 0 0 0 1.4 0l.934-.6a1.3 1.3 0 0 1 1.4 0l.933.6a1.3 1.3 0 0 0 1.4 0l.933-.6a1.3 1.3 0 0 1 1.4 0l.934.6a1.3 1.3 0 0 0 1.4 0l.933-.6A1.3 1.3 0 0 1 19 2a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1 1.3 1.3 0 0 1-.7-.2l-.933-.6a1.3 1.3 0 0 0-1.4 0l-.934.6a1.3 1.3 0 0 1-1.4 0l-.933-.6a1.3 1.3 0 0 0-1.4 0l-.933.6a1.3 1.3 0 0 1-1.4 0l-.934-.6a1.3 1.3 0 0 0-1.4 0l-.933.6a1.3 1.3 0 0 1-.7.2 1 1 0 0 1-1-1z"
+        {...strokeProps(color, strokeWidth)}
+      />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `hand-coins`. A tip (ADR-0034).
+ *
+ * Not `star`, which the mockup drew for it — a star means a **rating** in
+ * this product (`StarIcon`, ADR-0030), and reusing it for money would invert
+ * the glyph's meaning platform-wide on the one screen where the two could be
+ * confused. A hand passing coins is what actually happens.
+ */
+export function HandCoinsIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M11 15h2a2 2 0 1 0 0-4h-3c-.6 0-1.1.2-1.4.6L3 17"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path
+        d="m7 21 1.6-1.4c.3-.4.8-.6 1.4-.6h4c1.1 0 2.1-.4 2.8-1.2l4.6-4.4a2 2 0 0 0-2.75-2.91l-4.2 3.9"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path d="m2 16 6 6" {...strokeProps(color, strokeWidth)} />
+      <Circle cx="16" cy="9" r="2.9" {...strokeProps(color, strokeWidth)} />
+      <Circle cx="6" cy="5" r="3" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `award`. A weekly target bonus (ADR-0034 §4).
+ *
+ * The mockup drew a star here too, in amber. Same objection as above, and the
+ * colour is not taken either: `colors.star` is declared for a rating and is
+ * the only warm value in the palette. A bonus is money and reads in the same
+ * green every other credit does.
+ */
+export function AwardIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="m15.477 12.89 1.515 8.526a.5.5 0 0 1-.81.47l-3.58-2.687a1 1 0 0 0-1.197 0l-3.586 2.686a.5.5 0 0 1-.81-.469l1.514-8.526"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Circle cx="12" cy="8" r="6" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/** Lucide `square-arrow-up`. The wallet's Withdraw button. */
+export function SquareArrowUpIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Rect width="18" height="18" x="3" y="3" rx="2" {...strokeProps(color, strokeWidth)} />
+      <Path d="m16 12-4-4-4 4" {...strokeProps(color, strokeWidth)} />
+      <Path d="M12 16V8" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/** Lucide `circle-plus`. The wallet's Add Money button. */
+export function CirclePlusIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Circle cx="12" cy="12" r="10" {...strokeProps(color, strokeWidth)} />
+      <Path d="M8 12h8" {...strokeProps(color, strokeWidth)} />
+      <Path d="M12 8v8" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
 /** Lucide `banknote`. Settlement in cash. */
 export function BanknoteIcon(props: IconProps) {
   const { size, color, strokeWidth } = base(props);
@@ -571,6 +701,129 @@ export function XIcon({ size = 16, color = colors.danger, strokeWidth = 2.4 }: I
     <Outline size={size}>
       <Path d="M18 6 6 18" {...strokeProps(color, strokeWidth)} />
       <Path d="m6 6 12 12" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `file-text`. A driver's papers.
+ *
+ * Transcribed verbatim from
+ * `lucide-react/dist/esm/icons/file-text.mjs` (ADR-0033's Documents row).
+ */
+export function FileTextIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path d="M14 2v5a1 1 0 0 0 1 1h5" {...strokeProps(color, strokeWidth)} />
+      <Path d="M10 9H8" {...strokeProps(color, strokeWidth)} />
+      <Path d="M16 13H8" {...strokeProps(color, strokeWidth)} />
+      <Path d="M16 17H8" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `log-out`. Signing out.
+ *
+ * Transcribed verbatim from `lucide-react/dist/esm/icons/log-out.mjs`. The
+ * arrow points out of the door, which is the direction the action goes — the
+ * mirrored `log-in` is a different glyph and means the opposite.
+ */
+export function LogOutIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="m16 17 5-5-5-5" {...strokeProps(color, strokeWidth)} />
+      <Path d="M21 12H9" {...strokeProps(color, strokeWidth)} />
+      <Path
+        d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"
+        {...strokeProps(color, strokeWidth)}
+      />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `calendar`. Time off.
+ *
+ * Transcribed verbatim from `lucide-react/dist/esm/icons/calendar.mjs`.
+ */
+export function CalendarIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="M8 2v4" {...strokeProps(color, strokeWidth)} />
+      <Path d="M16 2v4" {...strokeProps(color, strokeWidth)} />
+      <Rect width="18" height="18" x="3" y="4" rx="2" {...strokeProps(color, strokeWidth)} />
+      <Path d="M3 10h18" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `upload`. Sending a document to the office.
+ *
+ * Transcribed verbatim from `lucide-react/dist/esm/icons/upload.mjs`.
+ */
+export function UploadIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="M12 3v12" {...strokeProps(color, strokeWidth)} />
+      <Path d="m17 8-5-5-5 5" {...strokeProps(color, strokeWidth)} />
+      <Path
+        d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+        {...strokeProps(color, strokeWidth)}
+      />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `triangle-alert`. Something needs the driver's attention.
+ *
+ * Transcribed verbatim from `lucide-react/dist/esm/icons/triangle-alert.mjs`.
+ *
+ * Used where a *state* is wrong rather than where an action failed: a rejected
+ * document, a parked outbox item. It is deliberately not `circle-alert`, which
+ * this app does not carry — one glyph per idea, per DESIGN.md § Icons.
+ */
+export function AlertTriangleIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path d="M12 9v4" {...strokeProps(color, strokeWidth)} />
+      <Path d="M12 17h.01" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `clock`. Waiting on somebody else.
+ *
+ * Transcribed verbatim from `lucide-react/dist/esm/icons/clock.mjs`.
+ */
+export function ClockIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Circle cx="12" cy="12" r="10" {...strokeProps(color, strokeWidth)} />
+      <Path d="M12 6v6l4 2" {...strokeProps(color, strokeWidth)} />
     </Outline>
   );
 }

@@ -91,6 +91,7 @@ function trip(overrides: Partial<Trip> = {}): Trip {
     duration_minutes: null,
     fare: null,
     estimated_fare: null,
+    earnings: null,
     passenger_contact: { name: 'Sarah N.', phone: '+256700123456', label: 'Passenger' },
     created_at: null,
     updated_at: null,

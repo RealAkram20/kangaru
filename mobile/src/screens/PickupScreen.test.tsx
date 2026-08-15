@@ -79,6 +79,7 @@ function trip(overrides: Partial<Trip> = {}): Trip {
       is_estimate: true,
       basis: 'Straight-line distance. The final fare follows the distance actually travelled.',
     },
+    earnings: null,
     passenger_contact: { name: 'Sarah N.', phone: '+256700123456', label: 'Passenger' },
     created_at: null,
     updated_at: null,
