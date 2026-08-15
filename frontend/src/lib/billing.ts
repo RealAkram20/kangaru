@@ -82,6 +82,8 @@ export const ROUNDING_OPTIONS: { value: RoundingMode; label: string }[] = [
  * the two lists exist to be compared.
  */
 export const VEHICLE_CATEGORIES = [
+  'boda',
+  'tricycle',
   'sedan',
   'suv',
   'van',

@@ -84,7 +84,7 @@ class RateCardService
             $version = RateCardVersion::create([
                 'tenant_id' => $locked->tenant_id,
                 'rate_card_id' => $locked->id,
-                'version' => $this->nextVersionNumber($locked),
+                'version' => $this->nextVersionNumber($locked, $actor),
                 'effective_from' => $data['effective_from'],
                 'currency' => Shillings::currency(),
                 'rounding_mode' => RoundingMode::tryFrom((string) ($data['rounding_mode'] ?? ''))
@@ -177,8 +177,33 @@ class RateCardService
         });
     }
 
-    private function nextVersionNumber(RateCard $card): int
+    /**
+     * The next version number for this card, counted the way the card itself
+     * was loaded.
+     *
+     * **`forActor()`, not `$card->versions()`.** The plain relation carries
+     * the global `TenantScope`, which fails closed — `1 = 0` — whenever no
+     * tenant is bound. Platform staff have no tenant of their own, so for a
+     * **platform-owned** rate card (`tenant_id` null, which the public walk-in
+     * tariff is) the count came back empty and this returned 1 for ever. The
+     * insert then died on the `(rate_card_id, version)` unique index, so the
+     * public tariff could not be given a second version through the API at
+     * all — a 500, every time.
+     *
+     * It was never noticed because that card is the only platform-owned one
+     * and it had exactly one version. `Vehicle::CATEGORIES` hid it further:
+     * the request refused the tariff's own `boda` and `tricycle` rows with a
+     * 422 before execution ever reached here.
+     *
+     * Reading past the scope grants nothing. `$card` has already been resolved
+     * through `RateCard::forActor()` and authorised by the policy; this only
+     * asks how many versions that same card has, filtered to it by id.
+     */
+    private function nextVersionNumber(RateCard $card, User $actor): int
     {
-        return (int) $card->versions()->reorder()->max('version') + 1;
+        return (int) RateCardVersion::forActor($actor)
+            ->where('rate_card_id', $card->getKey())
+            ->reorder()
+            ->max('version') + 1;
     }
 }
