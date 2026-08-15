@@ -835,9 +835,13 @@ live trip's nature is the seeder author's deliberate choice.
 
 ### 2026-08-15 — Settlement requests, and the transactions screen (driver app)
 
-**Status:** in progress. Follows the Wallet entry below; **the owner ruled on
-the two forks it raised**, so this builds what that entry deliberately left
-out.
+**Status:** complete. 395 mobile tests, 126 Drivers + 13 CI contract tests,
+`tsc --noEmit` and eslint clean across `mobile/src`, Pint clean and PHPStan
+level 8 clean across `app` and `Modules`. Five guards proved by mutation and
+restored; all three surfaces rendered and read.
+
+Follows the Wallet entry below; **the owner ruled on the two forks it raised**,
+so this builds what that entry deliberately left out.
 
 **The owner's two decisions:**
 
@@ -908,6 +912,69 @@ the two buttons, and the **most recent few** movements with a **View all**;
   ledger alone; a pending request changes nothing until it is confirmed, and
   the screen says so. Otherwise a driver could "request" their way out of
   what they owe.
+
+**Two things the framework made me do differently, both worth knowing:**
+
+- **`abort_unless(..., 403)` does not render the API envelope.** It produces a
+  framework error page, and `ValidatesOpenApiContract` catches it — three
+  tests failed on a missing `success` key. The house pattern is a policy plus
+  `$this->authorize()`, which raises `AuthorizationException` and gets
+  rendered properly. That is why `DriverSettlementRequestPolicy` exists rather
+  than an inline permission check.
+- **An `Auditable` model must be in the morph map or every insert throws.**
+  `AppServiceProvider::enforceMorphMap` gained one line; without it the first
+  request 500s with *"No morph map defined"*. The comment above that array
+  already warns about this — `VehicleAllocation` once shipped a table where
+  every insert threw — and I hit it anyway.
+
+**Five mutations, all of which bite** (and all restored):
+
+| Mutation | Test that caught it |
+|---|---|
+| Idempotency guard removed from `confirm()` | pays exactly once however many times confirm is pressed |
+| `ledgerSign()` inverted | writes one settlement entry when the office confirms a remittance |
+| Ledger date filter measured in UTC | narrows to a range, measured in the driver's local day |
+| `parseAmount` multiplies by 100 | never multiplies by a hundred, because UGX is zero-decimal |
+| Today's range drops its inclusive `to` | asks the server for today, at both ends of the day |
+
+**Files actually touched, corrected from the plan above.** As planned, plus:
+
+- `backend/app/Enums/ErrorCode.php` — one case,
+  `SETTLEMENT_REQUEST_ALREADY_OPEN`, **and its twin in `openapi.yaml`'s error
+  enum**. The spec lint requires every case to be enumerated there, and
+  missing it fails the request's own test rather than a separate suite.
+- `backend/app/Providers/AppServiceProvider.php` — the morph-map line and the
+  policy registration.
+- `mobile/src/ui/theme.ts` — **two added tokens**, `borderOnPrimary` (a
+  hairline on the green balance card) and `scrim` (the dim behind the sheet).
+  Both replaced a raw `rgba()` at a call site, which DESIGN.md §8 fails.
+- `mobile/jest.setup.ts` — a mock for the date picker. A native module, so it
+  throws on render under Jest; mocked as a named element rather than `null` so
+  a test can assert the picker *opened*.
+- `mobile/src/wallet/StatementRow.tsx` — **extracted from `WalletScreen`**
+  when `TransactionsScreen` needed the same row (AGENTS.md's rule). The two
+  must not drift into two ways of writing one fact about somebody's pay.
+- `mobile/package.json` — the one dependency the owner approved.
+
+**Not built, deliberately:**
+
+- **The office console screen.** The API can confirm and decline; nothing in
+  `frontend/` can. **This is now the biggest gap in the whole earnings/wallet
+  feature** — drivers can raise requests that only an API client can answer.
+  ADR-0032's Consequences names it as the next step.
+- **A dedicated `drivers.settle` permission.** `drivers.manage` gates
+  confirmation today. Confirming that money moved is closer to a Finance act,
+  and AGENTS.md already requires MFA for Finance because those roles move
+  money — `DriverSettlementRequestPolicy` is the single seam to cut when
+  Finance separates from Fleet.
+- **A way for a driver to cancel their own pending request.** They must wait
+  for the office to answer. Cheap to add and not asked for; noted because the
+  one-open-per-kind rule makes its absence more annoying than it looks.
+- **The four-tab bar.** Still the mockup's, still not taken — Earnings and
+  Wallet are both reached from Home cards, and promoting them to tabs reaches
+  every screen in the app.
+- **Notifications.** ADR-0032 §6 keeps ADR-0029's position: a driver learns
+  their request was answered by opening the wallet.
 
 ---
 
@@ -1736,3 +1803,931 @@ one.
 rate-limited and excluded by OSRM's own usage policy. `maps.osrm_base_url` is
 a setting so self-hosting is a URL change: a Docker container and the Uganda
 extract from Geofabrik.
+
+---
+
+### 2026-08-15 — "Trips History" screen, and the four-tab bar (driver app)
+
+**Status:** complete.
+**Mockup:** driver app, Trips History. Back arrow and a green title; **All /
+Rides / Deliveries** filter chips; day-grouped sections (**Today**,
+**Yesterday**) over rows of *icon · Ride|Delivery · origin → destination ·
+time · UGX figure*; and a four-item tab bar — **Home / Earnings / Wallet /
+Profile**, with icons.
+
+**No trip status is claimed.** This is a record list, not a leg of a job. The
+ownership table above is unchanged, and every row opens through the existing
+`tripDestination()` so a live trip still lands on the screen that owns it.
+
+**The owner ruled on the three forks I raised before writing anything.** All
+three are recorded here because two of them reverse decisions this file
+already holds:
+
+1. **The money on each row is the driver's own earnings, not the gross fare.**
+   The deciding argument was reconciliation: a driver adding up this list must
+   get the same figure the Earnings screen shows, and `/me/earnings` totals
+   `fare_earned`. Showing gross would also repeat the confusion
+   `TripResource::driverEarningsFor()` was written to prevent.
+2. **The tab bar becomes four: Home / Earnings / Wallet / Profile.** *This
+   overturns the three-tab decision documented in `navigation/types.ts` and
+   flagged-but-not-taken by the Wallet and Earnings agents.* Third mockup to
+   ask for it; the owner has now taken it. **Time off loses its tab and moves
+   under Profile.**
+3. **Cancelled and no-show trips appear**, with `—` where the money goes and
+   the status named. A history that hides the trip a driver wasted forty
+   minutes on is a record with holes, and nothing else in the app lists them.
+
+**Files I expect to own:**
+
+- `backend/Modules/Drivers/Controllers/DriverTripHistoryController.php`
+- `backend/Modules/Drivers/Resources/DriverTripResource.php`
+- `backend/tests/Feature/Drivers/DriverTripHistoryTest.php`
+- `docs/api/openapi.yaml` — `/me/trips` and `DriverHistoryTrip` only
+- `mobile/src/trips/history.ts` + `history.test.ts`
+- `mobile/src/trips/historyQueries.ts`
+- `mobile/src/screens/TripsHistoryScreen.tsx` + `.test.tsx`
+
+**Files shared — the exact edits:**
+
+- `backend/Modules/Drivers/Routes/api.php` — one route.
+- `backend/Modules/Drivers/README.md` — the new endpoint.
+- `mobile/src/api/endpoints.ts` — one fetcher and its types.
+- `mobile/src/ui/icons.tsx` — **additive**: `HouseIcon` and `ReceiptIcon`,
+  transcribed verbatim from `lucide-react/dist/esm/icons/{house,receipt}.mjs`.
+- `mobile/src/ui/components.tsx` — **one additive change to `ScreenHeader`**:
+  `onBack` becomes optional, because a screen that is now a *tab root* has
+  nothing behind it and must not draw an arrow that pops to nowhere.
+- `mobile/src/navigation/types.ts` + `RootNavigator.tsx` — the four-tab
+  restructure, and the `TripsHistory` route.
+- `mobile/src/screens/HomeScreen.tsx` — an entry point to the history, and the
+  Earnings tile's glyph changed to match the new Earnings tab (one vocabulary
+  per concept, DESIGN.md §7).
+- `mobile/src/screens/EarningsScreen.tsx`, `WalletScreen.tsx` — each loses its
+  back arrow now that it is a tab root. Two lines each, no layout change.
+- `mobile/README.md` — the navigation tree.
+
+**Why a new `GET /me/trips` rather than widening `GET /trips`.** Three
+reasons, and the third is about this shared tree:
+
+- The screen needs two facts `TripResource` cannot serve on a list:
+  `service_type` (for the filter) and the driver's `fare_earned` amount. Both
+  are per-page joins — the pattern `DriverLedgerController::serviceTypesFor()`
+  already established — and `TripResource::driverEarningsFor()` deliberately
+  returns null on `index()` because `ledgerEntries` is unbounded per row.
+- `/me` is where every driver-scoped endpoint on this platform lives: **the
+  driver is the token**, so there is no id in the path and no policy to write.
+- `TripResource.php` currently has three agents' fields interleaved in it.
+  Adding a constructor argument to it would touch all of them.
+
+**Decisions I am taking without asking, with the rule behind each:**
+
+- **The day grouping is computed server-side**, as a `local_day` key per row
+  plus `timezone`, `today` and `yesterday` in `meta`. The earnings work found
+  that `config/app.php` is UTC and a Kampala driver's day rolls at 03:00
+  local; grouping on the handset would reintroduce that bug, in a place where
+  it puts an evening's trips under the wrong heading.
+- **Deliveries take `PackageIcon`, not a scooter.** The mockup draws a
+  motorbike with a box; Lucide's `bike` is a bicycle and there is no scooter.
+  `PackageIcon` is already what `StatementRow` uses for a delivery, and
+  DESIGN.md §7 wants one vocabulary rather than a second glyph for one idea.
+- **The chips filter server-side**, not over a loaded page. The list is
+  cursor-paginated, so filtering the current page would show "3 rides" out of
+  25 loaded rows and call it all of them.
+
+---
+
+**Closed.** 430 mobile tests (34 new), 142 Drivers + 163 Trips backend tests
+(16 new), `tsc --noEmit` and eslint clean across `mobile/src`, Pint and PHPStan
+level 8 clean on every file touched. **Fourteen guards proved by mutation and
+all restored** — eight in the app, six on the server. The screen was rendered
+and its tree read against the mockup, which found two defects no test had.
+
+**Files actually touched, corrected from the plan above.** As listed, plus:
+
+- `backend/Modules/Trips/Models/Trip.php` — **one added scope,
+  `forDriver()`**, mirroring the existing `forCustomer()` directly above it.
+  Not in the plan and not optional; see the finding below.
+- `backend/app/Support/Auth/ClientScope.php` — **five route names, and four of
+  them were somebody else's missing.** See the finding below.
+- `mobile/src/offline/SyncProvider.tsx` — one added invalidation for
+  `['trip-history']`, beside the four already there.
+- `mobile/src/screens/WalletScreen.test.tsx` — **one assertion inverted**, not
+  deleted. It read *"goes back to where it was opened from"* and was correct
+  while the wallet was pushed from a Home card; a tab root has nothing behind
+  it. The new one asserts there is no arrow, and the old wording is preserved
+  in a docblock above it. **Wallet agent: revert freely if you would rather
+  own this.**
+- `mobile/src/screens/EarningsScreen.test.tsx` — one route name in a fixture.
+
+**Two live bugs found next door, and fixed rather than reported.** Both were
+sitting under the screen I was adding and leaving them would have meant
+shipping a fourth working screen beside three broken ones:
+
+1. **`me.earnings.show`, `me.ledger-entries.index` and both
+   `me.settlement-requests.*` were missing from `ClientScope`.** That list
+   fails closed, so **Earnings, Wallet and Transactions were all 403 to a
+   driver-scoped token** — every screen the last two agents built. Nothing
+   catches it but a handset: every backend test signs in without a `client`,
+   which mints an *unscoped console* token, so those endpoints pass their own
+   suites while being unreachable from the app. `DriverTripHistoryTest` now
+   has a case that signs in with a real driver token, which is the only kind
+   of test that can see this.
+2. **`Trip` is `BelongsToTenant` and a driver's walk-in work has no tenant.**
+   `TenantScope` fails closed — `1 = 0` with nothing bound, `tenant_id = X`
+   with something bound, and a walk-in's is null either way — so any `/me`
+   query over trips silently returns a *plausible, incomplete* list. Same trap
+   that cost `/me/ledger-entries` a test. `Trip::forDriver()` is the named
+   opt-out and removing it fails 12 of my 16 tests.
+
+   **Reported, not fixed: `GET /trips` has the same exposure.**
+   `TripController::index` uses `Trip::forActor($user)`, which keeps the scope
+   for anyone who is not platform-level — so a driver's walk-in trips may not
+   be reaching the home screen list either. I have not touched it: it is a
+   console endpoint with four clients and its own tests, and changing its
+   scoping is not a side-effect of building a history screen. **Worth somebody
+   looking at with a seeded walk-in and a driver token.**
+
+**Two defects the render pass caught that no test did** — both invisible in a
+test and obvious in a tree:
+
+1. **Every status was drawn in `warning` amber.** DESIGN.md §3 files
+   `cancelled` and `no_show` under *Error* (`#B42318`), and a cancelled trip
+   reading as a caution understates it — while `invoice_generated` and
+   `closed` would have been coloured as problems when they are simply a
+   completed trip moving through billing. `statusTone()` now maps the three
+   tones and has its own test.
+2. **The day section was a grey band over loose rows**, not the mockup's card.
+   The band had its top corners and nothing closed the bottom. The header now
+   carries three edges and the last row carries the fourth plus the bottom
+   corners.
+
+**A test of mine that was wrong about the schema**, kept in the suite rather
+than deleted. It set out to prove that dropping `driver_id` from the earnings
+join would show one driver another's pay. It cannot:
+`driver_ledger_entries` has a unique index on `(trip_id, kind)`, so two
+drivers can never both hold a `fare_earned` row for one trip. The predicate is
+defence in depth, the controller now says so instead of claiming otherwise,
+and the test asserts what *is* provable — that `cash_collected` is excluded,
+which is the predicate that actually bites.
+
+**Left alone in another agent's files (rule 6).** Whoever is building the
+Profile screen and documents (ADR-0033): `Modules/Drivers/Routes/api.php` has
+`DriverProfileController` imported out of alphabetical order, between
+`DriverEarningsController` and `DriverLedgerController`, so `pint --test` fails
+on that file. One line, and yours. My route sits below yours and is untouched.
+
+**And a collision worth knowing about, in your favour:** I have made **Profile
+a tab**, and `AccountScreen` is currently its root (`ProfileHome`). Your screen
+is the better root — swap it in and the tab is yours; `TimeOff` and
+`ChangePassword` are already pushed screens beneath it. Nothing I built assumes
+`AccountScreen` stays there.
+
+**Not built, deliberately:**
+
+- **No "See earnings details" or per-trip breakdown from a history row.** A row
+  opens the existing `TripDetail` / live-leg screen through
+  `tripDestination()`, which is a real destination and already the record.
+- **No date-range filter**, though `/me/ledger-entries` has one and the
+  Transactions screen uses it. The chips answer *what kind*; *which dates* is a
+  second control on a screen that scrolls a whole history, and adding it
+  unasked would put two filters above six rows.
+- **No search.** Origin and destination are free text keyed by a dispatcher, so
+  a search box would match inconsistently spelled place names and mostly return
+  nothing. A real one wants indexed places, which the platform does not have.
+- **No self_drive chip.** The platform knows three service types and the mockup
+  draws two. `All` still includes self-drive, so nothing is hidden — which is
+  what makes a two-chip filter honest rather than lossy.
+- **`GET /trips` is not deduplicated against `/me/trips`.** Both now list a
+  driver's work through different lenses, and folding them together is a real
+  cleanup for whoever is next in `TripController`.
+
+**Follow-up: I was wrong to drop the back arrow from the tab roots.** The
+owner read the Wallet screen against its mockup and reported it as broken, and
+on that one point they were right.
+
+My reasoning was that `goBack()` on a tab-stack root is a *silent no-op*, so an
+arrow there is a control that looks live and does nothing. That half is true.
+The conclusion was not: the mockup draws the arrow **and** the tab bar
+together, and a driver who opened the wallet from the Home screen's balance
+card expects the way out to work. The right answer was an arrow with an
+explicit destination, not no arrow.
+
+`WalletScreen` and `EarningsScreen` now pass
+`onBack={() => navigation.getParent()?.navigate('Home')}`. It always does
+something, wherever the driver came from, and it lands on the tab holding the
+card that opened it. `ScreenHeader`'s `onBack` stays optional — the parameter
+was right, my use of it was not — and its docblock now says that a tab root
+should pass a destination rather than omit the arrow. The `WalletScreen` test I
+inverted last pass is inverted back, with both wordings recorded.
+
+**Everything else the owner read as broken on that screen predates this work
+and is deliberate** — the "Wallet balance" naming over "Available Balance",
+the unsigned magnitude with its direction in words, "I've paid the office" /
+"Request a payout" in place of Withdraw / Add Money (the owner's own ADR-0032
+ruling), and the absent Tip / Weekly Bonus / Withdrawal rows. All of it is the
+Wallet agent's, argued in their entry above. Nothing has been changed there,
+and the differences have been put back to the owner as a list rather than
+resolved by me.
+
+**To the ADR-0033 agent:** `ProfileScreen.tsx` appeared in the tree while this
+was landing and I have not opened it. Two of its `tsc` errors were routes
+missing from `ProfileStackParams`, which is my file — `Documents` and
+`SyncQueue` are declared there now, purely additively, and **neither screen is
+registered in `RootNavigator` because neither exists yet**. Those are yours.
+Your remaining four errors were a component of your own missing a required
+`icon` prop; they have resolved themselves since, and I touched none of it.
+
+---
+
+### 2026-08-15 — "Driver Profile" screen, and driver documents (ADR-0033)
+
+**Status:** complete. 479 mobile tests, 178 Drivers backend tests, 369 frontend
+tests, `tsc --noEmit` and eslint clean on both TypeScript apps, Pint clean and
+PHPStan level 8 clean across `app` and `Modules`. **Ten guards proved by
+mutation and restored** — and an eleventh *survived*, which is written up below
+because a surviving mutation is the finding, not a footnote. Both mobile
+screens were rendered against the seeded database's real payload, which caught
+three defects no test had.
+**Mockup:** driver app, Profile. Back arrow and a green title; a card with a
+photograph, **John Kamau**, ★ 4.8 *(428 trips)*, then Phone / Vehicle /
+Vehicle Type / Member since; a menu card of **Documents — Verified ›**, **Bank
+Details ›**, **Settings ›**, **Log Out ›**; and the four-tab bar.
+
+**No trip status is claimed.** The ownership table above is unchanged.
+
+**To the Trips-History agent, whose four-tab entry is still open:** I am taking
+`AccountScreen` — the `ProfileHome` route your `navigation/types.ts` docblock
+says is *"not mine to rewrite"*. I am **not** touching the tab bar, the icons
+you added, or `TripsHistoryScreen`. One thing you should know:
+
+> **`TimeOff` is currently unreachable.** It is registered on `ProfileStack`
+> and nothing in the app navigates to it — it lost its tab and never gained a
+> row. `grep -rn "TimeOff" src/` finds only the navigator. My screen gives it
+> the row; flagging it in case you would rather place it yourself.
+
+**The owner ruled on three forks before any code was written.** Two of the
+mockup's four menu rows had nothing behind them at any layer:
+
+1. **Documents — build it for real.** There is no document table, no upload, no
+   verification state; `Driver`'s own docblock says *"document uploads are
+   deferred"*. A green **Verified** against a compliance fact the platform does
+   not hold is the most dangerous invention on this mockup: a driver stopped at
+   a checkpoint would believe their papers are on file. The owner chose the
+   feature over the omission, so this entry carries **ADR-0033** and a
+   documents system across all three apps.
+2. **Bank Details becomes a row pointing at the Wallet tab.** No bank rail
+   exists and ADR-0029 §6 rules one out by name; ADR-0032 made settling up a
+   *request the office answers*, and that already lives on Wallet. The row
+   names the real destination instead of implying a transfer.
+3. **The parked outbox queue gets its own screen**, reached by a row that turns
+   red and counts when it is non-empty. ADR-0023 §6 requires a refused update
+   to keep its payload and be shown; the mockup's menu shape has no room for it
+   inline, and burying it would have been the one thing this redesign must not
+   do.
+
+**Decisions I am taking without asking, with the rule behind each:**
+
+- **No back arrow.** Profile is a **tab root** — `goBack()` on a stack root is
+  a silent no-op, so the arrow would look live, be tapped, and do nothing.
+  `ScreenHeader`'s `onBack` is already optional for exactly this.
+- **No photograph. A monogram instead.** No avatar column, no upload and no
+  storage exists for one anywhere in the platform, and a stock face is the same
+  defect three screens have already refused for passengers. Initials are
+  derived from the driver's own name, so they are a fact rather than a picture
+  of somebody else.
+- **The rating stays withheld below five ratings** (ADR-0030 §3) — `—` and the
+  count, exactly as the home screen's tile does. One vocabulary for one number.
+- **"(428 trips)" becomes a real lifetime count**, from a `COUNT` over
+  completed trips. It is measured, so it is allowed.
+- **A new `GET /me/profile` rather than fattening `GET /me/stats`.** Stats is
+  polled on the home screen every sixty seconds; a lifetime count, a vehicle
+  join and a documents summary on every poll is a bill nobody is reading.
+- **Document types are named without a Uganda assumption.** `driving_licence`,
+  `identity_document`, `vehicle_insurance`, `vehicle_registration` — not "PSV
+  badge" or "logbook", which are East African terms for locally-shaped
+  artefacts. The quality-control north star: nothing new may deepen the Uganda
+  assumption.
+- **`expired` is derived from `expires_at`, never stored.** A stored expiry
+  status needs a nightly job and is wrong between runs; a comparison at read
+  time is right at every instant and costs nothing.
+
+**Files I expect to own:**
+
+- `docs/adr/0033-driver-documents-and-verification.md`
+- `backend/database/migrations/*_create_driver_documents_table.php`
+- `backend/Modules/Drivers/Enums/DriverDocumentType.php`, `…Status.php`
+- `backend/Modules/Drivers/Models/DriverDocument.php`
+- `backend/Modules/Drivers/Services/DriverDocumentService.php`,
+  `DriverDocumentStore.php`
+- `backend/Modules/Drivers/Controllers/DriverDocumentController.php` (driver)
+  and `DriverDocumentReviewController.php` (office)
+- `backend/Modules/Drivers/Requests/StoreDriverDocumentRequest.php`,
+  `RejectDriverDocumentRequest.php`
+- `backend/Modules/Drivers/Resources/DriverDocumentResource.php`
+- `backend/Modules/Drivers/Policies/DriverDocumentPolicy.php`
+- `backend/Modules/Drivers/Controllers/DriverProfileController.php`
+- `backend/Modules/Drivers/Services/DriverProfileService.php`
+- `backend/tests/Feature/Drivers/DriverDocumentTest.php`,
+  `DriverProfileTest.php`
+- `mobile/src/profile/` — `queries.ts`, `presentation.ts` + test
+- `mobile/src/screens/ProfileScreen.tsx` + `.test.tsx`
+- `mobile/src/screens/DocumentsScreen.tsx` + `.test.tsx`
+- `mobile/src/screens/SyncQueueScreen.tsx`
+- `frontend/src/pages/drivers/DriverDocumentsPanel.tsx` + test
+
+**Files shared — the exact edits, none of them a rewrite:**
+
+- `backend/Modules/Drivers/Routes/api.php` — six routes.
+- `backend/app/Support/Auth/ClientScope.php` — three driver route names.
+- `backend/app/Providers/AppServiceProvider.php` — one morph-map line, one
+  policy registration.
+- `backend/app/Enums/ErrorCode.php` + `docs/api/openapi.yaml`'s error enum —
+  the spec lint requires both halves.
+- `docs/api/openapi.yaml` — `/me/profile`, `/me/documents`,
+  `/drivers/{driver}/documents`, and their schemas only.
+- `backend/Modules/Drivers/README.md` — the new endpoints.
+- `backend/database/seeders/DriverAppSeeder.php` — demo documents, so the
+  screen can be seen populated. Through the service, never by writing rows.
+- `mobile/src/api/endpoints.ts` — the fetchers and their types.
+- `mobile/src/navigation/types.ts` + `RootNavigator.tsx` — `ProfileHome` now
+  points at `ProfileScreen`, plus two added routes. **The Trips-History agent
+  is in both files**; my diff is additive and does not touch the tab bar.
+- `mobile/src/ui/icons.tsx` — **additive**, transcribed verbatim from
+  `lucide-react/dist/esm/icons/`.
+- `mobile/src/ui/components.tsx` — one added shared component if the menu row
+  earns it (it appears three times on this screen alone).
+- `mobile/README.md` — the navigation tree.
+- `frontend/src/pages/DriversPage.tsx` — the panel's entry point.
+
+---
+
+**Files actually touched, corrected from the plan above.** As planned, plus:
+
+- `backend/database/seeders/DriverAppSeeder.php` — **two** added steps, not one.
+  The second was not planned: `drivers.vehicle_id` had never been set by
+  anything, so every seeded driver's profile reported an em dash for a fact the
+  platform could hold. It is its own method rather than a line inside
+  `seedEarningsAndRatings`, because that method returns early once its trips
+  exist — a line there would never execute on the second run, which is the run
+  everybody actually does. That is the exact shape of the `firstOrCreate` bug
+  this file already records.
+- `mobile/src/ui/components.tsx` — one added component, `MenuRow`, and its
+  styles. It appears six times on the profile screen alone. Deliberately **not**
+  `DetailRow` from `facts.tsx`: that one states a fact and is not tappable, and
+  folding them together would give every fact on every screen a chevron that
+  goes nowhere.
+- `mobile/src/api/endpoints.ts` — two helpers (`documentFileName`,
+  `documentMimeType`) are **exported** rather than private, as
+  `buildTransitionForm` is, because React Native's `FormData` polyfill does not
+  hand a file part back intact and there is no other way to assert what a
+  document is labelled as.
+- `mobile/README.md` — beyond the tree: the driver scope is **thirty-eight**
+  route names now, not nineteen (three agents have added to it since that
+  sentence was written), and the "a tab root draws no back arrow" paragraph was
+  stale. See the note to the Trips-History agent below.
+- `frontend/src/types/driverDocument.ts` and
+  `frontend/src/pages/drivers/DriverDocumentsDialog.tsx` + test — new, and not
+  in the original plan's file list under those names.
+- **`mobile/src/screens/AccountScreen.tsx` is deleted.** Everything in it lives
+  on `ProfileScreen` or `SyncQueueScreen`; nothing was dropped.
+- **No new dependency.** `expo-image-picker` and
+  `@react-native-community/datetimepicker` were both already installed.
+
+**What rendering caught that no test did — three things, all wording.** The
+screens were drawn against the seeded payload and read:
+
+1. **The "a new photo goes back to be checked again" warning was under every
+   row**, including the *rejected* one — where sending another photo is
+   precisely what the office asked for, so the sentence discouraged the only
+   action that screen exists to prompt. It is now shown on a verified document
+   only, where there is genuinely a verification to lose.
+2. **A rejected document's button said "Replace it"**, which describes swapping
+   out something that worked. It now says **"Send it again"**.
+3. **A verified identity document was showing its upload hint** — "A national
+   ID, passport, or whatever your country issues" — an instruction to
+   photograph a thing already on file. It now reads "Accepted by the office."
+
+None of these is a crash and every test passed with all three present. They are
+the class of defect that only reading the assembled screen finds.
+
+**The mutation that survived, and what it means.** Rewriting
+`uploadDriverDocument` to send JSON instead of multipart **compiled cleanly and
+passed every test** — including all seven screen tests, which mock the
+mutation. In production it would have posted `[object Object]` where the
+photograph goes, and the driver would have read the server's 422 as "the office
+refused my licence". `mobile/src/profile/upload.test.ts` exists because of it,
+and the same mutation now fails two of its cases. **A surviving mutation is the
+most useful result a mutation pass produces**, and it is the one that would
+have been easiest not to report.
+
+**Ten guards proved by mutation** (all restored):
+
+| Mutation | Test that caught it |
+|---|---|
+| `complianceState()` stops overriding a lapsed verification | reports a lapsed but verified document as expired |
+| A replacement keeps its old `verified` status | resets the review when a verified document is replaced |
+| `DriverDocumentPolicy::review()` grants the owner | never lets a driver verify their own document |
+| The driver/document pairing check dropped from `verify` | answers 404 when the document does not belong to this driver |
+| `me.documents.*` dropped from `ClientScope` | scopes the driver app token to its own document routes only |
+| `requiresExpiry()` ignored in the Form Request | demands an expiry for the documents whose meaning is a date |
+| The app row reads `status` instead of `compliance_state` | reads compliance_state, not status (+3 more) |
+| `isoDate` goes through `toISOString()` | uses the local calendar date, not UTC |
+| `documentsSummary` defaults to "Verified" when nothing loaded | never guesses the friendly answer when nothing has loaded |
+| The parked-queue row hidden while the queue is empty | keeps the parked queue reachable |
+
+Plus two on the console: reading `status` instead of `compliance_state`, and
+dropping the required-reason gate on a rejection. Both bite.
+
+**Two things worth knowing about this shared tree.**
+
+- **The Trips-History agent had already added `Documents` and `SyncQueue` to
+  `navigation/types.ts` before I got there**, with a docblock saying the screens
+  were mine to write and register. That is this file working exactly as
+  intended, and it saved a collision on the file three agents were in.
+- **A third agent is live**, adding `driver_weekly_bonuses`. I have not touched
+  it. Note for them: three entries in this file (Earnings, Wallet, Ride
+  Complete) refuse a bonuses row on the grounds that no bonus exists anywhere in
+  the backend. If bonuses are now real, **those three screens are stale, not
+  wrong** — and the Earnings screen's `UGX 0` argument in particular should be
+  revisited rather than inherited.
+- **The shared test database was migrated under me three times mid-run**,
+  producing 119, then 104, then 178 failures across suites I had not touched —
+  the same symptom this file already records. A clean re-run gave 178/178 every
+  time. If you see a wall of "table doesn't exist", re-run before diagnosing:
+  the second time it happened I watched
+  `insert into migrations … 0001_01_01_000001_create_cache_table` go past,
+  which is somebody else's `migrate:fresh`, not a code break.
+
+**One failing mobile test at the moment I finished, and it is not mine.**
+`src/earnings/presentation.test.ts` — *"gives a tip and a bonus rows of their
+own, not an Other work row"*. That is the bonuses agent's work in flight;
+`src/wallet/presentation.ts` is also mid-refactor and `tsc` fails on five
+missing exports in `src/wallet/presentation.test.ts`. **Neither file was
+opened** (rule 6). Every one of my own suites is green: 488 of the 489 mobile
+tests pass and the one that does not is theirs.
+
+**A polish pass after the render pass caught three more, all mine:**
+
+1. **A failed document fetch rendered a blank page** with only the "the office
+   checks each one by hand" footnote on it — which reads as *you have no
+   documents*, the opposite of the truth, on the screen whose entire subject is
+   what the office is holding. There is now a failure state with a retry, and
+   the footnote goes with the list it refers to.
+2. **`flexShrink: 0` on the menu value and the fact label** read as "this is
+   protected" and was really "this overflows the row". A localised label beside
+   a localised value exceeds a 360dp screen; both now shrink, at rates that put
+   the right half on screen. PRODUCT.md's international-ready rule is what makes
+   this a defect rather than a preference.
+3. **A dead `label` field** on the staged-photo type, written and never read.
+
+**Contrast was computed, not eyeballed**, for every pairing introduced:
+`warning` 5.43:1, `danger` 6.57:1, `primaryText` 7.91:1, `textMuted` 5.98:1 on
+white — all clear AA for normal text. `primary` at 4.15:1 is used only for menu
+glyphs, where the 3:1 UI-component threshold applies. **One thing to know:**
+`colors.star` measures **2.03:1** on white and is below even the 3:1 UI
+threshold. It is not mine and not new — `HomeScreen` uses it the same way — and
+it carries no unique meaning here, since the score sits beside it and the row
+has a composed screen-reader sentence. Reported rather than changed, because
+retuning a shared token is a design decision, not a side effect of this screen.
+
+**Not built, deliberately:**
+
+- **Nothing is gated on a document.** ADR-0033 §6 keeps enforcement out of
+  scope on purpose: a fleet where half the licences lapse on a Sunday cannot
+  take work on Monday, and that is a depot manager's decision, not an agent's.
+  `DriverDocumentService::complianceFor()` is the seam a future rule consults,
+  so there is never a second notion of compliance. **This is the biggest open
+  question the feature raises.**
+- **No notification when a document is verified or rejected.** Consistent with
+  ADR-0029 §6 and ADR-0032 §6 — a driver learns by opening the app. The push
+  channel exists (ADR-0025) and this is a fair candidate, but adding one
+  surface's worth while settlements and ratings have none is an inconsistency
+  rather than a feature.
+- **No document history.** A replacement deletes the superseded file. ADR-0033
+  §2 argues the trade and names the seam (soft-delete the row, not the file) if
+  a dispute ever needs it.
+- **No PDF upload from the handset.** The server accepts PDFs and the console
+  can read them, but the app offers the camera only —
+  `expo-document-picker` is not installed and a new dependency is the owner's
+  call. A driver photographs a document; a PDF is the office's path.
+- **No avatar upload.** The monogram is honest and a photo feature is a
+  storage, moderation and privacy conversation, not a row on a screen.
+- **`DriverApplication` still does not require documents.** Deliberate, per
+  ADR-0033's Consequences: making them a precondition of approval would stall
+  the applicant queue behind a review step the office has never done before.
+
+**Run it:**
+
+```
+php artisan db:seed --class=DriverAppSeeder
+```
+
+Sign in as `driver@kangaruride.test` / `password`, client `driver`, then
+**Profile**. The seeded driver has one verified licence, one verified identity
+document, one insurance certificate waiting, and one rejected registration with
+the office's reason on it — so the Documents row reads *1 needs attention* and
+every row state is visible at once. That is deliberately **not** the mockup's
+"Verified": four accepted documents would reproduce the screenshot and mean
+nobody ever saw the three states where the screen's behaviour actually lives.
+
+
+---
+
+### 2026-08-15 — Tips and bonuses (driver app + backend)
+
+**Status:** complete.
+**Source:** the owner read the Wallet screen against its mockup and chose to
+**build tipping and bonuses for real**, rather than keep refusing the mockup's
+*Tip from Sarah N.* and *Weekly Bonus* rows. Four screens currently carry
+docblocks saying tips do not exist; they are about to be wrong.
+
+**This needs a superseding ADR** — `docs/adr/0034-tips-and-bonuses.md`.
+AGENTS.md: *"A decision with an ADR requires a superseding ADR"*, and ADR-0029
+§6 rules both out by name. Same shape as ADR-0032, which superseded the same
+section for settlements.
+
+**The owner's three rulings, and the one that decided the data model:**
+
+1. **A tip reaches the platform as cash, declared by the driver and confirmed
+   by the office.** No gateway, no customer-side surface, no subscription —
+   the ADR-0032 pipeline that already exists.
+2. **The platform takes its usual commission on a tip.** This is the ruling
+   that made the model tractable, and it was worth the question: it means a
+   tip behaves *exactly* like a fare, reusing the pair that already makes the
+   balance come out right, and it belongs on the wallet statement as the
+   mockup draws it.
+
+   The alternative — a tip the driver keeps whole — creates **no obligation in
+   either direction**, so its effect on the balance is zero. That is not a
+   ledger entry at all: the ledger *is* the balance, and a `+2,000` row that
+   moves nothing would have broken the invariant the Wallet agent built the
+   screen on (*"every entry is shown, so the list sums to the balance above
+   it"*). It would have needed its own table and could not have appeared on
+   that screen. Same feature, completely different build.
+3. **Bonuses are an automatic weekly trip target**, not an ad-hoc award.
+
+**The arithmetic, which is the whole feature:**
+
+```
+Cash fare 10,000 + tip 2,000, commission 20%
+
+  fare_earned          + 8,000     the driver's share of the fare
+  cash_collected       − 10,000    gross fare in their hand
+  tip_earned           + 1,600     their share of the tip
+  tip_cash_collected   − 2,000     gross tip in their hand
+  --------------------------------
+  balance                − 2,400   commission owed on both
+```
+
+**Why `tip_cash_collected` is a fourth kind rather than a second
+`cash_collected` row.** `driver_ledger_entries` carries a unique index on
+`(trip_id, kind)` — the idempotency guard that stops a retried completion
+paying twice — so a tip on trip #412 cannot write a second `cash_collected`
+for #412. Splitting the kind keeps the trip link, keeps the index doing its
+job, and reads correctly on a statement. Naming mirrors the pair it copies.
+
+**Files I expect to own:**
+
+- `docs/adr/0034-tips-and-bonuses.md`
+- `backend/database/migrations/*_add_trip_to_driver_settlement_requests.php`
+- `backend/database/migrations/*_create_driver_weekly_bonuses_table.php`
+- `backend/Modules/Drivers/Models/DriverWeeklyBonus.php`
+- `backend/Modules/Drivers/Services/WeeklyBonusService.php`
+- `backend/Modules/Drivers/Console/AwardWeeklyBonuses.php`
+- `backend/tests/Feature/Drivers/DriverTipTest.php`, `WeeklyBonusTest.php`
+- `mobile/src/wallet/TipSheet.tsx`
+
+**Files shared — the exact edits:**
+
+- `backend/Modules/Drivers/Enums/LedgerEntryKind.php` — three cases.
+- `backend/Modules/Drivers/Enums/SettlementRequestKind.php` — one case, `TIP`.
+- `backend/Modules/Drivers/Services/DriverLedgerService.php` — `recordTip()`
+  and `recordBonus()`, beside the two that exist.
+- `backend/Modules/Drivers/Services/DriverSettlementRequestService.php` —
+  `confirm()` branches on kind; `raise()`'s one-open rule is scoped per trip
+  for tips.
+- `backend/Modules/Drivers/Services/DriverEarningsService.php` — the earnings
+  sum widens from `FARE_EARNED` to the three credit kinds.
+- `backend/Modules/Administration/Services/SettingsService.php` — a `billing`
+  bonus block.
+- `docs/api/openapi.yaml`, both READMEs, the mobile display layers.
+
+**Decisions I am taking without asking, with the rule behind each:**
+
+- **`bonus_enabled` defaults to `false`.** Same reasoning as
+  `routing_enabled`: a scheme that switches itself on at deploy starts an
+  unbudgeted liability against every driver on the platform. Turning it on is
+  a deliberate act.
+- **The target and the amount live in `settings`, never in the app or in a
+  constant.** This is the audit agent's finding 5 exactly — a threshold
+  hardcoded into a handset goes on asserting the old number after the office
+  changes it. Defaults are 40 trips and UGX 20,000 (the mockup's figure), both
+  admin-settable.
+- **The bonus is awarded by a scheduled command over a *closed* week**, never
+  mid-week. A partial week cannot be evaluated against a weekly target, and a
+  driver shown a bonus that later un-awards itself has been lied to.
+- **Idempotency is a unique index on `(driver_id, week_start)`**, not a
+  re-read. A cron that runs twice must not pay twice, and the `(trip_id,
+  kind)` index is the precedent for making that a database guarantee rather
+  than a code convention.
+- **A tip declaration names its trip**, and the one-open-request rule becomes
+  one open *per trip* for tips. The existing rule exists so the office is not
+  flooded with duplicate payout requests; a driver who took three tips in a
+  day has three real declarations to make.
+
+---
+
+**Closed.** 489 mobile tests (10 new), 112 backend money tests (23 new: 12
+tips, 11 bonuses), `tsc --noEmit` and eslint clean across `mobile/src`, Pint
+and PHPStan level 8 clean on every backend file touched. **Seventeen guards
+proved by mutation** — six in the app, eleven on the server.
+
+**Files actually touched, corrected from the plan above.** As listed, plus:
+
+- `backend/bootstrap/app.php` and `backend/routes/console.php` — the command
+  registration and the weekly schedule. Module commands are not auto-discovered
+  here; that is documented in `app.php` and I had to be told by a failing
+  `artisan` call.
+- `backend/Modules/Drivers/Requests/StoreSettlementRequest.php` and
+  `Controllers/DriverSettlementRequestController.php` — `trip_id`, and the
+  ownership check that goes with it.
+- `mobile/src/screens/RideCompleteScreen.tsx` — the tip declaration, and its
+  test gained a `wallet/queries` mock (the sheet reaches AsyncStorage).
+- `mobile/src/ui/icons.tsx` — `HandCoinsIcon` and `AwardIcon`, transcribed
+  verbatim. **Not the mockup's star**: a star means a *rating* in this product
+  (ADR-0030), and reusing it for money would invert the glyph platform-wide on
+  the one screen where the two could be confused.
+- Three fixtures gained `trip_id: null` because the new field is required on
+  `DriverSettlementRequest`. The mechanical patch that has caused collisions on
+  this branch three times now — if you add a required field to a shared type,
+  expect to patch these.
+
+**Two mutations survived, and both were real defects in my own tests.** This
+is the argument for the pass, so both are recorded:
+
+1. **A guard I added to `wallet/presentation.ts` was dead code.** I special-
+   cased the three new kinds in `rowTitle`; deleting the branch changed
+   nothing, because `kind !== 'fare_earned'` is already true for all of them.
+   Removed. The tests stay — they pin the *existing* condition against being
+   narrowed, which is the mutation that does bite and would rename a gratuity
+   "Ride earnings".
+2. **Nothing asserted the plural breakdown labels.** Deleting `tip` and
+   `bonus` from `serviceLabel`'s map survived: the fallback capitalises the raw
+   key and yields "Tip" and "Bonus", which is plausible, wrong, and invisible
+   beside rows that are all plural elsewhere. There is a test now.
+
+**A mistake of mine worth writing down, because it cost real work.** My
+mutation script backed files up to `/tmp/$(basename f)`, and
+`wallet/presentation.ts` and `earnings/presentation.ts` share a basename — so
+the restore overwrote the wallet module with the earnings one, and four
+mutation results after that were measured against a corrupted file. Neither is
+tracked by git, so there was nothing to `checkout`; the wallet module was
+reconstructed by hand and the whole pass re-run with distinct paths. **If you
+script a mutation pass across modules in this repo, key the backup on the full
+path.**
+
+**A test of another agent's that ADR-0034 inverted, kept rather than deleted:**
+`earnings/presentation.test.ts` asserted *"has no tip and no bonus row, because
+neither exists"*. It was correct until today. The replacement pins the new
+labels and the old wording is described in a docblock above it.
+
+**Three docblocks that had outlived the code are corrected** —
+`WalletScreen`, `EarningsScreen` and `DriverEarningsService` all stated that
+tips and bonuses do not exist on this platform. That is exactly the drift the
+audit agent's finding 5 was about, in prose rather than in a constant.
+
+**Not built, deliberately:**
+
+- **No office-side console screen for confirming a tip.** The endpoint is the
+  existing `POST /settlement-requests/{id}/confirm` and it handles the third
+  kind, but ADR-0032's note stands and is now heavier: there is still no
+  console surface for the settlement queue at all, so tips join remittances and
+  payouts in a queue nobody can see yet. **This is the single biggest gap in
+  the feature** and it is an office screen, not a driver one.
+- **No customer-facing tip.** ADR-0034 §1: it would need a payment path, and
+  ADR-0029 §6 rules that out — so a tip button in a passenger's app could only
+  ever be an instruction to hand over cash, which is what already happens.
+- **No notification when a bonus is awarded.** A driver finds it in their
+  wallet. The push channel exists (`TripOfferedNotification`) and this is a
+  reasonable second use for it, but a notification nobody asked for on a
+  surface that currently carries only job offers is its own decision.
+- **No bonus preview.** The app never learns the target or the amount, so it
+  cannot say "three more trips to your bonus". That is deliberate — the
+  figures are settings and a handset that stated them would state the old ones
+  — but a *server-computed* progress figure would be honest and is the obvious
+  next thing to want.
+
+**Seeder addendum, and two bugs found by running it rather than reading it.**
+
+`DriverAppSeeder` now writes one tip and one weekly bonus, through
+`recordTip()` and `recordBonus()` rather than as rows — so the demo data is
+whatever those rules say it is. Without them the Wallet looks exactly as it did
+before this feature, which is what the owner reported in the first place.
+
+1. **`seedWork()` was not re-runnable and had not been for a while.** It
+   created its three vehicles with a plain `Vehicle::factory()->create()` on a
+   unique `registration_number`, so a second run threw on `UDD 001D` *before
+   reaching anything after it* — which is why my tip and bonus silently never
+   landed on an already-seeded database. Fixed with look-then-factory, the
+   pattern the same file already documents at its other vehicle call site
+   (`firstOrCreate` is the trap there: `vehicles.make` is NOT NULL with no
+   default). **Proven by three consecutive runs**: three tip/bonus rows, four
+   UDD vehicles, no stacking.
+
+2. **A trip in the development database has a settled fare of
+   UGX 198,013,800** — trip #32, Acacia Mall → Kololo Airstrip, completed
+   2026-08-14. That is roughly fifty thousand US dollars for a cross-town run.
+   Found because my first draft hung the demo tip off "the newest completed
+   trip" and picked it up. **Not investigated and not fixed** — it is
+   `WalkInFareService::settle()`'s output and belongs to whoever owns Billing
+   and the ADR-0031 routing work, but it is a live money bug and the road
+   distance arriving in the wrong unit is the obvious first thing to check.
+   The seeder now selects from its own six rides (identified by the
+   `trip_ratings` row it writes for each), so its output no longer depends on
+   what else is in the database.
+
+**A seeder test of another agent's that ADR-0034 narrowed.** It asserted the
+demo wallet balance must be **negative**, because *"cash rides alone cannot
+produce"* a credit — true, and still true. The seeder no longer seeds cash
+rides alone: a bonus is precisely the thing that puts a driver in credit, so
+the demo balance is now +15,100. The assertion now strips the bonus and
+requires the cash work to still be in debt, which is the original insight
+exactly. **Worth knowing before opening the app: the demo home screen now
+reads "The office owes you"** — a real state, and the one branch of
+`walletNote()` nothing had ever rendered.
+
+**Verified:** 185 Drivers, 158 Administration, 379 Trips/Billing/Dispatch
+backend tests; 489 mobile; 369 console. Pint and PHPStan level 8 clean on
+every file touched. **The full backend suite cannot be run in one process
+here** — it exhausts PHP's 128M limit inside dompdf, in the invoice PDF
+suite, which is a pre-existing environment limit and unrelated to this work.
+
+---
+
+### 2026-08-15 — The queue worker was never running (driver app + backend)
+
+**Status:** done for the operational half; the design half is a proposal in
+`docs/distance-and-fare-integrity-plan.md` awaiting the owner's rulings.
+**Not a mockup and not a feature.** The owner reported "the screens seem
+wrong… as if we are not connected to the DB". Three separate causes, none of
+which any test could see.
+
+**Read this if a screen ever renders blank or a figure looks impossible.**
+
+**1. The API server was not running.** Nothing listened on 8000, so every read
+failed and every screen fell back to its em-dash/empty state, and the outbox
+queued the writes ("sending 1 update and 13 GPS points"). `mobile/.env` was
+correct all along. MySQL was fine — `php artisan db:show` fails on MariaDB
+because `performance_schema.session_status` does not exist there, which looks
+like a dead database and is not one.
+
+**2. `QUEUE_CONNECTION=database` and no queue worker had ever run.** This is
+the important one and it is now written up in the root `README.md` and
+`Modules/Trips/README.md`.
+
+`trip_locations` held **7 rows**; draining the queue produced **726**. With no
+worker, `RecordTripLocations` never runs, so `kilometresFor()` returns null,
+`reconcileAgainstGps()` takes its early return, and `gps_distance_km` stays
+null with `distance_variance_flagged` false — **indistinguishable from the
+legitimate "no GPS evidence" case**, which is exactly what makes it dangerous.
+Every layer reports success: the app uploads, the API answers 202, nothing
+throws, and the evidence simply never arrives. `TripOfferedNotification` was
+stuck in the same queue, so drivers were not being pushed offers either.
+
+**3. A UGX 198,013,800 fare was sitting in the driver ledger.** Trip 32's
+`odometer_end` was typed with one extra digit (100005 against a start of
+10001) → 90,004 km → sedan base 5,000 + 2,200/km = exactly 198,013,800. The
+reconciliation that exists to catch precisely this had never run.
+
+**Data corrected — through the services, never by writing rows:**
+
+- **Trip 32** re-priced. **I got this wrong once and it is worth recording
+  why:** I first assumed a single fat-fingered digit and set 4 km. Draining
+  the queue then produced 139 real pings totalling 15.47 km, which contradicted
+  the guess. Corrected to 15 km against the measurement — 3.1% variance, not
+  flagged. Fare UGX 38,000, ledger re-derived through
+  `DriverLedgerService::recordCompletedTrip()`. Driver balance went from
+  **−39,594,380** to **+780**.
+- **Trip 17** corrected against its own 504-ping trace (194 km, 0.04%
+  variance).
+- **Trip 16 deliberately NOT corrected.** One ping, so there is no measured
+  distance to correct it to, and inventing one is the exact defect this
+  codebase refuses everywhere else. Its 89,859 km reading is left visible and
+  `distance_variance_flagged` is set by hand: impossible on its face whatever
+  the GPS says.
+- **Backfilled reconciliation** on every completed trip that had a trace but no
+  `gps_distance_km`. Touches only those two fields — no fare, no invoice, no
+  ledger entry.
+
+**What the backfill found, and what somebody has to decide.** Two trips flagged:
+
+| Trip | Odometer | GPS | Variance | Money attached |
+|---|---|---|---|---|
+| 2 | 10.00 km | 0.39 km | 96.1% | none |
+| **33** | **13.00 km** | **5.98 km** | **54.0%** | **fare UGX 33,600, 2 ledger entries** |
+
+**Trip 33 is not mine to re-price.** A driver was paid on 13 km for a journey
+measured at 6 km. Changing it changes what somebody was paid, and who may clear
+a flagged trip is exactly the open question in the plan (Phase 3). Raised, not
+resolved.
+
+**Files owned:**
+
+- `docs/distance-and-fare-integrity-plan.md` — new.
+
+**Files shared — the exact edits:**
+
+- `README.md` — a queue-worker section under "Running locally", plus the
+  `--host=0.0.0.0` note for a physical handset.
+- `backend/Modules/Trips/README.md` — one subsection under "Odometer
+  reconciliation" on the silent-failure mode.
+- `mobile/src/navigation/types.ts`, `RootNavigator.tsx`,
+  `screens/HomeScreen.tsx`, `screens/RideCompleteScreen.tsx` + its test — the
+  Trips stack root renamed `Home` → **`TripsHome`**. React Navigation was
+  warning *"Found screens with the same name nested inside one another: Home,
+  Home > Home"* on a real handset, because the tab and its stack root shared a
+  name and `navigate('Home')` from inside the stack was ambiguous. The other
+  three tabs already used `EarningsHome` / `WalletHome` / `ProfileHome`; this
+  stack was the odd one out. **The tab keeps the name `Home`**, so every
+  `getParent()?.navigate('Home')` in Earnings, Wallet and Profile is unchanged.
+
+**Verified:** `tsc --noEmit` clean, `RideCompleteScreen` green, the API
+exercised end-to-end over the LAN address (login → `/me/stats`,
+`/me/profile`, `/me/earnings`, `/trips`) rather than assumed. Earnings today
+now reads UGX 37,920 and the earnings breakdown reconciles at 59,520.
+
+**Two mobile suites fail and neither is mine (rule 6):**
+`src/wallet/presentation.test.ts` and `src/screens/WalletScreen.test.tsx` — 9
+tests. `rowTitle()` now returns "Cash handed over" where the tests expect
+"Settlement". `src/wallet/presentation.ts` is mid-refactor by another agent.
+**Not opened, not touched.** They passed on a run 30 minutes earlier, so this
+is live work, not a break.
+
+**Not done, deliberately:**
+
+- **Nothing from the plan is built.** Every item in it supersedes a decision
+  and needs an ADR, and three of them (the odometer ceiling, the walk-in
+  distance source, who clears a flagged trip) are commercial decisions rather
+  than technical ones.
+- **`maximum_charge_minor` is still null on all 8 rate rows.** Setting it is a
+  zero-code fix available in the admin UI *today* and would have capped the
+  198M outright — but a maximum fare is a pricing decision and is the owner's
+  to make, per category.
+- **The tab-root back arrows** the owner ruled on ("keep arrows, make Home
+  match") are not done. Superseded in priority by all of the above; still open.
+
+---
+
+### 2026-08-15 — The Wallet card, to the mockup (driver app)
+
+**Status:** complete. 491 mobile tests, `tsc` and eslint clean, **five guards
+proved by mutation**, and the screen rendered and read line by line against the
+mockup.
+
+**The owner asked for two things:** the explaining paragraph gone, and the
+Wallet screen built as the mockup draws it. Both are done, and where a rule
+stood in the way it has been *answered* rather than either ignored or used to
+refuse the request.
+
+- **"Available Balance" is now the heading — when the money is available.**
+  ADR-0029 §5 makes this figure normally what a driver *owes*, so the mockup's
+  label over it would be a false claim. The direction moved **into the
+  heading**: the mockup's words in credit, "Balance you owe" otherwise. That
+  also replaces the removed paragraph's job — direction in words, above the
+  number, never a sign or a colour alone.
+- **Withdraw / Add Money are back**, which ADR-0032 §1 refused by name. The
+  mechanism is untouched: both raise a request the office answers. Read against
+  the *balance* the two words are accurate — payout moves it down, remittance
+  up — and what they must not imply is immediacy, so the accessibility hint and
+  the sheet both carry "nothing is transferred by this app". The ADR's argument
+  is preserved in `kindAction`'s docblock, including what would justify putting
+  it back.
+- **"Withdrawal" is a row, named by the sign.** The old refusal was half right:
+  one word for a two-way *kind* names the rarer half. By sign, each half gets
+  its own word.
+- **Buttons moved inside the green card**, rows went to two lines, timestamps
+  became "Today, 10:45 AM" / "May 10, 2024" — all the mockup's.
+
+**One real defect the mockup surfaced, unrelated to layout.** `walletValue`
+ran through `compactMoney`, so a 135,000 balance rendered **`UGX 135K`**.
+`compactMoney`'s own docblock permits itself on "a glanceable total" and
+refuses itself on money somebody reconciles — and a balance is exactly what a
+driver takes to the depot and checks against the office's figure. It is exact
+now, on both the wallet and the home card. Nothing but drawing the mockup would
+have caught it.
+
+**Six assertions of other agents' were inverted, none deleted**, each with the
+old wording and its reasoning kept in a docblock above the new one:
+"Wallet balance, not Available Balance"; the unsigned-figure-plus-note pair;
+"explains why the balance is usually money owed"; "names a settlement without
+calling it a withdrawal"; "has no tip, bonus or withdrawal row"; and "shortens
+a large balance". **The safety half of each survives** — most importantly the
+one that was never about the mockup: a row says "Tip", never "Tip from Sarah
+N.", because ADR-0024 §7 releases a passenger's details only while a trip is
+live and a statement is permanent. That is asserted in two places now.
+
+**Not done, and the one thing on the mockup I have not built:** its **star**
+glyphs for Tip and Weekly Bonus. A star means a *rating* in this product
+(ADR-0030, `StarIcon`), and reusing it for money would invert the glyph
+platform-wide on the one screen where the two could be confused. Lucide
+`hand-coins` and `award` are drawn instead. Say the word and I will change it.

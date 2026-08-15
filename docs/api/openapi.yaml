@@ -2360,6 +2360,303 @@ paths:
   # from Trip Started onward, so a driver waiting at a stage for work
   # reported nothing at all. These say "I am available, and I am here".
   # ------------------------------------------------------------------
+  /api/v1/me/profile:
+    get:
+      summary: >
+        Who the signed-in driver is on the platform — the app's Profile
+        screen.
+      description: >
+        Separate from `/me/stats` rather than a fatter payload on it: stats is
+        polled by the home screen every sixty seconds, and a lifetime `COUNT`,
+        a vehicle join and a documents summary should not ride along on every
+        poll. Same argument that kept `/me/earnings` off `/me/stats`.
+
+        **The rating is deliberately not here.** `/me/stats` already produces
+        it under ADR-0030's withholding rule, and a second reading of a figure
+        that is suppressed below five ratings is a second chance to publish it
+        by mistake.
+
+        `vehicle` is **null for a driver who has none**, which is not an edge
+        case: a corporate driver takes whatever the depot hands them that
+        morning, and `driver_presence.vehicle_id` is the per-shift answer.
+        `make` and `model` are individually nullable — a plate typed in a hurry
+        with no make is a real row.
+      responses:
+        '200':
+          description: The driver's profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DriverProfile' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/me/documents:
+    get:
+      summary: The signed-in driver's papers — every type, held or not.
+      description: >
+        **The un-uploaded types are the point** (ADR-0033). A list of what has
+        been sent answers "what have I sent"; a driver opening this screen is
+        asking "what do I still owe you", and only the full set answers that.
+        An absent type comes back as a real type with `document: null`.
+
+        `compliance_state` on a document is **not** always its stored `status`.
+        A `verified` document whose `expires_at` has passed reports `expired`:
+        expiry outranks verification, because a licence that lapsed last month
+        is not a verified licence. The comparison is made in the operator's
+        timezone (`settings.regional.timezone`) and is never stored — a stored
+        expiry state needs a nightly job and is wrong between runs.
+      responses:
+        '200':
+          description: Every document type, with what is held against it.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DriverDocumentSlot' }
+                  meta:
+                    type: object
+                    required: [compliance]
+                    additionalProperties: false
+                    properties:
+                      compliance: { $ref: '#/components/schemas/DriverDocumentCompliance' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Uploads a document, replacing anything already held of that type.
+      description: >
+        `multipart/form-data`. **A replacement resets the review** — status
+        goes back to `pending` and the reviewer, review time and rejection
+        reason are cleared, because a document the office verified is not
+        evidence for a different file that arrived afterwards (ADR-0033 §2).
+        The superseded file is deleted.
+
+        **Not routed through the offline outbox** (ADR-0023), unlike every
+        other mutation the driver app makes: that queue carries small JSON
+        transitions, and an eight-megabyte photograph is a different problem.
+        This needs a connection.
+
+        `expires_at` is **required** for `driving_licence` and
+        `vehicle_insurance`, whose entire meaning is a date, and optional for
+        the other two. A date of today is accepted — a licence expiring today
+        is valid today.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [type, file]
+              additionalProperties: false
+              properties:
+                type: { $ref: '#/components/schemas/DriverDocumentType' }
+                file:
+                  type: string
+                  format: binary
+                  description: >
+                    `jpg`, `jpeg`, `png`, `webp` or `pdf`, up to 8 MB. The list
+                    is closed rather than open: this is an upload from an
+                    unprivileged client straight onto the operator's disk.
+                expires_at:
+                  type: ['string', 'null']
+                  format: date
+                  description: A date, not an instant. Must not already have passed.
+      responses:
+        '201':
+          description: The document was filed and is waiting for the office.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DriverDocument' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/me/documents/{document}/file:
+    get:
+      summary: The document file itself, streamed.
+      description: >
+        Never a storage URL (ADR-0033 §5): a signed link to somebody's identity
+        document is addressable by anyone who ever saw it, for as long as it
+        lives. `OdometerPhotoController` makes the same argument about a
+        dashboard photograph, and it applies here more strongly.
+
+        The one `/me` route that takes an id, and therefore the one with a
+        policy check — a driver may read their own row only.
+      parameters:
+        - in: path
+          name: document
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: The file.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/drivers/{driver}/documents:
+    get:
+      summary: One driver's papers, for the office.
+      description: >
+        `drivers.manage`. The same shape `/me/documents` serves, so the console
+        and the app render one vocabulary — an office asked "what is missing"
+        needs the empty slots as much as the driver does.
+      parameters:
+        - in: path
+          name: driver
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Every document type, with what is held against it.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DriverDocumentSlot' }
+                  meta:
+                    type: object
+                    required: [compliance]
+                    additionalProperties: false
+                    properties:
+                      compliance: { $ref: '#/components/schemas/DriverDocumentCompliance' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/drivers/{driver}/documents/{document}/file:
+    get:
+      summary: The document file, for the office.
+      description: >
+        `drivers.manage`. A document that does not belong to the driver in the
+        path is a **404, not a 403**: the reviewer holds the permission over
+        every driver, so the policy alone would allow a mismatched pair to
+        address somebody else's licence.
+      parameters:
+        - in: path
+          name: driver
+          required: true
+          schema: { type: integer }
+        - in: path
+          name: document
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: The file.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/drivers/{driver}/documents/{document}/verify:
+    post:
+      summary: The office accepts a document.
+      description: >
+        `drivers.manage`. A POST to a sub-path rather than a PATCH on a status
+        field, for the reason the application and settlement decisions are:
+        this is a decision with its own audit meaning, and a status field would
+        make accepting somebody's licence look like an edit.
+
+        **Nothing else can reach this state.** There is no OCR, no third-party
+        check, and no rule that verifies a document because its expiry is in
+        the future (ADR-0033 §4).
+      parameters:
+        - in: path
+          name: driver
+          required: true
+          schema: { type: integer }
+        - in: path
+          name: document
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: The document is verified.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DriverDocument' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/drivers/{driver}/documents/{document}/reject:
+    post:
+      summary: The office turns a document down, and says why.
+      description: >
+        `drivers.manage`. **`reason` is required.** A rejection with no reason
+        is how a driver stops using a feature: they are told no, cannot tell
+        whether the photograph was blurred or the document was wrong, and
+        re-upload the same file.
+      parameters:
+        - in: path
+          name: driver
+          required: true
+          schema: { type: integer }
+        - in: path
+          name: document
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: { type: string, minLength: 3, maxLength: 255 }
+      responses:
+        '200':
+          description: The document is rejected.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DriverDocument' }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/me/stats:
     get:
       summary: >
@@ -2560,6 +2857,97 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/me/trips:
+    get:
+      summary: >
+        The signed-in driver's own trip history — the work that is over,
+        newest first.
+      description: >
+        The third `/me` read a driver has: `/me/earnings` answers *how much*,
+        `/me/ledger-entries` answers *why is my balance that*, and this
+        answers **what did I actually do**.
+
+        Separate from `GET /trips`, which is the dispatch board. That
+        endpoint's resource cannot serve `service_type` (this screen's filter,
+        which lives on `order_requests`) and deliberately returns no driver
+        earnings on any list, because reading the ledger relation is unbounded
+        per row. Both are answered here in one extra query each, keyed by trip.
+
+        **Only finished work.** `trip_completed`, `invoice_generated`,
+        `disputed`, `closed`, `no_show`, `cancelled` and `rejected`. The live
+        statuses are absent because each has a screen that owns it, and
+        `assigned` is absent because an unanswered offer has not happened yet.
+        Cancelled and no-show rows **are** included, with `earned_minor` null —
+        a driver who drove to a pickup and was cancelled on has spent the time,
+        and nothing else in the platform lists that trip.
+
+        **The money is the driver's own share, never the gross fare.** Read
+        back from the `fare_earned` ledger entry written at completion
+        (ADR-0029 §3), so it reconciles exactly with `/me/earnings` and is
+        never recomputed from the current commission rate.
+
+        **No passenger contact appears here at all.** ADR-0024 §7 releases a
+        name and number only while a trip is live; a scrollable history of
+        everyone a driver has carried is the directory that rule exists to
+        prevent.
+
+        Cursor-paginated at 25, ordered by `id` descending — not by a
+        timestamp, because `completed_at` is null on every cancelled trip and
+        is shared to the second by trips completed together, and a cursor over
+        a non-unique ordering can skip or repeat a row across pages.
+
+        403 `NOT_A_DRIVER` when the account has no driver profile.
+      parameters:
+        - $ref: '#/components/parameters/cursor'
+        - in: query
+          name: service_type
+          required: false
+          description: >
+            Narrows to one kind of job — `ride` or `delivery` for the screen's
+            chips. Filtered in SQL rather than over the loaded page, so the
+            count is of the whole history and not of twenty-five rows.
+
+            Deliberately not an enum: `order_requests.service_type` is a
+            `string(20)` fed partly by a public form, so a hard enum here
+            would 422 on a service the platform had started offering.
+          schema: { type: string, maxLength: 20 }
+      responses:
+        '200':
+          description: A page of finished trips.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DriverHistoryTrip' }
+                  meta:
+                    type: object
+                    required: [cursor, timezone, today, yesterday]
+                    additionalProperties: false
+                    properties:
+                      cursor: { $ref: '#/components/schemas/Cursor' }
+                      timezone:
+                        type: string
+                        description: >
+                          The fleet's zone, from `settings.regional.timezone`.
+                          Served so the app labels a section "Today" against
+                          the fleet's day rather than the handset's.
+                      today:
+                        type: string
+                        format: date
+                        description: Today in that zone, `YYYY-MM-DD`, to match against `local_day`.
+                      yesterday:
+                        type: string
+                        format: date
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/me/settlement-requests:
     get:
       summary: The signed-in driver's own settlement requests, newest first.
@@ -2597,7 +2985,13 @@ paths:
         their way out of what they owe.
 
         `409 SETTLEMENT_REQUEST_ALREADY_OPEN` when one of that kind is already
-        waiting: two pending payout requests are one driver asking twice.
+        waiting: two pending payout requests are one driver asking twice. For
+        `tip` the rule is **per trip** rather than per kind (ADR-0034 §1) — a
+        driver who took three tips in a day has three real declarations, and
+        each names the trip it happened on.
+
+        `404` when a `tip` names a trip that is not the declaring driver's
+        own. Not 403: a refusal must not confirm that a row exists.
       requestBody:
         required: true
         content:
@@ -2623,6 +3017,14 @@ paths:
                     at Nakawa depot". Carried into the ledger entry's
                     description on confirmation, where it is what makes the
                     row recognisable months later.
+                trip_id:
+                  type: integer
+                  description: >
+                    **Required when `kind` is `tip`, and refused otherwise**
+                    (ADR-0034 §1). The trip the passenger tipped on. The
+                    server checks it is the declaring driver's own — without
+                    that, a driver could declare a tip against somebody else's
+                    job, and a confirmed tip writes a credit.
       responses:
         '201':
           description: The request was recorded.
@@ -5430,10 +5832,41 @@ components:
             rate in force at completion is written into the ledger entry's
             description, so history is priced at the rate it happened under.
           type: object
-          required: [driver_commission_percent]
+          required:
+            - driver_commission_percent
+            - bonus_enabled
+            - bonus_weekly_trip_target
+            - bonus_weekly_amount_minor
           additionalProperties: false
           properties:
             driver_commission_percent: { type: integer, minimum: 0, maximum: 100 }
+            bonus_enabled:
+              type: boolean
+              description: >
+                The weekly target bonus (ADR-0034 §4). **Defaults to false**,
+                and not because the feature is risky: it creates a liability
+                against every driver on the platform, and a scheme that
+                switches itself on at deploy is an unbudgeted bill. Same
+                argument that defaults `maps.routing_enabled` off, where the
+                cost was a metered API rather than payroll.
+            bonus_weekly_trip_target:
+              type: integer
+              minimum: 1
+              maximum: 1000
+              description: >
+                Completed trips in one **local** week that earn the bonus.
+                Weeks are the fleet's, from `regional.timezone` — a Kampala
+                week measured in UTC starts on Sunday at 03:00.
+            bonus_weekly_amount_minor:
+              type: integer
+              minimum: 0
+              description: >
+                What clearing the target pays, in minor units. **Never served
+                to the driver app**: it is settable here, so a handset that
+                held it would go on asserting the old figure. The app reads
+                the award that was actually made, and the amount is written
+                into that entry's description so an old one still explains
+                itself.
         booking:
           type: object
           required: [approval_required, max_advance_days]
@@ -5892,6 +6325,195 @@ components:
           description: Always false. The counterpart of the always-true flag on WalkInFareEstimate.
           enum: [false]
 
+    DriverDocumentType:
+      description: >
+        The papers a driver has to hold (ADR-0033 §1).
+
+        **None of these is named for one country, and the naming is the
+        point.** The obvious East African list — *PSV badge*, *logbook* —
+        was deliberately not used: a type enum lands in a database column,
+        this schema and every shipped handset, and is then untouchable.
+        `identity_document` covers a national ID in Kampala and a passport in
+        Nairobi with no migration between them.
+      type: string
+      enum: [driving_licence, identity_document, vehicle_insurance, vehicle_registration]
+
+    DriverDocumentStatus:
+      description: >
+        What the office made of a document. Three **stored** states; `expired`
+        is not one of them — see `compliance_state`.
+      type: string
+      enum: [pending, verified, rejected]
+
+    DriverDocumentComplianceState:
+      description: >
+        The state anything outside the module should act on: the stored status,
+        plus the derived `expired`. **Expiry outranks verification** — a
+        licence that lapsed last month is not a verified licence.
+      type: string
+      enum: [pending, verified, rejected, expired]
+
+    DriverDocument:
+      description: >
+        One of a driver's papers (ADR-0033).
+
+        **`file_path` is never in this payload.** It is hidden on the model as
+        well, because a resource is the wrong place for the only guard on a
+        private disk holding somebody's identity document. The file is reached
+        through `file_url`, which streams behind the policy.
+      type: object
+      required:
+        - id
+        - driver_id
+        - type
+        - type_label
+        - status
+        - status_label
+        - compliance_state
+        - expires_at
+        - expired
+        - original_name
+        - mime_type
+        - size_bytes
+        - uploaded_at
+        - rejection_reason
+        - reviewed_at
+        - file_url
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        driver_id: { type: integer }
+        type: { $ref: '#/components/schemas/DriverDocumentType' }
+        type_label: { type: string }
+        status: { $ref: '#/components/schemas/DriverDocumentStatus' }
+        status_label: { type: string }
+        compliance_state: { $ref: '#/components/schemas/DriverDocumentComplianceState' }
+        expires_at:
+          type: ['string', 'null']
+          format: date
+          description: A date, not an instant — a licence expires on a day.
+        expired:
+          type: boolean
+          description: >
+            Derived at read time in the operator's timezone, never stored. A
+            document expiring **today** is not expired: the last day of a
+            licence is a day the driver can still work.
+        original_name: { type: ['string', 'null'] }
+        mime_type: { type: string }
+        size_bytes: { type: integer }
+        uploaded_at: { type: string, format: date-time }
+        rejection_reason:
+          type: ['string', 'null']
+          description: Present only on a rejection, and never empty when it is.
+        reviewed_at: { type: ['string', 'null'], format: date-time }
+        file_url:
+          type: string
+          description: >
+            A route path, not a storage URL, and **chosen by who is asking** —
+            the owner gets `/me/documents/{id}/file`, the office gets the
+            driver-scoped one. A handset building the office path would be
+            asking for a route its token cannot reach (`ClientScope`).
+
+    DriverDocumentSlot:
+      description: >
+        One document type and whatever is held against it.
+
+        **`document` is null for a type never uploaded, and that is the whole
+        reason this wrapper exists.** Omitting absent types would answer "what
+        have I sent" when the question is "what do I still owe you".
+      type: object
+      required: [type, type_label, hint, requires_expiry, document]
+      additionalProperties: false
+      properties:
+        type: { $ref: '#/components/schemas/DriverDocumentType' }
+        type_label: { type: string }
+        hint:
+          type: string
+          description: What to photograph, in the driver's words rather than the schema's.
+        requires_expiry:
+          type: boolean
+          description: >
+            True for the types whose entire meaning is a date. Served rather
+            than hardcoded in the app, so the rule lives in one place.
+        document:
+          oneOf:
+            - { $ref: '#/components/schemas/DriverDocument' }
+            - { type: 'null' }
+
+    DriverDocumentCompliance:
+      description: >
+        The one-line answer the profile screen puts beside "Documents", and
+        **the seam ADR-0033 §6 names**: if dispatch is ever gated on documents,
+        the rule consults this rather than inventing a second notion of
+        compliance.
+
+        `action_needed` covers rejected and expired but **not** never-uploaded,
+        which is `incomplete`. One means "we looked and it is wrong", the other
+        means "we are still waiting" — collapsing them makes a new driver look
+        like a problem.
+      type: object
+      required: [state, verified, total, action_needed, pending]
+      additionalProperties: false
+      properties:
+        state:
+          type: string
+          enum: [verified, pending, incomplete, action_needed]
+        verified: { type: integer }
+        total: { type: integer }
+        action_needed: { type: integer }
+        pending: { type: integer }
+
+    DriverProfile:
+      description: The facts on a driver's own Profile screen (ADR-0033).
+      type: object
+      required:
+        - name
+        - phone
+        - email
+        - member_since
+        - trips_total
+        - vehicle
+        - documents
+      additionalProperties: false
+      properties:
+        name: { type: string }
+        phone:
+          type: ['string', 'null']
+          description: >
+            The driver's **profile** phone, not the account's. A driver signs
+            in with an email (ADR-0016) and is reached on this number; the two
+            belong to different records on purpose.
+        email: { type: ['string', 'null'] }
+        member_since:
+          type: ['string', 'null']
+          format: date
+          description: A date, because the screen renders a month and a year.
+        trips_total:
+          type: integer
+          description: >
+            Completed trips, ever. A cancellation is not a trip a driver did.
+            Measured, unlike the rating beside it on screen, which `/me/stats`
+            withholds below five ratings.
+        vehicle:
+          oneOf:
+            - type: object
+              required: [make, model, registration_number, category, category_label]
+              additionalProperties: false
+              properties:
+                make: { type: ['string', 'null'] }
+                model: { type: ['string', 'null'] }
+                registration_number: { type: string }
+                category: { type: string }
+                category_label:
+                  type: string
+                  description: >
+                    Served rather than title-cased on the handset: Billing
+                    prices against `Vehicle::CATEGORIES`, and a second spelling
+                    of that list in a mobile bundle is a second place to be
+                    wrong when a category is added.
+            - type: 'null'
+        documents: { $ref: '#/components/schemas/DriverDocumentCompliance' }
+
     SettlementRequestKind:
       description: >
         Which way the driver is asking money to move (ADR-0032 §1).
@@ -5900,8 +6522,16 @@ components:
         depositing into an account this platform holds, and there is nothing
         to withdraw from. `remittance` is the common case — cash work runs
         towards the office.
+
+        `tip` (ADR-0034 §1) is the third and is not a settlement at all: it
+        declares that a passenger handed the driver cash on a particular trip.
+        It reuses this pipeline because the mechanism is identical — a driver
+        says money changed hands and the office's answer is what writes the
+        ledger — and it is the only kind that carries `trip_id`. Confirming it
+        writes a **pair** rather than one signed `settlement`, because a tip is
+        commissionable.
       type: string
-      enum: [remittance, payout]
+      enum: [remittance, payout, tip]
 
     SettlementRequestStatus:
       type: string
@@ -5918,6 +6548,7 @@ components:
       required:
         - id
         - driver_id
+        - trip_id
         - kind
         - kind_label
         - status
@@ -5933,6 +6564,14 @@ components:
       properties:
         id: { type: integer }
         driver_id: { type: integer }
+        trip_id:
+          type: ['integer', 'null']
+          description: >
+            The trip a tip was taken on (ADR-0034 §1). **Required on `tip` and
+            refused on the other two kinds** — a remittance covers a day's
+            takings and a payout is a request against a balance, so neither
+            belongs to one journey. The server also checks the trip is the
+            declaring driver's own.
         kind: { $ref: '#/components/schemas/SettlementRequestKind' }
         kind_label: { type: string }
         status: { $ref: '#/components/schemas/SettlementRequestStatus' }
@@ -5974,13 +6613,34 @@ components:
         id: { type: integer }
         kind:
           type: string
-          enum: [fare_earned, cash_collected, settlement, adjustment]
+          enum:
+            - fare_earned
+            - cash_collected
+            - settlement
+            - adjustment
+            - tip_earned
+            - tip_cash_collected
+            - bonus
           description: >
             `fare_earned` — the driver's share of a completed fare.
             `cash_collected` — the gross fare they took in hand, negative
             because they are holding the platform's money until they settle.
             `settlement` — money that actually moved, in either direction.
             `adjustment` — a correction.
+
+            `tip_earned` / `tip_cash_collected` (ADR-0034 §3) are the same
+            pair for a tip: the driver's share after commission, and the gross
+            in their hand. Two kinds rather than a second `cash_collected` row
+            because `(trip_id, kind)` is unique — the index that stops a
+            retried completion paying twice.
+
+            `bonus` (ADR-0034 §4) is a weekly target award and is
+            **unpaired**: it is not cash in anybody's hand, so the balance
+            moves by the whole amount.
+
+            Sums of *earnings* take `fare_earned`, `tip_earned` and `bonus`
+            and never the two cash kinds, which are the negative halves that
+            make the balance work.
         kind_label:
           type: string
           description: The kind in words, from `LedgerEntryKind::label()`, so no client re-spells them.
@@ -6013,6 +6673,82 @@ components:
             request behind it (a walk-in a dispatcher fulfilled by hand) — the
             client falls back to `kind_label`, which is always true.
         created_at: { type: ['string', 'null'], format: date-time }
+
+    DriverHistoryTrip:
+      description: >
+        One row of a driver's own trip history. Deliberately narrower than
+        `Trip`: six facts a scrollable list needs, for the one person whose
+        token it is.
+
+        Carries **no passenger contact** (ADR-0024 §7 — a history is not a
+        directory) and **no fare quote** (quoting costs Billing queries per
+        row, which is why `Trip.estimated_fare` is bounded to a single trip).
+      type: object
+      required:
+        - id
+        - status
+        - service_type
+        - origin
+        - destination
+        - happened_at
+        - local_day
+        - local_time
+        - earned_minor
+        - currency
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        status:
+          type: string
+          description: >
+            The raw lifecycle value, not a label. The driver app's
+            `statusLabel()` is the one place a status is put into words for a
+            driver; a second wording here would give it two vocabularies.
+        service_type:
+          type: ['string', 'null']
+          description: >
+            `ride`, `delivery` or `self_drive`, from the order request behind
+            the trip. Null when there is none — a walk-in a dispatcher
+            fulfilled by hand — and the row then reads as a plain trip rather
+            than as a guess.
+        origin: { type: string }
+        destination: { type: string }
+        happened_at:
+          type: string
+          format: date-time
+          description: >
+            `completed_at` where there is one, `created_at` otherwise — which
+            is the cancelled and no-show case. **Never `updated_at`**: that
+            column moves whenever anything touches the row, so a trip could
+            migrate between day headings months later, and a history that
+            reorders itself is not a history.
+        local_day:
+          type: string
+          format: date
+          description: >
+            The day this row files under, resolved in the fleet's timezone.
+            Computed server-side because `config/app.php` is UTC, so a day
+            derived from a raw instant rolls over at 03:00 in Kampala — which
+            on a screen headed "Today" and "Yesterday" files an evening's work
+            under the wrong one, plausibly enough that nobody reports it.
+        local_time:
+          type: string
+          description: '`HH:MM`, 24-hour, in the same zone. The app renders it for display.'
+        earned_minor:
+          type: ['integer', 'null']
+          description: >
+            **The driver's own share, not the gross fare.** Read back from the
+            `fare_earned` ledger entry written at completion, so the
+            commission rate in force *then* is what shows, and so this list
+            adds up to what `/me/earnings` reports.
+
+            **Null, never zero**, on a cancelled or no-show trip, on a
+            corporate trip (invoiced to the client — there is no per-trip
+            driver share), and between completion and the ledger listener
+            running. `0` would read as a job done for nothing.
+        currency:
+          type: ['string', 'null']
+          description: Null exactly when `earned_minor` is.
 
     EarningsPeriod:
       description: >
