@@ -1,7 +1,13 @@
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { apiOk, renderAs } from '../../test/harness'
+// `makeUser()`, not a `{ permissions: [...] }` literal. `renderAs` takes a
+// whole `User` and this dialog reads no user at all — the authorisation that
+// matters is `DriverDocumentPolicy` on the server, which a component test
+// cannot exercise. The old literal type-checked only because `tsc --noEmit`
+// resolves this project's solution-file tsconfig to nothing; `tsc -b` catches
+// it, and that is what CI runs.
+import { apiOk, makeUser, renderAs } from '../../test/harness'
 import { DriverDocumentsDialog } from './DriverDocumentsDialog'
 import type { Driver } from '../../types/driver'
 import type { DriverDocumentSlot } from '../../types/driverDocument'
@@ -86,9 +92,7 @@ describe('DriverDocumentsDialog', () => {
       ]),
     )
 
-    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, {
-      permissions: ['drivers.manage'],
-    })
+    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, makeUser())
 
     // "What is this person missing" is the question a reviewer arrives with,
     // and the uploaded subset cannot answer it.
@@ -115,9 +119,7 @@ describe('DriverDocumentsDialog', () => {
       ]),
     )
 
-    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, {
-      permissions: ['drivers.manage'],
-    })
+    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, makeUser())
 
     expect(await screen.findByText('Expired')).toBeInTheDocument()
     expect(screen.queryByText('Verified')).not.toBeInTheDocument()
@@ -127,9 +129,7 @@ describe('DriverDocumentsDialog', () => {
     get.mockResolvedValue(apiOk([slot()]))
     post.mockResolvedValue(apiOk(null))
 
-    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, {
-      permissions: ['drivers.manage'],
-    })
+    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, makeUser())
 
     await userEvent.click(await screen.findByRole('button', { name: 'Verify' }))
 
@@ -141,9 +141,7 @@ describe('DriverDocumentsDialog', () => {
   it('will not let a rejection go out without a reason', async () => {
     get.mockResolvedValue(apiOk([slot()]))
 
-    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, {
-      permissions: ['drivers.manage'],
-    })
+    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, makeUser())
 
     await userEvent.click(await screen.findByRole('button', { name: 'Reject' }))
 

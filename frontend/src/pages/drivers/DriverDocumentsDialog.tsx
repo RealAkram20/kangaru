@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ComponentProps } from 'react'
 import { apiClient } from '../../lib/apiClient'
 import { apiError } from '../../lib/apiError'
 import type { ApiSuccess } from '../../types/api'
@@ -130,11 +130,15 @@ export function DriverDocumentsDialog({
   )
 }
 
-const TONE: Record<string, 'success' | 'warning' | 'danger' | 'neutral'> = {
+// `error`, not `danger` — `Badge`'s tones are neutral | success | warning |
+// error | info | brand, and the driver app's `danger` token has no counterpart
+// here. Typed against Badge's own prop rather than a hand-written union, so a
+// tone the component does not accept cannot be written again.
+const TONE: Record<string, ComponentProps<typeof Badge>['tone']> = {
   verified: 'success',
   pending: 'warning',
-  rejected: 'danger',
-  expired: 'danger',
+  rejected: 'error',
+  expired: 'error',
   missing: 'neutral',
 }
 
