@@ -11,6 +11,7 @@ import { Alert } from '../components/feedback/Alert'
 import { Dialog } from '../components/feedback/Dialog'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { DriverDocumentsDialog } from './drivers/DriverDocumentsDialog'
 
 const STATUS_TONE: Record<Driver['status'], 'success' | 'warning' | 'neutral'> = {
   active: 'success',
@@ -23,6 +24,10 @@ export function DriversPage() {
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [managing, setManaging] = useState<Driver | null>(null)
+  // ADR-0033. Separate state from `managing`: a sign-in and a licence are
+  // different questions, and one dialog answering both would be the
+  // "settings screen" mistake at a smaller scale.
+  const [reviewing, setReviewing] = useState<Driver | null>(null)
 
   const load = useCallback(
     () =>
@@ -93,9 +98,19 @@ export function DriversPage() {
         key: 'id',
         header: '',
         render: (row) => (
-          <Button size="sm" variant="secondary" onClick={() => setManaging(row)}>
-            {row.account === null ? 'Give sign-in' : 'Manage sign-in'}
-          </Button>
+          <span style={{ display: 'inline-flex', gap: 'var(--space-2)' }}>
+            {/*
+              ADR-0033. The office half of driver documents — and it ships
+              with the feature rather than after it, because ADR-0029 created
+              an obligation with no surface and nothing ever discharged it.
+            */}
+            <Button size="sm" variant="secondary" onClick={() => setReviewing(row)}>
+              Documents
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => setManaging(row)}>
+              {row.account === null ? 'Give sign-in' : 'Manage sign-in'}
+            </Button>
+          </span>
         ),
       },
     ],
@@ -134,6 +149,10 @@ export function DriversPage() {
           />
         )}
       </Card>
+
+      {reviewing && (
+        <DriverDocumentsDialog driver={reviewing} onClose={() => setReviewing(null)} />
+      )}
 
       {managing && (
         <DriverAccountDialog
