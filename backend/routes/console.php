@@ -4,6 +4,7 @@ use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
 use Modules\Dispatch\Console\AdvanceDispatchOffers;
+use Modules\Drivers\Console\AwardWeeklyBonuses;
 use Modules\Reports\Console\PruneReportExports;
 
 Artisan::command('inspire', function () {
@@ -77,5 +78,24 @@ Schedule::command(AdvanceDispatchOffers::class)
     // A slow sweep must never stack up behind itself: two concurrent runs
     // would race to settle the same offers and could open two waves on one
     // ride.
+    ->withoutOverlapping()
+    ->onOneServer();
+
+// The weekly target bonus (ADR-0034 §4). Monday morning, over the week that
+// has just closed — never the week in progress, because a partial week cannot
+// be measured against a weekly target and a driver shown a bonus that later
+// un-awards itself has been lied to about money.
+//
+// 03:15 rather than midnight: the boundaries are the fleet's local week
+// (`settings.regional.timezone`), and running comfortably clear of it means a
+// trip finishing at 23:58 on Sunday is already settled and in the ledger.
+//
+// `onOneServer` **and** a unique index on `(driver_id, week_start)`. The first
+// is the ordinary precaution; the second is what makes a double award
+// impossible rather than unlikely, which is the standard payroll deserves.
+// Re-running by hand after a failure is therefore safe and is the intended
+// response to one — see `--week`.
+Schedule::command(AwardWeeklyBonuses::class)
+    ->weeklyOn(1, '03:15')
     ->withoutOverlapping()
     ->onOneServer();

@@ -112,6 +112,43 @@ final class ClientScope
                 // that already exist; nothing here is another driver's.
                 'me.stats.show',
 
+                // Who they are on the platform, and their papers (ADR-0033).
+                // All three are keyed off the token — `me.documents.file`
+                // takes a document id, but its policy grants a driver their
+                // own row only, so an id belonging to somebody else is a 403
+                // rather than a leak.
+                //
+                // There is no counterpart for verifying: a driver who could
+                // accept their own licence is the feature inverting itself,
+                // and the `drivers.documents.*` routes are absent from this
+                // list for that reason rather than by omission.
+                'me.profile.show',
+                'me.documents.index',
+                'me.documents.store',
+                'me.documents.file',
+
+                // The money screens, and **all four of these were missing.**
+                // The routes shipped; the allow-list did not follow, and this
+                // list fails closed — so `GET /me/earnings` and
+                // `GET /me/ledger-entries` were 403 to the only client that
+                // has a screen for them. Nothing catches it but a handset:
+                // every backend test signs in without a `client`, which mints
+                // an unscoped console token, so the endpoints pass their own
+                // suites while being unreachable from the app.
+                //
+                // Earnings answers *how much*, the ledger answers *why is my
+                // balance that*, and `me.trips.index` answers *what did I
+                // do*. All three are reads keyed off the token — there is no
+                // id in any path, so none of them can name another driver.
+                'me.earnings.show',
+                'me.ledger-entries.index',
+                'me.trips.index',
+                // Asking the office to settle (ADR-0032). A request, not a
+                // payment: it moves no money and cannot change a balance, so
+                // the write is as safe as the read beside it.
+                'me.settlement-requests.index',
+                'me.settlement-requests.store',
+
                 // Going on duty, and saying where they are (ADR-0024 §2).
                 // The app cannot be offered work without these, and the
                 // fail-closed rule above is why they have to be named: they

@@ -8,6 +8,7 @@ use Modules\Billing\Pricing\RateCardNotConfiguredException;
 use Modules\Billing\Services\WalkInFareService;
 use Modules\Bookings\Models\OrderRequest;
 use Modules\Bookings\Support\OrderDetails;
+use Modules\Drivers\Enums\LedgerEntryKind;
 use Modules\Drivers\Resources\DriverResource;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
@@ -130,6 +131,11 @@ class TripResource extends JsonResource
             // A driver carrying no float needs it before they arrive, not at
             // the kerb.
             'payment' => $this->paymentFor(),
+            // What the driver made on it, for that driver alone. The fare
+            // above is what the passenger paid; this is what is left after
+            // the platform's cut, read back from the ledger that recorded it
+            // rather than recomputed. See below.
+            'earnings' => $this->driverEarningsFor($request),
             // Who to ring, if anybody (ADR-0024 §7). Null far more often
             // than not — see below.
             'passenger_contact' => $this->passengerContactFor($request),
@@ -175,6 +181,99 @@ class TripResource extends JsonResource
         $trip = $this->resource;
 
         return app(ContactChannel::class)->forPassenger($trip)?->toArray();
+    }
+
+    /**
+     * The driver's own share of this trip, for the driver who drove it.
+     *
+     * ## Why this exists at all
+     *
+     * The figure was already in the database and had no way out. ADR-0029's
+     * ledger records a `fare_earned` entry per completed walk-in trip, keyed
+     * by `trip_id`, but the only HTTP surface over it is `GET /me/stats`,
+     * which serves *aggregates* — today's earnings and the running balance.
+     * So the one screen that has to answer "what did I just make" could not.
+     *
+     * The two alternatives were both worse, and both are the kind of thing
+     * `docs/screen-rules.md` exists to stop:
+     *
+     * - **Show the gross fare and call it earnings.** It is the passenger's
+     *   payment, not the driver's income, and on a 20% commission it
+     *   overstates by a quarter. `FareEstimate`'s docblock in the driver app
+     *   warned about exactly this confusion before there was a commission
+     *   model to be confused about.
+     * - **Compute `fare × (100 − percent)` on the handset.** That copies
+     *   `billing.driver_commission_percent` — a runtime setting the Super
+     *   Admin can change — into every installed phone, where it goes on being
+     *   the old number until the driver updates the app.
+     *
+     * ## The commission is derived, never recomputed
+     *
+     * `commission_minor` is `gross − earned`, which is what ADR-0029 §2 says
+     * it is: the ledger deliberately has no `commission` entry, because
+     * pairing one with the credit double-counts. Deriving it from the two
+     * figures that were actually written means the rate in force *at
+     * completion* is what shows, years later, whatever the setting says now.
+     * Nothing here reads the percent, and the percent is deliberately not
+     * served — a client that displayed it would be stating a rule it does not
+     * own.
+     *
+     * ## Three gates, and it fails closed on all of them
+     *
+     * - **The caller must be this trip's driver.** Same ownership test as
+     *   `passengerContactFor()` and `TripPolicy::transition` — keyed off
+     *   `driver->user_id`. A dispatcher holding `trips.view.all` sees the
+     *   board; what a driver takes home is not part of a list view, and a
+     *   corporate client must never see the platform's margin on their work.
+     * - **The relation must have been eager-loaded.** Unbounded per row, so
+     *   `show()` loads it and `index()` does not — the same bound
+     *   `estimatedFare()` documents. Unloaded yields null rather than a
+     *   lazy query, which is what keeps a dispatch board at one query.
+     * - **There must be an entry.** Null on every corporate trip (no
+     *   `fare_minor`, so ADR-0029 §4 raises no pair), and null in the window
+     *   between completion and the listener running. The driver app renders
+     *   that as an em dash and says the office has not confirmed it yet —
+     *   never as a zero, which would read as an unpaid morning.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function driverEarningsFor(Request $request): ?array
+    {
+        $user = $request->user();
+
+        if ($user === null || $this->driver?->user_id !== $user->id) {
+            return null;
+        }
+
+        if ($this->fare_minor === null || ! $this->relationLoaded('ledgerEntries')) {
+            return null;
+        }
+
+        $earned = $this->ledgerEntries->firstWhere('kind', LedgerEntryKind::FARE_EARNED);
+
+        if ($earned === null) {
+            return null;
+        }
+
+        $gross = (int) $this->fare_minor;
+        $share = (int) $earned->amount_minor;
+
+        return [
+            'earned_minor' => $share,
+            // Never negative, whatever the data says: a commission larger
+            // than the fare is not a thing the ledger can produce, and if it
+            // somehow did, showing the driver a negative fee would be a worse
+            // answer than showing them the arithmetic that was recorded.
+            'commission_minor' => $gross - $share,
+            // The gross is repeated here rather than left to be read off
+            // `fare` above, so the three figures a driver reconciles arrive
+            // as one object. A screen that had to pair two nullable blocks to
+            // show a subtraction would render half a sum whenever one of them
+            // was missing.
+            'total_minor' => $gross,
+            'currency' => $earned->currency,
+            'recorded_at' => $earned->created_at?->toIso8601String(),
+        ];
     }
 
     /**

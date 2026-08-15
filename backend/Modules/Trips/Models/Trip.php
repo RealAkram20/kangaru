@@ -20,6 +20,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Models\OrderRequest;
 use Modules\Drivers\Models\Driver;
+use Modules\Drivers\Models\DriverLedgerEntry;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Vehicles\Models\Vehicle;
 
@@ -266,6 +267,34 @@ class Trip extends Model
             ->where($this->getTable().'.customer_id', $customer->id);
     }
 
+    /**
+     * A driver's own trips, past the tenant scope — the sibling of
+     * `forCustomer` above, and it exists for exactly the same reason.
+     *
+     * **`TenantScope` fails closed, and a driver's walk-in work has no
+     * tenant.** With no tenant bound the scope appends `1 = 0`; with one
+     * bound it appends `tenant_id = X`, which excludes every walk-in, whose
+     * `tenant_id` is null by definition (`isWalkIn()` above). Either way a
+     * plain `Trip::query()->where('driver_id', …)` from a `/me` endpoint
+     * silently loses the trips a boda rider actually did — silently being the
+     * dangerous half. `DriverLedgerController` records the same trap costing
+     * that endpoint a test.
+     *
+     * The narrowing **is** the authorization, as in `forCustomer`: every query
+     * starts from the token's own driver, so there is no "may this driver see
+     * that row" question left for a policy to answer wrongly. This is why
+     * `/me/trips` needs no policy and `drivers/{driver}/trips` would.
+     *
+     * @param  Builder<static>  $query
+     * @return Builder<static>
+     */
+    public function scopeForDriver(Builder $query, Driver $driver): Builder
+    {
+        return $query
+            ->withoutGlobalScope(TenantScope::class)
+            ->where($this->getTable().'.driver_id', $driver->getKey());
+    }
+
     /** @return HasMany<TripEvent, $this> */
     public function events(): HasMany
     {
@@ -295,5 +324,26 @@ class Trip extends Model
     public function orderRequest(): HasOne
     {
         return $this->hasOne(OrderRequest::class, 'trip_id');
+    }
+
+    /**
+     * What this trip did to the driver's wallet.
+     *
+     * Written as a pair at completion by `DriverLedgerService` — a
+     * `fare_earned` credit and a `cash_collected` debit — and read back by
+     * `TripResource` so the driver can be shown their own share of the job
+     * they just finished. Nothing else on the platform reads it per-trip; the
+     * home screen's figures are aggregates over the whole ledger.
+     *
+     * **Eager-load this only where one trip is being served.** It is unbounded
+     * per row, so loading it on a list endpoint is the N+1 AGENTS.md forbids —
+     * `TripController::show()` loads it and `index()` does not, the same bound
+     * `orderRequest` carries and for the same reason.
+     *
+     * @return HasMany<DriverLedgerEntry, $this>
+     */
+    public function ledgerEntries(): HasMany
+    {
+        return $this->hasMany(DriverLedgerEntry::class, 'trip_id');
     }
 }

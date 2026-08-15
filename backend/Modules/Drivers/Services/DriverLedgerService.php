@@ -99,6 +99,125 @@ class DriverLedgerService
     }
 
     /**
+     * Raises the pair for a tip the office has confirmed (ADR-0034 §3).
+     *
+     * **Deliberately the same shape as `recordCompletedTrip()` above**, and
+     * that is the whole reason a tip was made commissionable rather than
+     * given a table of its own: the driver's share is a credit, the gross is
+     * cash in their hand, and the net of the two is exactly what they now owe.
+     *
+     * ```
+     * tip 2,000 at 20%
+     *   tip_earned          + 1,600
+     *   tip_cash_collected  − 2,000
+     *   ---------------------------
+     *   balance               −  400
+     * ```
+     *
+     * The rate is written into the description rather than merely applied —
+     * ADR-0029 §3 — so an office that changes the percentage tomorrow cannot
+     * restate what this driver kept today. Nothing here reads the rate back
+     * out; the figures are what they were.
+     *
+     * **`intdiv` floors, so the fraction of a shilling lands with the
+     * driver**, matching the fare path. A house that rounds against itself is
+     * a house nobody has to audit for rounding.
+     *
+     * Idempotency is the caller's: `DriverSettlementRequestService::confirm()`
+     * locks the request and returns early if it is no longer pending, which
+     * is the same guard that stops a double-tap paying a settlement twice.
+     * The `(trip_id, kind)` unique index is the backstop underneath it.
+     *
+     * @return array{0: DriverLedgerEntry, 1: DriverLedgerEntry} the credit, then the cash held
+     */
+    public function recordTip(
+        Driver $driver,
+        Trip $trip,
+        int $grossMinor,
+        string $currency,
+        User $by,
+        ?string $note,
+    ): array {
+        $percent = (int) $this->settings->get('billing', 'driver_commission_percent');
+
+        $gross = abs($grossMinor);
+        $commission = intdiv($gross * $percent, 100);
+        $earned = $gross - $commission;
+
+        // The passenger is never named, whatever a mockup says. ADR-0024 §7
+        // releases contact details only while a trip is live, and a wallet
+        // statement is permanent — ADR-0034 §6 spells this out. The trip
+        // number identifies the tip; the person does not.
+        $head = "Tip on trip #{$trip->getKey()} at {$percent}% commission";
+        $trimmed = trim((string) $note);
+        $description = $trimmed === '' ? $head : "{$head}: {$trimmed}";
+
+        return DB::transaction(function () use (
+            $driver, $trip, $gross, $earned, $commission, $percent, $currency, $by, $description,
+        ) {
+            $credit = DriverLedgerEntry::create([
+                'driver_id' => $driver->getKey(),
+                'trip_id' => $trip->getKey(),
+                'kind' => LedgerEntryKind::TIP_EARNED,
+                'amount_minor' => $earned,
+                'currency' => $currency,
+                'description' => $description,
+                'created_by_user_id' => $by->getKey(),
+            ]);
+
+            $held = DriverLedgerEntry::create([
+                'driver_id' => $driver->getKey(),
+                'trip_id' => $trip->getKey(),
+                'kind' => LedgerEntryKind::TIP_CASH_COLLECTED,
+                'amount_minor' => -$gross,
+                'currency' => $currency,
+                'description' => "Tip taken in cash on trip #{$trip->getKey()}; {$commission} of it is commission at {$percent}%",
+                'created_by_user_id' => $by->getKey(),
+            ]);
+
+            return [$credit, $held];
+        });
+    }
+
+    /**
+     * Credits a weekly target bonus (ADR-0034 §4).
+     *
+     * **Unpaired, unlike a tip**, and the difference is real rather than
+     * stylistic: a tip is cash already in the driver's hand, so it needs the
+     * negative half that says they are holding some of the platform's money.
+     * A bonus is not in anybody's hand — the office simply comes to owe it —
+     * so the balance moves by the whole amount and settles through the
+     * ordinary cash handover.
+     *
+     * **No commission.** A bonus is already the platform's own money going
+     * out; taking a cut of it would mean the advertised figure and the paid
+     * figure differ, which is the one thing an incentive must not do.
+     *
+     * The target and the amount are written into the description because both
+     * are admin-settable. A bonus explained only by "the current target" is a
+     * bonus nobody can defend a year later — ADR-0029 §3's rule, applied to a
+     * second kind of rate.
+     */
+    public function recordBonus(
+        Driver $driver,
+        int $amountMinor,
+        string $currency,
+        string $description,
+        ?User $by = null,
+    ): DriverLedgerEntry {
+        return DriverLedgerEntry::create([
+            'driver_id' => $driver->getKey(),
+            'kind' => LedgerEntryKind::BONUS,
+            'amount_minor' => abs($amountMinor),
+            'currency' => $currency,
+            'description' => $description,
+            // Null when the scheduled command awarded it, which is the
+            // ordinary case: no human decided this one, the rule did.
+            'created_by_user_id' => $by?->getKey(),
+        ]);
+    }
+
+    /**
      * Records money that actually moved between the office and the driver.
      *
      * Signed by the caller, because it genuinely goes both ways: a boda

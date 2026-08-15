@@ -7,7 +7,9 @@ use App\Support\Auth\ClientScope;
 use Database\Seeders\DriverAppSeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Support\Facades\Hash;
+use Modules\Drivers\Enums\LedgerEntryKind;
 use Modules\Drivers\Models\Driver;
+use Modules\Drivers\Models\DriverLedgerEntry;
 use Modules\Drivers\Services\DriverStatsService;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
@@ -144,13 +146,33 @@ it('seeds the earnings, wallet and rating the home screen renders', function () 
     expect($stats['rating'])->not->toBeNull();
     expect($stats['rating_count'])->toBeGreaterThanOrEqual(5);
 
-    // **Negative, and that is the assertion.** Each cash ride leaves the driver
-    // holding the whole fare and owing the commission (ADR-0029 §5), so a
-    // part-remittance lands below zero. An earlier draft remitted enough to
-    // push this positive — the office owing the driver — which cash rides
-    // alone cannot produce, and which rendered perfectly while being
-    // impossible.
-    expect($stats['wallet_balance_minor'])->toBeLessThan(0);
+    /*
+     * **This assertion was narrowed by ADR-0034, not weakened**, and the
+     * original is worth restating because its reasoning still holds.
+     *
+     * It read: the balance must be negative. Each cash ride leaves the driver
+     * holding the whole fare and owing the commission (ADR-0029 §5), so a
+     * part-remittance lands below zero — and an earlier draft of the seeder
+     * remitted enough to push it positive, which *cash rides alone cannot
+     * produce* and which rendered perfectly while being impossible.
+     *
+     * The seeder no longer seeds cash rides alone. A **bonus** is precisely
+     * the thing that can put a driver in credit: the office comes to owe it,
+     * with no cash in anybody's hand. So the demo balance is now positive, and
+     * that is a real state rather than an impossible one — it also renders the
+     * `walletNote()` branch that says *"The office owes you"*, which nothing
+     * had ever exercised.
+     *
+     * What is asserted instead is the original insight, exactly: **strip the
+     * bonus and the cash work is still in debt.**
+     */
+    $bonuses = (int) DriverLedgerEntry::query()
+        ->where('driver_id', $driver->getKey())
+        ->where('kind', LedgerEntryKind::BONUS)
+        ->sum('amount_minor');
+
+    expect($bonuses)->toBeGreaterThan(0)
+        ->and($stats['wallet_balance_minor'] - $bonuses)->toBeLessThan(0);
 });
 
 it('is re-runnable without stacking demo rides or colliding on the vehicle', function () {

@@ -111,6 +111,40 @@ class SettingsService
                 'default' => 20,
                 'rules' => ['required', 'integer', 'min:0', 'max:100'],
             ],
+            /*
+             * The weekly target bonus (ADR-0034 §4).
+             *
+             * **Off by default**, and not because the feature is risky. It
+             * creates a liability against every driver on the platform, and a
+             * scheme that switches itself on at deploy is an unbudgeted bill
+             * — the same argument that defaults `maps.routing_enabled` off,
+             * where the cost was a metered API rather than payroll.
+             *
+             * The target and the amount live here rather than in a constant
+             * or in the app for the reason the audit agent's finding 5 gives:
+             * a threshold shipped inside a handset goes on asserting the old
+             * number after the office changes it, on devices nobody can
+             * reach. The driver app is never told either figure — it reads the
+             * bonus that was actually awarded, and the amount is written into
+             * that entry's description so an old award still explains itself.
+             *
+             * 40 trips and UGX 20,000 are starting values, not a policy: the
+             * amount is the one the mockup drew, and the target is a week of
+             * roughly six trips a day. An operator turning this on should set
+             * both deliberately.
+             */
+            'bonus_enabled' => [
+                'default' => false,
+                'rules' => ['required', 'boolean'],
+            ],
+            'bonus_weekly_trip_target' => [
+                'default' => 40,
+                'rules' => ['required', 'integer', 'min:1', 'max:1000'],
+            ],
+            'bonus_weekly_amount_minor' => [
+                'default' => 20000,
+                'rules' => ['required', 'integer', 'min:0'],
+            ],
         ],
         /**
          * Maps and routing (ADR-0031 pending).

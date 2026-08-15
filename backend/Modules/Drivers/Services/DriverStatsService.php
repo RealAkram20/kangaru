@@ -17,15 +17,24 @@ use Modules\Trips\Enums\TripStatus;
  * derived on read, because a cached counter that drifts from its source is
  * worse than a query, and the query is small and indexed.
  *
- * What is deliberately absent is as important as what is here. There is no
- * rating, because the platform has never asked anybody for one. There is no
- * wallet balance, because payments are deferred by ADR-0005 and ADR-0012 to
- * a decision nobody has made. A screen showing an invented figure for either
- * would be lying to a driver about money or about their standing.
+ * **The paragraph that used to sit here said there was no rating and no
+ * wallet balance, and both statements outlived the code by a day.** ADR-0030
+ * added ratings and ADR-0029 added the ledger, and this class serves both — a
+ * docblock asserting their absence is worse than none, because it is the one
+ * thing a reader trusts without checking. What remains true is the principle
+ * underneath: a figure the platform cannot produce is served as null and
+ * rendered as an em dash, never invented. `acceptance_rate`, `completion_rate`
+ * and `rating` are all nullable for that reason.
+ *
+ * "Today" here means the driver's local day, from
+ * `settings.regional.timezone` — see `forDriver()`.
  */
 class DriverStatsService
 {
-    public function __construct(private readonly DriverLedgerService $ledger) {}
+    public function __construct(
+        private readonly DriverLedgerService $ledger,
+        private readonly DriverEarningsService $earnings,
+    ) {}
 
     /**
      * The window the rates are measured over.
@@ -62,7 +71,28 @@ class DriverStatsService
     public function forDriver(Driver $driver): array
     {
         $since = Carbon::now()->subDays(self::WINDOW_DAYS);
-        $startOfToday = Carbon::now()->startOfDay();
+
+        // **The driver's local day, not UTC.** `config/app.php` sets the app
+        // timezone to UTC, so the `Carbon::now()->startOfDay()` this used to
+        // call rolled a Kampala driver's day over at 03:00 local — the last
+        // two hours of an evening shift were filed under the previous day,
+        // and the tile a driver opens the app for was quietly wrong twice a
+        // night. Found while building the earnings screen, where the same
+        // boundary is the screen's entire subject.
+        //
+        // `DriverEarningsService` owns the timezone lookup
+        // (`settings.regional.timezone`) so the two surfaces cannot drift:
+        // "Earnings today" here and "Today's earnings" there must be the same
+        // number, and two independent readings of "today" is exactly how they
+        // would stop being.
+        //
+        // `->utc()` on the end is not cosmetic. Laravel binds a Carbon to SQL
+        // by *formatting* it in its own timezone rather than converting, so a
+        // `+03:00` boundary would arrive as a UTC wall-clock string and put
+        // the window three hours out — silently, with every figure still
+        // looking plausible. Converting first makes the bound instant and its
+        // rendering agree.
+        $startOfToday = Carbon::now($this->earnings->timezone())->startOfDay()->utc();
 
         $today = $this->today($driver, $startOfToday);
         $rating = $this->rating($driver);

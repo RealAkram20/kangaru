@@ -43,9 +43,11 @@ use Modules\Dispatch\Models\DispatchOffer;
 use Modules\Drivers\Listeners\CreditDriverForCompletedTrip;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverApplication;
+use Modules\Drivers\Models\DriverDocument;
 use Modules\Drivers\Models\DriverLedgerEntry;
 use Modules\Drivers\Models\DriverSettlementRequest;
 use Modules\Drivers\Policies\DriverApplicationPolicy;
+use Modules\Drivers\Policies\DriverDocumentPolicy;
 use Modules\Drivers\Policies\DriverPolicy;
 use Modules\Drivers\Policies\DriverSettlementRequestPolicy;
 use Modules\Fleet\Models\AvailabilityBlock;
@@ -173,6 +175,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Driver::class, DriverPolicy::class);
         Gate::policy(DriverApplication::class, DriverApplicationPolicy::class);
         Gate::policy(DriverSettlementRequest::class, DriverSettlementRequestPolicy::class);
+        Gate::policy(DriverDocument::class, DriverDocumentPolicy::class);
         Gate::policy(Trip::class, TripPolicy::class);
         Gate::policy(Booking::class, BookingPolicy::class);
         Gate::policy(OrderRequest::class, OrderRequestPolicy::class);
@@ -259,6 +262,10 @@ class AppServiceProvider extends ServiceProvider
             // settlement into the ledger — so who answered it, and when, is
             // the point rather than a formality.
             'driver_settlement_request' => DriverSettlementRequest::class,
+            // ADR-0033. Verifying somebody's licence is a compliance act, and
+            // the first staff decision on this platform about a legal
+            // document — who looked, when, and from which IP is the point.
+            'driver_document' => DriverDocument::class,
             'trip' => Trip::class,
             // ADR-0030. A rating cannot be edited or withdrawn, so the only
             // mutation an audit trail will ever see here is an administrator

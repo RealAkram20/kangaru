@@ -197,4 +197,19 @@ enum ErrorCode: string
      * replayed somewhere it should not be.
      */
     case TOKEN_SCOPE_EXCEEDED = 'TOKEN_SCOPE_EXCEEDED';
+
+    /**
+     * The driver already has a settlement request of this kind waiting
+     * (ADR-0032 §4).
+     *
+     * 409 rather than 422: nothing about the request they sent is malformed —
+     * it is the world that refuses it, and their own wallet screen already
+     * shows the open one. A driver fixes this by waiting or by cancelling,
+     * not by editing a field.
+     *
+     * The rule exists because two pending payout requests are not two
+     * payouts. They are one driver asking twice, and a queue full of
+     * duplicates is a queue the office stops reading.
+     */
+    case SETTLEMENT_REQUEST_ALREADY_OPEN = 'SETTLEMENT_REQUEST_ALREADY_OPEN';
 }

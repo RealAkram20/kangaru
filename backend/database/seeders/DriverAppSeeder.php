@@ -7,14 +7,23 @@ use App\Models\Customer;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
+use App\Support\Tenancy\TenantScope;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Seeder;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Modules\Bookings\Models\Booking;
 use Modules\Dispatch\Services\DispatchService;
+use Modules\Drivers\Enums\DriverDocumentType;
+use Modules\Drivers\Enums\LedgerEntryKind;
 use Modules\Drivers\Models\Driver;
+use Modules\Drivers\Models\DriverDocument;
+use Modules\Drivers\Models\DriverLedgerEntry;
 use Modules\Drivers\Services\DriverAccountService;
+use Modules\Drivers\Services\DriverDocumentService;
+use Modules\Drivers\Services\DriverEarningsService;
 use Modules\Drivers\Services\DriverLedgerService;
 use Modules\Fleet\Support\DriverPresence;
 use Modules\Fleet\Support\DriverPresenceStore;
@@ -137,6 +146,10 @@ class DriverAppSeeder extends Seeder
 
         $this->seedEarningsAndRatings($driver);
 
+        $this->assignOwnVehicle($driver);
+
+        $this->seedDocuments($driver);
+
         $onDuty = $this->freeDriverOnDuty();
 
         $this->report($driver, $onDuty);
@@ -207,6 +220,14 @@ class DriverAppSeeder extends Seeder
             ->exists();
 
         if ($alreadySeeded) {
+            // **Not a plain return.** The tip and the bonus carry their own
+            // guards and were added to this seeder later, so a database seeded
+            // before ADR-0034 has the six rides and neither of the two rows the
+            // wallet mockup draws — and would never gain them, because this
+            // guard is about the *trips*. They are idempotent on their own
+            // terms; let them run.
+            $this->tipAndBonus($driver, app(DriverLedgerService::class));
+
             return;
         }
 
@@ -237,13 +258,37 @@ class DriverAppSeeder extends Seeder
         $ledger = app(DriverLedgerService::class);
         $realNow = now();
 
+        /**
+         * The start of the driver's *local* day, as an instant.
+         *
+         * "Earnings today" is measured in `settings.regional.timezone`, not in
+         * UTC — so anchoring today's demo rides with `subHours` alone is not
+         * enough. Run this seeder shortly after local midnight and a ride "2
+         * hours ago" lands in yesterday's local day, the demo home screen
+         * shows `UGX 0` under "Earnings today", and the test that guards this
+         * fails depending on what time of day CI happens to run. The two
+         * today rides are therefore placed *inside* the elapsed part of the
+         * local day rather than counted backwards from now.
+         */
+        $localMidnight = $realNow->copy()
+            ->setTimezone(app(DriverEarningsService::class)->timezone())
+            ->startOfDay()
+            ->utc();
+
+        $elapsedToday = max(2, $localMidnight->diffInMinutes($realNow));
+
         // Two today so "Earnings today" is not zero, and four spread over the
         // preceding days so the rating has enough behind it. `rating` is the
         // mean of the recent 50 (§4), so the older ones count towards the
         // score without touching today's earnings.
+        //
+        // `dayFraction` places a ride that far through today so far — 0.3 is
+        // mid-morning on a normal run and is still inside today at 00:03.
+        // `hoursAgo` is only for the older rides, which have no such
+        // constraint because no boundary sits between them and now.
         $rides = [
-            ['hoursAgo' => 2, 'fare' => 12_500, 'stars' => 5, 'from' => 'Acacia Mall', 'to' => 'Kololo Airstrip'],
-            ['hoursAgo' => 4, 'fare' => 8_000, 'stars' => 5, 'from' => 'Garden City', 'to' => 'Ntinda'],
+            ['dayFraction' => 0.3, 'fare' => 12_500, 'stars' => 5, 'from' => 'Acacia Mall', 'to' => 'Kololo Airstrip'],
+            ['dayFraction' => 0.7, 'fare' => 8_000, 'stars' => 5, 'from' => 'Garden City', 'to' => 'Ntinda'],
             ['hoursAgo' => 27, 'fare' => 21_000, 'stars' => 4, 'from' => 'Entebbe Road', 'to' => 'Munyonyo'],
             ['hoursAgo' => 30, 'fare' => 6_500, 'stars' => 5, 'from' => 'Wandegeya', 'to' => 'Makerere'],
             ['hoursAgo' => 51, 'fare' => 15_000, 'stars' => 4, 'from' => 'Kabalagala', 'to' => 'Nakawa'],
@@ -251,7 +296,9 @@ class DriverAppSeeder extends Seeder
         ];
 
         foreach ($rides as $ride) {
-            $at = $realNow->copy()->subHours($ride['hoursAgo']);
+            $at = isset($ride['dayFraction'])
+                ? $localMidnight->copy()->addMinutes((int) round($elapsedToday * $ride['dayFraction']))
+                : $realNow->copy()->subHours($ride['hoursAgo']);
 
             $trip = Trip::factory()
                 ->forCustomer($customer)
@@ -306,6 +353,90 @@ class DriverAppSeeder extends Seeder
             $this->dispatcher(),
             'Cash remitted at the depot',
         );
+
+        $this->tipAndBonus($driver, $ledger);
+    }
+
+    /**
+     * One tip and one weekly bonus (ADR-0034), so the wallet and the earnings
+     * breakdown show the rows the mockups draw.
+     *
+     * **Written through the real services, not as rows.** The tip therefore
+     * gets its commission split from `DriverLedgerService::recordTip()` and the
+     * bonus its wording from `recordBonus()`, so a change to either rule
+     * changes this demo data with it — the same reason the fares above go
+     * through `recordCompletedTrip()`.
+     *
+     * The tip hangs off the most recent completed trip because a tip belongs
+     * to a journey: `tip_earned` and `tip_cash_collected` carry its id, and a
+     * `trip_id` of null would be a row the Trips History screen cannot place.
+     *
+     * **The bonus is written directly rather than through
+     * `WeeklyBonusService`.** That service is correctly gated on
+     * `billing.bonus_enabled`, which defaults to false — seeding the setting
+     * to true would leave a development database with a live bonus scheme
+     * nobody switched on, which is the state the default exists to prevent.
+     * This is one demo credit, not the rule running.
+     */
+    private function tipAndBonus(Driver $driver, DriverLedgerService $ledger): void
+    {
+        /*
+         * One of **this seeder's own** six rides, identified by the rating it
+         * writes for each of them.
+         *
+         * "The newest completed trip" was the first attempt and it picked up a
+         * walk-in from the live demo whose settled fare is UGX 198,013,800 —
+         * a real figure in the development database and, at roughly fifty
+         * thousand dollars for a cross-town run, a real bug in something. A
+         * demo tip hanging off it would have made this seeder's output depend
+         * on whatever else happened to be in the database.
+         */
+        $trip = Trip::query()
+            ->withoutGlobalScope(TenantScope::class)
+            ->where('driver_id', $driver->getKey())
+            ->where('status', TripStatus::TRIP_COMPLETED)
+            ->whereNull('tenant_id')
+            ->whereNotNull('fare_minor')
+            ->whereExists(fn ($q) => $q->select(DB::raw(1))
+                ->from('trip_ratings')
+                ->whereColumn('trip_ratings.trip_id', 'trips.id'))
+            ->orderByDesc('id')
+            ->first();
+
+        if ($trip !== null && ! DriverLedgerEntry::query()
+            ->where('trip_id', $trip->getKey())
+            ->where('kind', LedgerEntryKind::TIP_EARNED)
+            ->exists()
+        ) {
+            // 2,000 — the mockup's figure. At 20% the driver keeps 1,600 and
+            // owes 400, so the pair reads correctly on the statement and the
+            // balance moves by the commission rather than by the tip.
+            $ledger->recordTip(
+                $driver,
+                $trip,
+                2_000,
+                'UGX',
+                $this->dispatcher(),
+                'Passenger rounded up',
+            );
+        }
+
+        // Guarded like everything else in this seeder, which is re-runnable by
+        // contract — its own docblock promises it, and a previous draft broke
+        // that promise in a way that only a second run revealed.
+        $alreadyAwarded = DriverLedgerEntry::query()
+            ->where('driver_id', $driver->getKey())
+            ->where('kind', LedgerEntryKind::BONUS)
+            ->exists();
+
+        if (! $alreadyAwarded) {
+            $ledger->recordBonus(
+                $driver,
+                20_000,
+                'UGX',
+                'Weekly bonus for last week: 41 trips against a target of 40',
+            );
+        }
     }
 
     /**
@@ -407,12 +538,29 @@ class DriverAppSeeder extends Seeder
         // DemoFleetSeeder's trips deliberately stop mid-lifecycle and hold
         // their vehicle indefinitely, so borrowing from that pool would make
         // this seeder fail depending on which other seeders had run.
-        $vehicles = collect(['sedan', 'suv', 'van'])->map(
-            fn (string $category, int $index) => Vehicle::factory()->create([
-                'category' => $category,
-                'registration_number' => sprintf('UDD %03dD', $index + 1),
-            ]),
-        );
+        //
+        // **Look first, then fall back to the factory** — the same pattern,
+        // and the same reason, as the vehicle in `seedEarningsAndRatings()`
+        // below. `registration_number` is unique, so a plain `create` made
+        // this whole seeder unrunnable a second time: it threw on
+        // `UDD 001D` before reaching anything after it, which on this branch
+        // meant the tip and bonus demo rows could never land on a database
+        // that had already been seeded once.
+        //
+        // Not `firstOrCreate`: its second argument is a bare attribute list
+        // and `vehicles.make` is NOT NULL with no default, so the created
+        // branch inserts a row the schema rejects. That trap is written up at
+        // the other call site — it passed locally, where only the *found*
+        // branch ever ran, and failed in CI.
+        $vehicles = collect(['sedan', 'suv', 'van'])->map(function (string $category, int $index) {
+            $registration = sprintf('UDD %03dD', $index + 1);
+
+            return Vehicle::query()->firstWhere('registration_number', $registration)
+                ?? Vehicle::factory()->create([
+                    'category' => $category,
+                    'registration_number' => $registration,
+                ]);
+        });
 
         $finished = [
             ['Kampala', 'Entebbe Airport', [104_200, 104_243]],
@@ -502,6 +650,128 @@ class DriverAppSeeder extends Seeder
      * Creating a platform account carries the same risk as the driver
      * password above and is covered by the same environment guard.
      */
+    /**
+     * The driver's *own* vehicle, which nothing here had ever set.
+     *
+     * `drivers.vehicle_id` is what `Driver::vehicle()` calls "the durable one —
+     * the driver's own vehicle, which for a boda rider is not separable from
+     * the driver at all". Every vehicle this seeder makes was until now
+     * attached only to a *trip*, so a seeded driver had none: the Profile
+     * screen reported an em dash for a fact the platform could easily hold,
+     * and `AvailabilityService` had one less reason to consider them offerable.
+     *
+     * Assigned, never created. This is the car they have been driving on every
+     * seeded trip; pointing at a second one would be a demo database
+     * disagreeing with itself.
+     *
+     * Its own step rather than a line inside `seedEarningsAndRatings`, because
+     * that method returns early once its trips exist — so on the second run,
+     * which is the run everybody actually does, the line would never execute.
+     * That is the exact shape of the `firstOrCreate` bug this file already
+     * records: a branch written, shipped, and never run once.
+     */
+    private function assignOwnVehicle(Driver $driver): void
+    {
+        if ($driver->vehicle_id !== null) {
+            return;
+        }
+
+        $vehicle = Vehicle::query()->firstWhere('registration_number', 'UDD 004D')
+            ?? Vehicle::query()->orderBy('id')->first();
+
+        if ($vehicle === null) {
+            return;
+        }
+
+        $driver->forceFill(['vehicle_id' => $vehicle->getKey()])->save();
+    }
+
+    /**
+     * The driver's papers, in all four states the app can draw (ADR-0033).
+     *
+     * ## Why one of each rather than four verified
+     *
+     * The mockup shows **Documents — Verified**, and seeding four accepted
+     * documents would reproduce that screenshot exactly. It would also mean
+     * nobody ever sees the rejected row, the pending row or the empty slot
+     * until a real driver hits one — and those three are where the screen's
+     * behaviour actually lives. So: one verified, one verified-but-expiring,
+     * one waiting, one rejected with a reason. The compliance badge therefore
+     * reads *action needed* rather than *verified*, which is the honest
+     * summary of that set.
+     *
+     * ## Written through the service, never as rows
+     *
+     * `DriverDocumentService` owns the rule that a replacement resets the
+     * review, and `DriverDocumentStore` owns the path layout. Inserting rows
+     * here would produce demo data that a change to either rule would silently
+     * stop matching — the same argument the ledger seeding above makes for
+     * going through `DriverLedgerService`.
+     *
+     * Re-runnable like everything else here: the guard is on the documents
+     * themselves, and re-running would otherwise re-upload four files and
+     * orphan the previous ones.
+     */
+    private function seedDocuments(Driver $driver): void
+    {
+        $alreadySeeded = DriverDocument::query()
+            ->where('driver_id', $driver->getKey())
+            ->exists();
+
+        if ($alreadySeeded) {
+            return;
+        }
+
+        $documents = app(DriverDocumentService::class);
+        $reviewer = $this->dispatcher();
+
+        // A tiny PDF rather than `UploadedFile::fake()->image()`, which needs
+        // the GD extension — absent on plenty of development machines, and a
+        // seeder that fails on somebody's laptop for a reason unrelated to the
+        // data is a seeder people stop running.
+        $file = fn (string $name): UploadedFile => UploadedFile::fake()
+            ->create($name, 24, 'application/pdf');
+
+        $licence = $documents->upload(
+            $driver,
+            DriverDocumentType::DRIVING_LICENCE,
+            $file('licence.pdf'),
+            // Comfortably ahead, so this row is the plain verified case.
+            Carbon::now()->addYears(2)->toDateString(),
+        );
+        $documents->verify($licence, $reviewer);
+
+        $identity = $documents->upload(
+            $driver,
+            DriverDocumentType::IDENTITY_DOCUMENT,
+            $file('national-id.pdf'),
+            null,
+        );
+        $documents->verify($identity, $reviewer);
+
+        // Waiting on the office. Left `pending` on purpose — it is the state a
+        // driver sees for however long the queue takes, and the screen has to
+        // read well in it.
+        $documents->upload(
+            $driver,
+            DriverDocumentType::VEHICLE_INSURANCE,
+            $file('insurance.pdf'),
+            Carbon::now()->addMonths(3)->toDateString(),
+        );
+
+        $registration = $documents->upload(
+            $driver,
+            DriverDocumentType::VEHICLE_REGISTRATION,
+            $file('logbook.pdf'),
+            null,
+        );
+        $documents->reject(
+            $registration,
+            $reviewer,
+            'The photo is too dark to read the chassis number. Please send it again in daylight.',
+        );
+    }
+
     private function dispatcher(): User
     {
         $existing = User::query()

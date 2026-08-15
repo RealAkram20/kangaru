@@ -65,7 +65,8 @@ deleting a trip would break the audit trail, so it isn't exposed.
 
 ### What `TripResource` serves beyond the columns
 
-Three additions the driver app's pickup screen reads, all on `show`:
+Additions the driver app reads, all on `show` — the first three for the pickup
+screen, `earnings` for the completion screen:
 
 **`pickup` and `dropoff`** repeat `origin`/`destination` with coordinates
 attached. Those two string fields are unchanged and stay — AGENTS.md allows
@@ -87,11 +88,35 @@ version that priced it; `estimated_fare` is a quote from the public tariff
 client infers which it holds from the key it arrived under. The quote stops
 the moment a real fare exists, so nothing shows an estimate beside a bill.
 
-**`estimated_fare` is bounded to `show` on purpose.** A quote costs two or
+**`earnings` is what the *driver* made, and `fare` is what the passenger
+paid.** They differ by the platform's cut, and conflating them overstates a
+driver's income by the whole commission — which is why they are two fields.
+The block carries `earned_minor`, `commission_minor`, `total_minor`,
+`currency` and `recorded_at`, and every one of them is **read back from the
+ADR-0029 ledger entry that recorded the credit** rather than recomputed:
+`commission_minor` is `total_minor − earned_minor`, derived from the two
+figures actually written. That is what makes it report the rate in force *when
+the trip completed*, however `billing.driver_commission_percent` has moved
+since — ADR-0029 §3 forbids restating what a driver already earned. The
+percentage itself is deliberately not served: a client that displayed it would
+be stating a rule it does not own.
+
+**It is served to the trip's own driver and to nobody else**, keyed off
+`driver->user_id` exactly as `passenger_contact` is. A dispatcher holding
+`trips.view.all` sees the board but not what a driver takes home, and a
+corporate client must never read the platform's margin on their work. It is
+null on every corporate trip (no `fare_minor`, so ADR-0029 §4 raises no ledger
+pair) and null in the window between a completion arriving and the listener
+crediting it — which the driver app renders as "not confirmed yet" rather than
+as a zero. `TripEarningsTest` covers all seven cases.
+
+**`estimated_fare` and `earnings` are both bounded to `show` on purpose.** A quote costs two or
 three queries through `RateCardResolver`, and this resource also renders
 `GET /trips` — an unbounded quote would be a query per row on a dispatch
-board. The controller eager-loads `orderRequest` on `show` and not on `index`,
-and the field follows; `TripPlacesAndFareTest` asserts both halves. If a list
+board. The controller eager-loads `orderRequest` and `ledgerEntries` on `show`
+and neither on `index`, and both fields follow — an unloaded relation yields
+null rather than a lazy query.
+`TripPlacesAndFareTest` and `TripEarningsTest` assert both halves. If a list
 ever genuinely needs the figure, memoise the tariff version per request inside
 Billing rather than removing this guard — and note that making
 `RateCardResolver` `scoped` is not free, because a version held across an
@@ -301,6 +326,37 @@ thing.
 
 The threshold is deliberately loose for a first pass: GPS traces are noisy,
 and a flag nobody trusts is a flag nobody reviews.
+
+### Reconciliation depends on a running queue worker — and fails silently
+
+**All of the above does nothing unless `php artisan queue:work` is running.**
+
+Ingestion is asynchronous by design (ADR-0003): the endpoint answers 202 and
+queues `RecordTripLocations`. With no worker, the job never runs,
+`trip_locations` stays empty, `RouteDistanceCalculator::kilometresFor()`
+returns null for want of two points, and `reconcileAgainstGps()` takes its
+early return. `gps_distance_km` stays null and `distance_variance_flagged`
+stays false.
+
+That combination is indistinguishable from the legitimate "no GPS evidence"
+case documented just above — which is exactly what makes it dangerous. Every
+layer reports success. The app uploads, the API accepts, no exception is
+raised, and the only symptom is evidence that never arrives.
+
+This happened. The queue held unprocessed `RecordTripLocations` jobs while
+`trip_locations` held 7 rows; draining it produced 726 and immediately flagged
+two trips whose odometer readings disagreed with their traces by 96% and 54%.
+In the meantime an odometer typo of one extra digit had priced a trip at
+UGX 198,013,800 and written it to the driver ledger unflagged.
+
+Until queue health is visible on a dashboard (proposed in
+`docs/distance-and-fare-integrity-plan.md`, Phase 5), treat a null
+`gps_distance_km` on a trip that *should* have a trace as a worker problem
+until proven otherwise:
+
+```bash
+php artisan tinker --execute="echo DB::table('jobs')->count();"
+```
 
 ## Frontend
 
