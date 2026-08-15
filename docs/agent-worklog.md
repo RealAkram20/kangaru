@@ -1688,3 +1688,51 @@ one is a caller that will forget. Both screens call it.
 is the right screen for a finished, cancelled or unanswered trip, where the
 timeline and the odometer pair are the entire point. What changed is that no
 status with a screen of its own can reach it — asserted for all seven.
+
+---
+
+### 2026-08-15 — A keyless routing engine, and the reason nothing worked
+
+**Status:** done. 40 backend, 255 mobile, 365 frontend tests; Pint, PHPStan
+level 8, `tsc`, eslint. Two guards proved by mutation.
+
+**The report:** "we are having a straight line instead of the routes we are
+taking — this dotted line is not helping the drivers." Correct on both counts.
+
+**Two separate causes, and the second one was invisible.**
+
+**1. No provider could be configured without a billing account.** ADR-0031
+recorded that self-hosted OSRM was offered and Google chosen — but it never
+answered *what draws a route before anyone has opened an account*, and the
+answer was turning out to be "nothing, indefinitely". `OsrmProvider` is that
+answer: open-source, keyless, free, behind the seam that ADR-0031 §2 exists
+for. It is now the **default**, with Google as the upgrade — the difference is
+live traffic, and `routing_provider` is one field.
+
+On the Misindye → Acacia run: **19.83 km by road against 14.28 straight-line**,
+a 39% understatement, on a shape that follows no street. That is the whole
+case for the change in one number.
+
+`routingConfigured()` had to become provider-aware. Demanding a credential
+OSRM does not want would have left routing switched *on* and every route null
+— indistinguishable, from a driver's seat, from the bug it was meant to fix.
+
+**2. PHP on this machine could not make an HTTPS request at all.** `curl` from
+a shell worked; PHP failed with *"unable to get local issuer certificate"*,
+because `C:\php83\php.ini` set neither `curl.cainfo` nor `openssl.cafile`.
+Every outbound call was failing — Google would have failed identically, so the
+key nobody had was never the only blocker. Fixed by installing a current CA
+bundle and pointing both directives at it; `php.ini.bak-before-cainfo` is
+beside it.
+
+**Worth knowing for anyone debugging a third-party call from this project:**
+the providers swallow their failures by design (ADR-0031 §3), so a broken CA
+store presents as a permanently null route rather than as an error. That is
+correct for a driver and unhelpful for a developer — the log line is where it
+shows, which is why `GoogleDirectionsProvider` and `OsrmProvider` both write
+one.
+
+**The demo server is not production.** `router.project-osrm.org` is
+rate-limited and excluded by OSRM's own usage policy. `maps.osrm_base_url` is
+a setting so self-hosting is a URL change: a Docker container and the Uganda
+extract from Geofabrik.

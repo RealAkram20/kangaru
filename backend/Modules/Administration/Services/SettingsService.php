@@ -137,11 +137,28 @@ class SettingsService
         'maps' => [
             'routing_enabled' => ['default' => false, 'rules' => ['required', 'boolean']],
             'routing_provider' => [
-                'default' => 'google',
-                // Named rather than assumed. Nothing else is implemented
-                // today, and an enum with one member is how the second one
-                // gets added without a schema change.
-                'rules' => ['required', 'in:google'],
+                // **OSRM by default, and the default is the useful part.** It
+                // needs no key and costs nothing, so routing works the moment
+                // the switch is turned on rather than after somebody has
+                // opened a billing account. Google is the upgrade — better
+                // traffic data, a real meter — and switching is one field.
+                'default' => 'osrm',
+                'rules' => ['required', 'in:google,osrm'],
+            ],
+            /**
+             * Where OSRM lives.
+             *
+             * Defaults to the project's public demo server, which is free and
+             * keyless and is **explicitly not for production use** under
+             * OSRM's own usage policy — it is rate-limited and offered for
+             * development. Point this at a self-hosted instance before any
+             * real fleet depends on it: a Docker container and the Uganda
+             * extract from Geofabrik, and the URL below is the only thing
+             * that changes.
+             */
+            'osrm_base_url' => [
+                'default' => 'https://router.project-osrm.org',
+                'rules' => ['required', 'url', 'max:255'],
             ],
             'api_key' => ['default' => null, 'rules' => ['nullable', 'string', 'max:255'], 'secret' => true],
         ],
@@ -305,7 +322,19 @@ class SettingsService
     {
         $maps = $this->all()['maps'];
 
-        return $maps['routing_enabled'] === true && ! blank($this->secret('maps', 'api_key'));
+        if ($maps['routing_enabled'] !== true) {
+            return false;
+        }
+
+        // Only Google needs a credential. OSRM is an open server and asking it
+        // for a key it does not want would leave routing switched on and
+        // silently dead — which is exactly the state a driver reports as "the
+        // line is still straight".
+        if ($maps['routing_provider'] === 'osrm') {
+            return ! blank($maps['osrm_base_url']);
+        }
+
+        return ! blank($this->secret('maps', 'api_key'));
     }
 
     public function mailConfigured(): bool

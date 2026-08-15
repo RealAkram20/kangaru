@@ -61,7 +61,17 @@ function enableRouting(): void
     app(SettingsService::class)->setGroup('maps', [
         'routing_enabled' => true,
         'routing_provider' => 'google',
+        'osrm_base_url' => 'https://osrm.test',
         'api_key' => 'test-key',
+    ]);
+}
+
+function enableOsrm(): void
+{
+    app(SettingsService::class)->setGroup('maps', [
+        'routing_enabled' => true,
+        'routing_provider' => 'osrm',
+        'osrm_base_url' => 'https://osrm.test',
     ]);
 }
 
@@ -284,4 +294,78 @@ it('is refused to a driver the trip does not belong to', function () {
         ->assertForbidden();
 
     Http::assertNothingSent();
+});
+
+// ── OSRM: the keyless engine, and the default ────────────────────────────
+
+it('routes with no key at all on the free engine', function () {
+    // The point of having it. A straight dashed line is honest and, in a
+    // driver's words, not helping — and waiting for a billing account before
+    // any route can be drawn is not a good answer to that.
+    [$driverUser, $trip] = routableTrip();
+    enableOsrm();
+
+    Http::fake(['osrm.test/*' => Http::response([
+        'code' => 'Ok',
+        'routes' => [['geometry' => 'uclAcerfERE`@KD', 'distance' => 19832.7, 'duration' => 1071.7]],
+    ])]);
+
+    $this->actingAs($driverUser, 'sanctum')
+        ->getJson("/api/v1/trips/{$trip->id}/route?from_latitude=0.3949&from_longitude=32.7022")
+        ->assertOk()
+        ->assertJsonPath('data.route.polyline', 'uclAcerfERE`@KD')
+        ->assertJsonPath('data.route.distance_km', 19.83)
+        ->assertJsonPath('data.route.duration_seconds', 1072)
+        ->assertJsonPath('data.route.provider', 'osrm');
+});
+
+it('sends OSRM longitude first, which is the opposite of everything else here', function () {
+    // Uganda sits near the equator, so a swapped pair passes every range check
+    // either number could face and routes into the Indian Ocean. Asserted
+    // against the URL because nothing else would catch it.
+    [$driverUser, $trip] = routableTrip();
+    enableOsrm();
+
+    Http::fake(['osrm.test/*' => Http::response(['code' => 'NoRoute', 'routes' => []])]);
+
+    $this->actingAs($driverUser, 'sanctum')
+        ->getJson("/api/v1/trips/{$trip->id}/route?from_latitude=0.3949&from_longitude=32.7022")
+        ->assertOk();
+
+    Http::assertSent(fn ($request) => str_contains($request->url(), '32.7022,0.3949;32.6011,0.3268'));
+});
+
+it('treats an OSRM refusal as no route, exactly as it treats a Google one', function () {
+    [$driverUser, $trip] = routableTrip();
+    enableOsrm();
+
+    Http::fake(['osrm.test/*' => Http::response(['code' => 'NoRoute', 'routes' => []])]);
+
+    $this->actingAs($driverUser, 'sanctum')
+        ->getJson("/api/v1/trips/{$trip->id}/route")
+        ->assertOk()
+        ->assertJsonPath('data.route', null);
+});
+
+it('asks for no key on the free engine, so routing is never on but dead', function () {
+    // `routingConfigured()` is provider-aware for this reason: demanding a
+    // credential OSRM does not want would leave the switch on and every route
+    // null, which is indistinguishable from the bug it was meant to fix.
+    [$driverUser, $trip] = routableTrip();
+
+    app(SettingsService::class)->setGroup('maps', [
+        'routing_enabled' => true,
+        'routing_provider' => 'osrm',
+        'osrm_base_url' => 'https://osrm.test',
+    ]);
+
+    Http::fake(['osrm.test/*' => Http::response([
+        'code' => 'Ok',
+        'routes' => [['geometry' => 'abc', 'distance' => 1000, 'duration' => 120]],
+    ])]);
+
+    $this->actingAs($driverUser, 'sanctum')
+        ->getJson("/api/v1/trips/{$trip->id}/route")
+        ->assertOk()
+        ->assertJsonPath('data.route.provider', 'osrm');
 });

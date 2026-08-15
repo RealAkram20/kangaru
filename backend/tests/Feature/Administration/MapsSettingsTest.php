@@ -31,6 +31,7 @@ it('never returns the key it was given', function () {
         ->patchJson('/api/v1/settings/maps', [
             'routing_enabled' => true,
             'routing_provider' => 'google',
+            'osrm_base_url' => 'https://router.project-osrm.org',
             'api_key' => 'AIzaSyDEMO-not-a-real-key',
         ])
         ->assertOk();
@@ -49,6 +50,7 @@ it('encrypts the key at rest rather than storing it readable', function () {
         ->patchJson('/api/v1/settings/maps', [
             'routing_enabled' => true,
             'routing_provider' => 'google',
+            'osrm_base_url' => 'https://router.project-osrm.org',
             'api_key' => 'AIzaSyDEMO-not-a-real-key',
         ])
         ->assertOk();
@@ -68,6 +70,7 @@ it('keeps the key out of the public subset, which the browser reads unauthentica
         ->patchJson('/api/v1/settings/maps', [
             'routing_enabled' => true,
             'routing_provider' => 'google',
+            'osrm_base_url' => 'https://router.project-osrm.org',
             'api_key' => 'AIzaSyDEMO-not-a-real-key',
         ])
         ->assertOk();
@@ -83,7 +86,10 @@ it('starts switched off, so configuring a key never silently starts a bill', fun
         ->getJson('/api/v1/settings')
         ->assertOk()
         ->assertJsonPath('data.settings.maps.routing_enabled', false)
-        ->assertJsonPath('data.settings.maps.routing_provider', 'google')
+        // OSRM by default: it needs no key and costs nothing, so routing
+        // works the moment the switch is turned on rather than after somebody
+        // has opened a billing account. Google is the upgrade.
+        ->assertJsonPath('data.settings.maps.routing_provider', 'osrm')
         ->assertJsonPath('data.settings.maps.api_key.configured', false);
 });
 
@@ -98,6 +104,7 @@ it('reports routing as unconfigured until both the switch and the key are there'
     $this->actingAs($admin, 'sanctum')->patchJson('/api/v1/settings/maps', [
         'routing_enabled' => false,
         'routing_provider' => 'google',
+        'osrm_base_url' => 'https://router.project-osrm.org',
         'api_key' => 'AIzaSyDEMO-not-a-real-key',
     ])->assertOk();
 
@@ -107,6 +114,7 @@ it('reports routing as unconfigured until both the switch and the key are there'
     $this->actingAs($admin, 'sanctum')->patchJson('/api/v1/settings/maps', [
         'routing_enabled' => true,
         'routing_provider' => 'google',
+        'osrm_base_url' => 'https://router.project-osrm.org',
     ])->assertOk();
 
     expect(app(SettingsService::class)->routingConfigured())->toBeTrue();
@@ -117,9 +125,23 @@ it('refuses a provider nobody has implemented', function () {
         ->patchJson('/api/v1/settings/maps', [
             'routing_enabled' => true,
             'routing_provider' => 'mapbox',
+            'osrm_base_url' => 'https://router.project-osrm.org',
             'api_key' => 'x',
         ])
         ->assertStatus(422);
+});
+
+it('reports the free engine as configured without any credential', function () {
+    // The pair that would otherwise leave routing switched on and every route
+    // null — indistinguishable, from a driver's seat, from the straight line
+    // it was meant to replace.
+    $this->actingAs(mapsSuperAdmin(), 'sanctum')->patchJson('/api/v1/settings/maps', [
+        'routing_enabled' => true,
+        'routing_provider' => 'osrm',
+        'osrm_base_url' => 'https://router.project-osrm.org',
+    ])->assertOk();
+
+    expect(app(SettingsService::class)->routingConfigured())->toBeTrue();
 });
 
 it('is refused to a role without settings.manage', function () {
@@ -129,6 +151,7 @@ it('is refused to a role without settings.manage', function () {
         ->patchJson('/api/v1/settings/maps', [
             'routing_enabled' => true,
             'routing_provider' => 'google',
+            'osrm_base_url' => 'https://router.project-osrm.org',
             'api_key' => 'AIzaSyDEMO-not-a-real-key',
         ])
         ->assertForbidden();

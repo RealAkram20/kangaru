@@ -158,7 +158,7 @@ export type TripRoute = {
    * no minutes at all.
    */
   duration_seconds: number | null;
-  provider: 'google';
+  provider: 'google' | 'osrm';
   /** A forecast, never a promise of arrival. Travels with the figure. */
   is_estimate: true;
 };

@@ -2521,6 +2521,21 @@ paths:
         403 `NOT_A_DRIVER` when the account has no driver profile.
       parameters:
         - $ref: '#/components/parameters/cursor'
+        - in: query
+          name: from
+          required: false
+          description: >
+            Inclusive start, `YYYY-MM-DD`, in the **driver's local day**
+            (`settings.regional.timezone`) — not UTC.
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          required: false
+          description: >
+            **Inclusive** end, `YYYY-MM-DD`, local. The whole of the day named
+            is returned; an exclusive bound would make picking a single day
+            return nothing.
+          schema: { type: string, format: date }
       responses:
         '200':
           description: A page of ledger entries.
@@ -2542,6 +2557,171 @@ paths:
                     additionalProperties: false
                     properties:
                       cursor: { $ref: '#/components/schemas/Cursor' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/me/settlement-requests:
+    get:
+      summary: The signed-in driver's own settlement requests, newest first.
+      description: >
+        Not paginated: a driver holds at most one open request per kind
+        (ADR-0032 §4) and the history behind them is short — settlements
+        happen weekly, not per trip. Capped at 20.
+      responses:
+        '200':
+          description: The driver's requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DriverSettlementRequest' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Asks the office to settle — cash handed over, or a payout wanted.
+      description: >
+        **This moves no money** (ADR-0032). Cash changes hands at the depot
+        exactly as before; this records that the driver says it did, or would
+        like it to. The ledger learns about it only when somebody at the
+        office confirms.
+
+        A pending request **never affects the wallet balance**, which comes
+        from `driver_ledger_entries` alone. If it did, a driver could request
+        their way out of what they owe.
+
+        `409 SETTLEMENT_REQUEST_ALREADY_OPEN` when one of that kind is already
+        waiting: two pending payout requests are one driver asking twice.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, amount_minor]
+              additionalProperties: false
+              properties:
+                kind: { $ref: '#/components/schemas/SettlementRequestKind' }
+                amount_minor:
+                  type: integer
+                  minimum: 1
+                  description: >
+                    **Positive whatever the kind** — a person typing an amount
+                    does not type a sign, and the direction is `kind`'s job.
+                    Minor units; UGX is zero-decimal, so whole shillings.
+                note:
+                  type: ['string', 'null']
+                  maxLength: 255
+                  description: >
+                    The driver's own words about the handover — "paid Musoke
+                    at Nakawa depot". Carried into the ledger entry's
+                    description on confirmation, where it is what makes the
+                    row recognisable months later.
+      responses:
+        '201':
+          description: The request was recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DriverSettlementRequest' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/settlement-requests:
+    get:
+      summary: The office queue of settlement requests.
+      description: >
+        `drivers.manage`. **Oldest first**, unlike every other list here: a
+        driver who has waited three days for their money belongs at the top,
+        and a newest-first queue starves exactly the person it matters to.
+
+        Defaults to open requests only; pass `status` for the others.
+      parameters:
+        - $ref: '#/components/parameters/cursor'
+        - in: query
+          name: status
+          required: false
+          schema: { $ref: '#/components/schemas/SettlementRequestStatus' }
+      responses:
+        '200':
+          description: A page of requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DriverSettlementRequest' }
+                  meta:
+                    type: object
+                    required: [cursor]
+                    additionalProperties: false
+                    properties:
+                      cursor: { $ref: '#/components/schemas/Cursor' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/settlement-requests/{settlementRequest}/confirm:
+    post:
+      summary: Confirms that the cash moved — and writes the ledger entry.
+      description: >
+        `drivers.manage`. **This is the only thing that writes a `settlement`
+        entry**, through `DriverLedgerService::recordSettlement()` rather than
+        by inserting a row, so the sign convention stays in one place. The
+        sign is derived from the request's `kind`.
+
+        **Idempotent.** The row is locked and re-read inside the transaction;
+        a request that was already answered comes back unchanged rather than
+        paying twice, and `ledger_entry_id` records which entry it produced.
+        The message says which happened.
+      parameters:
+        - { name: settlementRequest, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          $ref: '#/components/responses/SettlementRequestResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/settlement-requests/{settlementRequest}/decline:
+    post:
+      summary: Declines a request, with a reason.
+      description: >
+        `drivers.manage`. The reason is **required**: this is the first
+        surface on the platform where staff refuse a driver something about
+        their own money, and a refusal with no explanation is how a driver
+        stops using a feature.
+      parameters:
+        - { name: settlementRequest, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: { type: string, minLength: 3, maxLength: 255 }
+      responses:
+        '200':
+          $ref: '#/components/responses/SettlementRequestResponse'
         default:
           $ref: '#/components/responses/Error'
 
@@ -3118,7 +3298,7 @@ paths:
                                   is the invention ADR-0020 §3 refused, wearing
                                   a better number. A client with null shows no
                                   minutes at all.
-                              provider: { enum: [google] }
+                              provider: { enum: [google, osrm] }
                               is_estimate:
                                 enum: [true]
                                 description: >
@@ -3782,6 +3962,19 @@ components:
               reason: { type: string, maxLength: 1000 }
 
   responses:
+    SettlementRequestResponse:
+      description: The request, after the office answered it.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/DriverSettlementRequest' }
+
     Error:
       description: >
         Any failure. `code` is stable and machine-readable — clients branch
@@ -4323,6 +4516,7 @@ components:
         - OFFER_NO_LONGER_OPEN
         - OFFER_HAS_NO_VEHICLE
         - TOKEN_SCOPE_EXCEEDED
+        - SETTLEMENT_REQUEST_ALREADY_OPEN
 
     TripStatus:
       enum:
@@ -5267,12 +5461,28 @@ components:
             never silently starts a bill, and is a separate switch so the
             spend can be stopped without destroying the credential.
           type: object
-          required: [routing_enabled, routing_provider, api_key]
+          required: [routing_enabled, routing_provider, osrm_base_url, api_key]
           additionalProperties: false
           properties:
             routing_enabled: { type: boolean }
-            routing_provider: { enum: [google] }
-            api_key: { $ref: '#/components/schemas/SecretValue' }
+            routing_provider:
+              enum: [google, osrm]
+              description: >
+                **OSRM by default**, because it needs no key and costs
+                nothing — routing works the moment the switch is on rather
+                than after a billing account exists. Google is the upgrade:
+                better traffic data, and a meter.
+            osrm_base_url:
+              type: string
+              format: uri
+              description: >
+                Where OSRM lives. Defaults to the project's public demo
+                server, which is rate-limited and **not for production** under
+                OSRM's own usage policy. Point it at a self-hosted instance
+                before a real fleet depends on it.
+            api_key:
+              allOf: [{ $ref: '#/components/schemas/SecretValue' }]
+              description: Google only. OSRM is an open server and needs none.
         mail:
           type: object
           required: [enabled, host, port, username, password, encryption, from_address, from_name]
@@ -5681,6 +5891,67 @@ components:
         is_estimate:
           description: Always false. The counterpart of the always-true flag on WalkInFareEstimate.
           enum: [false]
+
+    SettlementRequestKind:
+      description: >
+        Which way the driver is asking money to move (ADR-0032 §1).
+
+        Deliberately **not** "deposit" and "withdrawal": a driver is not
+        depositing into an account this platform holds, and there is nothing
+        to withdraw from. `remittance` is the common case — cash work runs
+        towards the office.
+      type: string
+      enum: [remittance, payout]
+
+    SettlementRequestStatus:
+      type: string
+      enum: [pending, confirmed, declined]
+
+    DriverSettlementRequest:
+      description: >
+        A driver asking the office to settle (ADR-0032).
+
+        **Never a balance.** The wallet total comes from
+        `driver_ledger_entries` alone, and a pending request changes nothing
+        until a human confirms it.
+      type: object
+      required:
+        - id
+        - driver_id
+        - kind
+        - kind_label
+        - status
+        - status_label
+        - amount_minor
+        - currency
+        - note
+        - decline_reason
+        - reviewed_at
+        - ledger_entry_id
+        - created_at
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        driver_id: { type: integer }
+        kind: { $ref: '#/components/schemas/SettlementRequestKind' }
+        kind_label: { type: string }
+        status: { $ref: '#/components/schemas/SettlementRequestStatus' }
+        status_label: { type: string }
+        amount_minor:
+          type: integer
+          description: '**Always positive.** The direction is `kind`; only the ledger entry is signed.'
+        currency: { type: string }
+        note: { type: ['string', 'null'] }
+        decline_reason:
+          type: ['string', 'null']
+          description: Present only on a decline, and never empty when it is.
+        reviewed_at: { type: ['string', 'null'], format: date-time }
+        ledger_entry_id:
+          type: ['integer', 'null']
+          description: >
+            The entry a confirmation produced, or null. Set once — it is what
+            makes confirmation idempotent.
+        created_at: { type: ['string', 'null'], format: date-time }
 
     DriverLedgerEntry:
       description: >

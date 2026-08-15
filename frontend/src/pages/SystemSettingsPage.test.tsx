@@ -53,7 +53,8 @@ const SETTINGS = {
   },
   maps: {
     routing_enabled: false,
-    routing_provider: 'google' as const,
+    routing_provider: 'osrm' as const,
+    osrm_base_url: 'https://router.project-osrm.org',
     api_key: { configured: false },
   },
   payments: {
@@ -91,7 +92,12 @@ describe('SystemSettingsPage', () => {
         data: {
           settings: {
             ...SETTINGS,
-            maps: { ...SETTINGS.maps, routing_enabled: true, api_key: { configured: true } },
+            maps: {
+              ...SETTINGS.maps,
+              routing_enabled: true,
+              routing_provider: 'google',
+              api_key: { configured: true },
+            },
           },
         },
       },
@@ -108,12 +114,31 @@ describe('SystemSettingsPage', () => {
     expect(field).toHaveAttribute('type', 'password')
   })
 
-  it('warns that routing costs money, on the one setting that does', async () => {
-    get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+  it('warns that Google costs money, on the one setting that does', async () => {
+    get.mockResolvedValue({
+      data: {
+        data: {
+          settings: { ...SETTINGS, maps: { ...SETTINGS.maps, routing_provider: 'google' } },
+        },
+      },
+    })
 
     render(<SystemSettingsPage />)
 
     expect(await screen.findByText(/costs money per trip/i)).toBeInTheDocument()
+  })
+
+  it('offers no key field on the free engine, and says it is not production-ready', async () => {
+    // OSRM needs no credential, so asking for one would leave an operator
+    // filling in a box that changes nothing — and the demo server's limits
+    // are exactly the thing somebody must know before a fleet leans on it.
+    get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+
+    render(<SystemSettingsPage />)
+
+    expect(await screen.findByLabelText(/osrm server address/i)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/google directions api key/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/not meant for production/i)).toBeInTheDocument()
   })
 
   it('treats a 403 as an answer, not an error', async () => {

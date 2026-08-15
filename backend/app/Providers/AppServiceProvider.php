@@ -44,8 +44,10 @@ use Modules\Drivers\Listeners\CreditDriverForCompletedTrip;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverApplication;
 use Modules\Drivers\Models\DriverLedgerEntry;
+use Modules\Drivers\Models\DriverSettlementRequest;
 use Modules\Drivers\Policies\DriverApplicationPolicy;
 use Modules\Drivers\Policies\DriverPolicy;
+use Modules\Drivers\Policies\DriverSettlementRequestPolicy;
 use Modules\Fleet\Models\AvailabilityBlock;
 use Modules\Fleet\Models\DriverShiftWindow;
 use Modules\Fleet\Models\VehicleAllocation;
@@ -65,6 +67,7 @@ use Modules\Trips\Models\Trip;
 use Modules\Trips\Models\TripRating;
 use Modules\Trips\Policies\TripPolicy;
 use Modules\Trips\Routing\GoogleDirectionsProvider;
+use Modules\Trips\Routing\OsrmProvider;
 use Modules\Trips\Routing\RouteProvider;
 use Modules\Trips\Support\ContactChannel;
 use Modules\Trips\Support\DatabaseLivePositionStore;
@@ -95,7 +98,20 @@ class AppServiceProvider extends ServiceProvider
         // The routing vendor, behind the seam ADR-0031 §2 keeps for it. One
         // implementation today; the settings group records which engine drew
         // a route so "why does this line look wrong" has an answer.
-        $this->app->bind(RouteProvider::class, GoogleDirectionsProvider::class);
+        $this->app->bind(RouteProvider::class, function ($app) {
+            // Resolved per call rather than pinned at boot: the provider is a
+            // setting, and an operator switching it in System Settings must
+            // take effect on the next request rather than the next deploy.
+            //
+            // A boot-time read would also make `php artisan migrate` on an
+            // empty database depend on the settings table it is about to
+            // create — the trap ADR-0014's `mail` note records.
+            $provider = $app->make(SettingsService::class)->get('maps', 'routing_provider');
+
+            return $provider === 'google'
+                ? $app->make(GoogleDirectionsProvider::class)
+                : $app->make(OsrmProvider::class);
+        });
     }
 
     /**
@@ -156,6 +172,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Vehicle::class, VehiclePolicy::class);
         Gate::policy(Driver::class, DriverPolicy::class);
         Gate::policy(DriverApplication::class, DriverApplicationPolicy::class);
+        Gate::policy(DriverSettlementRequest::class, DriverSettlementRequestPolicy::class);
         Gate::policy(Trip::class, TripPolicy::class);
         Gate::policy(Booking::class, BookingPolicy::class);
         Gate::policy(OrderRequest::class, OrderRequestPolicy::class);
@@ -237,6 +254,11 @@ class AppServiceProvider extends ServiceProvider
             // and a correction is a new row rather than an edit — so the audit
             // trail and the ledger tell the same story from two directions.
             'driver_ledger_entry' => DriverLedgerEntry::class,
+            // ADR-0032. The first surface where a staff action directly
+            // changes what a driver is owed — confirming one writes a
+            // settlement into the ledger — so who answered it, and when, is
+            // the point rather than a formality.
+            'driver_settlement_request' => DriverSettlementRequest::class,
             'trip' => Trip::class,
             // ADR-0030. A rating cannot be edited or withdrawn, so the only
             // mutation an audit trail will ever see here is an administrator

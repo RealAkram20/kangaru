@@ -79,7 +79,8 @@ interface Settings {
   }
   maps: {
     routing_enabled: boolean
-    routing_provider: 'google'
+    routing_provider: 'google' | 'osrm'
+    osrm_base_url: string
     /** Write-only: the API answers whether a key exists, never what it is. */
     api_key: SecretValue
   }
@@ -570,6 +571,8 @@ function OrderingCard({
  */
 function MapsCard({ maps, onSaved }: { maps: Settings['maps']; onSaved: (s: Settings) => void }) {
   const [enabled, setEnabled] = useState(maps.routing_enabled)
+  const [provider, setProvider] = useState(maps.routing_provider)
+  const [osrmUrl, setOsrmUrl] = useState(maps.osrm_base_url)
   const [apiKey, setApiKey] = useState('')
   const { state, errors, message, setMessage, save } = useSave('maps', onSaved)
 
@@ -583,7 +586,11 @@ function MapsCard({ maps, onSaved }: { maps: Settings['maps']; onSaved: (s: Sett
           e.preventDefault()
           void save(
             withSecrets(
-              { routing_enabled: enabled, routing_provider: 'google' },
+              {
+                routing_enabled: enabled,
+                routing_provider: provider,
+                osrm_base_url: osrmUrl,
+              },
               { api_key: apiKey },
             ),
           )
@@ -596,12 +603,37 @@ function MapsCard({ maps, onSaved }: { maps: Settings['maps']; onSaved: (s: Sett
           </Alert>
         )}
 
-        <Alert tone="info" title="This one costs money per trip">
-          Google charges for every route it calculates, so this is the one setting on
-          this page with a running cost attached. Leave it off until you are ready to
-          pay for it — the app falls back to a direct line between the two points and
-          says so on screen, and the driver&rsquo;s own maps app is still one tap away.
-        </Alert>
+        {provider === 'google' ? (
+          <Alert tone="info" title="This one costs money per trip">
+            Google charges for every route it calculates, so this is the one setting on
+            this page with a running cost attached. It buys live traffic, which is the
+            whole difference from OSRM below.
+          </Alert>
+        ) : (
+          <Alert tone="info" title="Free, and not yet ready for a real fleet">
+            OSRM needs no key and costs nothing, so routing works as soon as you turn it
+            on. It routes on road geometry rather than live traffic, so its arrival
+            times read optimistic in rush hour. The default address is the project&rsquo;s
+            public demo server, which is rate-limited and not meant for production —
+            run your own before drivers depend on it.
+          </Alert>
+        )}
+
+        <FormField
+          label="Routing engine"
+          htmlFor="settings-maps-provider"
+          hint="OSRM is free and needs no account. Google costs per route and adds live traffic."
+          error={errors.routing_provider}
+        >
+          <Select
+            id="settings-maps-provider"
+            value={provider}
+            onChange={(e) => setProvider(e.target.value as 'google' | 'osrm')}
+          >
+            <option value="osrm">OSRM — free, no key</option>
+            <option value="google">Google Directions — paid, live traffic</option>
+          </Select>
+        </FormField>
 
         <Checkbox
           label="Calculate routes with Google"
@@ -610,6 +642,25 @@ function MapsCard({ maps, onSaved }: { maps: Settings['maps']; onSaved: (s: Sett
           onChange={(e) => setEnabled(e.target.checked)}
         />
 
+        {provider === 'osrm' && (
+          <FormField
+            label="OSRM server address"
+            htmlFor="settings-maps-osrm"
+            hint="Change this to your own instance before a real fleet depends on it."
+            error={errors.osrm_base_url}
+            required
+          >
+            <Input
+              id="settings-maps-osrm"
+              type="url"
+              value={osrmUrl}
+              onChange={(e) => setOsrmUrl(e.target.value)}
+              required
+            />
+          </FormField>
+        )}
+
+        {provider === 'google' && (
         <SecretField
           label="Google Directions API key"
           htmlFor="settings-maps-api-key"
@@ -618,6 +669,7 @@ function MapsCard({ maps, onSaved }: { maps: Settings['maps']; onSaved: (s: Sett
           onChange={setApiKey}
           error={errors.api_key}
         />
+        )}
 
         <SaveButton state={state} />
       </form>
