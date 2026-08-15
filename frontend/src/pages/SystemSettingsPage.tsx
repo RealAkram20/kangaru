@@ -61,6 +61,18 @@ interface Settings {
     approval_required: boolean
     max_advance_days: number
   }
+  /** ADR-0029 §3 and ADR-0034. In the catalogue since then, with no UI. */
+  billing: {
+    driver_commission_percent: number
+    bonus_enabled: boolean
+    bonus_weekly_trip_target: number
+    bonus_weekly_amount_minor: number
+  }
+  /** ADR-0035: the two numbers that decide whether a reading is believed. */
+  tracking: {
+    variance_threshold_percent: number
+    odometer_max_km_per_trip: number
+  }
   mail: {
     enabled: boolean
     host: string | null
@@ -167,6 +179,10 @@ export function SystemSettingsPage() {
       <BrandingCard branding={settings.branding} onSaved={setSettings} />
       <OrderingCard ordering={settings.ordering} onSaved={setSettings} />
       <BookingCard booking={settings.booking} onSaved={setSettings} />
+      {/* Money and measurement sit together, above the credential slots:
+          these are the numbers an operator actually revisits. */}
+      <BillingCard billing={settings.billing} onSaved={setSettings} />
+      <TrackingCard tracking={settings.tracking} onSaved={setSettings} />
       <MapsCard maps={settings.maps} onSaved={setSettings} />
       <RegionalCard regional={settings.regional} onSaved={setSettings} />
       <LegalCard legal={settings.legal} onSaved={setSettings} />
@@ -870,6 +886,218 @@ function AuthMethodsCard({
           onChange={setFacebookAppSecret}
           error={errors.facebook_app_secret}
         />
+
+        <SaveButton state={state} />
+      </form>
+    </Card>
+  )
+}
+
+/**
+ * What the platform keeps, and what it pays out (`billing` group).
+ *
+ * The group has existed since ADR-0029 and gained the bonus keys in ADR-0034;
+ * neither shipped a card, so both were reachable only by an API client. An
+ * unreachable setting is not a setting.
+ *
+ * **The commission rate is never applied retroactively.** ADR-0029 §3 writes
+ * the rate in force into each ledger entry's own description, so changing it
+ * here moves future work only — the hint says so, because a rate field with no
+ * such assurance reads as one that restates last month's pay.
+ */
+function BillingCard({
+  billing,
+  onSaved,
+}: {
+  billing: Settings['billing']
+  onSaved: (s: Settings) => void
+}) {
+  const [commission, setCommission] = useState(String(billing.driver_commission_percent))
+  const [bonusEnabled, setBonusEnabled] = useState(billing.bonus_enabled)
+  const [target, setTarget] = useState(String(billing.bonus_weekly_trip_target))
+  const [amount, setAmount] = useState(String(billing.bonus_weekly_amount_minor))
+  const { state, errors, message, setMessage, save } = useSave('billing', onSaved)
+
+  return (
+    <Card
+      title="Driver pay"
+      subtitle="What the platform keeps from a fare, and the weekly bonus. Changes apply to future work only — every ledger entry records the rate that was in force when it was written."
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          void save({
+            driver_commission_percent: Number(commission),
+            bonus_enabled: bonusEnabled,
+            bonus_weekly_trip_target: Number(target),
+            bonus_weekly_amount_minor: Number(amount),
+          })
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
+      >
+        {message !== null && (
+          <Alert tone="error" title="Driver pay" onDismiss={() => setMessage(null)}>
+            {message}
+          </Alert>
+        )}
+
+        <FormField
+          label="Commission the platform keeps (%)"
+          htmlFor="settings-commission"
+          hint="Taken from every walk-in fare and every tip. The driver keeps the rest; a fraction of a shilling rounds in their favour."
+          error={errors.driver_commission_percent}
+          required
+        >
+          <Input
+            id="settings-commission"
+            type="number"
+            min={0}
+            max={100}
+            value={commission}
+            onChange={(e) => setCommission(e.target.value)}
+            required
+            style={{ maxWidth: 120 }}
+          />
+        </FormField>
+
+        <Checkbox
+          label="Award a weekly bonus"
+          hint="Off by default, and deliberately: a scheme that switches itself on at deploy is an unbudgeted liability against every driver. Awarded by a scheduled job over a finished week, never mid-week."
+          checked={bonusEnabled}
+          onChange={(e) => setBonusEnabled(e.target.checked)}
+        />
+
+        <FormField
+          label="Trips needed in a week"
+          htmlFor="settings-bonus-target"
+          hint="Completed trips inside one closed week."
+          error={errors.bonus_weekly_trip_target}
+          required
+        >
+          <Input
+            id="settings-bonus-target"
+            type="number"
+            min={1}
+            max={1000}
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            required
+            style={{ maxWidth: 120 }}
+          />
+        </FormField>
+
+        <FormField
+          label="Bonus amount"
+          htmlFor="settings-bonus-amount"
+          hint="In whole shillings. No commission is taken from a bonus — the figure advertised is the figure paid."
+          error={errors.bonus_weekly_amount_minor}
+          required
+        >
+          <Input
+            id="settings-bonus-amount"
+            type="number"
+            min={0}
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            required
+            style={{ maxWidth: 160 }}
+          />
+        </FormField>
+
+        <SaveButton state={state} />
+      </form>
+    </Card>
+  )
+}
+
+/**
+ * Whether an odometer reading is believed (`tracking` group, ADR-0035).
+ *
+ * Both numbers were unreachable before this card: the threshold lived in
+ * `config/tracking.php` behind an env var, and the ceiling did not exist. A
+ * driver typed one digit too many and the platform priced a 90,004 km journey
+ * at UGX 198,013,800 without objecting.
+ *
+ * The rest of `config/tracking.php` is deliberately not here. Retention,
+ * partition headroom and the GPS noise floor are properties of the measuring
+ * apparatus rather than business rules, and a noise floor in an admin form is
+ * an invitation to break distance measurement for the whole fleet.
+ */
+function TrackingCard({
+  tracking,
+  onSaved,
+}: {
+  tracking: Settings['tracking']
+  onSaved: (s: Settings) => void
+}) {
+  const [threshold, setThreshold] = useState(String(tracking.variance_threshold_percent))
+  const [ceiling, setCeiling] = useState(String(tracking.odometer_max_km_per_trip))
+  const { state, errors, message, setMessage, save } = useSave('tracking', onSaved)
+
+  return (
+    <Card
+      title="Distance checks"
+      subtitle="How far a single trip may plausibly be, and how far the odometer may disagree with the GPS trace before somebody looks at it."
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          void save({
+            variance_threshold_percent: Number(threshold),
+            odometer_max_km_per_trip: Number(ceiling),
+          })
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
+      >
+        {message !== null && (
+          <Alert tone="error" title="Distance checks" onDismiss={() => setMessage(null)}>
+            {message}
+          </Alert>
+        )}
+
+        <FormField
+          label="Longest single trip (km)"
+          htmlFor="settings-odometer-ceiling"
+          hint="A closing odometer reading beyond this is refused outright, so the driver corrects it while they are still at the vehicle. Set it above your longest real journey — this catches mistyped digits, it does not judge long-distance work."
+          error={errors.odometer_max_km_per_trip}
+          required
+        >
+          <Input
+            id="settings-odometer-ceiling"
+            type="number"
+            min={1}
+            max={100000}
+            value={ceiling}
+            onChange={(e) => setCeiling(e.target.value)}
+            required
+            style={{ maxWidth: 160 }}
+          />
+        </FormField>
+
+        <FormField
+          label="Flag a trip when the readings differ by more than (%)"
+          htmlFor="settings-variance-threshold"
+          hint="Compared against the GPS trace at completion. Lower catches more and flags more; a queue nobody can keep up with is one nobody reads. A trip with no GPS trace is never flagged — that is missing evidence, not a discrepancy."
+          error={errors.variance_threshold_percent}
+          required
+        >
+          <Input
+            id="settings-variance-threshold"
+            type="number"
+            min={1}
+            max={100}
+            value={threshold}
+            onChange={(e) => setThreshold(e.target.value)}
+            required
+            style={{ maxWidth: 120 }}
+          />
+        </FormField>
+
+        <Alert tone="info" title="This only flags — it does not stop anything">
+          A flagged trip is still invoiced and still pays the driver. Reviewing
+          flagged trips is a manual job today, and the fare is priced from the
+          odometer rather than the GPS trace.
+        </Alert>
 
         <SaveButton state={state} />
       </form>

@@ -5874,6 +5874,54 @@ components:
           properties:
             approval_required: { type: boolean }
             max_advance_days: { type: integer }
+        tracking:
+          description: >
+            Whether an odometer reading is believed (ADR-0035).
+
+
+            Both numbers were unreachable before this group existed: the
+            threshold lived in `config/tracking.php` behind an env var, so
+            changing it needed a deploy and left no audit trail, and the
+            ceiling did not exist at all. A driver typed one digit too many and
+            the platform recorded a 90,004 km journey and priced it at
+            UGX 198,013,800 without objecting.
+
+
+            The rest of `config/tracking.php` — retention, partition headroom,
+            the live-position TTL and the GPS noise floor — deliberately stays
+            in config. Those are properties of the measuring apparatus rather
+            than business rules.
+          type: object
+          required: [variance_threshold_percent, odometer_max_km_per_trip]
+          additionalProperties: false
+          properties:
+            variance_threshold_percent:
+              type: number
+              minimum: 1
+              maximum: 100
+              description: >
+                How far the odometer distance may differ from the GPS trace
+                before the trip is flagged for review, as a percentage of the
+                odometer distance. A trip with no GPS trace is never flagged:
+                that is missing evidence, not a discrepancy.
+
+
+                Flagging only. A flagged trip is still invoiced and still pays
+                the driver.
+            odometer_max_km_per_trip:
+              type: integer
+              minimum: 1
+              maximum: 100000
+              description: >
+                The longest journey one closing odometer reading may describe,
+                in kilometres. Beyond it the transition to Trip Completed is
+                refused with 422, so the reading never becomes a trip and
+                therefore never becomes a fare — the driver corrects it while
+                still at the vehicle.
+
+
+                This is the ceiling to the floor that already refuses a closing
+                reading below the opening one.
         maps:
           description: >
             Road routing for the driver app's maps (ADR-0031 pending). The

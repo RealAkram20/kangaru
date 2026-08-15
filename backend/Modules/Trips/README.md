@@ -312,6 +312,36 @@ It returns **null, not zero**, for a trip with fewer than two points. The
 two are different claims — "there is no GPS evidence" versus "the vehicle
 did not move" — and reconciliation treats them differently.
 
+### The odometer has both a floor and a ceiling (ADR-0035)
+
+`TransitionTripRequest` refuses two readings outright, with 422, before the
+trip moves:
+
+- a closing reading **below** the opening one;
+- a closing reading that makes the journey longer than
+  `tracking.odometer_max_km_per_trip` (default 2,000 km).
+
+Refused rather than flagged, and refused there rather than downstream: past it
+the reading becomes a trip, then a fare, then a ledger entry or an invoice
+line, and correcting it means somebody unpicking money. One closing reading of
+100005 against an opening of 10001 recorded a 90,004 km journey and priced it
+at UGX 198,013,800.
+
+**The driver app does not see the refusal immediately.** It queues transitions
+through the offline outbox (ADR-0023), so the 422 lands on a later drain and
+*parks* the item with the server's message, which the sync queue screen shows.
+That is ADR-0023 §6 working, and it still stops the fare — but it is why the
+message names both the figure and the limit: it has to be legible hours later,
+away from the dashboard. A console user sees it synchronously.
+
+The two can never both fire — a reading below the opening one makes the
+distance negative, which cannot exceed a positive ceiling — so no guard
+enforces that. A first draft had one; a mutation pass proved it was dead code.
+
+The ceiling is settings, not config: it is a fact about a fleet, not about this
+codebase. An operator running cross-border work raises it; one running city
+work only can drop it a long way and catch far more.
+
 ### Odometer reconciliation
 
 At `Trip Completed`, the odometer span the driver just entered is compared

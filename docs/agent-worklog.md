@@ -2731,3 +2731,156 @@ glyphs for Tip and Weekly Bonus. A star means a *rating* in this product
 (ADR-0030, `StarIcon`), and reusing it for money would invert the glyph
 platform-wide on the one screen where the two could be confused. Lucide
 `hand-coins` and `award` are drawn instead. Say the word and I will change it.
+
+---
+
+### 2026-08-15 — Open question, parked by the owner: the OSRM demo server
+
+**Not a code change.** Raised, acknowledged, deferred — recorded so it is not
+lost between sessions. **To whoever owns ADR-0031 routing.**
+
+`maps.osrm_base_url` defaults to `https://router.project-osrm.org`, the OSRM
+project's public demo. Two things follow, and only the first is written down:
+
+1. **It is explicitly not for production** under OSRM's own usage policy —
+   rate-limited, no SLA. `OsrmProvider` and `SettingsService` both say so
+   already. Failures are silent by design (ADR-0031 §3 returns `route: null`
+   and the map falls back to the dashed line), so a throttled fleet does not
+   error, it just quietly stops getting roads.
+
+2. **Every routing request sends a real trip's pickup and drop-off coordinates
+   to a third party** with no contract and no data-processing agreement. This
+   is *not* recorded anywhere. This platform has an ADR about withholding a
+   passenger's phone number (ADR-0024 §7); their address leaving to an
+   unaccountable host is arguably the larger exposure and has had none of the
+   same scrutiny. Worth an ADR paragraph either way — even "we accept this" is
+   better recorded than assumed.
+
+**Nothing is happening today:** `maps.routing_enabled` defaults to `false`.
+The exposure begins the moment an operator switches routing on.
+
+**The fix is one setting.** Self-host — a Docker container and the Uganda
+extract from Geofabrik — and change `maps.osrm_base_url`. No provider code
+changes, no recurring bill, and it closes both points at once. That is why the
+seam was a setting rather than a constant.
+
+---
+
+### 2026-08-15 — Bounding the odometer, and giving the admin the dials
+
+**Status:** in progress.
+**Source:** `docs/distance-and-fare-integrity-plan.md`, Phases 1 and 4 only.
+The owner asked for the flagged work to be built; these are the two phases
+that change no pricing and block no billing, so they need no commercial
+ruling first.
+
+**Deliberately NOT building, and why it matters that nobody else does either:**
+
+- **Phase 2, `distance_source` on the rate card version.** Changes what a
+  client is invoiced and what a driver is paid. Needs the owner's ruling and
+  an ADR.
+- **Phase 3, the hard gate on a flagged trip.** Would stop invoices and ledger
+  writes that succeed today. Same reason.
+- **Setting `maximum_charge_minor`.** Zero-code and already in the console, but
+  a maximum fare per vehicle category is a pricing decision, not mine.
+
+**What I am building:**
+
+1. A **ceiling** on the odometer delta, refused at the transition (422) rather
+   than flagged after the fact, beside the floor check that already exists in
+   `TransitionTripRequest::withValidator()`. A driver who mistypes at the kerb
+   can retype in seconds; nobody else can correct it cheaply later.
+2. A **`tracking` settings group** so the threshold and the new ceiling are the
+   admin's, not an env var's, plus the console card for it.
+3. The **`billing` settings card**, for the group that has existed since
+   ADR-0029/0034 with no UI at all — `driver_commission_percent` and the three
+   bonus keys are API-only today.
+
+**A judgement call I am making rather than asking about.** The plan proposed
+moving `min_segment_metres` into settings too. I am **not** doing that, nor
+retention, partition headroom or the live-position TTL. Those are engineering
+tuning, not operator policy: a GPS noise floor in an admin form is an invitation
+to break distance measurement for the whole fleet, and none of them is a number
+an office has an opinion about. `variance_threshold_percent` and the ceiling
+are different — PROJECT.md already calls the first configurable, and the second
+is a policy number about plausible journeys.
+
+**Files I expect to own:**
+
+- `docs/adr/0035-odometer-plausibility-ceiling.md`
+- `backend/tests/Feature/Trips/OdometerCeilingTest.php`
+- `frontend/src/pages/settings/TrackingCard.tsx` + `BillingCard.tsx` if the
+  page wants them split out; otherwise two sections inside
+  `SystemSettingsPage.tsx`
+
+**Files shared — the exact edits:**
+
+- `backend/Modules/Administration/Services/SettingsService.php` — one new
+  `tracking` group. Purely additive to the catalogue.
+- `backend/Modules/Trips/Requests/TransitionTripRequest.php` — one added check
+  in `withValidator()`, beside the existing floor check.
+- `backend/config/tracking.php` — a note that two entries are superseded by the
+  settings group. No behaviour change to the others.
+- `frontend/src/pages/SystemSettingsPage.tsx` + `frontend/src/types/settings.ts`
+  — two added cards and their types.
+- `docs/api/openapi.yaml` — the settings schema gains the group.
+- `backend/Modules/Trips/README.md`, `AGENTS.md` if the ceiling belongs beside
+  the threshold sentence.
+
+**To whoever owns `src/wallet/presentation.ts`:** your refactor landed and is
+committed; 491 mobile tests pass. Nothing of mine touches `wallet/`.
+
+
+**Closed — done.** 611 backend tests (6 new), 372 frontend (3 new), Pint clean,
+PHPStan level 8 clean on `Modules/Trips` and `Modules/Administration`,
+`tsc -b --force` and eslint clean. Six guards proved by mutation and restored.
+
+**PHPStan needs `--memory-limit=1G` here.** It crashes at the default 128M with
+"Child process error… reached configured PHP memory limit", which reads like a
+code failure and is not one. Same environment limit this file already records
+for the full backend suite.
+
+**The mutation pass killed a line I had just written.** The ceiling check
+originally guarded on `! $validator->errors()->has('odometer_end')`, with a
+comment explaining that it stopped a reading being reported as both too small
+and too large. Dropping the guard failed nothing — because a reading below the
+opening one makes the distance *negative*, which can never exceed a positive
+ceiling. The arithmetic already guaranteed what the guard claimed to do. It is
+removed, and the comment now says so. A surviving mutation is the most useful
+result the pass produces and this is the second time this file records one.
+
+**A claim I had to walk back before shipping it.** The ADR, the README and the
+code comment all originally said a driver who mistypes is told at the kerb and
+retypes in seconds. **That is not true for the driver app.** `OdometerScreen`
+does not send the transition — it queues it through the offline outbox, so the
+422 arrives on a later drain and `outbox.ts` *parks* the item with the server's
+message, which the sync queue screen shows. The bad fare is still prevented,
+and ADR-0023 §6 is working exactly as designed, but the driver reads it hours
+later and away from the dashboard. All three now say so, and the message names
+the figure *and* the limit for that reason. Found by reading the app's call
+path rather than by any test.
+
+**Also updated, beyond the plan:** `tests/Feature/Trips/OdometerReconciliationTest.php`
+— its "respects the configured threshold" case set `config()`, which now drives
+nothing. Converted to `SettingsService` rather than deleted, because the
+property it asserts is still the right one. **This is a shared test file and
+the edit is one case**; the assertion is unchanged in spirit and the test fails
+if the state machine goes back to reading config.
+
+**Not built, deliberately — and the first one is the real gap:**
+
+- **The pre-submit warning in the driver app.** Phase 1 proposed comparing the
+  typed delta against the trip's own buffered GPS distance before queueing. The
+  ceiling is a *server setting* and the handset does not know it, and
+  hardcoding it is the exact defect the audit agent recorded as finding 5 — a
+  threshold shipped in a handset goes on asserting the old number after the
+  office changes it. Doing it properly means deciding which payload carries the
+  ceiling to the app, which is a contract decision. **Whoever picks this up:
+  serve it, do not inline it.**
+- **Phase 2 (`distance_source`) and Phase 3 (the hard gate).** Untouched. Both
+  change what a client is invoiced or a driver is paid.
+- **`min_segment_metres` and the rest of `config/tracking.php`** stay in config.
+  Reasoned in ADR-0035: measurement apparatus, not business rule.
+- **`maximum_charge_minor` is still null on all 8 rate rows.** Still the
+  owner's pricing call, still a zero-code fix in the console, and still the
+  single change that would have capped the 198M outright.

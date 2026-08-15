@@ -4,6 +4,7 @@ namespace Modules\Trips\Services;
 
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Modules\Administration\Services\SettingsService;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Events\TripCompleted;
 use Modules\Trips\Models\Trip;
@@ -21,6 +22,7 @@ class TripStateMachine
         private readonly TripAssignmentGuard $guard,
         private readonly RouteDistanceCalculator $routeDistance,
         private readonly OdometerPhotoStore $photos,
+        private readonly SettingsService $settings,
     ) {}
 
     /**
@@ -173,8 +175,14 @@ class TripStateMachine
 
         $variancePercent = abs($odometerKilometres - $gpsKilometres) / $odometerKilometres * 100;
 
+        // The office's number, not an env var's (ADR-0035). It was
+        // `config('tracking.variance_threshold_percent')`, which meant the
+        // threshold behind PROJECT.md's "reviewed within two business days"
+        // metric could only be changed by a deploy, was invisible in the
+        // console, and was not audited. Same default, so nothing moves until
+        // somebody decides it should.
         $trip->distance_variance_flagged = $variancePercent
-            > (float) config('tracking.variance_threshold_percent', 10);
+            > (float) $this->settings->get('tracking', 'variance_threshold_percent');
     }
 
     /**

@@ -146,6 +146,58 @@ class SettingsService
                 'rules' => ['required', 'integer', 'min:0'],
             ],
         ],
+        /*
+         * Distance integrity — the two numbers that decide whether an
+         * odometer reading is believed (ADR-0035).
+         *
+         * Here rather than in `config/tracking.php` because both are operator
+         * policy, and an env var is not something an office can change: it
+         * needs a deploy, it is invisible in the console, and it is not
+         * audited. The rest of `config/tracking.php` stays where it is —
+         * retention, partition headroom, the live-position TTL and the GPS
+         * noise floor are engineering tuning that no office has an opinion
+         * about, and a noise floor in an admin form is an invitation to break
+         * distance measurement for the whole fleet.
+         *
+         * Both defaults match what `config/tracking.php` shipped, so an
+         * existing deployment behaves identically until somebody changes them.
+         */
+        'tracking' => [
+            /*
+             * PROJECT.md: "variances beyond a configurable threshold are
+             * flagged for review." This is that threshold, as a percentage of
+             * the odometer distance.
+             *
+             * Loose on purpose. GPS traces are noisy, and PROJECT.md's success
+             * metric — flagged trips reviewed within two business days — only
+             * survives while the flag stays rare and means one thing.
+             */
+            'variance_threshold_percent' => [
+                'default' => 10,
+                'rules' => ['required', 'numeric', 'min:1', 'max:100'],
+            ],
+            /*
+             * The ceiling on a single trip's odometer delta, in kilometres.
+             *
+             * A refusal, not a flag: it is checked at the transition, so an
+             * impossible reading never becomes a trip and therefore never
+             * becomes a fare. The floor (closing below opening) has always
+             * been refused this way; this is the other end of the same rule.
+             *
+             * 2,000 km is deliberately generous — far beyond any single
+             * journey this platform dispatches, so it catches mistyped digits
+             * rather than adjudicating long-distance work. An operator running
+             * genuine cross-border runs should raise it; one running city work
+             * only can drop it a long way and catch far more.
+             *
+             * It exists because a driver typed 100005 against an opening of
+             * 10001 and priced a 90,004 km journey at UGX 198,013,800.
+             */
+            'odometer_max_km_per_trip' => [
+                'default' => 2000,
+                'rules' => ['required', 'integer', 'min:1', 'max:100000'],
+            ],
+        ],
         /**
          * Maps and routing (ADR-0031 pending).
          *

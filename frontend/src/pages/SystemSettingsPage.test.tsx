@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { apiFailure } from '../test/harness'
@@ -35,6 +35,13 @@ const SETTINGS = {
   regional: { currency: 'UGX', timezone: 'Africa/Kampala', date_format: 'DD MMM YYYY' },
   ordering: { walk_in_enabled: true, rate_limit_per_minute: 3 },
   booking: { approval_required: true, max_advance_days: 90 },
+  billing: {
+    driver_commission_percent: 20,
+    bonus_enabled: false,
+    bonus_weekly_trip_target: 40,
+    bonus_weekly_amount_minor: 20000,
+  },
+  tracking: { variance_threshold_percent: 10, odometer_max_km_per_trip: 2000 },
   mail: {
     enabled: false,
     host: null,
@@ -207,6 +214,79 @@ describe('SystemSettingsPage', () => {
       mtn_momo_api_user: 'momo-user',
       airtel_money_client_id: null,
     }))
+  })
+
+  it('gives the driver-pay group a card at last, and saves the whole group', async () => {
+    // `billing` has been in the catalogue since ADR-0029 and gained the bonus
+    // keys in ADR-0034, with no UI either time — so the commission rate and
+    // the bonus scheme were reachable only by an API client. An unreachable
+    // setting is not a setting.
+    const user = userEvent.setup()
+    get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+    patch.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+
+    render(<SystemSettingsPage />)
+
+    const commission = await screen.findByLabelText(/commission the platform keeps/i)
+    expect(commission).toHaveValue(20)
+
+    await user.clear(commission)
+    await user.type(commission, '25')
+    await user.click(screen.getByLabelText(/award a weekly bonus/i))
+
+    // Scoped to the form this field lives in rather than a test id. Ten cards
+    // render a "Save changes" button, and adding an attribute to `Card` that
+    // exists only for tests would put test scaffolding in production markup.
+    await user.click(
+      within(commission.closest('form')!).getByRole('button', { name: /save changes/i }),
+    )
+
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith('/settings/billing', {
+        driver_commission_percent: 25,
+        bonus_enabled: true,
+        bonus_weekly_trip_target: 40,
+        bonus_weekly_amount_minor: 20000,
+      }),
+    )
+  })
+
+  it('lets the office set the odometer ceiling and the variance threshold', async () => {
+    // ADR-0035. The threshold was an env var — a deploy to change, invisible
+    // here, unaudited — and the ceiling did not exist, which is how a mistyped
+    // digit priced a 90,004 km journey at UGX 198,013,800.
+    const user = userEvent.setup()
+    get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+    patch.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+
+    render(<SystemSettingsPage />)
+
+    const ceiling = await screen.findByLabelText(/longest single trip/i)
+    expect(ceiling).toHaveValue(2000)
+
+    await user.clear(ceiling)
+    await user.type(ceiling, '300')
+    await user.click(
+      within(ceiling.closest('form')!).getByRole('button', { name: /save changes/i }),
+    )
+
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith('/settings/tracking', {
+        variance_threshold_percent: 10,
+        odometer_max_km_per_trip: 300,
+      }),
+    )
+  })
+
+  it('says plainly that a flagged trip is still billed', async () => {
+    // The card must not imply a control it does not have. Flagging is a review
+    // signal: the invoice still goes out and the driver is still paid, and the
+    // fare is priced from the odometer rather than the GPS trace.
+    get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+
+    render(<SystemSettingsPage />)
+
+    expect(await screen.findByText(/only flags — it does not stop anything/i)).toBeInTheDocument()
   })
 
   it('shows the server message against the failing field', async () => {
