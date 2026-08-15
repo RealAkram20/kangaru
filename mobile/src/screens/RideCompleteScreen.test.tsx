@@ -77,6 +77,7 @@ function trip(earnings: TripEarnings | null = SETTLED): Trip {
     status: 'trip_completed',
     allowed_transitions: [],
     pickup_wait_target_seconds: 300,
+    odometer_max_km_per_trip: 2000,
     payment: { payment_method: 'cash', payer: null },
     odometer_start: 104_320,
     odometer_end: 104_332,

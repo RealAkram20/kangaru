@@ -4961,7 +4961,17 @@ components:
       enum: [pending, approved, rejected, assigned, cancelled]
 
     VehicleCategory:
-      enum: [sedan, suv, van, minibus, bus, pickup, truck]
+      description: >
+        Mirrors `Vehicle::CATEGORIES`. A category priced on a rate card but
+        absent here is a vehicle nobody can invoice.
+
+
+        `boda` and `tricycle` were missing while the walk-in tariff already
+        priced both and a fleet vehicle was already recorded as a boda — the
+        rows had been inserted by seeders, which skips the validation that
+        would have refused them. The self-drive subset on the public order
+        endpoint is deliberately narrower than this list.
+      enum: [boda, tricycle, sedan, suv, van, minibus, bus, pickup, truck]
 
     # -------------------------- envelopes ----------------------------
     ErrorEnvelope:
@@ -6989,6 +6999,7 @@ components:
         - status
         - allowed_transitions
         - pickup_wait_target_seconds
+        - odometer_max_km_per_trip
         - fare
         - estimated_fare
         - payment
@@ -7073,6 +7084,26 @@ components:
             fills its ring to full and holds it there while the elapsed
             figure keeps counting.
           example: 300
+        odometer_max_km_per_trip:
+          type: integer
+          description: >
+            The longest journey one closing odometer reading may describe, from
+            `tracking.odometer_max_km_per_trip` (ADR-0035). Beyond it the
+            transition to Trip Completed is refused with 422.
+
+
+            Served on the trip so the driver app can refuse an impossible
+            reading before it queues one, and **served rather than hardcoded**
+            because the office changes it in the console: a handset holding its
+            own copy would go on enforcing the old number on devices nobody can
+            reach. It rides on the trip rather than a config endpoint because
+            the trip is already cached offline, which is where readings get
+            typed.
+
+
+            **The server remains the control.** A client that ignores this
+            still cannot save an impossible reading.
+          example: 2000
         payment:
           description: >
             How this job settles, for the driver carrying it — the same fact

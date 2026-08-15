@@ -196,6 +196,22 @@ export type Trip = {
    */
   pickup_wait_target_seconds: number;
   /**
+   * The longest journey one closing odometer reading may describe, from
+   * `tracking.odometer_max_km_per_trip` (ADR-0035).
+   *
+   * **Served rather than hardcoded, and that is the whole point.** The office
+   * changes it in the console; a copy baked into this app would go on
+   * enforcing the old number on handsets nobody can reach. It rides on the
+   * trip because the trip is already cached offline, which is where a reading
+   * gets typed.
+   *
+   * `OdometerScreen` uses it to refuse an impossible reading before queueing
+   * it. **The server is still the control** — this app queues transitions
+   * rather than sending them, so without it the refusal arrives as a parked
+   * outbox item hours later.
+   */
+  odometer_max_km_per_trip: number;
+  /**
    * How this job settles, or null.
    *
    * **Null is a real answer**: a corporate trip is invoiced to the client and

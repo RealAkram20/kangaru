@@ -47,8 +47,21 @@ const goBack = jest.fn();
 async function renderOdometer(
   to: Extract<TripStatus, 'trip_started' | 'trip_completed'>,
   from: TripStatus,
+  // `null` means the key is absent altogether — a trip cached before the field
+  // existed. Passing `undefined` cannot express that: a default parameter
+  // treats an explicit `undefined` as "not supplied" and substitutes 2,000,
+  // which quietly made the first version of that test assert the opposite of
+  // its own name.
+  ceiling: number | null = 2_000,
 ): Promise<ReturnType<typeof render>> {
-  mockUseTrip.mockReturnValue({ data: { id: 42, odometer_start: 104_320 } });
+  mockUseTrip.mockReturnValue({
+    data: {
+      id: 42,
+      odometer_start: 104_320,
+      // Served on the trip, never hardcoded here (ADR-0035).
+      ...(ceiling === null ? {} : { odometer_max_km_per_trip: ceiling }),
+    },
+  });
 
   const node: ReactElement = (
     <OdometerScreen
@@ -89,6 +102,67 @@ it('sends the driver to the completion screen once the closing reading is queued
   // has already been queued.
   expect(replace).toHaveBeenCalledWith('RideComplete', { tripId: 42 });
   expect(goBack).not.toHaveBeenCalled();
+});
+
+it('refuses an impossible reading before it ever reaches the queue', async () => {
+  // The reading that shipped: 100005 against an opening of 10001, which
+  // recorded a 90,004 km journey and priced it at UGX 198,013,800.
+  //
+  // The server refuses it too, and authoritatively — but this screen *queues*
+  // transitions rather than sending them (ADR-0023), so the server's 422
+  // arrives as a parked outbox item hours later. Catching it here is the
+  // difference between correcting a digit and filing a support question.
+  const { getByPlaceholderText, getByText, queryByText } = await renderOdometer(
+    'trip_completed',
+    'trip_started',
+  );
+
+  await fireEvent.changeText(getByPlaceholderText('104320'), '1043200');
+
+  expect(getByText(/over the 2,000 km limit/i)).toBeTruthy();
+
+  // Named, not "invalid": a driver has to know which digit to change.
+  expect(queryByText(/938,880 km/i)).toBeTruthy();
+
+  void fireEvent.press(getByText('Complete trip'));
+
+  await waitFor(() => expect(mockQueueTransition).not.toHaveBeenCalled());
+});
+
+it('takes the limit from the trip rather than a number of its own', async () => {
+  // The office can change the ceiling in the console. A copy compiled into the
+  // app would go on enforcing the old one on handsets nobody can reach — the
+  // defect this codebase already records once.
+  const { getByPlaceholderText, getByText } = await renderOdometer(
+    'trip_completed',
+    'trip_started',
+    50,
+  );
+
+  // 60 km clears the shipped default of 2,000 comfortably and is still
+  // refused, because this trip says 50.
+  await fireEvent.changeText(getByPlaceholderText('104320'), '104380');
+
+  expect(getByText(/over the 50 km limit/i)).toBeTruthy();
+});
+
+it('does not invent a limit for a trip cached before the field existed', async () => {
+  // No local opinion, rather than a limit of zero. The server still enforces
+  // it; refusing a legitimate reading because the payload is old would be
+  // worse than letting the 422 arrive late.
+  const { getByPlaceholderText, getByText, queryByText } = await renderOdometer(
+    'trip_completed',
+    'trip_started',
+    null,
+  );
+
+  await fireEvent.changeText(getByPlaceholderText('104320'), '1043200');
+
+  expect(queryByText(/km limit/i)).toBeNull();
+
+  void fireEvent.press(getByText('Complete trip'));
+
+  await waitFor(() => expect(mockQueueTransition).toHaveBeenCalled());
 });
 
 it('goes back on the opening reading, because the trip carries on', async () => {

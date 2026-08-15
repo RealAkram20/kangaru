@@ -46,6 +46,7 @@ function trip(overrides: Partial<Trip> = {}): Trip {
     status: 'trip_started',
     allowed_transitions: ['waiting', 'trip_completed'],
     pickup_wait_target_seconds: 300,
+    odometer_max_km_per_trip: 2000,
     payment: null,
     odometer_start: null,
     odometer_end: null,

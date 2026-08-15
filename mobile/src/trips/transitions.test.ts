@@ -30,6 +30,7 @@ function tripWith(status: TripStatus, allowed: TripStatus[]): Trip {
     status,
     allowed_transitions: allowed,
     pickup_wait_target_seconds: 300,
+    odometer_max_km_per_trip: 2000,
     payment: null,
 
     odometer_start: null,

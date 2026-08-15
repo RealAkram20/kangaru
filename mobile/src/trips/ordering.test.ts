@@ -19,6 +19,7 @@ function trip(id: number, status: TripStatus, createdAt: string | null): Trip {
     status,
     allowed_transitions: [],
     pickup_wait_target_seconds: 300,
+    odometer_max_km_per_trip: 2000,
     payment: null,
 
     odometer_start: null,

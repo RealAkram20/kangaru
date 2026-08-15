@@ -78,6 +78,7 @@ function trip(overrides: Partial<Trip> = {}): Trip {
     // the three, and the test below names the two it must not.
     allowed_transitions: ['passenger_onboard', 'no_show', 'cancelled'],
     pickup_wait_target_seconds: 300,
+    odometer_max_km_per_trip: 2000,
     payment: null,
     odometer_start: null,
     odometer_end: null,

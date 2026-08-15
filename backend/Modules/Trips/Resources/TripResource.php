@@ -4,6 +4,7 @@ namespace Modules\Trips\Resources;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Modules\Administration\Services\SettingsService;
 use Modules\Billing\Pricing\RateCardNotConfiguredException;
 use Modules\Billing\Services\WalkInFareService;
 use Modules\Bookings\Models\OrderRequest;
@@ -87,6 +88,29 @@ class TripResource extends JsonResource
             // `config/dispatch.php` — no waiting charge, no `no_show`, no
             // sweep. The app fills the ring to full and holds it there.
             'pickup_wait_target_seconds' => (int) config('dispatch.pickup_wait_target_seconds'),
+            /*
+             * The ceiling the closing reading will be judged against
+             * (ADR-0035), so the app can refuse an impossible number before it
+             * queues one.
+             *
+             * Served for exactly the reason `pickup_wait_target_seconds` above
+             * is, and the reason matters more here: the office can change this
+             * in the console, and a handset holding its own copy would go on
+             * enforcing the old number on devices nobody can reach. That is
+             * the defect this repository already records once — a server
+             * threshold hardcoded into a shipped app.
+             *
+             * On the trip rather than a config endpoint because the app is
+             * offline-first: the trip is already cached on the handset, so the
+             * limit is there in a dead zone, which is exactly where a driver
+             * finishes a job and types a reading.
+             *
+             * **The server still enforces it.** This is a courtesy so the
+             * driver is told at the keypad instead of by a parked outbox item
+             * hours later; it is not the control.
+             */
+            'odometer_max_km_per_trip' => (int) app(SettingsService::class)
+                ->get('tracking', 'odometer_max_km_per_trip'),
             'odometer_start' => $this->odometer_start,
             'odometer_start_photo_path' => $this->odometer_start_photo_path,
             'odometer_end' => $this->odometer_end,
