@@ -174,10 +174,27 @@ export function RateCardsPage() {
 
       {(cards ?? []).map((card) => (
         <RateCardPanel
-          key={card.id}
+          /*
+            **Keyed on the newest version, not just the card.**
+
+            `RateCardPanel` picks which version to expand with a `useState`
+            initialiser, which runs once per mounted instance. Keyed on
+            `card.id` alone the instance survives every refetch, so adding a
+            version left `expanded` pointing at the version that *used* to be
+            newest: the list gained a row and the panel went on showing the old
+            prices. Somebody had just changed a tariff and the screen appeared
+            not to have noticed.
+
+            Folding the newest version's id into the key remounts the panel
+            exactly when the answer to "which version is current" changes, and
+            leaves it alone on every other reload. An effect syncing the state
+            would do the same thing and trip `react-hooks/set-state-in-effect`,
+            which this codebase already documents as a rule it keeps.
+          */
+          key={`${card.id}:${card.versions?.[0]?.id ?? 'none'}`}
           card={card}
           canManage={canManage}
-          onAddVersion={() => setDialogFor({ card })}
+          onEdit={() => setDialogFor({ card })}
           onMakeDefault={() => void makeDefault(card)}
         />
       ))}
@@ -200,12 +217,12 @@ export function RateCardsPage() {
 function RateCardPanel({
   card,
   canManage,
-  onAddVersion,
+  onEdit,
   onMakeDefault,
 }: {
   card: RateCard
   canManage: boolean
-  onAddVersion: () => void
+  onEdit: () => void
   onMakeDefault: () => void
 }) {
   // Versions arrive newest first. The top one is what a trip run today
@@ -229,9 +246,23 @@ function RateCardPanel({
               </Button>
             )
           )}
+          {/*
+            **One Edit, opening the same form the card was created with.**
+
+            There were two buttons here — *Edit* for the name and *New version*
+            for the prices — and the owner put the two dialogs side by side and
+            said the edit was a different thing from the create. It was: the
+            immutability rule had been made the *shape of the UI* rather than
+            the behaviour of Save.
+
+            It is the behaviour of Save now. The form carries everything;
+            renaming issues a PATCH, repricing adds a version, and doing both
+            does both. The rule is unchanged and the dialog states it — what
+            went away is having to know which button implements which half.
+          */}
           {canManage && (
-            <Button size="sm" iconLeft="plus" onClick={onAddVersion}>
-              New version
+            <Button size="sm" iconLeft="pencil" onClick={onEdit}>
+              Edit
             </Button>
           )}
         </div>

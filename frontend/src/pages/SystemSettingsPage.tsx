@@ -67,6 +67,15 @@ interface Settings {
     bonus_enabled: boolean
     bonus_weekly_trip_target: number
     bonus_weekly_amount_minor: number
+    /** ADR-0036: the peak-hour uplift on a driver's share. */
+    peak_enabled: boolean
+    peak_starts_at: string
+    peak_ends_at: string
+    peak_uplift_percent: number
+    /** ADR-0037: what introducing a driver pays, and what it takes. */
+    referral_enabled: boolean
+    referral_trip_target: number
+    referral_reward_amount_minor: number
   }
   /** ADR-0035: the two numbers that decide whether a reading is believed. */
   tracking: {
@@ -916,12 +925,21 @@ function BillingCard({
   const [bonusEnabled, setBonusEnabled] = useState(billing.bonus_enabled)
   const [target, setTarget] = useState(String(billing.bonus_weekly_trip_target))
   const [amount, setAmount] = useState(String(billing.bonus_weekly_amount_minor))
+  const [peakEnabled, setPeakEnabled] = useState(billing.peak_enabled)
+  const [peakFrom, setPeakFrom] = useState(billing.peak_starts_at)
+  const [peakUntil, setPeakUntil] = useState(billing.peak_ends_at)
+  const [peakPercent, setPeakPercent] = useState(String(billing.peak_uplift_percent))
+  const [referralEnabled, setReferralEnabled] = useState(billing.referral_enabled)
+  const [referralTarget, setReferralTarget] = useState(String(billing.referral_trip_target))
+  const [referralReward, setReferralReward] = useState(
+    String(billing.referral_reward_amount_minor),
+  )
   const { state, errors, message, setMessage, save } = useSave('billing', onSaved)
 
   return (
     <Card
       title="Driver pay"
-      subtitle="What the platform keeps from a fare, and the weekly bonus. Changes apply to future work only — every ledger entry records the rate that was in force when it was written."
+      subtitle="What the platform keeps from a fare, and the three schemes that pay a driver more. Changes apply to future work only — every ledger entry records the rate that was in force when it was written."
     >
       <form
         onSubmit={(e) => {
@@ -931,6 +949,13 @@ function BillingCard({
             bonus_enabled: bonusEnabled,
             bonus_weekly_trip_target: Number(target),
             bonus_weekly_amount_minor: Number(amount),
+            peak_enabled: peakEnabled,
+            peak_starts_at: peakFrom,
+            peak_ends_at: peakUntil,
+            peak_uplift_percent: Number(peakPercent),
+            referral_enabled: referralEnabled,
+            referral_trip_target: Number(referralTarget),
+            referral_reward_amount_minor: Number(referralReward),
           })
         }}
         style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
@@ -999,6 +1024,112 @@ function BillingCard({
             min={0}
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
+            required
+            style={{ maxWidth: 160 }}
+          />
+        </FormField>
+
+        <Checkbox
+          label="Pay more during peak hours"
+          hint="Off by default. This one bills on every trip inside the window, not once a week — the most expensive setting on this page if it is left wide."
+          checked={peakEnabled}
+          onChange={(e) => setPeakEnabled(e.target.checked)}
+        />
+
+        <div style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap' }}>
+          <FormField
+            label="Peak starts"
+            htmlFor="settings-peak-from"
+            hint="In the fleet's own timezone."
+            error={errors.peak_starts_at}
+            required
+          >
+            <Input
+              id="settings-peak-from"
+              type="time"
+              value={peakFrom}
+              onChange={(e) => setPeakFrom(e.target.value)}
+              required
+              style={{ maxWidth: 140 }}
+            />
+          </FormField>
+
+          <FormField
+            label="Peak ends"
+            htmlFor="settings-peak-until"
+            hint="A window may run past midnight. Setting both to the same time means no window at all."
+            error={errors.peak_ends_at}
+            required
+          >
+            <Input
+              id="settings-peak-until"
+              type="time"
+              value={peakUntil}
+              onChange={(e) => setPeakUntil(e.target.value)}
+              required
+              style={{ maxWidth: 140 }}
+            />
+          </FormField>
+        </div>
+
+        <FormField
+          label="Peak uplift (%)"
+          htmlFor="settings-peak-percent"
+          hint="Added to the driver's share of a fare finished inside the window. It does not change what the passenger pays — that is the rate card's night multiplier, which is a separate thing."
+          error={errors.peak_uplift_percent}
+          required
+        >
+          <Input
+            id="settings-peak-percent"
+            type="number"
+            min={1}
+            max={100}
+            value={peakPercent}
+            onChange={(e) => setPeakPercent(e.target.value)}
+            required
+            style={{ maxWidth: 120 }}
+          />
+        </FormField>
+
+        <Checkbox
+          label="Pay drivers for referrals"
+          hint="Off by default. Switching this on also takes on the work it creates: every referral arrives as an application somebody has to read, and that approval is the only thing standing between the scheme and a cash machine."
+          checked={referralEnabled}
+          onChange={(e) => setReferralEnabled(e.target.checked)}
+        />
+
+        <FormField
+          label="Trips the new driver must complete"
+          htmlFor="settings-referral-target"
+          hint="The reward is paid once they reach this. It is the verification, not a hurdle — a sign-up costs nothing to manufacture, and real trips do not."
+          error={errors.referral_trip_target}
+          required
+        >
+          <Input
+            id="settings-referral-target"
+            type="number"
+            min={1}
+            max={1000}
+            value={referralTarget}
+            onChange={(e) => setReferralTarget(e.target.value)}
+            required
+            style={{ maxWidth: 120 }}
+          />
+        </FormField>
+
+        <FormField
+          label="Referral reward"
+          htmlFor="settings-referral-reward"
+          hint="In whole shillings, paid to the driver who introduced them. No commission is taken. Changing it never restates a referral that was already promised."
+          error={errors.referral_reward_amount_minor}
+          required
+        >
+          <Input
+            id="settings-referral-reward"
+            type="number"
+            min={0}
+            value={referralReward}
+            onChange={(e) => setReferralReward(e.target.value)}
             required
             style={{ maxWidth: 160 }}
           />

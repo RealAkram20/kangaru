@@ -6,12 +6,13 @@ import type { Zone } from '../../types/zone'
 import { RateCardVersionDialog } from './RateCardVersionDialog'
 
 vi.mock('../../lib/apiClient', () => ({
-  apiClient: { get: vi.fn(), post: vi.fn() },
+  apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn() },
 }))
 
 const { apiClient } = await import('../../lib/apiClient')
 const get = vi.mocked(apiClient.get)
 const post = vi.mocked(apiClient.post)
+const patch = vi.mocked(apiClient.patch)
 
 function zone(overrides: Partial<Zone> = {}): Zone {
   return {
@@ -37,6 +38,7 @@ function zone(overrides: Partial<Zone> = {}): Zone {
 beforeEach(() => {
   get.mockReset()
   post.mockReset()
+  patch.mockReset()
 })
 
 /** The zone-price row's controls, which carry no labels after the first row. */
@@ -180,4 +182,288 @@ it('shows a rejected zone price against the row that carries it', async () => {
   expect(
     await within(zonePriceRow()).findByText(/That zone is not available for pricing/),
   ).toBeInTheDocument()
+})
+
+/**
+ * **Adding a version opens prefilled with the current prices.**
+ *
+ * The owner asked to be able to edit rate cards. Prices are immutable, so the
+ * honest form of that request is: start from what the prices are now, change
+ * the figures, save a new version. Making a finance officer retype six vehicle
+ * categories to change one number is how a typo gets into a tariff.
+ *
+ * Nothing about immutability moves — the copied version is untouched, and what
+ * is submitted is an ordinary create.
+ */
+it('opens a new version prefilled from the card’s current prices', async () => {
+  get.mockResolvedValue(apiOk([]))
+
+  const card = {
+    id: 3,
+    name: 'Public tariff',
+    description: null,
+    status: 'active',
+    is_default: true,
+    versions: [
+      {
+        id: 7,
+        version: 2,
+        effective_from: '2026-08-15',
+        currency: 'UGX',
+        rounding_mode: 'half_up',
+        rounding_mode_label: 'Half up',
+        free_waiting_minutes: 3,
+        night_starts_at: null,
+        night_ends_at: null,
+        night_multiplier_bp: 10_000,
+        is_locked: false,
+        notes: null,
+        rates: [
+          {
+            vehicle_category: 'boda',
+            base_fare_minor: 2_000,
+            per_km_minor: 1_000,
+            per_waiting_minute_minor: 200,
+            minimum_charge_minor: 3_000,
+            maximum_charge_minor: 150_000,
+            zone_rates: [],
+          },
+        ],
+      },
+    ],
+  }
+
+  renderAs(
+    <RateCardVersionDialog card={card as never} onClose={vi.fn()} onSaved={vi.fn()} />,
+  )
+
+  await waitFor(() => expect(screen.getByDisplayValue('2000')).toBeInTheDocument())
+
+  expect(screen.getByDisplayValue('1000')).toBeInTheDocument()
+  expect(screen.getByDisplayValue('200')).toBeInTheDocument()
+  expect(screen.getByDisplayValue('3000')).toBeInTheDocument()
+  expect(screen.getByDisplayValue('150000')).toBeInTheDocument()
+
+  // The version's own settings come with it, or a finance officer changing one
+  // price silently resets the free waiting allowance to zero — a change to
+  // what every passenger is charged, made by accident.
+  expect(screen.getByDisplayValue('3')).toBeInTheDocument()
+})
+
+it('prefills an uncapped maximum as blank, never as zero', async () => {
+  get.mockResolvedValue(apiOk([]))
+
+  const card = {
+    id: 3,
+    name: 'Public tariff',
+    description: null,
+    status: 'active',
+    is_default: true,
+    versions: [
+      {
+        id: 7,
+        version: 1,
+        effective_from: '2026-08-15',
+        currency: 'UGX',
+        rounding_mode: 'half_up',
+        rounding_mode_label: 'Half up',
+        free_waiting_minutes: 3,
+        night_starts_at: null,
+        night_ends_at: null,
+        night_multiplier_bp: 10_000,
+        is_locked: false,
+        notes: null,
+        rates: [
+          {
+            vehicle_category: 'boda',
+            base_fare_minor: 2_000,
+            per_km_minor: 1_000,
+            per_waiting_minute_minor: 200,
+            minimum_charge_minor: 3_000,
+            // Uncapped, which is every rate row on this platform today.
+            maximum_charge_minor: null,
+            zone_rates: [],
+          },
+        ],
+      },
+    ],
+  }
+
+  renderAs(<RateCardVersionDialog card={card as never} onClose={vi.fn()} onSaved={vi.fn()} />)
+
+  await waitFor(() => expect(screen.getByDisplayValue('2000')).toBeInTheDocument())
+
+  /*
+   * **Blank, not "0".** The two are opposite claims here: blank means
+   * uncapped and `toMinor` turns it back into null on submit, while "0" means
+   * capped at nothing — every trip on this category free.
+   *
+   * This case exists because a mutation survived without it. The first version
+   * of the prefill test used a rate with a maximum set, so `amountToDraft`'s
+   * null branch was never exercised, and replacing it with `String(value ?? 0)`
+   * passed the whole suite while silently zero-capping a tariff.
+   */
+  // `.value`, not `toHaveValue`: these are number inputs, and jsdom reports an
+  // empty one as `null` rather than `''`, which makes the assertion read as if
+  // the element were missing.
+  const maximums = screen.getAllByLabelText(/Maximum/) as HTMLInputElement[]
+
+  expect(maximums[0]!.value).toBe('')
+})
+
+it('opens blank for a card with no versions, rather than crashing', async () => {
+  get.mockResolvedValue(apiOk([]))
+
+  const bare = { id: 9, name: 'Empty', description: null, status: 'active', is_default: false, versions: [] }
+
+  renderAs(<RateCardVersionDialog card={bare as never} onClose={vi.fn()} onSaved={vi.fn()} />)
+
+  // Falls back to the single empty sedan row the dialog has always started
+  // with. `versions` is optional on the type and a card genuinely can have
+  // none — that was the state the whole listing bug rendered as.
+  await waitFor(() => expect(screen.getByText(/sedan/i)).toBeInTheDocument())
+})
+
+/**
+ * Editing a card is now the same form it was created with, and **Save does the
+ * minimum writes the change actually needs.**
+ *
+ * The immutability rule used to be enforced by the shape of the UI — a small
+ * "details" dialog beside a big "prices" one. The owner put the two side by
+ * side and said the edit was a different thing from the create; it was, and the
+ * rule belonged in what Save does rather than in how many dialogs there are.
+ *
+ * These cases pin the three outcomes, and the first is the one that matters:
+ * a rename must not add a version, or a card's pricing history fills with
+ * entries that changed no price and nobody can read a real change out of it.
+ */
+function tariff(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 3,
+    name: 'Public tariff',
+    description: 'The walk-in tariff.',
+    status: 'active',
+    is_default: true,
+    versions: [
+      {
+        id: 7,
+        version: 2,
+        effective_from: '2026-08-15',
+        currency: 'UGX',
+        rounding_mode: 'half_up',
+        rounding_mode_label: 'Half up',
+        free_waiting_minutes: 3,
+        night_starts_at: null,
+        night_ends_at: null,
+        night_multiplier_bp: 10_000,
+        is_locked: false,
+        notes: null,
+        rates: [
+          {
+            vehicle_category: 'boda',
+            base_fare_minor: 2_000,
+            per_km_minor: 1_000,
+            per_waiting_minute_minor: 200,
+            minimum_charge_minor: 3_000,
+            maximum_charge_minor: null,
+            zone_rates: [],
+          },
+        ],
+      },
+    ],
+    ...overrides,
+  }
+}
+
+it('renames a card without adding a version', async () => {
+  get.mockResolvedValue(apiOk([]))
+  patch.mockResolvedValue(apiOk(tariff()))
+
+  const onSaved = vi.fn()
+  const user = userEvent.setup()
+  renderAs(<RateCardVersionDialog card={tariff() as never} onClose={vi.fn()} onSaved={onSaved} />)
+
+  const name = await screen.findByLabelText(/Card name/)
+  await user.clear(name)
+  await user.type(name, 'Walk-in tariff')
+  await user.click(screen.getByRole('button', { name: /Save changes/ }))
+
+  await waitFor(() => expect(patch).toHaveBeenCalledWith('/rate-cards/3', expect.anything()))
+
+  // The whole point. Nothing about the prices moved, so no version exists that
+  // says otherwise — and the message says so rather than leaving somebody to
+  // check the card afterwards.
+  expect(post).not.toHaveBeenCalled()
+  expect(onSaved).toHaveBeenCalledWith(expect.stringMatching(/no version was added/i))
+})
+
+it('adds a version when a price changes, and does not patch the card', async () => {
+  get.mockResolvedValue(apiOk([]))
+  post.mockResolvedValue(apiOk({ id: 9, version: 3 }))
+
+  const onSaved = vi.fn()
+  const user = userEvent.setup()
+  renderAs(<RateCardVersionDialog card={tariff() as never} onClose={vi.fn()} onSaved={onSaved} />)
+
+  const baseFare = await screen.findByDisplayValue('2000')
+  await user.clear(baseFare)
+  await user.type(baseFare, '2500')
+  await user.click(screen.getByRole('button', { name: /Save changes/ }))
+
+  await waitFor(() => expect(post).toHaveBeenCalled())
+
+  expect(post.mock.calls[0]![0]).toBe('/rate-cards/3/versions')
+  // Name and description untouched, so there is nothing for a PATCH to say.
+  expect(patch).not.toHaveBeenCalled()
+  expect(onSaved).toHaveBeenCalledWith(expect.stringMatching(/version 3 added/i))
+})
+
+it('does both when both changed, and patches before it versions', async () => {
+  get.mockResolvedValue(apiOk([]))
+  patch.mockResolvedValue(apiOk(tariff()))
+  post.mockResolvedValue(apiOk({ id: 9, version: 3 }))
+
+  const order: string[] = []
+  patch.mockImplementation(() => {
+    order.push('patch')
+
+    return Promise.resolve(apiOk(tariff()) as never)
+  })
+  post.mockImplementation(() => {
+    order.push('post')
+
+    return Promise.resolve(apiOk({ id: 9, version: 3 }) as never)
+  })
+
+  const user = userEvent.setup()
+  renderAs(<RateCardVersionDialog card={tariff() as never} onClose={vi.fn()} onSaved={vi.fn()} />)
+
+  const name = await screen.findByLabelText(/Card name/)
+  await user.clear(name)
+  await user.type(name, 'Walk-in tariff')
+
+  const baseFare = screen.getByDisplayValue('2000')
+  await user.clear(baseFare)
+  await user.type(baseFare, '2500')
+
+  await user.click(screen.getByRole('button', { name: /Save changes/ }))
+
+  await waitFor(() => expect(order).toEqual(['patch', 'post']))
+
+  // Details first. If the version is refused, the rename has landed and the
+  // prices have not — the safe half to keep, because a card with the wrong name
+  // still prices correctly. The other order leaves a version priced under a
+  // name that was never saved.
+})
+
+it('shows the card’s own name and description when editing, not a blank form', async () => {
+  get.mockResolvedValue(apiOk([]))
+
+  renderAs(<RateCardVersionDialog card={tariff() as never} onClose={vi.fn()} onSaved={vi.fn()} />)
+
+  // The complaint that started this: edit was a different, smaller form than
+  // create. It is the same form now, carrying the same fields.
+  expect(await screen.findByDisplayValue('Public tariff')).toBeInTheDocument()
+  expect(screen.getByDisplayValue('The walk-in tariff.')).toBeInTheDocument()
+  expect(screen.getByLabelText(/Status/)).toHaveValue('active')
 })

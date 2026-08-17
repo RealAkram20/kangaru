@@ -56,6 +56,52 @@ function emptyRate(category: string): RateDraft {
   return { vehicle_category: category, ...emptyAmounts(), zone_rates: [] }
 }
 
+/**
+ * A stored amount as the form's string, and **`null` as blank rather than
+ * "0"**.
+ *
+ * The two are not the same claim anywhere in this dialog: blank means
+ * "uncapped" for a maximum, and `toMinor` turns it back into null on submit.
+ * Prefilling a null maximum as "0" would silently cap every trip on that
+ * category at nothing.
+ */
+function amountToDraft(value: number | null): string {
+  return value === null ? '' : String(value)
+}
+
+/**
+ * The latest version's prices, as a set of drafts to edit.
+ *
+ * **This is what "editing a rate card" means here.** Prices are immutable —
+ * `PricedRate` throws on update and the card's own subtitle says a version is
+ * never edited — so the honest version of the request is: start from what the
+ * prices are now, change the figures, and save a *new* version. Retyping six
+ * categories from scratch to change one number is how a finance officer
+ * introduces a typo into a tariff.
+ *
+ * The result is still an ordinary create. Nothing here mutates the version it
+ * copied, and the old one stays exactly as it was for every invoice already
+ * priced by it.
+ */
+function draftsFromVersion(version: RateCardVersion): RateDraft[] {
+  return (version.rates ?? []).map((rate) => ({
+    vehicle_category: rate.vehicle_category,
+    base_fare_minor: amountToDraft(rate.base_fare_minor),
+    per_km_minor: amountToDraft(rate.per_km_minor),
+    per_waiting_minute_minor: amountToDraft(rate.per_waiting_minute_minor),
+    minimum_charge_minor: amountToDraft(rate.minimum_charge_minor),
+    maximum_charge_minor: amountToDraft(rate.maximum_charge_minor),
+    zone_rates: (rate.zone_rates ?? []).map((zoneRate) => ({
+      zone_id: String(zoneRate.zone_id),
+      base_fare_minor: amountToDraft(zoneRate.base_fare_minor),
+      per_km_minor: amountToDraft(zoneRate.per_km_minor),
+      per_waiting_minute_minor: amountToDraft(zoneRate.per_waiting_minute_minor),
+      minimum_charge_minor: amountToDraft(zoneRate.minimum_charge_minor),
+      maximum_charge_minor: amountToDraft(zoneRate.maximum_charge_minor),
+    })),
+  }))
+}
+
 /** Blank means zero for a rate, and "uncapped" for the maximum. */
 function toMinor(value: string): number {
   return value.trim() === '' ? 0 : Math.round(Number(value))
@@ -102,16 +148,60 @@ export function RateCardVersionDialog({
 }) {
   const creating = card === null
 
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
+  /*
+   * **One form for create and edit**, rather than a small "details" dialog
+   * beside a big "prices" one.
+   *
+   * The owner opened the two side by side and said so: creating a rate card is
+   * a single form carrying its name, its description and its prices, and
+   * editing one should not be a different, smaller thing. Splitting them made
+   * the immutability rule the *shape of the UI*, which is the wrong place for
+   * it — the rule belongs in what Save does, not in how many dialogs a person
+   * has to find.
+   *
+   * So both modes render the same fields, and Save does the minimum writes the
+   * change actually needs. See `submit()`.
+   */
+
+  /*
+   * The version a new one starts from.
+   *
+   * Versions arrive newest first, and the newest is what a trip run today
+   * prices at — so it is the only sensible thing to copy. Null when creating a
+   * card, or when the card somehow has no version yet, and the form then opens
+   * blank exactly as it always did.
+   */
+  const basis = card?.versions?.[0] ?? null
+
+  const [name, setName] = useState(card?.name ?? '')
+  const [description, setDescription] = useState(card?.description ?? '')
+  const [status, setStatus] = useState<RateCard['status']>(card?.status ?? 'active')
   const [makeDefault, setMakeDefault] = useState('no')
   const [effectiveFrom, setEffectiveFrom] = useState(new Date().toISOString().slice(0, 10))
-  const [rounding, setRounding] = useState<RoundingMode>('half_up')
-  const [freeWaiting, setFreeWaiting] = useState('0')
-  const [nightFrom, setNightFrom] = useState('')
-  const [nightTo, setNightTo] = useState('')
-  const [nightMultiplier, setNightMultiplier] = useState('1.25')
-  const [rates, setRates] = useState<RateDraft[]>([emptyRate('sedan')])
+  const [rounding, setRounding] = useState<RoundingMode>(basis?.rounding_mode ?? 'half_up')
+  const [freeWaiting, setFreeWaiting] = useState(String(basis?.free_waiting_minutes ?? 0))
+  // "22:00:00" from the server, "22:00" in a time input.
+  const [nightFrom, setNightFrom] = useState(basis?.night_starts_at?.slice(0, 5) ?? '')
+  const [nightTo, setNightTo] = useState(basis?.night_ends_at?.slice(0, 5) ?? '')
+  const [nightMultiplier, setNightMultiplier] = useState(
+    basis === null ? '1.25' : String(basis.night_multiplier_bp / 10_000),
+  )
+  /*
+   * **Prefilled from the current prices when adding a version.**
+   *
+   * Prices are immutable, so "edit this rate card" can only ever mean "make a
+   * new version that differs from the current one" — and making somebody
+   * retype six vehicle categories to change one figure is how a typo gets into
+   * a tariff. The lazy initialiser runs once on mount, which is right: this is
+   * a starting point to edit, not a live mirror of the card.
+   *
+   * Nothing about immutability moves. The copied version is untouched and
+   * every invoice already priced by it stays reproducible; what is submitted
+   * is an ordinary new version.
+   */
+  const [rates, setRates] = useState<RateDraft[]>(() =>
+    basis !== null && (basis.rates ?? []).length > 0 ? draftsFromVersion(basis) : [emptyRate('sedan')],
+  )
   const [zones, setZones] = useState<Zone[]>([])
 
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -158,7 +248,7 @@ export function RateCardVersionDialog({
   )
 
   const incomplete =
-    (creating && name.trim() === '') ||
+    name.trim() === '' ||
     effectiveFrom === '' ||
     rates.length === 0 ||
     duplicateCategory ||
@@ -188,6 +278,68 @@ export function RateCardVersionDialog({
     })),
   })
 
+  /**
+   * Whether the *prices* differ from the version this form was filled from.
+   *
+   * **`effective_from` is excluded on purpose.** The form defaults it to today
+   * while the basis carries whatever date it was set live on, so including it
+   * would make every open of this dialog look like a change — and a rename
+   * would silently add a version identical to the one before it. The date says
+   * *when* a change applies; if nothing changed, it is answering a question
+   * nobody asked.
+   */
+  const pricesChanged = (): boolean => {
+    if (basis === null) return true
+
+    const now = versionPayload()
+    const before = {
+      rounding_mode: basis.rounding_mode,
+      free_waiting_minutes: basis.free_waiting_minutes,
+      night_starts_at: basis.night_starts_at === null ? null : basis.night_starts_at.slice(0, 5),
+      night_ends_at: basis.night_ends_at === null ? null : basis.night_ends_at.slice(0, 5),
+      night_multiplier_bp: basis.night_multiplier_bp,
+      rates: (basis.rates ?? []).map((rate) => ({
+        vehicle_category: rate.vehicle_category,
+        base_fare_minor: rate.base_fare_minor,
+        per_km_minor: rate.per_km_minor,
+        per_waiting_minute_minor: rate.per_waiting_minute_minor,
+        minimum_charge_minor: rate.minimum_charge_minor,
+        maximum_charge_minor: rate.maximum_charge_minor,
+        zone_rates: (rate.zone_rates ?? []).map((zoneRate) => ({
+          zone_id: zoneRate.zone_id,
+          base_fare_minor: zoneRate.base_fare_minor,
+          per_km_minor: zoneRate.per_km_minor,
+          per_waiting_minute_minor: zoneRate.per_waiting_minute_minor,
+          minimum_charge_minor: zoneRate.minimum_charge_minor,
+          maximum_charge_minor: zoneRate.maximum_charge_minor,
+        })),
+      })),
+    }
+
+    const comparable = { ...now, effective_from: undefined }
+
+    return JSON.stringify(comparable) !== JSON.stringify({ ...before, effective_from: undefined })
+  }
+
+  const detailsChanged = (): boolean =>
+    card !== null &&
+    (name.trim() !== card.name ||
+      (description.trim() === '' ? null : description.trim()) !== (card.description ?? null) ||
+      status !== card.status)
+
+  /**
+   * One Save, and **the minimum writes the change actually needs.**
+   *
+   * This is where the immutability rule lives now that the UI no longer
+   * enforces it by being two dialogs. A rename is a `PATCH` and nothing else;
+   * a price change adds a version and never touches the old one; changing both
+   * does both, and the message says which happened so nobody has to guess
+   * whether a version was created.
+   *
+   * **Renaming must not add a version.** Doing so would fill the card's history
+   * with versions identical to the one before them, and a pricing history where
+   * most entries changed no price is one nobody can read a real change out of.
+   */
   const submit = async () => {
     setSubmitting(true)
     setErrors({})
@@ -202,13 +354,49 @@ export function RateCardVersionDialog({
           version: versionPayload(),
         })
         onSaved(`Rate card "${response.data.data.name}" created.`)
-      } else {
+
+        return
+      }
+
+      const renamed = detailsChanged()
+      const repriced = pricesChanged()
+
+      if (renamed) {
+        await apiClient.patch<ApiSuccess<RateCard>>(`/rate-cards/${card.id}`, {
+          name: name.trim(),
+          description: description.trim() === '' ? null : description.trim(),
+          status,
+        })
+      }
+
+      /*
+       * The details first, then the version. If the version is refused —
+       * validation, or a rate card that has since been locked — the rename has
+       * landed and the prices have not, which is the safe half to keep: a card
+       * with the wrong name prices correctly, and the error names what failed.
+       * The other order would leave a version priced under a name that was
+       * never saved.
+       */
+      if (repriced) {
         const response = await apiClient.post<ApiSuccess<RateCardVersion>>(
           `/rate-cards/${card.id}/versions`,
           versionPayload(),
         )
-        onSaved(`Version ${response.data.data.version} added to "${card.name}".`)
+
+        onSaved(
+          renamed
+            ? `"${name.trim()}" updated, and version ${response.data.data.version} added.`
+            : `Version ${response.data.data.version} added to "${name.trim()}".`,
+        )
+
+        return
       }
+
+      onSaved(
+        renamed
+          ? `"${name.trim()}" updated. Prices are unchanged, so no version was added.`
+          : 'Nothing changed.',
+      )
     } catch (error) {
       const problem = apiError(error, 'Could not save this rate card.')
       setErrors(fieldErrors(problem))
@@ -222,11 +410,11 @@ export function RateCardVersionDialog({
     <Dialog
       open
       width={980}
-      title={creating ? 'New rate card' : `New version of "${card.name}"`}
+      title={creating ? 'New rate card' : `Edit "${card.name}"`}
       description={
         creating
           ? 'A card is created together with its first priced version — a card that prices nothing cannot invoice anything.'
-          : 'The current version is left untouched. Every invoice already raised keeps pointing at it.'
+          : 'Name, description and prices — the same form the card was created with. Changing a price adds a version; the current one is left untouched, and every invoice already raised keeps pointing at it.'
       }
       onClose={onClose}
       footer={
@@ -235,7 +423,7 @@ export function RateCardVersionDialog({
             Back
           </Button>
           <Button loading={submitting} disabled={incomplete} onClick={() => void submit()}>
-            {creating ? 'Create rate card' : 'Add version'}
+            {creating ? 'Create rate card' : 'Save changes'}
           </Button>
         </>
       }
@@ -252,17 +440,29 @@ export function RateCardVersionDialog({
           any invoice raised in between keeps the figures it was billed under.
         </Alert>
 
-        {creating && (
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 'var(--space-4)' }}>
-            <FormField label="Card name" htmlFor="rc-name" required error={errors.name}>
-              <Input
-                id="rc-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Corporate Standard"
-                autoFocus
-              />
-            </FormField>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 'var(--space-4)' }}>
+          <FormField label="Card name" htmlFor="rc-name" required error={errors.name}>
+            <Input
+              id="rc-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Corporate Standard"
+              autoFocus
+            />
+          </FormField>
+
+          {/*
+            On create this asks whether the new card becomes the default; on
+            edit it becomes the card's status. Both are the one "what is this
+            card for" control in the same slot, and neither is a price.
+
+            **`is_default` is deliberately not editable here.** Promoting a card
+            must demote whichever card currently holds the flag, in the same
+            transaction, and `PUT /rate-cards/{id}/default` owns that — it is
+            already the *Make default* button on the card itself. A second way
+            in is the one that forgets to demote.
+          */}
+          {creating ? (
             <FormField
               label="Make this the default"
               htmlFor="rc-default"
@@ -278,19 +478,34 @@ export function RateCardVersionDialog({
                 ]}
               />
             </FormField>
-          </div>
-        )}
+          ) : (
+            <FormField
+              label="Status"
+              htmlFor="rc-status"
+              hint="Archived cards stay readable, so past invoices remain explicable."
+              error={errors.status}
+            >
+              <Select
+                id="rc-status"
+                value={status}
+                onChange={(e) => setStatus(e.target.value as RateCard['status'])}
+                options={[
+                  { value: 'active', label: 'Active' },
+                  { value: 'archived', label: 'Archived' },
+                ]}
+              />
+            </FormField>
+          )}
+        </div>
 
-        {creating && (
-          <FormField label="Description" htmlFor="rc-description" error={errors.description}>
-            <Input
-              id="rc-description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Default corporate rates"
-            />
-          </FormField>
-        )}
+        <FormField label="Description" htmlFor="rc-description" error={errors.description}>
+          <Input
+            id="rc-description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Default corporate rates"
+          />
+        </FormField>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 'var(--space-4)' }}>
           <FormField

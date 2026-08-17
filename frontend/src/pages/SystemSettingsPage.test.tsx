@@ -40,6 +40,14 @@ const SETTINGS = {
     bonus_enabled: false,
     bonus_weekly_trip_target: 40,
     bonus_weekly_amount_minor: 20000,
+    // ADR-0036 and ADR-0037. Both schemes default off, like the bonus above.
+    peak_enabled: false,
+    peak_starts_at: '17:00',
+    peak_ends_at: '20:00',
+    peak_uplift_percent: 20,
+    referral_enabled: false,
+    referral_trip_target: 10,
+    referral_reward_amount_minor: 10000,
   },
   tracking: { variance_threshold_percent: 10, odometer_max_km_per_trip: 2000 },
   mail: {
@@ -247,6 +255,17 @@ describe('SystemSettingsPage', () => {
         bonus_enabled: true,
         bonus_weekly_trip_target: 40,
         bonus_weekly_amount_minor: 20000,
+        // ADR-0036 and ADR-0037 widened this card. The group is saved whole,
+        // so the untouched schemes must travel back **unchanged** — a partial
+        // PATCH here would silently switch off whatever the office had
+        // running the moment somebody edited the commission rate.
+        peak_enabled: false,
+        peak_starts_at: '17:00',
+        peak_ends_at: '20:00',
+        peak_uplift_percent: 20,
+        referral_enabled: false,
+        referral_trip_target: 10,
+        referral_reward_amount_minor: 10000,
       }),
     )
   })
