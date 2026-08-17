@@ -4577,3 +4577,176 @@ hide, ship half-open knowingly — with a recommendation and a cost.
 
 **What this package will not do:** hide nothing, delete nothing, edit no source,
 and build no missing console. It reports so the owner can choose.
+
+**Closing amendment — 20:15. Status: done.**
+
+`docs/feature-completeness.md` is written. **Files touched: that file and this
+entry. No source file was edited, nothing was hidden, nothing was deleted.**
+
+**Seven of the twelve seeded rows in `master-plan.md` §2 were wrong.** The brief
+warned two already were; it was seven. Corrections are §2 of the census, with the
+evidence for each. The three that change a decision:
+
+1. **The office cannot see a driver's ledger or earnings anywhere** — seeded as
+   "office console: yes". No endpoint, no page, no report. Checked three ways
+   (route list, a `frontend/src` grep, the Reports module — whose "ledger" is the
+   *invoice* ledger). The office is expected to confirm settlement requests, which
+   write ledger entries, **without being able to see the balance they apply to.**
+2. **A rejected driver applicant is never told, and has no surface that could
+   tell them** — seeded as a fully closed loop. Only five notification types
+   exist platform-wide and none concerns an application; `approve()`/`reject()`
+   send nothing. Approved applicants can at least sign in with the password they
+   chose. Rejected ones get silence, and they are members of the public.
+3. **`GET/POST/DELETE /api/v1/me/photo` have no contract entry, so
+   `OpenApiRouteCensusTest` fails — on the branch, now.** See the note to A0.
+
+**To A0 — one CI failure, and it is in your exit criteria.** Verified *after*
+your 11 commits, not before: `DriverPhotoController` is committed in `d804f2f`,
+and `5801b70 docs(api)` did not add the three paths — `me/photo` appears zero
+times in `openapi.yaml`. The census test has **no exemption list**, so "CI green
+on the branch" cannot be reached until three paths are documented. It is a docs
+change, not a source change. **I did not fix it**: the contract file is not mine,
+several entries in this log claim specific blocks in it, and this package edits no
+source.
+
+**Also to A0, and thank you:** you committed the tree while I was reading it, so
+the census spans both states. I re-ran the route census against `46d32b3` rather
+than trusting the earlier result — which is the only reason I know your `docs(api)`
+commit did not close the finding. Nothing of mine was disturbed.
+
+**Raised by the owner mid-census, and recorded rather than built** — the driver's
+Profile screen should offer profile editing, password change and account
+deletion. Census §3.8. It splits three ways and **should not be built as one
+thing**:
+
+- **Change password already works** (`PATCH /auth/password`, wired through
+  `SettingsScreen` → `PasswordScreen`). The gap is *placement*, not capability —
+  it is under Settings and the owner looked on Profile. That is B1's
+  information-architecture finding, and it is the exact complaint that opened the
+  UX audit.
+- **Editing profile data needs an endpoint and an owner decision.** There is no
+  write route on `me/profile`. "Full control" cannot mean all seven fields the
+  office can set: a driver who edits their own `license_expiry` self-certifies
+  their compliance and the ADR-0033 review queue stops meaning anything, and one
+  who edits `status` undoes their own suspension. Recommended narrow: `phone`
+  (and `name`) only, with the office-managed fields shown and explained.
+- **"Delete my account" cannot be a hard delete at any price.** It would break
+  invoice reproducibility, the append-only ledger and the trip timeline — the
+  one property `master-plan.md` §6 says a rushed launch can destroy. The plan has
+  already decided the shape: §3's retention rule anonymizes ex-employee accounts
+  after 90 days. So it is a **closure request the office confirms**, reusing the
+  `DriverSettlementRequest` pattern, and it needs an ADR. Week one, not tonight.
+  Noted for whoever owns Track B: self-service deletion is a **Play Store**
+  requirement, and §7 defers the listing — so the forcing function is absent
+  tonight and returns the day a listing is wanted.
+
+**Verified by running:** the route census, reproduced outside the Pest suite
+(`artisan route:list --json` diffed against the spec with the same Symfony YAML
+parser the real test uses) — 156 routes, 153 spec operations, 3 undocumented, 0
+phantom, and re-run after A0's commits. Not vacuous: had the YAML failed to
+parse, all 153 operations would have shown as phantom.
+
+**One suspicion checked and found unfounded, worth recording because W1-e will
+touch it tonight:** `LegalCard` saves only `terms` and `privacy` while the
+`legal` group also carries `safety`, which looked like it would blank the driver
+Safety screen's text. It does not — `SettingsService::setGroup()` iterates only
+the keys supplied and does one `updateOrCreate` each.
+
+**NOT verified, and each stated in the census:** the Pest suite was not run (A0
+was live in the tree and the test database is shared — two concurrent runs corrupt
+each other); nothing was checked against a deployed system, because none exists
+yet (W1-a); no screen was rendered and no endpoint called; and **client-scope
+gating on the `/me` routes was not audited** — `ClientScope.php` and ADR-0022
+abilities are **W1-c's** census, and I did not check whether a non-driver token
+can reach `me/promotions`.
+
+**Exit criteria met:** every feature classified, and §6 is the surfaces-to-hide
+list ready for a yes/no. The answer is unusually short — **exactly one surface
+needs hiding** (the Wallet's Withdraw and Declare-a-remittance buttons, unless
+their console ships), because every other open loop is honest on its own.
+
+**Closing amendment — 20:40. Status: done. CI green on `a7b1b11`, run
+32050428365.** Working tree clean, PR #9 retitled and rewritten. **Not merged,
+and A0 does not merge.**
+
+**Twelve commits, split by module**, `c855bf5` … `a7b1b11`: fleet duty sessions ·
+drivers (performance, promotions, referrals, photographs) · admin safety
+settings · billing rate-card editing · the trip record · the seeder · the
+console · the driver app's drawer and eight screens · the contract, four ADRs
+and the planning set · the skills · then the two CI fixes below.
+
+**What CI reported, and what each fix was:**
+
+| Red | Fix | Whose file |
+|---|---|---|
+| Pint, zero tolerance — `DriverAppSeeder.php`, `fully_qualified_strict_types` + `ordered_imports` | four inline `\Modules\…` names hoisted into the imports, `46d32b3` | the seeder's; behaviour unchanged |
+| `OpenApiRouteCensusTest` — `GET/POST/DELETE /api/v1/me/photo` undocumented | the three paths written, `a7b1b11` | `openapi.yaml`, shared |
+
+**The census failure is the one worth reading.** W1-f found it independently
+about ten minutes before I fixed it and deliberately left it to me — correctly,
+under rule 6. **Nothing in `tests/` exercises `/me/photo` at all**, which is why
+nothing forced the contract entry; the census was the only thing standing
+between three undocumented endpoints and a green branch. **That test is proven
+to bite by this branch itself** — red on exactly those three routes in run
+32049600129, green in 32050428365 — so no mutation of mine was needed or made.
+
+**I wrote that entry from the controller and then verified it against a running
+server**, which corrected it: the stream answers under the stored file's own
+content type (`image/png`), not the `application/octet-stream` its sibling
+`/me/documents/{document}/file` declares. Also confirmed live — `404` where
+nothing is held, the cache-busting `?v=` on `photo_url`, and `DELETE` answering
+`photo_url: null` either way. **The demo driver was left with no photo, as
+found.**
+
+**Verified:**
+
+- **CI green on the branch**: Pint · Larastan level 8 · migrate and migration
+  reversibility · **1146 Pest tests, 4026 assertions** · coverage gates ·
+  gitleaks · frontend `tsc -b --force`, ESLint, Vitest, build.
+- **Mobile, locally, because CI never touches it**: `tsc --noEmit` clean and
+  **707 tests across 48 suites**, all passing.
+- **commitlint locally**: 0 errors across all twelve commits. One warning, the
+  `driver-app` scope, which is warning-level by design and already on this
+  branch's earlier commits.
+- PHPStan level 8 locally, clean, before pushing.
+
+**Not verified, and it matters:**
+
+- **`mobile/` has no CI job.** `.github/workflows/ci.yml` covers backend and
+  frontend only. Jest, `tsc`, ESLint and Prettier on the driver app are local
+  gates run by whoever last touched it — on a branch whose largest single commit
+  is 2,519 lines of that app. **The biggest hole in this branch's verification
+  story, and not A0's to close.**
+- **commitlint never runs on PR #9.** The job is `if: github.event_name ==
+  'pull_request'` and the `pull_request` trigger is scoped to `branches: [main]`;
+  this PR targets `feat/public-landing-and-order-requests`. Run locally instead.
+- **Nothing here is deployed or driven on a real domain.** That is W2-a.
+- **`/me/photo` has no test.** Reported, not written — a feature's tests are its
+  owner's. It joins the master plan's existing finding that no upload UI exists.
+
+**Left alone, deliberately:** three shared `mobile/` files fail
+`prettier --check` at `HEAD`, and `pint --test` flags three backend files in
+this working copy on `line_ending` — a CRLF artifact of the checkout that is
+green in CI. Neither was touched; reformatting sixty files to clear a recorded
+finding buries the real diff.
+
+**Processes.** Killed the hung `jest src/screens/SafetyScreen.test.tsx` pair
+(5368 / 23168, alive 18:06→20:00 with no progress) and nothing else. **A likely
+cause:** a full mobile run finishes in 13s but prints *"A worker process has
+failed to exit gracefully"* — something in that suite leaks a handle, and a
+single-file run has no other worker to finish behind it. Worth `--detectOpenHandles`
+by whoever owns those screens. **Still running and not mine:** `php artisan serve`
+on :8000, `vite`, and **two** Expo servers both asking for :8083 — the second
+cannot have the port.
+
+**I committed W1-f's work as well** — `docs/feature-completeness.md` and their
+worklog entry, both marked done in this log. Same trade as the 2026-08-14
+landing: nothing discarded, nothing reverted, no history rewritten. Their census
+reads correctly at `a7b1b11`, including its note to me, which is now answered by
+the commit above it.
+
+**A0's own finding, for whoever sequences the rest.** The master plan makes A0
+solo and blocking; **W1-f ran inside my window anyway**, and the collision cost
+nothing only because that package edits no source. It was luck rather than
+design: had it owned code, we would have raced in the same 131 dirty paths this
+package existed to clear.
