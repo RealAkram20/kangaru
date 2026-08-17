@@ -21,6 +21,7 @@ import { RolesPage } from '../pages/RolesPage'
 import { ProfilePage } from '../pages/ProfilePage'
 import { SystemSettingsPage } from '../pages/SystemSettingsPage'
 import { StaffPage } from '../pages/StaffPage'
+import { SupportRequestsPage } from '../pages/SupportRequestsPage'
 import { LiveMapPage } from '../pages/LiveMapPage'
 import { TripsPage } from '../pages/TripsPage'
 import { VehiclesPage } from '../pages/VehiclesPage'
@@ -196,6 +197,14 @@ export const router = createBrowserRouter([
         // the API answers — a 403 renders as an answer, not an apology.
         path: 'driver-applications',
         element: <DriverApplicationsPage />,
+      },
+      {
+        // ADR-0044. Not behind `RequireNavAccess`, for the same reason the
+        // applications queue above is not: `drivers.manage` can live on a
+        // custom role a slug list cannot see, and the page gates on whether
+        // the API answers.
+        path: 'support-requests',
+        element: <SupportRequestsPage />,
       },
     ],
   },

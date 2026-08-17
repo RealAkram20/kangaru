@@ -242,6 +242,7 @@ function SecretField({
         placeholder={secret.configured ? '••••••••' : ''}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        revealable
       />
     </FormField>
   )

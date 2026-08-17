@@ -192,7 +192,7 @@ export function ExportPanel({
           compact
           icon="download"
           title="No exports yet"
-          description="Pick a format above. Large reports keep generating in the background — you can leave this page."
+          description="Large reports keep generating in the background."
         />
       ) : (
         <div>

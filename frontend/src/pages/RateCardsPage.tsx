@@ -129,7 +129,7 @@ export function RateCardsPage() {
       <EmptyState
         icon="lock"
         title="Rate cards are not visible to your role"
-        description="Pricing is restricted to Finance, Super Admin, Operations Manager and Corporate Admin. Ask an administrator if you need access."
+        description="Restricted to Finance and administrators. Ask for access."
       />
     )
   }

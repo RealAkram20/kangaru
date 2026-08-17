@@ -35,6 +35,11 @@ const SECTIONS: SidebarSection[] = [
       { id: 'vehicles', label: 'Vehicles', icon: 'truck' },
       { id: 'drivers', label: 'Drivers', icon: 'users' },
       { id: 'driver-applications', label: 'Applications', icon: 'user-plus' },
+      // ADR-0044. Under Fleet with the drivers rather than in Operations: it
+      // is a queue about the people who drive, gated on the same
+      // `drivers.manage` the two entries above it use, and a clerk who
+      // handles one handles all three.
+      { id: 'support-requests', label: 'Driver reports', icon: 'message-square-warning' },
     ],
   },
   {
@@ -85,6 +90,7 @@ const NAV_PATHS: Partial<Record<string, string>> = {
   vehicles: '/vehicles',
   drivers: '/drivers',
   'driver-applications': '/driver-applications',
+  'support-requests': '/support-requests',
   invoices: '/invoices',
   'rate-cards': '/rate-cards',
   reports: '/reports',
@@ -107,6 +113,7 @@ const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
   '/vehicles': { id: 'vehicles', title: 'Vehicles' },
   '/drivers': { id: 'drivers', title: 'Drivers' },
   '/driver-applications': { id: 'driver-applications', title: 'Driver applications' },
+  '/support-requests': { id: 'support-requests', title: 'Driver reports' },
   '/invoices': { id: 'invoices', title: 'Invoices' },
   '/rate-cards': { id: 'rate-cards', title: 'Rate cards' },
   '/reports': { id: 'reports', title: 'Reports' },

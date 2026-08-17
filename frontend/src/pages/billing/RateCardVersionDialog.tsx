@@ -557,7 +557,7 @@ export function RateCardVersionDialog({
             <FormField
               label="From"
               htmlFor="rc-nightfrom"
-              hint="Leave both blank for no night rate."
+              hint="Leave both blank for none."
               error={errors[`${prefix}night_starts_at`]}
             >
               <Input id="rc-nightfrom" type="time" value={nightFrom} onChange={(e) => setNightFrom(e.target.value)} />

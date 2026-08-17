@@ -178,7 +178,7 @@ export function RolesPage() {
         <EmptyState
           icon="lock"
           title="Roles are not available to your account"
-          description="Composing roles is reserved for whoever holds role management. Ask a Super Admin if you need to see what a role grants."
+          description="Ask a Super Admin for role management."
         />
       </Card>
     )
@@ -389,7 +389,7 @@ function RoleDialog({
           <FormField
             label="Key"
             htmlFor="r-slug"
-            hint="Optional. Lowercase letters, numbers and underscores. Left blank it is derived from the name, and it can never be changed afterwards."
+            hint="Optional. Lowercase, numbers and underscores. Never changes afterwards."
             error={errors.slug}
           >
             <Input
@@ -566,7 +566,7 @@ function DeleteRoleDialog({
       open
       tone="destructive"
       title={`Delete ${role.name}?`}
-      description="This cannot be undone. Accounts holding this role would lose every permission it grants, so the server refuses while anyone still holds it."
+      description="This cannot be undone, and is refused while anyone holds it."
       onClose={onClose}
       footer={
         <>

@@ -121,7 +121,7 @@ export function LiveMapPage() {
           <EmptyState
             icon="map-pin-off"
             title="Nothing is moving"
-            description="Vehicles appear here once a trip is under way and the driver's app is reporting. Assign a trip on the dispatch board to see it."
+            description="Vehicles appear once a trip is under way. Assign one on the dispatch board."
           />
         </Card>
       ) : (

@@ -525,7 +525,7 @@ export function ReportsPage() {
               <EmptyState
                 icon="file-search"
                 title="No trips in this period"
-                description="No trip commenced between the selected dates. Widen the range or clear the vehicle and driver filters."
+                description="Widen the range or clear the filters."
               />
             ) : (
               <DataTable<ReportTableRow>

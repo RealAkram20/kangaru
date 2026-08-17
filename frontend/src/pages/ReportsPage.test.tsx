@@ -254,7 +254,7 @@ describe('ReportsPage', () => {
 
     expect(await screen.findByText('No trips in this period')).toBeInTheDocument()
     expect(
-      screen.getByText(/Widen the range or clear the vehicle and driver filters/i),
+      screen.getByText(/Widen the range or clear the filters/i),
     ).toBeInTheDocument()
   })
 

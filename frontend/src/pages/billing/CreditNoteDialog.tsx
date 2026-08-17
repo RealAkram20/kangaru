@@ -116,7 +116,7 @@ export function CreditNoteDialog({
           label="Reason"
           htmlFor="cn-reason"
           required
-          hint="Recorded on the credit note against your name. A credit without a stated reason is an audit finding."
+          hint="A credit with no stated reason is an audit finding."
           error={errors.reason}
         >
           <Input

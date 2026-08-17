@@ -302,7 +302,7 @@ function DecisionDialog({
             <FormField
               label="Licence number"
               htmlFor="application-license-number"
-              hint="From the licence you checked, not from the applicant's form — this is the field the fleet screen treats as verified, and it is unique platform-wide."
+              hint="From the licence you checked, not the applicant's form."
               error={errors.license_number}
               required
             >
@@ -317,7 +317,7 @@ function DecisionDialog({
             <FormField
               label="Licence expiry"
               htmlFor="application-license-expiry"
-              hint="Must be in the future — onboarding somebody on an expired licence is the one thing this field exists to prevent."
+              hint="Must be in the future."
               error={errors.license_expiry}
               required
             >
@@ -335,7 +335,7 @@ function DecisionDialog({
           <FormField
             label="Reason"
             htmlFor="application-reject-reason"
-            hint="For the office. It lets whoever reads this in three months tell a lapsed licence apart from a decision worth revisiting."
+            hint="For the office. Say why, for whoever reads this later."
             error={errors.reason}
             required
           >

@@ -202,7 +202,7 @@ export function InvoicesPage() {
       <EmptyState
         icon="lock"
         title="Invoices are not visible to your role"
-        description="Invoicing is restricted to Finance, Super Admin, Operations Manager and Corporate Admin. Ask an administrator if you need access."
+        description="Restricted to Finance and administrators. Ask for access."
       />
     )
   }
@@ -289,7 +289,7 @@ export function InvoicesPage() {
           <EmptyState
             icon="receipt"
             title="No invoices yet"
-            description="An invoice is raised from a completed trip on the Trips page. Nothing here is created directly."
+            description="Raised from a completed trip, on the Trips page."
           />
         ) : (
           <DataTable<InvoiceRow>

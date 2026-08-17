@@ -86,7 +86,7 @@ export function DriverDocumentsDialog({
     <Dialog
       open
       title={`${driver.name}’s documents`}
-      description="Open each file, check it against the driver's record, and decide. Nothing here is verified automatically."
+      description="Check each file against the driver's record. Nothing is automatic."
       onClose={onClose}
       width={720}
       footer={
@@ -278,7 +278,7 @@ function RejectDialog({
     <Dialog
       open
       title={`Reject this ${doc.type_label.toLowerCase()}?`}
-      description="The driver sees this reason and nothing else, so say what would make the next attempt right."
+      description="The driver sees only this reason."
       onClose={onCancel}
       width={480}
       tone="destructive"

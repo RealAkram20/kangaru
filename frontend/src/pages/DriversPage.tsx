@@ -12,6 +12,7 @@ import { Dialog } from '../components/feedback/Dialog'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
 import { DriverDocumentsDialog } from './drivers/DriverDocumentsDialog'
+import { DriverPayoutDialog } from './drivers/DriverPayoutDialog'
 
 const STATUS_TONE: Record<Driver['status'], 'success' | 'warning' | 'neutral'> = {
   active: 'success',
@@ -28,6 +29,8 @@ export function DriversPage() {
   // different questions, and one dialog answering both would be the
   // "settings screen" mistake at a smaller scale.
   const [reviewing, setReviewing] = useState<Driver | null>(null)
+  /** ADR-0042. Whose payout destination the office is reading, if any. */
+  const [payout, setPayout] = useState<Driver | null>(null)
 
   const load = useCallback(
     () =>
@@ -107,6 +110,15 @@ export function DriversPage() {
             <Button size="sm" variant="secondary" onClick={() => setReviewing(row)}>
               Documents
             </Button>
+            {/*
+              ADR-0042. The office half of payout destinations, shipping with
+              the feature rather than after it — the completeness census found
+              four backends nobody in the office could reach, and a destination
+              a clerk cannot read is a form filled in for nobody.
+            */}
+            <Button size="sm" variant="secondary" onClick={() => setPayout(row)}>
+              Payout
+            </Button>
             <Button size="sm" variant="secondary" onClick={() => setManaging(row)}>
               {row.account === null ? 'Give sign-in' : 'Manage sign-in'}
             </Button>
@@ -153,6 +165,8 @@ export function DriversPage() {
       {reviewing && (
         <DriverDocumentsDialog driver={reviewing} onClose={() => setReviewing(null)} />
       )}
+
+      {payout && <DriverPayoutDialog driver={payout} onClose={() => setPayout(null)} />}
 
       {managing && (
         <DriverAccountDialog
