@@ -19,18 +19,24 @@ use Modules\Bookings\Models\Booking;
 use Modules\Dispatch\Services\DispatchService;
 use Modules\Drivers\Enums\DriverDocumentType;
 use Modules\Drivers\Enums\LedgerEntryKind;
+use Modules\Drivers\Enums\SettlementRequestKind;
+use Modules\Drivers\Enums\SettlementRequestStatus;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverDocument;
 use Modules\Drivers\Models\DriverLedgerEntry;
+use Modules\Drivers\Models\DriverSettlementRequest;
 use Modules\Drivers\Services\DriverAccountService;
 use Modules\Drivers\Services\DriverDocumentService;
 use Modules\Drivers\Services\DriverEarningsService;
 use Modules\Drivers\Services\DriverLedgerService;
+use Modules\Drivers\Services\DriverSettlementRequestService;
 use Modules\Drivers\Services\ReferralService;
 use Modules\Fleet\Models\DriverShiftWindow;
 use Modules\Fleet\Services\DutySessionService;
 use Modules\Fleet\Support\DriverPresence;
 use Modules\Fleet\Support\DriverPresenceStore;
+use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Models\Notification;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Models\TripRating;
@@ -550,7 +556,7 @@ class DriverAppSeeder extends Seeder
         ];
 
         foreach ($inbox as $message) {
-            $exists = \Modules\Notifications\Models\Notification::query()
+            $exists = Notification::query()
                 ->where('user_id', $user->getKey())
                 ->where('subject', $message['subject'])
                 ->exists();
@@ -559,13 +565,13 @@ class DriverAppSeeder extends Seeder
                 continue;
             }
 
-            $notification = new \Modules\Notifications\Models\Notification([
+            $notification = new Notification([
                 // Null tenant: a driver is the platform's, not a client's
                 // (ADR-0005), and the platform-scoped migration made the
                 // column nullable for exactly this shape of recipient.
                 'tenant_id' => null,
                 'user_id' => $user->getKey(),
-                'type' => \Modules\Notifications\Enums\NotificationType::TRIP_OFFERED,
+                'type' => NotificationType::TRIP_OFFERED,
                 'subject' => $message['subject'],
                 'body' => $message['body'],
                 'url' => null,
@@ -580,16 +586,16 @@ class DriverAppSeeder extends Seeder
         // shows the pending band. Through the real service so the one-open
         // rule and the request shape stay whatever ADR-0032 says they are;
         // guarded first because that same rule refuses a second open request.
-        $hasOpen = \Modules\Drivers\Models\DriverSettlementRequest::query()
+        $hasOpen = DriverSettlementRequest::query()
             ->where('driver_id', $driver->getKey())
-            ->where('status', \Modules\Drivers\Enums\SettlementRequestStatus::PENDING)
-            ->where('kind', \Modules\Drivers\Enums\SettlementRequestKind::REMITTANCE)
+            ->where('status', SettlementRequestStatus::PENDING)
+            ->where('kind', SettlementRequestKind::REMITTANCE)
             ->exists();
 
         if (! $hasOpen) {
-            app(\Modules\Drivers\Services\DriverSettlementRequestService::class)->raise(
+            app(DriverSettlementRequestService::class)->raise(
                 $driver,
-                \Modules\Drivers\Enums\SettlementRequestKind::REMITTANCE,
+                SettlementRequestKind::REMITTANCE,
                 10_000,
                 'Cash handed to the depot on Friday evening',
             );
