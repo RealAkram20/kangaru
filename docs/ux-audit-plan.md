@@ -45,7 +45,7 @@ dropped in Phase 2.
 | Observation | Numbers |
 |---|---|
 | Driver app navigation depth | 4 tabs → 13 drawer rows → `SettingsScreen` holds 4 further nav rows. Three menu layers to reach `TimeOff`. |
-| Duplicate surface | `TodayScreen` and `HomeScreen` both render `DutyBar`, offers and the trip list. `Today` has one entry point and no drawer row. |
+| Duplicate surface | ~~`TodayScreen` and `HomeScreen` both render `DutyBar`, offers and the trip list. `Today` has one entry point and no drawer row.~~ **Settled by the owner ahead of the audit: `TodayScreen` is deleted and its one entry point — the home screen's bell — now opens `Notifications`.** |
 | One feature, many places | Money and standing: `Earnings`, `Wallet`, `Transactions`, `Promotions`, `Performance` — 5 destinations across 2 tabs and the drawer. |
 | Prose volume, worst screens | `SafetyScreen` 119 words · `TripDetailScreen` 91 · `TripsHistoryScreen` 73 · `TimeOffScreen` 68 · `DocumentsScreen` 53 |
 | Backend wiring, driver app | Only `SignIn`, `SignUp`, `ForgotPassword` have no data hook, and those are correctly formless. **Whole-screen orphans are a web-app risk; the driver app's risk is at control level.** |
@@ -104,8 +104,9 @@ cost. A finding that cannot name a rule is an opinion and is dropped.
 
 - Which screens are unreachable, or reachable by exactly one path that nothing
   points at.
-- Which two screens answer the same question. `TodayScreen` / `HomeScreen` is
-  the open case.
+- Which two screens answer the same question. `TodayScreen` / `HomeScreen` was
+  the open case and is closed — the owner deleted `TodayScreen`. The lens still
+  applies to the pairs nobody has looked at.
 - **Menu depth.** Every destination gets its tap count from a cold home screen.
   Anything a driver touches during a shift and cannot reach in **one tap** is a
   finding. Anything at **three or more** is a finding regardless of frequency.
@@ -197,7 +198,8 @@ It must answer, explicitly:
 - Whether the drawer and the tab bar can name the same destination without
   becoming the two drifting lists the owner already rejected.
 - Whether `Settings` remains a navigation layer or becomes a leaf.
-- What happens to `Today`.
+- ~~What happens to `Today`.~~ Answered ahead of the audit: deleted, and the
+  bell that was its only door now opens `Notifications`.
 
 Constraint: **`docs/agent-worklog.md`'s status → screen table is binding.** One
 `TripStatus` belongs to exactly one screen. Any proposal that merges live-leg

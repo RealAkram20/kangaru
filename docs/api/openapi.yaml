@@ -157,7 +157,7 @@ paths:
               additionalProperties: false
               properties:
                 current_password: { type: string }
-                password: { type: string, minLength: 12 }
+                password: { type: string, minLength: 8 }
                 password_confirmation: { type: string }
       responses:
         '200':
@@ -208,7 +208,7 @@ paths:
               properties:
                 email: { type: string, format: email, maxLength: 190 }
                 code: { type: string, minLength: 6, maxLength: 6 }
-                password: { type: string, minLength: 12 }
+                password: { type: string, minLength: 8 }
                 password_confirmation: { type: string }
       responses:
         '200':
@@ -1633,11 +1633,16 @@ paths:
                 email: { type: string, format: email, maxLength: 190 }
                 password:
                   type: string
-                  minLength: 12
+                  minLength: 8
                   description: >
                     The applicant's own choice, hashed at submission and
                     carried to the account at approval — never re-typed,
                     never emailed, never known to the approver (§3).
+                    Eight, matching `PATCH /auth/password` and
+                    `POST /auth/password/reset` — the doors this password
+                    walks through next. Accounts the office mints
+                    (`POST /users`, `POST /drivers/{driver}/account`) still
+                    hold twelve: those are typed by staff at a desk.
                 password_confirmation: { type: string }
                 terms_accepted:
                   description: >
@@ -2403,6 +2408,441 @@ paths:
                   success: { enum: [true] }
                   message: { type: string }
                   data: { $ref: '#/components/schemas/DriverProfile' }
+        default:
+          $ref: '#/components/responses/Error'
+    patch:
+      summary: A driver correcting their own name or phone number.
+      description: >
+        **Two fields, and the omissions are the design.** The office's
+        `PATCH /drivers/{driver}` accepts seven; the five withheld here are
+        withheld for reasons that are not about trust.
+
+        `license_number` and `license_expiry` are the compliance facts the
+        office verifies (ADR-0033) — a driver who can edit their own expiry
+        self-certifies their own compliance, and the review queue stops meaning
+        anything. `status` is a dispatch control, so a suspended driver who
+        could set it has undone the suspension. `vehicle_id` is a Fleet
+        allocation. `email` is the login credential (ADR-0016): changing it
+        needs re-authentication and a notice to the old address, and a mistyped
+        one locks somebody out of their own account — a feature of its own, not
+        a field on this form.
+
+        Either field may be sent alone, so correcting a phone number cannot
+        blank a name. The profile screen shows all five withheld fields and says
+        who manages them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                phone:
+                  type: string
+                  maxLength: 50
+                  description: >
+                    Deliberately unconstrained in shape, matching the office's
+                    own rule. PRODUCT.md is East Africa first and international
+                    after: a pattern tuned to `+256` silently refuses `+254`,
+                    and the platform must not accept a number it then refuses to
+                    let its owner correct.
+      responses:
+        '200':
+          description: The updated profile, in full.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DriverProfile' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/me/closure-request:
+    get:
+      summary: The driver's current or most recent account-closure request.
+      description: >
+        ADR-0043. Returns the **latest** request rather than only an open one,
+        so the screen can show a declined answer and its reason - a driver who
+        was refused needs to read why more than they need the row to vanish.
+
+        Null where they have never asked.
+      responses:
+        '200':
+          description: The request, or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [closure_request]
+                    additionalProperties: false
+                    properties:
+                      closure_request:
+                        oneOf:
+                          - { $ref: '#/components/schemas/DriverClosureRequest' }
+                          - { type: 'null' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Ask the office to close the account.
+      description: >
+        **Asking closes nothing.** The office's confirmation deactivates the
+        driver and detaches their sign-in; until then they can still work.
+
+        Closing is **not deleting**: trips, pay records, invoices and the audit
+        trail survive, because `master-plan.md` section 6 stakes the product on
+        their staying reproducible. Personal details are removed on the
+        retention schedule, measured from the closure.
+
+        The reason is optional - requiring somebody to justify leaving is a dark
+        pattern, and a mandatory box produces a full stop more often than a
+        reason.
+
+        Answers **409 `CLOSURE_REQUEST_ALREADY_OPEN`** where one is already
+        waiting; withdraw it first.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason: { type: ['string', 'null'], maxLength: 500 }
+      responses:
+        '200':
+          description: The request, waiting for the office.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [closure_request]
+                    additionalProperties: false
+                    properties:
+                      closure_request: { $ref: '#/components/schemas/DriverClosureRequest' }
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Withdraw a pending request.
+      description: >
+        The driver changing their mind. ADR-0032 left this out of settlement
+        requests and recorded that its absence was more annoying than it looked;
+        without it the one-open-per-driver rule makes the decision unfixable
+        without ringing the office.
+
+        Answers **404** where nothing is waiting.
+      responses:
+        '200':
+          description: Withdrawn; the account stays open.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [closure_request]
+                    additionalProperties: false
+                    properties:
+                      closure_request: { $ref: '#/components/schemas/DriverClosureRequest' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/closure-requests:
+    get:
+      summary: The office queue of drivers asking to leave.
+      description: >
+        ADR-0043. `drivers.manage`. Pending first, then newest - a queue sorted
+        only by date buries the rows needing an answer under the ones already
+        answered.
+      responses:
+        '200':
+          description: Up to 100 requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DriverClosureRequest' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/closure-requests/{closureRequest}/confirm:
+    post:
+      summary: Close the account.
+      description: >
+        Deactivates the driver, detaches their sign-in through ADR-0016's own
+        service, and stamps the closure - **the clock the retention sweep runs
+        on**. Emails the driver, because by now they cannot sign in to be told
+        any other way.
+
+        **Deletes nothing**: no trip, no ledger entry, no invoice, no audit row,
+        and not the payout destination - the office may still owe a final
+        payment.
+
+        Answers **409 `CLOSURE_REQUEST_ALREADY_DECIDED`** where a colleague got
+        there first; a second confirm would move the retention clock.
+      parameters:
+        - name: closureRequest
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Closed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [closure_request]
+                    additionalProperties: false
+                    properties:
+                      closure_request: { $ref: '#/components/schemas/DriverClosureRequest' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/closure-requests/{closureRequest}/decline:
+    post:
+      summary: Refuse to close the account, with a reason.
+      description: >
+        The reason is **required**, unlike the driver's. A driver leaving owes
+        nobody an explanation; an office refusing to let them leave does -
+        "settle your balance first" is an answer they can act on, and it is
+        emailed to them.
+      parameters:
+        - name: closureRequest
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '200':
+          description: Declined, and the driver emailed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [closure_request]
+                    additionalProperties: false
+                    properties:
+                      closure_request: { $ref: '#/components/schemas/DriverClosureRequest' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/me/payout-account:
+    get:
+      summary: Where the signed-in driver's money is sent.
+      description: >
+        ADR-0042. **Nothing on this path moves money.** ADR-0029 §6's boundary
+        is unchanged — the platform records a destination so the office knows
+        where to send what ADR-0032's confirm flow says is owed.
+
+        `payout_account` is **null for a driver who has not given any details**,
+        which is a normal first-visit state rather than an error, and the screen
+        renders it as an empty form.
+
+        **The account number is masked to its last four characters and the whole
+        number is never in this payload** (ADR-0042 §4). A driver confirming
+        "yes, that is my account" needs the tail; they do not need a full
+        account number echoed to a handset that may be shared or shoulder-read.
+        The office reads the whole number from
+        `/api/v1/drivers/{driver}/payout-account`.
+      responses:
+        '200':
+          description: The destination, or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [payout_account]
+                    additionalProperties: false
+                    properties:
+                      payout_account:
+                        oneOf:
+                          - { $ref: '#/components/schemas/DriverPayoutAccount' }
+                          - { type: 'null' }
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      summary: Set or replace it.
+      description: >
+        **Every field is required on every save.** A destination is one fact
+        made of four parts, and a partial update would let a driver change the
+        bank while leaving last month's account number — a working destination
+        pointing at the wrong place, which is the worst state this record can
+        hold.
+
+        Idempotent: saving twice leaves one destination, so a driver on a bad
+        connection who taps Save again does not get a conflict.
+
+        `account_number` has **no shape rule**, deliberately. Ugandan bank
+        account numbers vary in length by bank, a mobile-money number may be
+        typed `+256700123456` or `0700123456`, and PRODUCT.md is East Africa
+        first and international after — a pattern here would refuse a real
+        account and leave its owner unable to be paid.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, institution, account_holder, account_number]
+              additionalProperties: false
+              properties:
+                kind: { type: string, enum: [bank, mobile_money] }
+                institution:
+                  type: string
+                  maxLength: 120
+                  description: The bank or mobile-money provider — "Stanbic", "MTN MoMo".
+                account_holder: { type: string, maxLength: 255 }
+                account_number: { type: string, minLength: 4, maxLength: 64 }
+      responses:
+        '200':
+          description: The destination as saved, masked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [payout_account]
+                    additionalProperties: false
+                    properties:
+                      payout_account: { $ref: '#/components/schemas/DriverPayoutAccount' }
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Remove it.
+      description: >
+        Answers the same shape whether or not one was held, so a second tap is
+        not an error.
+      responses:
+        '200':
+          description: Removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [payout_account]
+                    additionalProperties: false
+                    properties:
+                      payout_account:
+                        type: ['object', 'null']
+                        additionalProperties: false
+                        description: Always null here — the destination is gone.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/drivers/{driver}/payout-account:
+    get:
+      summary: The office reading where a driver's money is sent.
+      description: >
+        ADR-0042 §4. **Returns the whole account number**, because a clerk
+        cannot wire money to a mask — which is why this is a separate path and
+        a separate resource from the driver's own masked one.
+
+        Gated on `drivers.manage` through `DriverPolicy@view`, and audited: a
+        read here is a staff member looking at somebody's bank account.
+
+        Answers **404 with `NOT_FOUND`** where the driver exists but has given
+        no details, which the office must be able to tell apart from a missing
+        driver — the first is a phone call, the second is a bug.
+      parameters:
+        - name: driver
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: The destination, in full.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [payout_account]
+                    additionalProperties: false
+                    properties:
+                      payout_account: { $ref: '#/components/schemas/OfficePayoutAccount' }
         default:
           $ref: '#/components/responses/Error'
 
@@ -3442,6 +3882,183 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/SettlementRequestResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/me/support-requests:
+    get:
+      summary: The signed-in driver's own reports, newest first.
+      description: >
+        Driver issue reporting (ADR-0044). Not paginated and capped at 50: a
+        driver's reports are counted in ones per month, and the screen reading
+        this is a short list with the office's answers on it.
+
+        An `answer` of `null` means the office still owes one — there is no
+        "closed without an answer" on this feature (ADR-0044 §2), so null is
+        precisely "still waiting" and never "declined in silence".
+      responses:
+        '200':
+          description: The driver's reports.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/SupportRequest' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Reports something to the office, in writing.
+      description: >
+        ADR-0044. **The first place on this platform a driver's own words reach
+        the office as a record.** Before it, the five Help Topics rows on
+        Help & Safety all opened the same contact card and nothing a driver
+        wrote reached anybody.
+
+        The body is stored verbatim and is never edited or truncated. `topic`
+        is one of the five Help Topics, which decides how the report is filed
+        and which office desk answers it.
+
+        `trip_id` is optional for **every** topic. The server checks it is the
+        reporting driver's own trip and answers `404` when it is not — not 403,
+        because a refusal must not confirm that a row exists.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [topic, body]
+              additionalProperties: false
+              properties:
+                topic: { $ref: '#/components/schemas/SupportRequestTopic' }
+                body:
+                  type: string
+                  minLength: 10
+                  maxLength: 4000
+                  description: >
+                    What happened, in the driver's own words. The floor stops
+                    a one-word report the office cannot answer; the ceiling is
+                    a request-size bound far above anything typed on a phone.
+                    **Nothing truncates** — over the ceiling the report is
+                    refused with a message saying so, because storing half of
+                    somebody's account of an event is worse than storing none.
+                trip_id:
+                  type: integer
+                  description: >
+                    The journey it is about, when it is about one. Optional on
+                    every topic: a driver reporting a passenger who never
+                    boarded has no trip to name.
+      responses:
+        '201':
+          description: The report was sent to the office.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/SupportRequest' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/support-requests:
+    get:
+      summary: The office queue of driver reports.
+      description: >
+        `drivers.manage` (ADR-0044 §3). **Oldest first**, like the settlement
+        queue and for the same reason: the driver who has waited longest has
+        most earned an answer.
+
+        Defaults to unanswered reports only. `status=answered` reads the
+        archive; `topic` narrows to one of the five, because a payment dispute
+        and a lost phone are answered by different desks.
+      parameters:
+        - $ref: '#/components/parameters/cursor'
+        - in: query
+          name: status
+          required: false
+          schema: { $ref: '#/components/schemas/SupportRequestStatus' }
+        - in: query
+          name: topic
+          required: false
+          schema: { $ref: '#/components/schemas/SupportRequestTopic' }
+      responses:
+        '200':
+          description: A page of reports.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/SupportRequest' }
+                  meta:
+                    type: object
+                    required: [cursor]
+                    additionalProperties: false
+                    properties:
+                      cursor: { $ref: '#/components/schemas/Cursor' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/support-requests/{supportRequest}:
+    get:
+      summary: One driver report, with the office's answer if it has one.
+      description: '`drivers.manage`. Carries the driver''s name and, once answered, who answered it.'
+      parameters:
+        - { name: supportRequest, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          $ref: '#/components/responses/SupportRequestResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/support-requests/{supportRequest}/answer:
+    post:
+      summary: Answers a driver's report — and tells them.
+      description: >
+        `drivers.manage` (ADR-0044 §2, §4). **The answer is required**: there
+        is no closing a report without one, because an office that can close in
+        silence reproduces the failure this feature exists to end.
+
+        Writing the answer sends the driver a `driver.support.answered`
+        notification — the in-app row and a push, never mail. The answer text
+        itself is deliberately **not** in the push: it is somebody's account of
+        a dispute, and a lock screen is read over a shoulder.
+
+        **Idempotent.** A report that is already answered comes back unchanged
+        rather than overwritten, so a double-tap cannot replace a colleague's
+        reply or send a second push.
+      parameters:
+        - { name: supportRequest, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answer]
+              additionalProperties: false
+              properties:
+                answer: { type: string, minLength: 5, maxLength: 4000 }
+      responses:
+        '200':
+          $ref: '#/components/responses/SupportRequestResponse'
         default:
           $ref: '#/components/responses/Error'
 
@@ -4724,6 +5341,19 @@ components:
               reason: { type: string, maxLength: 1000 }
 
   responses:
+    SupportRequestResponse:
+      description: One driver report, with the office's answer if it has one.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/SupportRequest' }
+
     SettlementRequestResponse:
       description: The request, after the office answered it.
       content:
@@ -5279,6 +5909,12 @@ components:
         - OFFER_HAS_NO_VEHICLE
         - TOKEN_SCOPE_EXCEEDED
         - SETTLEMENT_REQUEST_ALREADY_OPEN
+        # ADR-0043. One open closure request per driver; withdraw it to change it.
+        - CLOSURE_REQUEST_ALREADY_OPEN
+        # ADR-0043. A second reviewer answering a row a colleague just answered —
+        # worth losing safely, because a second confirm would move the retention
+        # clock the closure is measured from.
+        - CLOSURE_REQUEST_ALREADY_DECIDED
 
     TripStatus:
       enum:
@@ -6997,6 +7633,105 @@ components:
         action_needed: { type: integer }
         pending: { type: integer }
 
+    DriverClosureRequest:
+      type: object
+      description: >
+        A driver's request to close their account (ADR-0043). **One resource for
+        both readers**, unlike the payout account's two: there is nothing here
+        the driver may not see - it is their own request and the office's
+        answer, which is the whole point of the return path.
+
+        The reviewer is not served at all; a driver learning which clerk closed
+        their account gains nothing.
+      required:
+        - id
+        - status
+        - status_label
+        - reason
+        - decline_reason
+        - requested_at
+        - reviewed_at
+        - closed_at
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        status: { type: string, enum: [pending, confirmed, declined, withdrawn] }
+        status_label: { type: string }
+        reason: { type: ['string', 'null'] }
+        decline_reason: { type: ['string', 'null'] }
+        requested_at: { type: ['string', 'null'], format: date-time }
+        reviewed_at: { type: ['string', 'null'], format: date-time }
+        closed_at:
+          type: ['string', 'null']
+          format: date-time
+          description: >
+            When the account actually closed, and the clock the retention sweep
+            runs on. Null unless confirmed - a declined or withdrawn request
+            never closed anything and must not start a retention clock.
+        driver_name:
+          type: string
+          description: Present on the office queue only, where the driver is eager-loaded.
+
+    DriverPayoutAccount:
+      type: object
+      description: >
+        A payout destination **as its owner is allowed to see it** (ADR-0042
+        §4). The whole account number is never here; the office reads it from
+        `/drivers/{driver}/payout-account`.
+
+        `account_holder_masked` shortens "John Kamau" to "J. Kamau" for the same
+        reason the number is masked: the pair *name plus account number* is what
+        makes either useful to somebody who should not have it, so returning the
+        whole name beside four digits gives back most of what the mask protects.
+      required:
+        - kind
+        - kind_label
+        - institution_label
+        - number_label
+        - institution
+        - account_holder_masked
+        - account_number_masked
+        - last_four
+        - updated_at
+      additionalProperties: false
+      properties:
+        kind: { type: string, enum: [bank, mobile_money] }
+        kind_label: { type: string }
+        institution_label:
+          type: string
+          description: >
+            What to call the institution on a form — "Bank" or "Provider".
+            Served rather than spelled on the handset: nobody calls Stanbic a
+            provider and nobody calls MTN a bank, and a second copy of that
+            mapping in a mobile bundle is a second place for it to be wrong.
+        number_label:
+          type: string
+          description: '"Account number" or "Mobile money number".'
+        institution: { type: string }
+        account_holder_masked: { type: string }
+        account_number_masked:
+          type: string
+          description: A mask and the last four characters.
+        last_four: { type: string, maxLength: 4 }
+        updated_at: { type: ['string', 'null'], format: date-time }
+
+    OfficePayoutAccount:
+      type: object
+      description: >
+        The same destination **as the office needs it** (ADR-0042 §4) — with the
+        whole account number, because a clerk cannot wire money to a mask. Only
+        ever rendered by `/drivers/{driver}/payout-account`, which is gated on
+        `drivers.manage` and audited.
+      required: [kind, kind_label, institution, account_holder, account_number, updated_at]
+      additionalProperties: false
+      properties:
+        kind: { type: string, enum: [bank, mobile_money] }
+        kind_label: { type: string }
+        institution: { type: string }
+        account_holder: { type: string }
+        account_number: { type: string }
+        updated_at: { type: ['string', 'null'], format: date-time }
+
     DriverProfile:
       description: The facts on a driver's own Profile screen (ADR-0033).
       type: object
@@ -7090,6 +7825,78 @@ components:
     SettlementRequestStatus:
       type: string
       enum: [pending, confirmed, declined]
+
+    SupportRequestTopic:
+      description: >
+        What a driver's report is about (ADR-0044 §1) — **the five Help Topics
+        rows**, which is why this is an enum and not a free-text subject. The
+        same value names the row in the office queue and decides which desk
+        answers it.
+      type: string
+      enum: [report, passenger, vehicle, payment, lost_item]
+
+    SupportRequestStatus:
+      description: >
+        Two states, and the missing third is the decision (ADR-0044 §2). There
+        is no "closed" without an answer, so the only way out of `open` is a
+        reply somebody wrote.
+      type: string
+      enum: [open, answered]
+
+    SupportRequest:
+      description: >
+        A driver's written report and the office's answer to it (ADR-0044).
+
+        One schema for both readers. `driver_name` and `answered_by` are
+        present **only on the office queue**: a driver is told the office
+        replied, not which clerk — naming one employee to the person whose
+        report was refused puts an individual's name on the organisation's
+        decision.
+      type: object
+      required:
+        - id
+        - driver_id
+        - topic
+        - topic_label
+        - status
+        - status_label
+        - trip_id
+        - body
+        - answer
+        - answered_at
+        - created_at
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        driver_id: { type: integer }
+        driver_name:
+          type: ['string', 'null']
+          description: Office queue only, so a clerk knows whose afternoon this was.
+        topic: { $ref: '#/components/schemas/SupportRequestTopic' }
+        topic_label: { type: string }
+        status: { $ref: '#/components/schemas/SupportRequestStatus' }
+        status_label: { type: string }
+        trip_id:
+          type: ['integer', 'null']
+          description: >
+            The journey it is about, or null. Optional on every topic, and the
+            server checks it belongs to the reporting driver.
+        body:
+          type: string
+          description: >
+            The driver's own account, **verbatim**. Never truncated here — a
+            list that shortens somebody's description of an assault to fit a
+            row is a decision for the screen, not for the API.
+        answer:
+          type: ['string', 'null']
+          description: >
+            The office's reply, or null while it is still owed. An answered
+            report always carries text, so null means precisely "not yet".
+        answered_by:
+          type: ['string', 'null']
+          description: Office queue only — see the schema description.
+        answered_at: { type: ['string', 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
 
     DriverSettlementRequest:
       description: >

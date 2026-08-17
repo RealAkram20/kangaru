@@ -51,7 +51,7 @@ document with new information in it.
 | Driver changes own password | yes | yes | n/a | yes | **closed** |
 | Driver **edits own profile** | **none** | **none** | office only | n/a | **open** — §3.8 |
 | Driver **closes own account** | **none** | **none** | none | none | **not built** — §3.8 |
-| Driver issue reporting | **none** | none | none | none | **not built** |
+| Driver issue reporting | yes | yes | yes | yes | **closed 2026-08-17, ADR-0044** — see §3.9 |
 
 ⚠ = this cell differs from the seeded table in `master-plan.md` §2.
 
@@ -413,12 +413,34 @@ are self-service, which are office-mediated, and how a driver exercises each.
 Right now the answer is "ring the office", and that is a defensible answer only
 once it is written down somewhere a driver can read it.
 
-### 3.9 · Driver issue reporting — not built, and correctly out of scope
+### 3.9 · Driver issue reporting — ~~not built, and correctly out of scope~~ **built, 2026-08-17 (ADR-0044)**
 
-`master-plan.md` §7 excludes it; it needs a table, endpoints, a policy, a
-console and an ADR (**L**). **No action, and nothing to hide**, because the
-current surface does not overclaim: `SupportScreen` offers a phone call and
-delivers a phone call. That is the honest version of an unbuilt feature.
+The census was right about the state of the code and wrong about one thing, and
+the owner is the one who found it. This section read:
+
+> `master-plan.md` §7 excludes it; it needs a table, endpoints, a policy, a
+> console and an ADR (**L**). **No action, and nothing to hide**, because the
+> current surface does not overclaim: `SupportScreen` offers a phone call and
+> delivers a phone call. That is the honest version of an unbuilt feature.
+
+**The surface did overclaim** — not on the Support screen, which was honest, but
+one screen earlier. Help & Safety drew five rows shaped exactly like a ticket
+queue (*Report an issue*, *Passenger issue*, …), all five opening the same
+contact card, with the sentence that told them apart passed as an accessibility
+label only. The owner read them as *"repeated and fake"* and asked whether they
+were wired to anything. They were not.
+
+**Now closed, all four parts:** `support_requests` + `Modules\Support` (backend),
+`ReportIssueScreen` / `MyReportsScreen` (driver app), `SupportRequestsPage`
+(office console), and `driver.support.answered` (return path). There is no
+"close without answering" anywhere in it, which is what keeps the loop closed by
+construction rather than by discipline.
+
+**A lesson for the rest of this census that is worth stating:** a loop can be
+open at the *entry point* rather than at the endpoint. Every part of §3.9's
+original reasoning was about what the backend lacked, and the defect a human
+noticed was five rows that looked like a form. Rows that imply a feature are
+part of the loop.
 
 ---
 

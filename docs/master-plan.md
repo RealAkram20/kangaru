@@ -237,7 +237,12 @@ The gates are not what slow this down. They are the product.
   and prominent-disclosure wording for `ACCESS_FINE_LOCATION`. Follow-up.
 - **iOS.** `PRODUCT.md` is Android-first.
 - **i18n extraction.** Strings are literals app-wide; rewrites stay i18n-safe.
-- **Driver issue reporting.** The largest known gap. Needs its own ADR.
+- ~~**Driver issue reporting.** The largest known gap. Needs its own ADR.~~
+  **Reversed by the owner on 2026-08-17 and built: see ADR-0044.** They read the
+  Help Topics card, found five rows that all opened one phone number, and chose
+  the whole loop over three cheaper options. The line is struck rather than
+  deleted so the reversal stays legible — this section was right when it was
+  written, and the ADR it asked for is what changed it.
 - **The missing office consoles** (referrals, promotions, duty visibility, tip
   confirmation, safety guidance). W1-f classifies them; building them is
   week-one work.

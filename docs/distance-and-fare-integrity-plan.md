@@ -1,6 +1,9 @@
 # Distance and fare integrity — an enterprise plan
 
-**Status:** proposal, awaiting the owner's rulings. Nothing here is built.
+**Status:** proposal. Nothing here is built. **One of §6's five decisions has
+been ruled** — decision 2, on 2026-08-18; the answer was "use both figures", it
+supersedes §4 Phase 2's dial before it was built, and it is written out in §8.
+The other four are still open.
 **Scope:** both billing paths — corporate invoicing and walk-in fares.
 **Written:** 2026-08-15, after a UGX 198,013,800 fare reached the driver ledger
 from a single mistyped odometer digit.
@@ -270,9 +273,10 @@ Each of these needs an ADR, because each supersedes something already decided.
 
 1. **The odometer ceiling.** A single global maximum, or per vehicle category?
    A truck's plausible day is not a boda's.
-2. **Default `distance_source` for walk-in.** `gps` is the recommendation. It
-   changes what drivers are paid on, so it is a commercial decision, not a
-   technical one.
+2. ~~**Default `distance_source` for walk-in.** `gps` is the recommendation.~~
+   **Ruled by the owner on 2026-08-18, and the answer is neither option: use
+   both.** See §8 — the ruling asks for something this plan did not offer, so it
+   is written out there rather than compressed into a table cell here.
 3. **Hard gate or soft gate** on a flagged trip, and who may clear it. Finance
    already requires MFA because those roles move money;
    `DriverSettlementRequestPolicy` is the existing seam.
@@ -295,3 +299,78 @@ Each of these needs an ADR, because each supersedes something already decided.
   different failure modes; nothing here needs it.
 - **Touching issued invoices.** They are immutable by design. A wrong invoice
   is corrected by a credit note, which `CreditNoteService` already implements.
+
+---
+
+## 8. The pricing unit — ruled on 2026-08-18, and deliberately not designed here
+
+**Recorded because the owner asked for it to be recorded, and because a ruling
+that lives only in a chat log is a ruling that gets re-litigated.** This section
+states what was decided and what was not. Nothing in it is built.
+
+### What the owner ruled
+
+Asked to choose between pricing from the odometer, pricing from the GPS trace,
+or deferring, they chose **none of the three: price from both.**
+
+> *"can we have both, for a better Pricing we will be referreing the both the
+> Distance and the Odometer we are looking at developing a better 'in-app
+> algorithm using fixed routing and dynamic time factors' … and we talk time to
+> develop this one specific unite becasue it take about 85% of the system
+> value"*
+
+Four things follow, and each is the owner's, not this document's:
+
+1. **Both figures are inputs.** The measured trace and the odometer reading both
+   feed the fare, rather than one being the source and the other a watchdog.
+   §2.4's complaint — that `gps_distance_km` "never enters the arithmetic" — is
+   answered by putting it *in* the arithmetic, not by swapping which number wins.
+2. **The instrument is an in-app algorithm** over **fixed routing** and
+   **dynamic time factors**, not a `distance_source` switch. §4 Phase 2's
+   four-value dial is therefore **superseded before it was built** — it was the
+   right shape for "choose one figure" and the wrong shape for "combine two".
+3. **It is its own unit of work, and its schedule is a separate conversation.**
+   The owner asked to *talk time* on it rather than to start it.
+4. **The owner values it at roughly 85% of the system.** That is their estimate
+   and it is recorded as theirs. It is also the reason this section refuses to
+   sketch a design: a unit carrying that much of the product earns a real
+   scoping pass and an ADR, not a paragraph written by whoever happened to be
+   fixing a screen.
+
+### What this changes today: nothing
+
+Until that unit is designed and built, **the fare is still priced from the
+odometer** (`TripPricingEngine::chargeLines()` reads `$trip->distance_km`), and
+the GPS trace is still only a review signal. Everything in §2 that is unfixed
+stays unfixed — in particular §2.2, **`maximum_charge_minor` is still NULL on
+all 8 rate rows**, which is the one guard available today at zero code and is
+independent of every ruling above.
+
+### The questions the unit will have to answer
+
+Listed so the scoping conversation starts from something, and explicitly **not
+answered here**:
+
+- **What "fixed routing" prices.** The planned road distance between the two
+  points, or the driven trace snapped to roads? `RouteDistanceCalculator`
+  measures what the vehicle did; ADR-0031's routing engine knows what the road
+  is. They disagree whenever a driver detours, and which one the passenger pays
+  for is a commercial answer, not a technical one.
+- **What a "dynamic time factor" is a factor of.** Waiting time is already
+  billed from `trip_events` and already has a free allowance; a time *factor*
+  on top of a per-km fare is a different charge and must not silently
+  double-bill the same minutes.
+- **How two inputs resolve when they disagree** — which is the normal case, not
+  the exception. This is where §4 Phase 2's `lesser_of` reasoning survives even
+  though its dial does not.
+- **Whether a driver can reproduce their own pay from what the app showed
+  them.** `PRODUCT.md`'s claim is audit-grade correctness; an algorithm a driver
+  cannot check is a dispute generator regardless of how fair it is.
+- **What it costs per trip.** ADR-0031 already records that a naive
+  thirty-second routing poll runs to roughly $900 a month at a hundred trips a
+  day. Any per-trip routing call belongs in that arithmetic before it is
+  designed in.
+
+**Nothing here supersedes ADR-0035**, which stands: the ceiling still refuses an
+impossible reading at the transition, and the odometer still exists for fuel,
+servicing and the anchor client's evidence trail (§3, §7).
