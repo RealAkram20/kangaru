@@ -14,6 +14,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Modules\Administration\Services\SettingsService;
 use Modules\Bookings\Models\Booking;
 use Modules\Dispatch\Services\DispatchService;
 use Modules\Drivers\Enums\DriverDocumentType;
@@ -25,6 +26,9 @@ use Modules\Drivers\Services\DriverAccountService;
 use Modules\Drivers\Services\DriverDocumentService;
 use Modules\Drivers\Services\DriverEarningsService;
 use Modules\Drivers\Services\DriverLedgerService;
+use Modules\Drivers\Services\ReferralService;
+use Modules\Fleet\Models\DriverShiftWindow;
+use Modules\Fleet\Services\DutySessionService;
 use Modules\Fleet\Support\DriverPresence;
 use Modules\Fleet\Support\DriverPresenceStore;
 use Modules\Trips\Enums\TripStatus;
@@ -149,6 +153,18 @@ class DriverAppSeeder extends Seeder
         $this->assignOwnVehicle($driver);
 
         $this->seedDocuments($driver);
+
+        $this->seedRosterAndShifts($driver);
+
+        // ADR-0036 and ADR-0037. Last, because it needs the driver to exist
+        // and it mints their referral code.
+        $this->promotions($driver, app(SettingsService::class), app(ReferralService::class));
+
+        // The rest of the demo estate: the office's contact details, the
+        // safety number, an inbox with something in it, and a settlement
+        // request mid-flight — so every screen the drawer reaches shows its
+        // populated state, not its empty one.
+        $this->officeAndInbox($driver, app(SettingsService::class));
 
         $onDuty = $this->freeDriverOnDuty();
 
@@ -373,10 +389,19 @@ class DriverAppSeeder extends Seeder
      *
      * **The bonus is written directly rather than through
      * `WeeklyBonusService`.** That service is correctly gated on
-     * `billing.bonus_enabled`, which defaults to false — seeding the setting
-     * to true would leave a development database with a live bonus scheme
-     * nobody switched on, which is the state the default exists to prevent.
-     * This is one demo credit, not the rule running.
+     * `billing.bonus_enabled`, and this writes one demo credit rather than
+     * running the rule.
+     *
+     * **The switch itself is now flipped by `promotions()` below, and that
+     * reverses the reasoning this docblock used to give.** It argued that
+     * seeding `bonus_enabled` to true would leave a development database with
+     * a live scheme nobody switched on — right at the time, when the flag only
+     * decided whether a scheduled command paid out. ADR-0036 gave the flag a
+     * second job: it now also decides whether the **Promotions screen draws a
+     * Weekly Challenge card at all**, so leaving it false means that screen
+     * cannot be seen working in development. The original concern survives
+     * where it matters — the defaults are still false everywhere, and only a
+     * seeder that already refuses to run outside development changes them.
      */
     private function tipAndBonus(Driver $driver, DriverLedgerService $ledger): void
     {
@@ -436,6 +461,237 @@ class DriverAppSeeder extends Seeder
                 'UGX',
                 'Weekly bonus for last week: 41 trips against a target of 40',
             );
+        }
+    }
+
+    /**
+     * Switches the three incentive schemes on, and gives the referral one
+     * somebody to have introduced (ADR-0036, ADR-0037).
+     *
+     * **Every one of them defaults to off in production**, deliberately, so a
+     * freshly seeded database shows a Promotions screen reading *"There are no
+     * promotions running at the moment"* — which is the screen behaving
+     * correctly and looking broken. This is the seeder's job: the schemes are
+     * off because switching them on is a commercial act, and a developer
+     * looking at the screen needs to see the case that has something in it.
+     *
+     * Guarded by `refuseOutsideDevelopment()` like the rest of this file.
+     *
+     * ## The referral is written through the real service, not as a row
+     *
+     * So the demo data is whatever `ReferralService` says it is, including the
+     * frozen figures and the qualifying rule — the same reason the fares go
+     * through `recordCompletedTrip()` and the tip through `recordTip()`. It
+     * also means the *second* referral below stays pending exactly as long as
+     * that driver has fewer than the target completed trips, rather than
+     * because the seeder decided it should look that way.
+     */
+    /**
+     * What the office screens show — contact details, the emergency number,
+     * an inbox, and a settlement request the office has not answered yet.
+     *
+     * ## Why these are seeded at all
+     *
+     * Every one of these surfaces renders an *honest empty state* on a fresh
+     * database — Support says the office has published no number, Safety warns
+     * there is no emergency line, the inbox says nothing has arrived. All
+     * correct, and all useless for judging whether the screens work. The demo
+     * exists to show the populated branch; the empty branches keep their tests.
+     *
+     * ## The numbers are demo numbers on purpose
+     *
+     * `999` is Uganda's real emergency number and stays. The office phone is a
+     * reserved-looking placeholder a developer cannot accidentally dial into
+     * somebody's pocket. An operator setting up a real deployment replaces
+     * both in the console.
+     *
+     * Notifications are guarded per subject rather than wholesale, so a
+     * re-run refreshes nothing and duplicates nothing — the same
+     * look-then-create shape the rest of this seeder settled on after two
+     * re-runnability bugs.
+     */
+    private function officeAndInbox(Driver $driver, SettingsService $settings): void
+    {
+        $settings->setGroup('branding', [
+            'contact_phone' => '+256 700 123 456',
+        ]);
+
+        $settings->setGroup('safety', [
+            'emergency_number' => '999',
+        ]);
+
+        $user = $driver->user;
+
+        if ($user === null) {
+            return;
+        }
+
+        // Three messages, two of them read, so the screen shows both visual
+        // states and the drawer's dot has exactly one thing to count.
+        $inbox = [
+            [
+                'subject' => 'New job: Acacia Mall to Kololo Airstrip',
+                'body' => 'A ride pickup at Acacia Mall was offered to you.',
+                'read' => true,
+                'at' => Carbon::now()->subDays(2)->setTime(9, 12),
+            ],
+            [
+                'subject' => 'New job: Garden City to Ntinda',
+                'body' => 'A delivery pickup at Garden City was offered to you.',
+                'read' => true,
+                'at' => Carbon::now()->subDay()->setTime(15, 40),
+            ],
+            [
+                'subject' => 'New job: Lugogo Mall to Bukoto',
+                'body' => 'A ride pickup at Lugogo Mall was offered to you.',
+                'read' => false,
+                'at' => Carbon::now()->subHours(2),
+            ],
+        ];
+
+        foreach ($inbox as $message) {
+            $exists = \Modules\Notifications\Models\Notification::query()
+                ->where('user_id', $user->getKey())
+                ->where('subject', $message['subject'])
+                ->exists();
+
+            if ($exists) {
+                continue;
+            }
+
+            $notification = new \Modules\Notifications\Models\Notification([
+                // Null tenant: a driver is the platform's, not a client's
+                // (ADR-0005), and the platform-scoped migration made the
+                // column nullable for exactly this shape of recipient.
+                'tenant_id' => null,
+                'user_id' => $user->getKey(),
+                'type' => \Modules\Notifications\Enums\NotificationType::TRIP_OFFERED,
+                'subject' => $message['subject'],
+                'body' => $message['body'],
+                'url' => null,
+                'context' => null,
+                'read_at' => $message['read'] ? $message['at']->copy()->addMinutes(30) : null,
+            ]);
+            $notification->created_at = $message['at'];
+            $notification->save();
+        }
+
+        // One settlement request the office has not answered, so the Wallet
+        // shows the pending band. Through the real service so the one-open
+        // rule and the request shape stay whatever ADR-0032 says they are;
+        // guarded first because that same rule refuses a second open request.
+        $hasOpen = \Modules\Drivers\Models\DriverSettlementRequest::query()
+            ->where('driver_id', $driver->getKey())
+            ->where('status', \Modules\Drivers\Enums\SettlementRequestStatus::PENDING)
+            ->where('kind', \Modules\Drivers\Enums\SettlementRequestKind::REMITTANCE)
+            ->exists();
+
+        if (! $hasOpen) {
+            app(\Modules\Drivers\Services\DriverSettlementRequestService::class)->raise(
+                $driver,
+                \Modules\Drivers\Enums\SettlementRequestKind::REMITTANCE,
+                10_000,
+                'Cash handed to the depot on Friday evening',
+            );
+        }
+    }
+
+    private function promotions(Driver $driver, SettingsService $settings, ReferralService $referrals): void
+    {
+        $settings->setGroup('billing', [
+            // The mockup's figures, so the demo screen reads as it was drawn.
+            'bonus_enabled' => true,
+            'bonus_weekly_trip_target' => 30,
+            'bonus_weekly_amount_minor' => 50_000,
+            'peak_enabled' => true,
+            'peak_starts_at' => '17:00',
+            'peak_ends_at' => '20:00',
+            'peak_uplift_percent' => 20,
+            'referral_enabled' => true,
+            'referral_trip_target' => 10,
+            'referral_reward_amount_minor' => 10_000,
+        ]);
+
+        // Minted here rather than left to the first screen open, so the code
+        // is stable across runs and can be read off the database.
+        $referrals->codeFor($driver);
+
+        // Somebody they introduced who is already driving. `attach()` is a
+        // no-op on a second run — `driver_referrals.referred_driver_id` is
+        // unique — so this is re-runnable without a guard of its own.
+        $recruit = $this->accountFor('driver.recruit@kangaruride.test', 'Recruited Rider');
+
+        $referrals->attach($recruit, (string) $driver->refresh()->referral_code);
+    }
+
+    /**
+     * A roster, and the shifts worked against it — so the Performance screen
+     * has an online-hours dial with something to be a fraction of (ADR-0038).
+     *
+     * ## Both halves are needed, and neither is optional
+     *
+     * The dial draws online hours against **rostered** hours. Seed the duty
+     * sessions alone and the arc is absent (no denominator); seed the roster
+     * alone and it is empty. A driver looking at the demo would see a screen
+     * that is working correctly and looks broken either way.
+     *
+     * Sessions are written through `DutySessionService`, not as rows, for the
+     * reason the ledger seeding gives: the demo data is then whatever the
+     * service's rules say it is, and a change to those rules changes this with
+     * it. In particular the `ended_at`-before-`started_at` guard and the
+     * one-open-session invariant apply here exactly as they do in the app.
+     *
+     * ## Re-runnable, which this file has broken twice
+     *
+     * Guarded on the shift windows rather than on the sessions: the windows
+     * are written first, so a guard on the sessions would let a second run
+     * stack seven more shift rows before it noticed. Both previous
+     * re-runnability bugs in this seeder were exactly this shape — a guard
+     * checking something written after the thing that collides.
+     */
+    private function seedRosterAndShifts(Driver $driver): void
+    {
+        if (DriverShiftWindow::query()->where('driver_id', $driver->getKey())->exists()) {
+            return;
+        }
+
+        $timezone = app(DriverEarningsService::class)->timezone();
+        $weekStart = CarbonImmutable::now($timezone)->startOfWeek()->startOfDay();
+
+        // Monday to Saturday, 07:00–17:00. Ten hours a day, sixty a week —
+        // a plausible Kampala roster, and deliberately not seven days: a
+        // driver with a day off is the ordinary case and makes the dial read
+        // as a roster rather than as a formula.
+        foreach (range(1, 6) as $weekday) {
+            DriverShiftWindow::create([
+                'driver_id' => $driver->getKey(),
+                'weekday' => $weekday,
+                'starts_at' => '07:00:00',
+                'ends_at' => '17:00:00',
+            ]);
+        }
+
+        $sessions = app(DutySessionService::class);
+        $now = CarbonImmutable::now($timezone);
+
+        // One closed shift per elapsed day of the week so far, a little
+        // shorter than the roster — which is what makes the arc partial and
+        // therefore worth drawing. A shift that exactly matched the roster
+        // would render a full ring and prove nothing about the arithmetic.
+        for ($day = 0; $day < 6; $day++) {
+            $start = $weekStart->addDays($day)->setTime(7, 30);
+
+            // Never seed the future. A shift ending tomorrow would count
+            // hours nobody has worked, which is the one thing this figure
+            // must never do.
+            if ($start->greaterThanOrEqualTo($now)) {
+                break;
+            }
+
+            $end = $start->addHours(8)->addMinutes(20);
+
+            $sessions->open($driver->getKey(), $driver->vehicle_id, $start);
+            $sessions->close($driver->getKey(), $end->lessThan($now) ? $end : $now);
         }
     }
 
@@ -670,20 +926,81 @@ class DriverAppSeeder extends Seeder
      * That is the exact shape of the `firstOrCreate` bug this file already
      * records: a branch written, shipped, and never run once.
      */
+    /**
+     * The demo driver rides a **boda**, and both the driver record and their
+     * presence row are moved onto it.
+     *
+     * ## Why a boda and not the sedan this used to assign
+     *
+     * The category is not cosmetic — it is the input the walk-in tariff prices
+     * against. `WalkInFareService::quote()` builds a `Vehicle` from a category
+     * alone and `RateCardResolver` looks that category up in the public
+     * tariff's rates, so the demo driver's vehicle decides which row of the
+     * tariff every fare on the app is computed from. On a sedan the app
+     * demonstrated sedan pricing, which is not the vehicle this product is
+     * mostly about: PRODUCT.md's driver is on an Android handset in Kampala,
+     * and the boda is the common case.
+     *
+     * The public tariff already prices `boda` — base 2,000, 1,000/km,
+     * 200/waiting minute, minimum 3,000, maximum 150,000 (ADR-0035's backstop)
+     * — so nothing about the rate card had to change for this.
+     *
+     * ## Why a second boda rather than reusing the fleet's
+     *
+     * `UEB 001B` belongs to the *free* driver, who exists so automatic
+     * dispatch has somebody to offer work to. Taking their vehicle to give the
+     * primary account a boda would fix one demo by breaking the other — a
+     * driver on duty with no vehicle is ranked by the matcher and then dropped
+     * as unofferable, which `DriverPresenceController::vehicleFor()` records
+     * as a real bug found the hard way.
+     *
+     * ## Why this corrects an existing assignment
+     *
+     * The guard is on the *category*, not on `vehicle_id` being null. The old
+     * version returned early for any driver who already had a vehicle, so on a
+     * database seeded before this change the demo driver would have stayed on
+     * the sedan forever and re-running the seeder would have looked like it
+     * did nothing. Correcting the row is safe precisely because this is demo
+     * data in a seeder that already refuses to run outside development.
+     *
+     * The live trip keeps whatever vehicle it was dispatched with. A trip
+     * records the vehicle that actually did the work, and rewriting history to
+     * match a driver's current bike is the opposite of what this platform is
+     * for.
+     */
     private function assignOwnVehicle(Driver $driver): void
     {
-        if ($driver->vehicle_id !== null) {
+        $current = $driver->vehicle_id !== null
+            ? Vehicle::query()->find($driver->vehicle_id)
+            : null;
+
+        if ($current !== null && $current->category === 'boda') {
             return;
         }
 
-        $vehicle = Vehicle::query()->firstWhere('registration_number', 'UDD 004D')
-            ?? Vehicle::query()->orderBy('id')->first();
+        // Look first, then the factory — never `firstOrCreate`. Its second
+        // argument is a bare attribute list and `vehicles.make` is NOT NULL
+        // with no default, so the created branch inserts a row the schema
+        // rejects. That trap is documented at both other vehicle call sites in
+        // this file and has already shipped once.
+        $boda = Vehicle::query()->firstWhere('registration_number', 'UDD 005D')
+            ?? Vehicle::factory()->create([
+                'category' => 'boda',
+                'registration_number' => 'UDD 005D',
+                'make' => 'Bajaj',
+                'model' => 'Boxer 100',
+            ]);
 
-        if ($vehicle === null) {
-            return;
-        }
+        $driver->forceFill(['vehicle_id' => $boda->getKey()])->save();
 
-        $driver->forceFill(['vehicle_id' => $vehicle->getKey()])->save();
+        // Presence carries its own `vehicle_id`, and it is what dispatch ranks
+        // and offers against. Leaving it on the old sedan would put the driver
+        // record and the dispatch pool in disagreement about what this person
+        // is driving — and the offer, not the profile, is what a fare is
+        // quoted from.
+        DB::table('driver_presence')
+            ->where('driver_id', $driver->getKey())
+            ->update(['vehicle_id' => $boda->getKey(), 'updated_at' => now()]);
     }
 
     /**
