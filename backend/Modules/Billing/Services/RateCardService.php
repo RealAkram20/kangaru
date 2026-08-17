@@ -154,6 +154,41 @@ class RateCardService
     }
 
     /**
+     * Renames a card, redescribes it, or archives it.
+     *
+     * **The card's *label*, never its prices.** Nothing reachable from here
+     * touches a `RateCardVersion` or a `PricedRate`, which throw
+     * `FinancialRecordImmutableException` on update anyway — the point is that
+     * this method offers no route to try. Changing what a client is charged
+     * stays `addVersion()`, so an invoice already sent stays reproducible from
+     * the version it was priced by.
+     *
+     * `RateCard` is `Auditable`, so the rename is recorded with its before and
+     * after. That is the reason to do this through the model rather than a
+     * query-builder update: a pricing document's name changing with nobody
+     * accountable for it is the kind of thing an auditor asks about.
+     *
+     * Archiving is deliberately **not** blocked when the card is the default.
+     * The two flags answer different questions and the existing guard is
+     * elsewhere: `makeDefault()` owns which card prices an unnamed trip, and
+     * `RateCardResolver` already refuses to price against a card with no
+     * usable version. Adding a second rule here would put the same decision in
+     * two places.
+     *
+     * @param  array<string, mixed>  $details  only the keys the client sent
+     */
+    public function updateDetails(RateCard $card, array $details, User $actor): RateCard
+    {
+        $card->fill($details)->save();
+
+        // `forActor`, not `refresh()` — the same trap `create()` documents at
+        // length. The model's own refresh goes back through `TenantScope`,
+        // which fails closed, so a platform actor renaming the public tariff
+        // would write the row and then fail to read it back.
+        return RateCard::forActor($actor)->findOrFail($card->id);
+    }
+
+    /**
      * Makes this the card invoice generation reaches for when no card is
      * named. Exactly one card per tenant holds the flag; MySQL cannot
      * express "at most one true per tenant" as a constraint, so the demotion
