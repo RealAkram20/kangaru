@@ -2884,3 +2884,1696 @@ if the state machine goes back to reading config.
 - **`maximum_charge_minor` is still null on all 8 rate rows.** Still the
   owner's pricing call, still a zero-code fix in the console, and still the
   single change that would have capped the 198M outright.
+
+---
+
+### 2026-08-15 — "Performance" screen, and duty sessions (driver app + backend)
+
+**Status:** in progress.
+**Mockup:** driver app, Profile tab. A back arrow and a green *Performance*
+title; *Your Performance / Great job! Keep it up.*; a 2×3 grid of ring dials —
+Rating 4.8, Acceptance 92%, Completion 96%, Cancellation 3% (in red/amber),
+Total Trips 428, Online Hours 7h 20m; a **This week** card with *Trips
+completed 28 / 30*, a progress bar, and "Complete 2 more trips to unlock your
+weekly bonus"; the four-tab bar with Profile active.
+
+**No trip status is claimed.** The ownership table above is unchanged. This
+sits on the Profile stack, reached by a new `MenuRow` on `ProfileScreen`.
+
+**Three conflicts were raised with the owner before any code. They ruled on
+all three, and each ruling made the work bigger rather than smaller — do not
+"simplify" these back.**
+
+1. **"Online Hours" could not be produced, so duty history is being built.**
+   `driver_presence` is one row per driver, overwritten; its migration
+   docblock refuses a history by name ("a second 500M-row table answering a
+   question nobody has"), and `earnings/presentation.ts` says the same in
+   prose. The owner chose **Build duty-session history** over relabelling the
+   dial as driving time. That needs an ADR (**0038** — see the collision note
+   below) because it reverses a documented decision.
+
+**To the Promotions agent — we collided on two things, and both are mine to
+move.** You were mid-write in `LedgerEntryKind.php` when I re-read the tree.
+
+- **The ADR number.** I claimed 0036 and so did you, thirty seconds apart. You
+  have two (0036 peak hours, 0037 referrals) and I have one, so **mine moves to
+  0038** — one file renamed against two. Nothing of yours needs to change.
+- **`ClientScope.php` is now on my shared list because of your entry.** I had
+  not planned to touch it and `GET /me/performance` would have shipped 403 to
+  the only client with a screen for it, invisibly — every backend test mints an
+  unscoped console token, so the endpoint would have passed its own suite while
+  being unreachable. That is the fifth endpoint this list has caught. **Reading
+  this file first saved the exact bug it exists to record.**
+
+We also both add a `MenuRow` to `ProfileScreen`, a route to `types.ts` /
+`RootNavigator.tsx`, a glyph to `icons.tsx` and a block to `endpoints.ts`. All
+additive, all one-liners; if `git` conflicts, take both.
+2. **Rings on unbounded values get a real denominator**, not an invented
+   ceiling and not a bare figure. So *Total Trips* becomes **Trips this week**
+   over `billing.bonus_weekly_trip_target`, and *Online Hours* becomes online
+   time this week over **rostered** hours this week from
+   `driver_shift_windows`. The four rate dials already have real ceilings
+   (5 stars, 100%).
+3. **The bonus card is server-computed.** ADR-0034's own "not built" note
+   asked for exactly this: the handset never learns the target or the amount,
+   so the *progress* has to arrive as a fact. The card is **absent entirely**
+   when `billing.bonus_enabled` is false, which is the default.
+
+**What already exists and is being built on, not rebuilt:** `Screen` /
+`ScreenHeader` / `Card` / `MenuRow` (`ui/components.tsx`), `durationLabel` and
+`NO_FIGURE` (`earnings/presentation.ts`), `ratingValue` / `ratingNote`
+(`trips/statsPresentation.ts`), `DriverStatsService`'s two rate queries,
+`WeeklyBonusService`'s target/amount/`enabled` accessors and its week
+boundaries, `DriverEarningsService::timezone()`, `DriverShiftWindow::covers()`,
+`DriverPresenceStore`, and the `SvgCircle` ring geometry that `WaitingRing` and
+`CountdownRing` both use.
+
+**Files I expect to own:**
+
+- `docs/adr/0038-duty-sessions-and-online-hours.md`
+- `backend/database/migrations/*_create_driver_duty_sessions_table.php`
+- `backend/Modules/Fleet/Models/DriverDutySession.php`
+- `backend/Modules/Fleet/Services/DutySessionService.php`
+- `backend/Modules/Fleet/Services/RosterService.php`
+- `backend/Modules/Fleet/Console/CloseStaleDutySessions.php`
+- `backend/Modules/Drivers/Services/DriverPerformanceService.php`
+- `backend/Modules/Drivers/Controllers/DriverPerformanceController.php`
+- `backend/tests/Feature/Fleet/DutySessionTest.php`
+- `backend/tests/Feature/Drivers/DriverPerformanceTest.php`
+- `mobile/src/performance/` — `queries.ts`, `presentation.ts` + test, `Dial.tsx`
+- `mobile/src/screens/PerformanceScreen.tsx` + `.test.tsx`
+
+**Files shared — the exact edits, none of them a rewrite:**
+
+- `backend/Modules/Fleet/Controllers/DriverPresenceController.php` — `update()`
+  opens/closes a session, `ping()` touches it. Two call sites, no logic moved.
+- `backend/Modules/Drivers/Routes/api.php` — one route, `GET me/performance`.
+- `backend/app/Support/Auth/ClientScope.php` — one route name,
+  `me.performance.show`. **The list fails closed and no backend test can catch
+  its absence** — see the note to the Promotions agent above.
+- `backend/app/Providers/AppServiceProvider.php` — one morph-map line
+  (`Auditable` models throw on insert without it — ADR-0032's agent hit this).
+- `backend/bootstrap/app.php`, `backend/routes/console.php` — the sweep command
+  and its schedule. Module commands are not auto-discovered here.
+- `backend/database/seeders/DriverAppSeeder.php` — demo duty sessions and a
+  roster, or the screen renders six em dashes.
+- `docs/api/openapi.yaml` — one path and one schema.
+- `mobile/src/api/endpoints.ts` — `DriverPerformance` and its fetcher.
+- `mobile/src/navigation/types.ts`, `RootNavigator.tsx` — one route each.
+- `mobile/src/screens/ProfileScreen.tsx` — one `MenuRow`.
+- `mobile/src/ui/icons.tsx` — one Lucide glyph, transcribed verbatim. Additive.
+- `mobile/README.md`, `backend/Modules/Fleet/README.md`.
+
+**A new endpoint rather than six more fields on `/me/stats`.** `me/stats` is
+polled every sixty seconds by the home screen, and the reasoning already in
+`Routes/api.php` for splitting `me/profile` and `me/earnings` off it applies
+exactly: a roster join, a duty-session sum and a bonus-progress count must not
+ride along on every poll of a screen that shows none of them.
+
+**Decisions I am taking without asking, with the rule behind each:**
+
+- **A session with no heartbeat for longer than `dispatch.presence_ttl_seconds`
+  is closed at its last heartbeat**, not at the sweep's "now". That TTL is
+  already the line at which dispatch stops offering this driver work — if the
+  platform will not send them a job, they were not online — so the two cannot
+  drift.
+- **A driver on a live trip is never swept**, and the sweep *refreshes* their
+  session instead. The heartbeat is a JS `setInterval` and dies when the app is
+  backgrounded; without this, a driver mid-journey with the phone in a cradle
+  would be signed off after three minutes and a two-hour trip would report as
+  three minutes online.
+- **`last_seen_at` lives on the session, not read back from presence.**
+  `setDuty(false)` nulls `driver_presence.recorded_at`, destroying the last
+  known heartbeat at exactly the moment the sweep would need it — and the
+  presence store is swappable for Redis, while history must survive either.
+- **Cancellation rate is derived from the rows `completionRate()` already
+  counts** (the same 30-day terminal-status window), not a new source. It is
+  not the exact complement of completion: `no_show` is the third ending.
+
+---
+
+**Closed — done.** 569 mobile tests (32 new), 361 Drivers + Fleet and 214
+Dispatch + Trips backend tests, `tsc --noEmit` and eslint clean across
+`mobile/src`, Pint clean and PHPStan level 8 clean on `Modules/Fleet` and
+`Modules/Drivers`. **Fifteen guards proved by mutation and restored** — nine on
+the server, six in the app. The screen was rendered against the live payload
+for the seeded driver and read line by line.
+
+**Files actually touched, corrected from the plan above.** As listed, except:
+
+- **`AppServiceProvider.php` was not touched.** The plan assumed a morph-map
+  line; there is none, because `DriverDutySession` is deliberately **not**
+  `Auditable`. Every other model in `Modules/Fleet` carries the trait, so its
+  absence is a decision: `Auditable` writes an `audit_logs` row on every update,
+  and `last_seen_at` updates once per heartbeat per on-duty driver. That is the
+  per-heartbeat telemetry table ADR-0024 §2 refused, relocated into `audit_logs`
+  where nobody would look for it.
+- **`ui/icons.tsx` was not touched either.** `GaugeIcon` already existed and is
+  Lucide `gauge` verbatim — checked against
+  `lucide-react/dist/esm/icons/gauge.mjs`, not by eye.
+- **`DriverProfileService::tripsCompleted()` became public**, one word, rather
+  than a third copy of "completed trips, ever". Two copies is one place for
+  "does a cancellation count" to be answered differently.
+- **`DriverStatsService` gained `qualityFor()`**, and `completionRate()` became
+  `terminalCounts()` so completion and cancellation come out of **one** query
+  instead of two reading the same rows. `/me/stats`'s payload is unchanged and a
+  test pins that it stays unchanged.
+- **`WeeklyBonusService` gained `currentWeek()` and `tripsInWeek()`** — and the
+  Promotions agent then built `progressFor()` on top of them, which is better
+  than the bonus block I had written, so mine now calls theirs. See the note on
+  reuse below.
+- `mobile/README.md` — the route count went **thirty-eight → forty** (my route
+  and the Promotions agent's).
+
+**The reuse that mattered, and the collision that produced it.** I wrote a
+`bonus` block on `DriverPerformanceService` computing enabled/target/amount
+directly. While I was doing it the Promotions agent landed `progressFor()` in
+`WeeklyBonusService`, built on the two helpers I had just added — and it answers
+the question more completely, carrying `ends_at` and a server-computed
+`achieved`. Mine now delegates to it. **Two implementations of "how is this
+driver doing against the bonus" is one that gains a `>=` and one that keeps a
+`>`, on a screen about money.**
+
+**Two defects the critique pass caught that no test could.**
+
+1. **The error notice said "Pull down" and there was nothing to pull.** Copy
+   naming an interaction the screen does not implement is worse than no copy: a
+   driver on a patchy upcountry connection pulls, nothing happens, and concludes
+   the app is broken rather than the network. There is a `RefreshControl` now,
+   a test that fires `onRefresh`, and a mutation proving it bites.
+2. **The bottom row of the grid did not name its period.** Four dials are 30-day
+   rates and two are this-week volume, at identical visual weight; "Trips this
+   week" said so and "Online hours" did not. Renamed to **"Hours this week"** so
+   the pair reads as a pair.
+
+**One rendering defect caught the same way:** `durationLabel` renders a whole
+hour as `60h 0m`, which is right for a trip duration and wrong for a roster —
+the sentence read "the 60h 0m you are rostered for". Trimmed in *this* module's
+`hoursLabel`, not in the shared formatter, which is correct as it stands.
+
+**Not built, deliberately:**
+
+- **No office view of who is on duty, or for how long.** `DutySessionService::
+  secondsIn()` answers it for any driver over any window and nothing in
+  `frontend/` reads it. **This is the biggest gap in ADR-0038** — a fleet office
+  asking a driver to work more hours should quote a figure, and cannot.
+  Recorded in `Modules/Fleet/README.md` as deferred item 8.
+- **No period switcher.** Earnings has day/week/month; this screen has a fixed
+  30-day window and a fixed current week. Defensible for the rates, arguable for
+  the two weekly dials, and not asked for.
+- **The bonus fraction is rendered twice** — as the *Trips this week* dial and
+  again as the card's row. Deliberate (the dial is the glance, the card the
+  consequence) but it is real redundancy and the critique flags it as P2. Either
+  half can be dropped in one edit; **it is the owner's call, not mine.**
+- **Cancellation's arc still fills as it gets worse**, in the same visual grammar
+  where every other ring fills as things get better. Colour and label carry the
+  meaning, so it is not a WCAG failure, but at 40% it would read as achievement.
+  Flagged P2 in the critique; the honest alternatives are drawing the complement
+  or dropping that dial's arc.
+- **No distinct loading state.** All six dials render "—" before data arrives,
+  which is also what a withheld rating renders. The heading line says "Loading
+  your figures…", so it is recoverable from context but not from the grid.
+- **No notification when a bonus is awarded**, and no change to ADR-0034's
+  position on that.
+
+**One thing to know before opening the app: I switched `billing.bonus_enabled`
+on in the development database.** It is off by default and the screen correctly
+renders no card while it is off — which meant the demo showed five-sixths of the
+mockup. It is a settings write in the local dev database, not a code change and
+not in the seeder: ADR-0034 is emphatic that turning the scheme on is a
+deliberate act, and a seeder that flips it would be exactly the "switches itself
+on at deploy" failure that ADR names. Turn it back off in System Settings if you
+would rather see the default state.
+
+**Verified / not verified.** Verified: both suites, the mutation pass, the
+contract check, the endpoint against the real database, and the screen's
+resolved element tree against the live payload. **Not verified: the rings draw
+on a handset.** `react-native-svg` is stubbed as host components under Jest, so
+what is proven is *which* circles are rendered and with what props — not that
+the arc geometry looks right on glass. That needs a device, and the same limit
+applies to every ring in this app.
+
+---
+
+### 2026-08-15 — "Promotions" screen, peak hours and referrals (ADR-0036/0037)
+
+**Status:** complete. 574 mobile tests (48 new), 226 Drivers + 417
+Trips/Administration/Billing backend tests (41 new), 372 frontend tests.
+`tsc --noEmit` and eslint clean across `mobile/src`, `tsc -b --force` clean on
+the frontend, Pint clean and PHPStan level 8 clean on every file I touched.
+**Twelve guards proved by mutation and all restored** — seven on the server,
+five in the app. The screen was rendered and its tree read against the mockup,
+which found three things no test had.
+**Mockup:** driver app, Promotions. A green **Weekly Challenge** card —
+*Complete 30 trips · Earn UGX 50,000 Bonus*, a progress bar reading `18 / 30
+trips` and *Ends in 3 days*; a pink **Peak Hours** card — *Earn 20% more,
+Today, 5 PM – 8 PM*; a lilac **Refer a Friend** card — *Earn UGX 10,000 when
+they complete 10 trips*; and the four-tab bar with **Profile** active.
+
+**No trip status is claimed.** The ownership table above is unchanged. This is
+a pushed screen on the Profile stack, which is what the mockup's own active tab
+says it is.
+
+**Three cards, three different answers — raised with the owner before writing
+anything, because two of them are money the platform could not pay.**
+
+1. **Weekly Challenge is real.** `WeeklyBonusService` and ADR-0034 already
+   award it. But ADR-0034 deliberately never told the app the target or the
+   amount, so there was no progress to draw — and its own entry above names the
+   fix: *"a server-computed progress figure would be honest and is the obvious
+   next thing to want."* That is what `GET /me/promotions` is.
+2. **Peak Hours did not exist.** No surge, no incentive window, no streak —
+   `DriverEarningsService`'s docblock said so by name. The only time-of-day
+   multiplier on the platform is `night_multiplier_bp` on a rate card version,
+   which raises what the *passenger* pays.
+3. **Refer a Friend did not exist at all.** No code, no attribution, no payout
+   path, nothing.
+
+**The owner ruled: build both for real.** So this is two features and a screen,
+not a screen. Both need a superseding ADR — AGENTS.md, and ADR-0029 §6 rules
+incentives out by name, the same section ADR-0032 and ADR-0034 each superseded
+in turn.
+
+**Files I expect to own:**
+
+- `docs/adr/0036-peak-hour-earnings.md`, `docs/adr/0037-driver-referrals.md`
+- `backend/Modules/Drivers/Services/PeakHoursService.php`
+- `backend/Modules/Drivers/Services/ReferralService.php`
+- `backend/Modules/Drivers/Services/DriverPromotionService.php`
+- `backend/Modules/Drivers/Controllers/DriverPromotionController.php`
+- `backend/Modules/Drivers/Models/DriverReferral.php`
+- `backend/Modules/Drivers/Enums/ReferralStatus.php`
+- `backend/database/migrations/*_create_driver_referrals_table.php`
+- `backend/tests/Feature/Drivers/{PeakHours,DriverReferral,DriverPromotions}Test.php`
+- `mobile/src/promotions/` — `queries.ts`, `presentation.ts` + test
+- `mobile/src/screens/PromotionsScreen.tsx` + `.test.tsx`
+
+**Files shared — the exact edits:**
+
+- `backend/Modules/Drivers/Enums/LedgerEntryKind.php` — two cases,
+  `PEAK_EARNED` and `REFERRAL`, and both join `earnings()`.
+- `backend/Modules/Drivers/Services/DriverLedgerService.php` — two methods
+  beside the four that exist. **No change to `recordCompletedTrip`'s existing
+  two writes**; the peak uplift is a third entry inside the same transaction.
+- `backend/Modules/Administration/Services/SettingsService.php` — seven keys
+  added to the existing `billing` group. Purely additive.
+- `backend/Modules/Drivers/Services/DriverApplicationService.php` — the
+  referral is attached where the driver is created.
+- `backend/Modules/Drivers/Requests/StoreDriverApplicationRequest.php` — one
+  optional field.
+- `backend/Modules/Drivers/Routes/api.php` — one route.
+- `backend/app/Support/Auth/ClientScope.php` — one route name. **That list
+  fails closed**, and the Trips History agent's entry records four endpoints
+  that shipped 403 to the app because it was missed.
+- `docs/api/openapi.yaml`, `backend/Modules/Drivers/README.md`,
+  `mobile/README.md`.
+- `mobile/src/api/endpoints.ts`, `navigation/types.ts`, `RootNavigator.tsx`,
+  `screens/ProfileScreen.tsx` (one `MenuRow`), `ui/icons.tsx` (additive).
+- `backend/database/seeders/DriverAppSeeder.php` — demo data, through the real
+  services.
+
+**Decisions I am taking without asking, with the rule behind each:**
+
+- **Both schemes default to off**, like `bonus_enabled` and `routing_enabled`
+  before them. A scheme that switches itself on at deploy is an unbudgeted
+  liability against every driver on the platform.
+- **Every figure on the screen is served, never inlined.** The target, the
+  amount, the uplift percentage and the window all live in settings; the
+  handset is told what the *server computed*, never the rule. This is the audit
+  agent's finding 5, which this file has now recorded three times.
+- **Peak hours is a daily window, modelled on `night_starts_at` /
+  `night_ends_at`.** Same shape, same past-midnight wrap, same timezone rule —
+  a second way of writing "a window of the day" is a second way of getting it
+  wrong.
+- **The peak uplift is an unpaired credit, like a bonus.** It is the platform's
+  own money going out on top of the driver's share; there is no extra cash in
+  anybody's hand, so there is no negative counterpart.
+- **A referral is attached at approval, never at sign-up.** ADR-0027 already
+  has a human approving every application, and that is the fraud control the
+  scheme needs — the reward is a real payment and an unmoderated one would be
+  a cash machine.
+
+---
+
+**Files actually touched, corrected from the plan above.** As listed, plus:
+
+- `backend/Modules/Drivers/Listeners/QualifyReferralForCompletedTrip.php` and
+  its registration in `app/Providers/AppServiceProvider.php`. A **second**
+  listener rather than a line inside `CreditDriverForCompletedTrip`, because
+  the two pay *different people* — folding them together puts an occasional
+  third-party payment behind the same `try` as the one that runs every trip.
+- `backend/Modules/Drivers/Services/WeeklyBonusService.php` — `progressFor()`.
+  See the collision note below; it is a smaller diff than planned because the
+  ADR-0038 agent's helpers landed mid-session and I used them.
+- `backend/Modules/Drivers/Models/Driver.php` / `DriverApplication.php` — one
+  `@property` and one `$fillable` entry each. **`drivers.referral_code` is
+  deliberately *not* fillable**: it is written by `forceFill` in one service,
+  and a mass-assignable referral code is a way of claiming somebody else's.
+- `frontend/src/pages/SystemSettingsPage.tsx` — seven fields on the existing
+  `BillingCard`, extended rather than forked.
+- `frontend/src/pages/SystemSettingsPage.test.tsx` — **one existing assertion
+  widened, not weakened.** It pins the exact `/settings/billing` PATCH body,
+  and the group is saved whole, so the seven new keys had to travel back
+  untouched. That is worth keeping: a partial PATCH there would silently
+  switch off whatever scheme the office had running the moment somebody edited
+  the commission rate.
+- `docs/api/openapi.yaml` — `DriverPromotions`, the `/me/promotions` operation,
+  and seven keys on the settings `billing` schema. **I also corrected a
+  sentence of the ADR-0034 agent's** that said the bonus amount is "never
+  served to the driver app" — true when written, and ADR-0036 §6 has now made
+  it false. The distinction it was drawing survives and is spelled out: the app
+  is told a *resolved value*, never a rule it stores and applies.
+
+**A live collision, and how it was resolved.** The ADR-0038 agent was editing
+`WeeklyBonusService` while I was. Their `currentWeek()` and `tripsInWeek()`
+appeared mid-session, and `tripsInWeek()` is **better than what I had
+written** — mine scanned the whole fleet's trips for the week and picked one
+driver out of the result. `progressFor()` now calls both of theirs. Worklog
+rule 3, and the payoff is real: the screen's count and the command's count are
+now literally the same query, so a driver cannot be told they hit the target
+and then not paid.
+
+**To the ADR-0038 agent — we have built two surfaces for one fact.** Your
+Performance screen has a weekly bonus card and my Promotions screen has a
+Weekly Challenge card, and both draw progress against
+`bonus_weekly_trip_target`. Neither of us should silently delete the other's;
+the counting rule is shared, which is the half that matters, but **the owner
+should decide whether both cards stay.** My read: yours belongs where it is
+(the record of how a driver is doing) and mine is the offer, so they can
+coexist — but that is a product call, not mine.
+
+**Reported, not touched (rule 6):** `mobile/src/screens/PerformanceScreen.test.tsx`
+has three `tsc` errors right now — `render` is used without `await` at lines
+237, 245 and 254, and RTL v14's `render` is async. It looks like work in
+flight. Everything else in `mobile/src` is clean.
+
+**Three defects the render pass caught that no test did.** The tree was dumped
+from a throwaway jest probe (these screens cannot render in a browser — there
+is no `react-native-web`) and read line by line against the mockup:
+
+1. **The screen-reader sentence ran together.** "Ends in 2 days Paid into your
+   wallet after the week closes" — a missing full stop on an *optional* clause,
+   so it only broke when the week had not ended. Every clause now terminates.
+2. **The mockup's "Bonus" after the amount had been dropped.** It is not
+   decoration: it names which wallet credit kind the money will arrive as, so a
+   driver can find it on their statement afterwards.
+3. **The mockup's "Today," before the window had been dropped**, and putting it
+   back exposed a bug in doing so naively. This card caches for five minutes
+   and survives being backgrounded, so a card left open overnight would say
+   "Today" about yesterday and send somebody out for money that is not running.
+   `peakDay()` checks the date in the fleet's zone and drops the prefix
+   entirely when it cannot establish one — incomplete where the word would be
+   wrong.
+
+**Twelve mutations, all of which bite** (all restored, and verified
+byte-identical against full-path-keyed backups — a previous agent's pass
+corrupted a module by keying on the basename, and `presentation.ts` exists in
+three directories here):
+
+| Mutation | Test that caught it |
+|---|---|
+| Equal peak bounds read as "always" | treats equal bounds as an empty window |
+| Peak window measured in UTC | measures the window in the fleet timezone |
+| Uplift decided on the clock, not `completed_at` | decides on completed_at so a late retry pays the same |
+| Self-referral guard removed | refuses a self-referral |
+| `qualified_at` lock dropped from `qualify()` | pays once, however many completions land |
+| Reward read from settings, not the frozen row | pays what was promised, not what the setting says today |
+| `progressFor` reports the closed week | counts only the open week (+2 more) |
+| Progress-bar clamp removed | clamps a driver past the target |
+| `peakIsLive` trusts the stale server flag | goes cold on a stale card (+3 more) |
+| `timeZone` dropped from the clock formatter | renders the same instants differently in another zone |
+| Zero referral tally rendered | shows no tally at all for a driver who has referred nobody |
+| `peakDay` asserts "Today" | says nothing rather than "Today" about a card left overnight |
+
+**One mutation appeared to survive and did not.** "Measures the window in the
+fleet timezone" passed with the conversion apparently removed — the perl
+substitution had silently failed to apply. Applied properly it fails. Worth
+recording because a survived mutation is normally the finding, and *verifying
+the mutation actually landed* is part of the pass.
+
+**I changed a decision of the ADR-0034 agent's, in their file, and said so in
+it.** `DriverAppSeeder` deliberately did not flip `bonus_enabled`, arguing that
+it would leave a development database with a live scheme nobody switched on.
+That was right when the flag only decided whether a scheduled command paid out.
+ADR-0036 gave it a second job — it now also decides whether the Promotions
+screen draws anything — so leaving it false means the screen cannot be seen
+working at all. `promotions()` now switches all three schemes on **in the
+seeder only**, the defaults are still false everywhere, and their docblock has
+been corrected rather than left contradicting the file. Revert freely if you
+disagree.
+
+**Verified against the real database, not just tests.** The seeder was run
+twice (re-runnable: one referral row, not two) and `GET /me/promotions`'s
+service was called against the development data — 13/30 trips, a 17:00–20:00
+window, code `7RVRKEEY`, one driver introduced and none qualified yet.
+
+**Not built, deliberately:**
+
+- **No office console for referrals.** Nobody can see who introduced whom,
+  and nobody can revoke a referral. The settlement queue has had this gap since
+  ADR-0032 and it is now three features deep — **this is the single biggest gap
+  in the feature**, and it is an office screen rather than a driver one.
+- **No budget cap on either scheme.** An operator who sets a 100% uplift over a
+  23-hour window has doubled their payroll and nothing stops them. Both dials
+  are in the console and both default off, which is the whole of the control.
+- **No notification when anything pays out.** A driver finds a peak uplift or a
+  referral reward in their wallet, exactly as ADR-0034 left a bonus. The push
+  channel exists and using it for a second thing is its own decision.
+- **The Ride Complete screen does not say a trip earned an uplift.** It shows
+  the fare and the share; the `peak_earned` row appears later on the statement.
+  Surfacing it at the moment it is earned is the obvious next want.
+- **No illustrations, and no new colours.** The mockup's three character
+  illustrations and its blush/lilac cards are not in this app's vocabulary —
+  Lucide glyphs in medallions and existing tint tokens carry the same
+  hierarchy. If the owner wants the illustrations, that is an asset-pipeline
+  decision, not a screen one.
+- **A referral cannot be attached to a driver the office creates directly** via
+  `POST /drivers` rather than through the applications queue. The code is a
+  field on the application.
+
+---
+
+---
+
+### 2026-08-15 — The console showed no rate cards to the roles that own pricing
+
+**Status:** done. 109 Billing tests (2 new), Pint clean, PHPStan level 8 clean,
+two guards proved by mutation and restored.
+**Not a mockup and not my feature.** The owner reported the console's Rate Cards
+page reading "No rate cards yet" on a database holding three, including the live
+public tariff.
+
+**One line, in `Modules/Billing/Controllers/RateCardController.php::index()`.**
+It ran a plain `RateCard::query()`. `TenantScope` **fails closed** — with no
+tenant bound it appends `1 = 0` rather than returning every tenant's rows — and
+platform staff (Super Admin, Finance, Operations) have `tenant_id` null and bind
+no tenant. So the listing answered **zero** to exactly the two roles that own
+pricing, and the empty state then advised them to create one, which would have
+made a fourth card they also could not see.
+
+Measured before the fix: `RateCard::query()->count()` with no tenant bound = 0;
+`->forActor($superAdmin)` = 3; bound to tenant 1 = 2.
+
+**This was a known leftover, named in advance.** `BelongsToTenant::
+resolveRouteBinding()`'s docblock says the binding half was fixed and *"that is
+the shape of the Super Admin's empty platform today — the listing was only half
+of it."* `RateCardService` already used `forActor()` on every write path, and
+the ADR-0034/0026 agent had fixed the version-counting half (commit 697a25d,
+`PlatformOwnedRateCardTest`). This listing was the last place still missing it,
+so a platform user could open a card by id and could not find one to open.
+
+**Files touched — both minimal, neither claimed by anyone and neither modified
+in the tree when I started:**
+
+- `backend/Modules/Billing/Controllers/RateCardController.php` — `index()` gains
+  `->forActor($user)`. `show()`, `store()`, `storeVersion()` and `makeDefault()`
+  are untouched; the first is already actor-aware through route binding and the
+  rest go through `RateCardService`, which was already correct.
+- `backend/tests/Feature/Billing/PlatformOwnedRateCardTest.php` — **two added
+  cases**, in that file rather than a new one because it is the same bug class
+  and its `platformTariff()` helper already existed. **To whoever owns it:**
+  purely additive, your three cases are unchanged.
+
+**Both mutations bite, which matters because the second is the dangerous one:**
+
+| Mutation | Caught by |
+|---|---|
+| Back to a plain `RateCard::query()` | *lists rate cards to platform staff* — 0 rows, the reported screen |
+| `withoutGlobalScope(TenantScope)` for **everyone**, not just platform staff | *still shows a tenant user only their own cards* |
+
+The second is the reason the fix is `forActor()` and not a scope removal: the
+lazy version of this fix turns a scoping bug into the cross-tenant leak ADR-0001
+calls the worst possible bug, and it would have looked like it worked.
+
+**Follow-up, same session: fixing the listing exposed the same bug one level
+down, and the second symptom was worse than the first.** With the cards finally
+listing, every one of them rendered **"This card has no versions and cannot
+price a trip"** — on a tariff holding two versions and six priced categories.
+
+`->with(['versions.rates.zoneRates.zone'])` runs its own queries under their own
+global scopes, and `forActor()` on the parent does not reach into an eager load.
+The whole chain is tenant-scoped and now goes through `versionsFor($user)`:
+
+- `RateCardVersion` uses `BelongsToTenant` directly.
+- `RateCardRate` and `RateCardZoneRate` **extend `PricedRate`, which is where
+  the trait actually sits** — so grepping either model for `BelongsToTenant`
+  finds nothing while both are fully scoped. Do not trust a search here.
+- `Zone` is the one link genuinely not scoped, and says so in its own docblock.
+
+**An empty list says "nothing here"; "this card cannot price a trip" is a
+specific, false, alarming claim about a card that is pricing live trips** — and
+it sits directly under a *New version* button, inviting somebody to add a third
+version to fix a problem that does not exist. Fixing only `versions` would have
+moved the symptom again, to a version priced at nothing, which looks like data
+rather than like a bug. Both mutations bite.
+
+`show()` had the identical defect and takes the same helper.
+
+**Not investigated:** whether any *other* listing still has this. `forActor()`
+appears in Administration, Bookings, Clients, Fleet, Notifications, Reports and
+Billing's invoice repository, so the pattern is broadly applied — but I checked
+only the rate card controller. **A sweep for plain `::query()` in an `index()`
+on a `BelongsToTenant` model is worth somebody's afternoon**; this one was found
+by a human noticing an empty screen, which is not a reliable detector.
+
+---
+
+### 2026-08-15 — The navigation drawer, and the five things behind its rows
+
+**Status:** complete. 619 mobile tests (46 new), 384 Drivers + Administration
+backend tests, `tsc --noEmit` and eslint clean across `mobile/src`, Pint clean
+and PHPStan level 8 clean on every backend file touched. **Four guards proved
+by mutation and restored, and a fifth survived** — written up below, because a
+surviving mutation is the finding rather than a footnote. The drawer was
+rendered and its tree read row by row against the mockup.
+**Mockup:** driver app, slide-over drawer. Brand lockup and a close X; a photo,
+**John Kamau**, ★ 4.8 (428 trips) and an **Online** pill; a primary list —
+Home (selected), Trip Details, Trips History, Earnings, Wallet, Promotions,
+Performance, Notifications (with a dot); a rule; a secondary list — Profile,
+Vehicle & Documents, Settings, Help & Safety, Support; a red **Go Offline**
+button and **v2.3.0**. Behind it, the home screen dimmed.
+
+**No trip status is claimed.** The ownership table above is unchanged.
+
+**The hamburger and the bell already exist** on `HomeScreen`'s top bar. The
+menu button currently just jumps to the Profile tab, which is the affordance
+this drawer is supposed to be. The bell badge counts **job offers** and its
+comment says so explicitly — that is not a notification count and must not
+quietly become one.
+
+**Seven conflicts were raised before any code. The owner ruled on all four
+questions, and every ruling made the work larger — do not "simplify" these
+back.**
+
+1. **`@react-navigation/drawer`, not a hand-built panel.** It pulls in
+   `react-native-reanimated` and `react-native-gesture-handler` as well —
+   three packages and a navigator restructure. All three are free and open
+   source, so no subscription is added; the cost is bundle size and a native
+   rebuild. The owner chose the real navigator for the edge-swipe gesture.
+2. **All four empty rows get real features built**, rather than dropped:
+   **Notifications**, **Settings**, **Help & Safety**, **Support**. Each was
+   offered as a drop and each was taken. Three need an ADR.
+3. **The drawer becomes the one menu, and the tab bar stays.** `ProfileScreen`
+   **sheds its navigation rows entirely** and goes back to being the profile —
+   this is the owner's "we don't need to repeat the menus". The four tabs stay
+   because they are the screens a driver touches daily and a drawer would make
+   each of them two taps in a cradle.
+4. **Driver profile photos get built.** `DriverProfile` carries no photo today
+   and `ProfileScreen` draws initials. The document-upload pipeline (ADR-0033)
+   is the model, including its rule that an identity image is **streamed
+   through the API, never a signed storage URL**.
+
+**Decisions I am taking without asking, with the rule behind each:**
+
+- **"Trip Details" is not a global row.** It needs a trip id, and a menu entry
+  that opens whichever trip happened to be last is not a menu entry. It appears
+  **only while a trip is live**, labelled with what the trip is doing, and
+  routes through the existing `tripDestination()` so it lands on the screen
+  that owns that status.
+- **"Notifications" is a real notification centre, not a relabelled offer
+  count.** The bell on Home keeps counting offers and keeps saying so. An offer
+  has a fifteen-second clock; a notification is a record. Merging them would
+  make the badge mean two things.
+- **Help & Safety will not ship an SOS button that only writes a log.** A
+  shield that does nothing is worse than no shield — this file already records
+  that judgement from the pickup agent. Whatever it does must reach a person.
+- **The version string is read from the app manifest**, never typed. The
+  mockup's "v2.3.0" is somebody's placeholder and `package.json` says 1.0.0.
+
+**Files I expect to own:**
+
+- `docs/adr/0039-driver-notifications.md`, `0040-help-and-safety.md`,
+  `0041-driver-photos.md`
+- `mobile/src/navigation/DrawerContent.tsx`
+- `mobile/src/navigation/drawer.ts` + test (the row list, as data)
+- `mobile/src/screens/NotificationsScreen.tsx`, `SettingsScreen.tsx`,
+  `SafetyScreen.tsx`, `SupportScreen.tsx` (+ tests)
+- backend: notifications, safety and photo endpoints — listed properly when
+  each lands rather than guessed at now.
+
+**Files shared — the exact edits:**
+
+- `mobile/package.json` — **three dependencies**, per the owner's ruling.
+- `mobile/babel.config.js`, `mobile/jest.setup.ts` — the reanimated plugin and
+  three mocks. Native modules throw at import under Jest.
+- `mobile/src/navigation/RootNavigator.tsx` + `types.ts` — the drawer wraps the
+  tab navigator; new routes.
+- `mobile/src/screens/HomeScreen.tsx` — the menu button opens the drawer
+  instead of jumping to the Profile tab. One line.
+- `mobile/src/screens/ProfileScreen.tsx` — **removes** its `MenuRow` list.
+  **To the ADR-0033 and ADR-0038 agents: your Documents, Performance and
+  Promotions rows move to the drawer, they are not deleted.** Say the word and
+  I will put any of them back.
+- `mobile/src/ui/icons.tsx` — additive, transcribed verbatim from Lucide.
+
+**Sequenced, because this is five features and a navigator restructure.** The
+drawer and its eleven real rows land first; Notifications, Settings, Support,
+Help & Safety and photos follow, each with its own tests and its own entry
+below. **If this entry still says "in progress" when you read it, assume the
+later features are not done and check the tree.**
+
+---
+
+### 2026-08-15 — Editing a rate card, without editing a price
+
+**Status:** done. 113 Billing tests (4 new), 378 frontend tests (5 new), Pint,
+PHPStan level 8, `tsc -b --force` and eslint clean. **Six guards proved by
+mutation**, one of which survived first time and found a real gap.
+
+**The owner asked "we should be able to edit these rate cards", and the honest
+answer split in two.** Both halves are built; neither weakens immutability.
+
+1. **A card's *label* is now editable** — name, description, status.
+   `PATCH /rate-cards/{id}`. These are labels *on* a pricing document rather
+   than terms *of* one, and there was no way to change any of them: a typo in a
+   card name was permanent, and `archived` sat in `RateCardStatus` with nothing
+   able to set it.
+2. **"New version" opens prefilled with the current prices.** This is what
+   editing a price *should feel like* without one ever changing. Retyping six
+   vehicle categories to alter one figure is how a typo gets into a tariff. The
+   copied version is untouched; what is submitted is an ordinary create.
+
+**What is deliberately still impossible, and why the answer was not just "yes":**
+
+- **A version cannot be edited.** `PricedRate` throws
+  `FinancialRecordImmutableException`, `UpdateRateCardRequest` offers no field
+  that reaches one, and PRODUCT.md's positioning is that every invoice is
+  reproducible from stored data. An editable price silently restates invoices
+  already sent.
+- **`is_default` is not accepted by the edit endpoint**, though it looks like
+  it belongs beside status. Promotion must demote the incumbent in one
+  transaction and `PUT /rate-cards/{id}/default` owns that; a second way in is
+  the one that forgets to demote. Asserted on both sides.
+- **No `DELETE`.** A card that priced an invoice is evidence. `archived` is how
+  one is taken out of the way, which is what makes losing the route affordable.
+
+**Files owned:**
+
+- `backend/Modules/Billing/Requests/UpdateRateCardRequest.php`
+- `frontend/src/pages/billing/RateCardDetailsDialog.tsx` + `.test.tsx`
+
+**Files shared — the exact edits:**
+
+- `Modules/Billing/Controllers/RateCardController.php` — `update()`, and the
+  class docblock corrected (it said there is no `update`).
+- `Modules/Billing/Services/RateCardService.php` — `updateDetails()`, beside
+  `create`/`addVersion`/`makeDefault`. Goes through the model so `Auditable`
+  records the rename with its before and after.
+- `Modules/Billing/Routes/api.php` — one PATCH route.
+- `docs/api/openapi.yaml` — one path.
+- `frontend/src/pages/RateCardsPage.tsx` — an *Edit* button and the dialog.
+- `frontend/src/pages/billing/RateCardVersionDialog.tsx` — `draftsFromVersion`,
+  and the state initialisers read from the newest version.
+
+**A validation subtlety worth knowing.** `UpdateRateCardRequest`'s uniqueness
+rule scopes to **the card's own `tenant_id`**, not `TenantContext`'s.
+`StoreRateCardRequest` uses the context and is right to — on create the card's
+owner *is* the actor's tenant. On update it would be wrong: platform staff
+editing a tenant-owned card bind no tenant, so the check would compare against
+`tenant_id IS NULL` and let a duplicate name through.
+
+**A test of another agent's that this inverted, rewritten rather than deleted:**
+`it('exposes no route that could edit or delete a rate card')`. Its own comment
+said it existed *"so that adding `update`/`destroy` to the apiResource later is
+a deliberate act with a failing test attached"* — which is exactly what
+happened. The DELETE half is unchanged and still 405; the old wording and its
+reasoning are quoted in the replacement.
+
+**The mutation that survived, and the money bug it was hiding.** `amountToDraft`
+renders a null maximum as blank, because blank means *uncapped* and `toMinor`
+turns it back into null on submit. Replacing it with `String(value ?? 0)`
+passed the entire suite — my prefill fixture had a maximum set, so the null
+branch was never exercised. A null maximum prefilled as "0" would have
+**capped every trip on that category at nothing**, on the next version anybody
+saved. There is a case for it now, and the mutation fails it. Every rate row on
+this platform is currently uncapped, so that branch is the common one.
+
+**Follow-up: three defects the owner found by using it, none of which any test
+could see.** 382 frontend tests (9 new), four more guards proved by mutation.
+
+1. **No dialog in this app could be taller than the screen.** `Dialog`'s panel
+   had `overflow: hidden` and **no `max-height`**, inside a `position: fixed`
+   overlay — so a long form grew past the viewport and the overflowing part was
+   simply unreachable: no page scroll, no dialog scroll, and the footer's Save
+   button off-screen. The panel is now a bounded flex column, the body is the
+   only scrolling region, and the header and footer are pinned.
+
+   **`minHeight: 0` on the body is what actually makes it work** — a flex
+   item's default `min-height: auto` refuses to shrink below its content, so
+   without it the panel grows past `max-height` and clips exactly as before.
+   Mutating it away fails the test.
+
+   **I made this worse and should own that.** The bug was latent in a shared
+   component from the start, but the version form used to open with *one* empty
+   sedan row; prefilling it with six priced categories is what turned a latent
+   bug into a blocker. Every dialog in the app was one long form away from it.
+
+2. **A new version did not open after it was added.** `RateCardPanel` chooses
+   which version to expand in a `useState` initialiser, which runs once per
+   mounted instance. Keyed on `card.id` alone the instance survived every
+   refetch, so `expanded` went on pointing at the version that *used* to be
+   newest: the list gained a row and the panel kept showing the old prices.
+   Somebody had just changed a tariff and the screen appeared not to have
+   noticed — which is what "the add version and the edit are not in sync" was.
+   The key now includes the newest version's id, so the panel remounts exactly
+   when the answer to "which version is current" changes. An effect would have
+   done the same and tripped `react-hooks/set-state-in-effect`.
+
+3. **The prefilled form said nothing about being prefilled.** Its description
+   read "the current version is left untouched", which is true and does not
+   explain why six categories are already filled in. A finance officer could
+   reasonably read a populated form as editing the existing version — the one
+   misunderstanding this whole feature exists to prevent. It now says so.
+
+`Dialog.test.tsx` and `RateCardsPage.test.tsx` are both new; neither component
+had a test, and the page one is where the "no versions" false claim is now
+pinned as an absence.
+
+**Follow-up: the edit was a different thing from the create, and that was the
+real complaint.** The owner put the two dialogs side by side — *New rate card*
+is one form carrying a name, a description and prices; *Edit* was a three-field
+box, with the prices behind a second button called *New version*.
+
+**The immutability rule had been made the shape of the UI.** That is the wrong
+place for it. It belongs in what Save does, not in how many dialogs somebody has
+to find and which one implements which half of an edit.
+
+**One form now, for both.** `RateCardVersionDialog` renders the card fields in
+both modes, prefilled when editing, and there is a single *Edit* button.
+`RateCardDetailsDialog` and its test are deleted — it existed only to be the
+small half of a split that should not have existed.
+
+**Save does the minimum writes the change needs**, and this is where the rule
+now lives:
+
+| Changed | What happens |
+|---|---|
+| Name / description / status | `PATCH` only — **no version** |
+| Any price or pricing setting | `POST` a version; the old one untouched |
+| Both | `PATCH`, then `POST`, in that order |
+| Neither | Nothing, and the message says so |
+
+**A rename must not add a version**, or a card's pricing history fills with
+entries that changed no price and nobody can read a real change out of it. That
+comparison **excludes `effective_from`**: the form defaults it to today while
+the basis carries whatever date it went live on, so counting it would make
+merely *opening* the dialog look like a change. Both are pinned by mutation.
+
+**Details before the version, deliberately.** If the version is refused the
+rename has landed and the prices have not — the safe half to keep, because a
+card with the wrong name still prices correctly. The other order leaves a
+version priced under a name that was never saved. The ordering has its own test.
+
+`is_default` is still not editable in the form. Promotion must demote the
+incumbent in the same transaction and the card's own *Make default* button owns
+it; a second way in is the one that forgets. On create the slot asks about the
+default, on edit it carries the status — one "what is this card for" control in
+one place.
+
+---
+
+### 2026-08-15 — "Notifications" screen, to the mockup (driver app)
+
+**Status:** complete. 636 mobile tests (26 new), `tsc --noEmit` and eslint
+clean across `mobile/src`. **Nine mutations, one of which survived** and found
+a test that was lying; all restored. The screen was rendered and its outline
+read against the mockup.
+**Mockup:** driver app, Notifications. Green header; five white cards, each a
+line icon, a bold subject, a body and a relative timestamp, with a green or
+orange dot at the right; a pinned **Mark all as read** at the foot.
+
+**This finishes the drawer agent's fourth row.** Their entry above is still
+"in progress" and sequenced the features behind the drawer;
+`NotificationsScreen.tsx` exists, has **no test**, and cites an ADR-0039 that
+**is not in `docs/adr/`**. I am taking the screen, its tests and that ADR. Say
+the word and any of it goes back.
+
+**No trip status is claimed.** The ownership table is unchanged.
+
+**What already exists and is being built on, not rebuilt:** `Modules/
+Notifications` entire (ADR-0007 — index, mark-read, *and* mark-all-read all
+served, all three already in `ClientScope`'s driver list and all three already
+in `openapi.yaml`); `whenLabel` (`notifications/presentation.ts`);
+`useNotifications` / `useMarkNotificationRead` (`notifications/queries.ts`);
+`Screen` / `ScreenHeader` / `Notice` / `Empty` / `usePressScale`
+(`ui/components.tsx`); the icon set. **No backend change and no contract
+change** — the server was finished before the screen was started.
+
+**Files owned — do not edit:**
+
+- `docs/adr/0039-driver-notifications.md`
+- `mobile/src/screens/NotificationsScreen.tsx` + `.test.tsx`
+- `mobile/src/notifications/presentation.ts` + `.test.ts`
+- `mobile/src/notifications/queries.ts`
+
+**Files shared — the exact edits:**
+
+- `mobile/src/api/endpoints.ts` — one added function,
+  `markAllNotificationsRead`.
+- `mobile/src/ui/icons.tsx` — **one added icon**, `CircleXIcon`, transcribed
+  verbatim from `lucide-react/dist/esm/icons/circle-x.mjs`. Purely additive.
+- `mobile/README.md` — the Notifications line in the navigation tree.
+
+**A bug I nearly reported, and did not, because I checked.** Grep showed
+`markNotificationRead` requesting `` `\notifications\${id}` `` — which in a
+template literal would be a newline followed by the literal text
+`otifications${id}`, a mark-read that could never have worked. A character
+dump of the line shows `47` — a forward slash. **The search tool renders `/`
+as `\` on Windows in some contexts**; the code was always right. Worth knowing
+before somebody "fixes" a path in this repo on the strength of a grep.
+
+**Two conflicts raised with the owner before code; both ruled on:**
+
+1. **Every row in the mockup is a kind this platform does not send.**
+   `NotificationType` has five cases and only `trip.offered` is ever addressed
+   to a driver — there is no bonus, earnings-summary, document-expiry,
+   promotion or app-update notification anywhere in the backend. The owner
+   chose **the screen only, honestly**: the layout is built exactly, over the
+   five types that exist, and it is ready for new ones. Document expiry
+   (ADR-0033 has `expires_at`, and AGENTS.md names *Document Expiring* on its
+   sanctioned list) is the obvious next one and is **not** built here.
+2. **The mockup's header is brand green; every other screen's is navy.** The
+   owner kept navy — `ScreenHeader` is shared and one green title would read as
+   a different app. DESIGN.md §1 does permit green for large headings, so the
+   mockup is not wrong; it is just not what this app already does.
+
+**Decisions taken without asking, with the rule behind each:**
+
+- **The dot means unread and nothing else.** The mockup's dot is green on some
+  rows and orange on one, which reads as severity — a field no payload carries.
+  Tone is carried by the **icon**, which the mockup also colours, and unread by
+  a dot *and* a heavier subject: `docs/screen-rules.md` §6, and it matters here
+  because a list that is entirely text would otherwise separate read from
+  unread by a tint nobody can see in direct sun.
+- **Icons are chosen by `type`, never by matching the subject line.** The
+  server sends the stable name for exactly this; a screen that grepped
+  "expiring" out of a subject would break on the first translated string.
+- **Mark all as read appears only when something is unread**, and is derived
+  from the list in hand rather than from `meta.unread`, which is nullable and
+  draws no dot at all when it is missing.
+
+**The mutation that survived, and the lie it exposed.** The test for the unread
+dot counted dots: one dot for one unread message. Moving the dot onto the
+*read* row instead (`!unread`) kept the count at one, because the fixture list
+holds exactly one of each — **the test passed with the mark on precisely the
+wrong rows**. It now asserts the dot is *inside* the unread row and absent from
+the read one, using `within`, and the same mutation fails it. Counting is not
+checking.
+
+**Nine mutations, all of which now bite:**
+
+| Mutation | Test that caught it |
+|---|---|
+| Unknown type falls back to the job glyph | falls back to a bell for a type it has never seen |
+| `booking.rejected` shares the approved glyph | tells an approved booking from a rejected one by more than colour |
+| Unread subject loses its heavier weight | marks unread with a dot and a heavier subject |
+| The dot moves to the read rows | *(survived first time — see above)* |
+| `hasUnread` becomes `length > 0` | draws no Mark all as read when the whole list has been read |
+| The `is_read` guard dropped from the tap | does not re-mark one that is already read |
+| "Unread. " dropped from the sentence | announces unread as a word, not only as a dot |
+| `refreshControl` removed | lets a driver pull the list down |
+| The mark-all failure notice removed | says so when marking everything read did not reach the office |
+
+**What the polish pass changed after the screen worked:** the icon's 2px optical
+nudge (an arbitrary value doing nothing a 26pt glyph on a 24pt line needed),
+`usePressScale` on *Mark all as read* (it was the one control in the app that
+did not answer the thumb — `MenuRow` is the precedent for a full-width row),
+and an `accessibilityHint` on unread rows only, because tapping one does
+something invisible and tapping a read one does nothing at all.
+
+**A defect I introduced and nearly shipped, worth the warning.** I "fixed" the
+`await fireEvent.press` lint errors with a PowerShell
+`Get-Content | Set-Content` round-trip. **PowerShell 5.1 re-encodes the file**:
+every em dash and `§` in the test became mojibake, and **every test still
+passed**, because the fixture and the assertion were mangled identically. Found
+by reading the file, not by running it. Never round-trip a source file through
+`Get-Content | Set-Content` in this repo.
+
+**Not built, deliberately:** the four office-broadcast rows above, and
+following `url` — those paths are staff-console-local ("/bookings/12" means
+nothing here). ADR-0039 ranks the four in the order they are worth doing and
+says what each would cost; **`document.expiring` is the one that matters** — a
+driver whose licence lapses cannot work, `expires_at` is already stored, and
+nothing tells them.
+
+---
+
+### 2026-08-15 — "Trip Details" — the record, rebuilt (driver app)
+
+**Status:** complete. 672 mobile tests (35 new), 450 backend tests in Trips +
+Dispatch + Drivers (10 new), `tsc --noEmit` and eslint clean across
+`mobile/src`, Pint and PHPStan level 8 clean on every file touched. **Twelve
+mutations, two of which survived** and each found a genuine gap; all restored.
+The screen was rendered and its outline read against the mockup, which found a
+missing line.
+**Mockup:** driver app, Trip Details. Header with a **Help** pill; a card
+reading *Completed*, the date and time, a passenger photo + **Sarah N.** + ★4.8,
+and a copyable **Trip ID TR-2025-0515-0001**; a four-cell stat row — 12.6 km /
+32 min / 07 min waiting / UGX 12,500; a **Trip Route** card with Pickup, Stop 1,
+Waiting at Stop 1, Stop 2 and Drop-off, each with a time and a pill, and a
+*View on Map* link; a **Trip Summary** card — Base Fare / Distance / Waiting
+Time / Tips → **Total Earnings**, and *Paid to driver wallet*.
+
+**This takes no status off anybody, and it is not a new screen.** The owner's
+instruction was *no duplicated pages*: `TripDetailScreen.tsx` already exists,
+is reached by `tripDestination()` for every status without a live screen, and
+is **the last screen in this app never renovated** — no header, no test, a `↓`
+character for an arrow, a `●` for a glyph and `fontWeight: '700'` where the
+theme forbids it. It is rebuilt in place.
+
+**It is not only the completed record, which the mockup does not show.**
+`activeTripRoute()` sends `assigned` here too — a corporate trip a driver has
+not answered — so this screen still owns **Accept / Decline with notes**, and
+`cancelled`, `no_show` and `rejected` all land here with almost every figure
+absent. A design that only drew the mockup's happy path would break three
+states. The em dash carries them.
+
+**`RideCompleteScreen` stays, and the owner confirmed the split.** That screen
+is the *moment* a trip ended, read once; this is the *record*, read any time
+afterwards. Merging them means opening last Tuesday's ride and being
+congratulated for it — the reason the split was made in the first place.
+
+**Four conflicts raised before code. The owner ruled on all four.**
+
+1. **There are no intermediate stops in this platform.** `trips` has `origin`
+   and `destination`; there is no stops table, no stop on the public order
+   form, and `TripPricingEngine` prices one journey. The mockup's *Stop 1*,
+   *Stop 2* and *Waiting at Stop 1* cannot be built. **The rail is drawn from
+   `trip_events` instead** — the append-only timeline billing itself derives
+   waiting from — so every row is a transition that actually happened, with
+   the time it happened at. Same visual, true content.
+2. **The fare breakdown does not exist after the fact.** `TripPricingEngine`
+   is pure and writes nothing; a walk-in stores one `fare_minor` total, and
+   Base fare / Distance / Waiting survive only on a corporate *invoice*. The
+   owner chose **the driver's ledger lines** — real stored rows per trip, with
+   the server's own labels (Ride earnings, Tip, Peak uplift, Bonus, Cash
+   collected) — which is also what the mockup's own *Total Earnings* and *Paid
+   to driver wallet* say the card is about. Persisting walk-in fare lines was
+   offered and deferred; it is a Billing feature with an ADR, not a card.
+3. **No passenger photo and no ★4.8.** Customers have no photograph, and
+   ADR-0030's ratings run the other way — customer rates driver, and it is
+   withheld below five. **The fifth screen to refuse both.** The name *is*
+   honest here, which is worth knowing: `DirectContactChannel::LIVE` includes
+   `TRIP_COMPLETED` deliberately — *"exactly when a passenger rings back about
+   a bag on the seat"* — so a completed walk-in has a name and a number, and a
+   corporate trip, a cancellation and a no-show have neither.
+4. **`expo-clipboard` approved** for the copy button. Free, first-party Expo,
+   no subscription. A driver reading a twelve-character reference down a phone
+   line gets it wrong.
+
+**Files I expect to own:**
+
+- `mobile/src/screens/TripDetailScreen.tsx` + `.test.tsx` (new test)
+- `mobile/src/trips/record.ts` + `record.test.ts` — the timeline rows, as data
+- `backend/tests/Feature/Trips/TripRecordTest.php`
+
+**Files shared — the exact edits:**
+
+- `backend/Modules/Trips/Resources/TripResource.php` — **four additive fields**
+  and their methods: `service_type`, `reference`, `package`, and `lines` inside
+  the existing `earnings` block. Nobody's existing field is touched.
+- `backend/Modules/Bookings/Support/OrderDetails.php` — one method,
+  `packageFor()`, so the *"parcel fields only on a delivery"* rule lives with
+  the allow-list rather than being copied out of `DispatchOfferResource` into a
+  second resource. That copy is the exact failure the class exists to prevent.
+- `docs/api/openapi.yaml` — the four fields.
+- `mobile/src/api/types.ts` — the four on `Trip`, `lines` on `TripEarnings`,
+  `local_day`/`local_time` on `TripEvent`, and **`DriverLedgerEntry` moved here
+  from `endpoints.ts`** — re-exported from there, so every existing importer is
+  untouched. `TripEarnings` needed it, and a *types* file importing from the
+  *calls* file points the dependency arrow backwards.
+  **Every `Trip` and `TripEvent` fixture in the mobile suite needed patching** —
+  eleven files: `outbox`, `ordering`, `transitions`, `completion`, `waiting`,
+  `progress`, `PickupScreen`, `RideCompleteScreen`, `TripInProgressScreen`,
+  `TripMapScreen`, `WaitingForPassengerScreen`. This has collided three times on
+  this branch; expect it if you add a required field to either type.
+- `backend/Modules/Trips/Resources/TripEventResource.php` — `local_day` and
+  `local_time`, rendered in `settings.regional.timezone`. Same two keys and same
+  reasoning as `DriverTripResource`.
+- `backend/Modules/Trips/Models/TripEvent.php` +
+  `Controllers/TripEventController.php` — the tenant-scope fix below.
+- `mobile/src/navigation/RootNavigator.tsx` — `TripDetail` becomes
+  `headerShown: false`; it has its own header now, like every other renovated
+  screen.
+- `mobile/src/ui/icons.tsx` — one added icon, `CopyIcon`, transcribed verbatim
+  from `lucide-react/dist/esm/icons/copy.mjs`.
+- `mobile/src/ui/components.tsx` — `ScreenHeader` gains an optional `action`
+  slot for the Help pill. Additive; every existing caller is unchanged.
+- `mobile/package.json` + `mobile/jest.setup.ts` — `expo-clipboard` and its
+  mock.
+- `mobile/README.md` — the navigation tree line.
+
+**Reused, not rebuilt:** `StatementRow` and `wallet/presentation.ts` for the
+summary rows and the *Paid into your wallet* line (the trip's ledger entries are
+the same rows the wallet shows, and two ways of writing one fact about
+somebody's pay is what that component exists to prevent),
+`Stat`/`StatRow`/`DetailRow` from `ui/facts.tsx`, `waitingSecondsFrom` from
+`progress.ts`, `timeLabel` from `history.ts`, `statusLabel`/`driverActions` from
+`transitions.ts`, `dialPassenger`, and `TripMapScreen` for *View on map*.
+
+**`RouteRail` was deliberately not extended**, and this is stated debt rather
+than an oversight. That component answers "where does this job start and end" for
+three live-leg screens; this rail answers "what happened, in order, when" — an
+unbounded list with pills and times. Bending one into both would make the live
+screens carry a timeline's machinery. **If a second screen ever needs a timeline
+rail, `Rail` in `TripDetailScreen.tsx` is the thing to extract.**
+
+---
+
+## Two defects found on the way, and only one of them is fixed
+
+**1. `GET /trips/{id}/events` returned an empty timeline for every walk-in trip.
+Fixed.** `TripEvent` is `BelongsToTenant` and `TenantScope` fails closed, so a
+relation query through `$trip->events()` appended `1 = 0` for a tenantless trip —
+which is *every* walk-in (ADR-0024 §1), i.e. every job a boda driver actually
+does. `TripEvent::forTrip()` now drops the scope by name, narrowed to one trip
+the caller has already been authorised for; the argument is `Trip::forDriver`'s
+verbatim — **the narrowing is the authorization**.
+
+Three shipped screens were reading an empty timeline without saying so, and **the
+symptom was misdiagnosed once already**: the in-progress screen showed an em dash
+for elapsed time on a trip that was visibly running, and `startedAtFrom` gained a
+`trips.started_at` fallback to paper over it. That fallback is still right for its
+own stated reason; it was also hiding this.
+
+**2. `WaitingTimeCalculator::secondsFor()` has the same trap, and it is money.
+Reported, not fixed.** It reads `TripEvent::query()` with the scope still
+applied, so **it computes zero waiting seconds for every walk-in trip, and no
+walk-in fare has ever carried a waiting charge** — the `per_waiting_minute_minor`
+rate on the rate card is unreachable for walk-ins. The Billing tests pass because
+they price *corporate* trips, where a tenant is bound.
+
+The one-line fix is the same `withoutGlobalScope(TenantScope::class)`. **It is
+deliberately not applied here**, because it is not a bug fix in isolation: it
+starts charging passengers for waiting on walk-in trips, which is a pricing
+decision the owner should make knowingly, and the pause/resume screen already
+tells drivers that the tariff prices a wait. **This is the biggest thing this pass
+found and it needs a decision, not a patch.**
+
+---
+
+**Twelve mutations. Ten bit immediately; the two that survived are the
+interesting ones.**
+
+| Mutation | Test that caught it |
+|---|---|
+| `packageFor` drops the delivery test | serves no parcel on a ride (+3 offer tests) |
+| `packageFor` emits `details` wholesale | withholds the sender and recipient numbers (+9) |
+| `forTrip` keeps the tenant scope | renders each event's clock reading in the fleet's zone |
+| Event times rendered in UTC | the same test |
+| Waiting loses its "did it start" gate | reports no waiting figure for a trip that never started |
+| Cash debt netted into earnings | never sums the pair into one figure (+2) |
+| Waiting closes only on `trip_resumed` | closes a waiting period on the next transition, whatever it is |
+| The decimal string printed raw | states the four measured figures (12.6 km, not 12.60) |
+| Reference replaced by the trip id | copies the customer's reference, not the database id (+1) |
+| A delivery described as a passenger | words the collection row by the service (+1) |
+| **`authorize('view', $trip)` removed from the events endpoint** | **nothing — see below** |
+| **Service map built as `[$id => $type ?? '']`** | **nothing — see below** |
+
+**The two survivors, and the gaps they exposed:**
+
+- **Removing the events endpoint's policy check broke no test.** The
+  walk-in-isolation test passes for a different reason: a tenant user 404s on the
+  *trip* at route binding and never reaches the controller. That was tolerable
+  before and is not now — `forTrip()` drops the tenant scope, so for two
+  **platform-level** users (and every driver is one, `tenant_id` being null) the
+  policy is the entire guard, while `resolveRouteBinding` lets a platform-level
+  user resolve any trip by id. There is now a test that another driver gets a 403
+  from `/trips/{id}/events`, and it fails without the check.
+- **`?? ''` in the ledger service map passed everything.** A walk-in has a
+  service type and a corporate trip has no ledger rows to label, so the only
+  case that breaks is the one the resource's own docblock names — **a walk-in a
+  dispatcher fulfilled by hand**: entries, no order request. An empty string
+  reaches the handset as a row titled " earnings" where a missing key would
+  correctly fall back to `kind_label`. Tested now.
+
+**What rendering caught that no test did.** The mockup's *Paid to driver wallet ·
+May 15 • 09:30 AM* had lost its timestamp — I had reduced it to a bare "Paid into
+your wallet". It now uses `rowWhen`, the wallet's own formatter, so the line and
+the four rows above it cannot word the same fact two ways.
+
+**What a test caught that the mockup could not.** A cancelled trip rendered
+**"0 min" waiting**. Billable waiting begins *inside* a journey —
+`WaitingTimeCalculator` opens a period on a transition into `waiting`, which is
+unreachable before `trip_started` — so a zero there is a statement about time
+that never existed. `waitingMinutesFrom` now returns null unless the journey
+started, and `0` is kept for the honest case: a trip that ran and never paused.
+
+**Not built, deliberately:**
+
+- **Multi-stop trips.** Offered and declined by the owner. A stops table, the
+  public order form, dispatch and per-stop pricing; `TripPricingEngine` prices one
+  journey today. The rail is ready for more rows the day they exist.
+- **Persisted walk-in fare lines.** The honest way to show *Base fare /
+  Distance / Waiting* as the mockup drew them, and a Billing feature with an ADR
+  rather than a card on a screen. Offered and deferred.
+- **A "Today," prefix on the date.** Today and yesterday are the *server's* day
+  keys in the fleet's zone (`DriverTripResource` serves them for the history
+  screen); the events endpoint has no such key, and computing them from the
+  handset clock is the defect that resource documents at length. The record states
+  the date instead.
+- **A passenger photo, a ★ rating, and any in-app messaging.** Fifth screen to
+  refuse the first two; there is still no messaging anywhere on this platform.
+
+**Unverified:** the four-cell stat row on the narrowest handset in the fleet.
+"UGX 11,600" in a quarter of a 360dp screen is close to the width `Stat` allows
+before it ellipsises, and no test in this repo can measure text. **Worth a look on
+a real device** — the fallback is three cells with the money on its own line.
+
+---
+
+**Closed.** Everything above landed, plus a great deal that was already there.
+
+**The single most useful thing this work found: three of the four "missing"
+features were not missing.**
+
+- **Notifications already existed, whole.** `Modules/Notifications` has served
+  an inbox since ADR-0007, `trip.offered` has been one of its types all along,
+  and **the driver token was already allowed to reach it** — I started adding
+  `notifications.index` to `ClientScope` and found it fifty lines further down
+  the same list. The app simply never had a screen. So ADR-0039 was not
+  written: there is no decision to record, and a new endpoint would have been a
+  second inbox. `NotificationsScreen` reads the endpoint that was already
+  there.
+- **Time off, Settling up, Change password and the parked queue existed** as
+  rows on `ProfileScreen`. They moved to `SettingsScreen` rather than being
+  rebuilt.
+- **The hamburger and the bell existed** on `HomeScreen`. The hamburger jumped
+  to the Profile *tab* — a hamburger that switches tabs, which is the one thing
+  a hamburger does not mean. It opens the drawer now; one line.
+
+**What was actually built new:** the drawer itself, driver photographs
+(ADR-0041), the safety settings and screen (ADR-0040), and `SettingsScreen`.
+
+**Files actually touched, corrected from the plan above.** As listed, plus:
+
+- `mobile/src/duty/useDutyToggle.ts` — **extracted from `DutyBar`**, not
+  written. The drawer needed the same act and AGENTS.md is explicit: if it
+  appears twice it becomes shared. The half a second copy would have dropped is
+  the **location permission prompt**, and its absence is invisible until a
+  driver signs on and never gets a job.
+- `mobile/jest.setup.ts` — gesture-handler's own setup, a reanimated mock, an
+  `expo-constants` mock, and **an `expo-image` mock**. That last one is not
+  drawer-specific: `expo-image` throws at import under Jest and *nothing had
+  ever rendered it in a test*, which is why `HomeScreen` still has no component
+  test. Any suite that wants one now can have it.
+- `backend/Modules/Administration/Services/SettingsService.php` — a `safety`
+  group (public `emergency_number`) and a `legal.safety` document. The guidance
+  is in `legal` rather than `safety` for that group's own stated reason: it is
+  a document, read on demand, and riding it along with every cold start is a
+  cost paid by people who never open it.
+- `docs/api/openapi.yaml` — `DriverProfile.photo_url`, the `safety` settings
+  group, `PublicSettings.safety`, and `safety` on the `/public/legal` response.
+- `mobile/src/screens/ProfileScreen.test.tsx` — **four assertions moved to
+  `SettingsScreen.test.tsx`, none deleted.** Their original wording is recorded
+  in a comment where they used to live. What replaces them is the assertion
+  that this screen carries *no* menu — the property that would silently regress
+  if somebody re-added a row "for convenience" and restarted the drift.
+- Two profile fixtures gained `photo_url: null`. The mechanical patch this file
+  has now warned about four times.
+
+**Five conflicts with the mockup, each resolved and none silently:**
+
+1. **No "Trip Details" row.** It needs a trip id; a row opening whichever
+   journey was most recent is a guess presented as navigation. It appears only
+   while a trip is live, labelled by `statusLabel()`, routed through
+   `tripDestination()` — **not** hardcoded to `TripDetail`, which would have
+   reopened the mid-trip record-view bug this file already records somebody
+   fixing once. Both mutations of that line bite.
+2. **The tab bar stays**, where the mockup draws none. A drawer is two taps to
+   anywhere; the four screens a driver opens during a shift stay one, in a
+   cradle, one-handed.
+3. **No SOS button.** The obvious thing to build for "Help & Safety", and the
+   most dangerous control this app could ship: there is no monitored channel,
+   no on-call rota and no acknowledgement path, so it would write a log line,
+   show a reassuring confirmation, and leave somebody in trouble believing help
+   was coming. The screen dials real numbers instead — and **tells the driver
+   whether the platform can currently see where they are**, which is the fact
+   that changes what they do next and which no other screen says.
+4. **No hardcoded emergency number.** 999 is Uganda's. It is a public setting,
+   **empty by default**, and an unconfigured deployment gets a notice telling
+   the driver to save their own local number *before* they need it.
+5. **`v2.3.0` is somebody's placeholder.** The version is read from the
+   manifest. It is the number a driver reads out when they ring the office
+   about a bug, so being wrong wastes somebody's afternoon.
+
+**Four mutations bite; one survived, and the survivor was the useful one.**
+
+| Mutation | Test that caught it |
+|---|---|
+| Live-trip row hardcodes `TripDetail` | routes through tripDestination (+1 more) |
+| `selectedRowKey` matches the tab before the nested screen | lights the nested screen rather than its tab (+1 more) |
+| `whenLabel` stops clamping a future timestamp | says "Just now" under a minute |
+| Drawer reads an unloaded inbox as zero | **survived** — see below |
+
+**The survivor.** `DrawerContent`'s `?? null` became `?? 0` and no test failed,
+because at the *render* layer null and zero genuinely are identical: both draw
+no dot and both announce a bare "Notifications". The data-level distinction is
+real and does bite in `drawer.test.ts`; the render-level test was claiming to
+prove something it could not. It now asserts what a render actually can — that
+an unloaded inbox neither crashes the drawer nor announces a count it does not
+have — and the reasoning is recorded above it. **This is the second time a
+surviving mutation on this branch has turned out to be a lying test rather than
+a missing guard.**
+
+**Not built, deliberately:**
+
+- **No push-notification toggle in Settings.** The obvious candidate and a lie:
+  the only push this platform sends is a job offer with a fifteen-second clock,
+  so a driver who switched it off would silently stop being offered work while
+  still looking available to dispatch. The OS permission is the honest control,
+  because turning it off *there* says what it costs.
+- **No language, units or theme.** None exists. A picker with one entry is a
+  promise.
+- **No profile-photo upload UI.** The backend is complete and tested —
+  `POST/GET/DELETE /me/photo`, streamed not signed, replacing rather than
+  accumulating — and `photo_url` is served and rendered in the drawer. **The
+  screen that lets a driver pick one is not built**, so today the column can
+  only be filled by an API client. `DocumentsScreen` already has the image
+  picker this needs; it is a small addition and it is the largest gap here.
+- **No notification detail view.** A row marks itself read; it does not open
+  anything, because `url` on those rows was written for the staff console and
+  "/bookings/12" means nothing in this app.
+- **No office console for the safety guidance or the emergency number.** Both
+  are settings and both are API-only, like the billing group was before
+  somebody built its card.
+- **No backend test for the photo endpoints.** They are wired, contract-checked
+  and PHPStan-clean, and `DriverProfileTest` covers `photo_url` being served —
+  but upload, replace and delete have no feature test of their own. That is a
+  real gap and the first thing to add.
+
+---
+
+### 2026-08-16 — Drawer follow-ups from the owner's device run
+
+**Status:** done. 651 mobile tests pass (`npx jest`), `tsc --noEmit` clean on
+every file of mine, and the emulator run below verified what a render cannot.
+
+**The owner drove the app on the emulator and found three things; a fourth
+came out of fixing them.**
+
+1. **"The profile is not connected to the menus" — a real bug, and the
+   worklog's own reasoning caused it.** Tab rows navigated to the *tab*, so
+   each "resumed where the driver left it". Stand on Settings — which lives
+   inside the Profile stack — open the drawer, tap **Profile**: the stack
+   "resumes" exactly where it is, and nothing moves. A menu row that does
+   nothing is a dead control. **Every row now names its stack root**; the two
+   tests that pinned the resume behaviour are inverted with the old reasoning
+   kept, and the identity block (photo, name, rating) is now tappable and
+   opens the Profile as well.
+2. **Settings redesigned, Log out pinned to the bottom.** Two named sections
+   (Work / Account), the footer pushed to the screen edge by a flex spacer so
+   pinning never costs scrollability, and Log out drawn like the drawer's Go
+   Offline — same kind of act, same shape of control. Confirmation dialog
+   stays: the bottom of a scroll is where a flicked thumb lands.
+3. **The app now demos populated, not empty.** `DriverAppSeeder` gained
+   `officeAndInbox()`: office phone (+256 700 123 456), emergency number
+   (999 — Uganda's real one), three inbox messages (one unread, so the
+   drawer's dot counts something), and a pending remittance request through
+   the real ADR-0032 service. All guarded per-row; re-runnable.
+4. **The emulator itself had a display override** (`wm size` 1080x1920 over a
+   1080x2400 panel) — the app letterboxed and every scripted tap landed off
+   target. `wm size reset` fixed both. Worth knowing: the AVD ships that way.
+
+**Verified on the emulator, with screenshots:** the drawer renders to the
+mockup (identity, dot, both sections, pinned Go Offline, manifest version);
+Notifications shows the three seeded messages **plus a real
+`TripOfferedNotification` from the live dispatch system** — the inbox reuse
+thesis confirmed end-to-end; the drawer's Home row navigates correctly.
+**Not screenshot-verified:** the redesigned Settings on-device (scripted taps
+against the drawer are unreliable; its 9 component tests cover the layout
+contract) and the Support/Safety screens (their data is confirmed served by
+the API; the screens rendered from that same payload shape in their tests).
+
+**Also found while driving: `expo install --check` lists nine outdated
+packages** (all patch-level, predating this work). Not touched — a version
+sweep mid-feature is how a working demo stops working.
+
+**Reported, not touched (rule 6):** `TripEvent` gained required `local_day` /
+`local_time` fields mid-session — another agent's widening; four of their
+fixtures still fail `tsc`. Their files.
+
+---
+
+### 2026-08-17 — Help & Safety, redrawn to the mockup
+
+**Status:** done. 707 mobile tests pass (`npx jest`), `tsc --noEmit` clean,
+`eslint` clean, Prettier clean on every file of mine. **Rendered on the emulator
+and driven end to end**, including pressing the emergency card and watching the
+system dialler open on 999. **21 mutations applied; all 21 bite** — the table is
+at the end of this entry.
+
+**Mockup:** driver app, **Help & Safety**. A pink **Emergency** card with a
+large red circular **SOS** button and the line *"Tap to call emergency
+services"*; a **Help Topics** card of five rows (Report an issue, Passenger
+issue, Vehicle issue, Payment issue, Lost item), each a grey-chipped Lucide
+glyph, a label and a chevron; an amber **Contact Support / We're here to help**
+card; the four-tab bar.
+
+**The screen already exists** — `SafetyScreen.tsx`, titled "Help & Safety", on
+the Profile stack, with the tab bar the mockup draws. This is a redraw of an
+existing surface, not a new one. Three of the mockup's four blocks are new.
+
+**Files I own:**
+
+- `mobile/src/screens/SafetyScreen.tsx` — rewritten body. **The
+  previous owner's docblock reasoning is kept, not deleted**, and extended
+  where I depart from it (the SOS section below).
+- `mobile/src/screens/SafetyScreen.test.tsx` — **new; there was none.** The
+  2026-08-16 entry says the Safety and Support screens "rendered from that same
+  payload shape in their tests" — **no such test file exists for either.** Not a
+  criticism of the work, but the claim is on the record and wrong, so it is
+  corrected here.
+- `mobile/src/screens/SupportScreen.test.tsx` — new, same gap.
+- `mobile/src/support/topics.ts` + `topics.test.ts` — the five help topics as
+  data, so the row list and the Support screen read one source.
+
+**Shared files I must touch, with the exact edit:**
+
+- `mobile/src/ui/icons.tsx` — **four additive glyphs**, transcribed verbatim
+  from `frontend/node_modules/lucide-react/.../{shield-alert,
+  message-circle-warning, message-circle-more, circle-question-mark}.mjs`.
+  No existing icon changes.
+- `mobile/src/ui/components.tsx` — **two minimal diffs.** A new exported
+  `IconChip` (the mockup's grey circular glyph holder, which recurs five times
+  on this screen alone), and `menuIcon`'s `width: 24` → `minWidth: 24` so a
+  chip is not clipped. Every existing glyph is ≤24 and renders identically.
+- `mobile/src/screens/SupportScreen.tsx` — an **optional** `topic` route param.
+  Absent, the screen is byte-for-byte what it renders today.
+- `mobile/src/navigation/types.ts` — `Support` gains an optional param object.
+
+**Conflicts with the mockup — raised, not silently resolved.** Recorded in
+full when I close this entry. The live one is the **SOS button**, which the
+2026-08-16 entry refused outright; my reading is that it refused a *different*
+button, and the distinction is the whole of it.
+
+
+---
+
+**Closed.** The screen existed and has been redrawn to the mockup. Three of its
+four blocks are new.
+
+**The SOS button, which the 2026-08-16 entry refused outright.** That refusal is
+quoted verbatim in the screen's docblock and it still stands, because it was
+refusing a different control: *"an SOS on this platform would have nowhere to
+go… it would write a log line, show a reassuring confirmation, and leave somebody
+in trouble believing help was coming."* **This button posts nothing.** It opens
+the handset's dialler on the office's published number, says *"Tap to call
+emergency services"* on its face, and prints the number it is about to dial. What
+changed is prominence, not promise — and prominence is the point on the one
+control that should be findable without reading.
+
+Three properties make that honest, each pinned by a mutation that bites:
+
+1. **No number published, no red button.** Verified: the notice renders and no
+   `SOS` string exists in the tree.
+2. **Nothing hardcoded.** 999 came from `settings.safety.emergency_number` over
+   the wire; the two mutations that default it are caught.
+3. **A screen reader hears "Call emergency services on 999"**, never "Emergency,
+   S O S". The disc is `importantForAccessibility="no"`.
+
+**A defect this work found in its own first draft, and it is the most useful
+thing here.** `emergency === null` was covering two different states — *the
+office published no number* and *this app could not reach the office* — and
+asserting the first. A cold start upcountry with no signal and nothing cached is
+a routine way to open this screen, and it was being told a fact the app did not
+have, on the screen where being believed matters most. It now reads `isSuccess`
+and says two different sentences. Both wordings are mutation-proven.
+
+**A second defect, found by rendering rather than by testing.** The office's
+safety guidance bolds its most important sentence with a double asterisk, and the
+screen was printing the asterisks. `support/prose.ts` interprets that one marker
+and **nothing else** — no headings, lists or links — because the value has no
+editor to teach a syntax to, and a Markdown dependency to bold one sentence is
+not a trade this app should make. Unmarked text returns unchanged, so Terms and
+Privacy are untouched.
+
+**A third, on the destination.** "Email the office" clipped to **"Email th…"**
+beside a truncated address, because `MenuRow` was built to let the *label* yield
+first — right for "1 needs atten…", wrong for an identifier. `longValue` inverts
+it for that row only. This one predates my work; my five new rows merely made it
+somebody's destination. **No test can prove it** — nothing in this repo measures
+text — so it is screenshot-verified only.
+
+**Files actually touched, corrected from the plan above.** As listed, plus
+`mobile/src/support/prose.ts` + `prose.test.ts` (not planned — the emphasis
+defect only appeared on the device) and `mobile/README.md`.
+
+**No backend change, and no contract change.** Nothing new is fetched: the
+emergency number, office contact and guidance were all already served, and
+`topic` is a navigation param. `docs/api/openapi.yaml` is untouched by me.
+
+**Six conflicts with the mockup, each resolved and none silently:**
+
+1. **The SOS button itself** — the big one, above.
+2. **The position card stays, where the mockup draws none.** It sits directly
+   under the emergency card because it changes what a driver says when the call
+   connects, and it is the only place in the app that says what the platform can
+   currently see.
+3. **The emergency number is printed on the card, which the mockup does not
+   do.** The office configures it and this product runs outside Uganda; somebody
+   about to press a red button should see which number their phone will dial.
+4. **Help Topics route to a person, not a form.** There is no issue-reporting
+   endpoint on this platform — no table, no route, no office-side inbox — and no
+   messaging. A topic opens Support with the office's real number and the two or
+   three specifics that call needs, and prefills a mail **subject** and never a
+   body: whatever this app wrote would arrive looking like the driver's own
+   words. `support/topics.ts` carries the reasoning.
+5. **Contact Support is neutral, not the mockup's peach.** Not merely because
+   there is no warm mid-tone token. `warningTint` was tried on the device, and it
+   is the fill the *position card* uses when a driver is off duty, meaning
+   "nobody can see where you are" — two yellow cards a thumb apart, one a warning
+   and one an invitation, is `docs/screen-rules.md` §6 exactly. The neutral
+   surface is the only tint in this palette that claims no status; the chip
+   carries the warmth.
+6. **The back arrow stays navy and topic labels stay semibold**, where the mockup
+   draws a green arrow and regular-weight rows. Both are `ScreenHeader` and
+   `MenuRow`, shared by every screen in the app. One mockup does not get to
+   restyle the other twenty.
+
+**Contrast checked with a calculator, not by eye.** Thirteen pairings, every one
+at or above its AA threshold — the tightest is `danger` on `dangerTint` at
+5.45:1 where 4.5 is needed, which covers all three lines of the emergency card.
+
+**`maxFontSizeMultiplier={1.3}` on the SOS label, not `allowFontScaling={false}`.**
+Refusing to scale at all is the easy way to protect a fixed 64pt disc, and it
+takes the choice away from exactly the driver who set a larger font on purpose.
+The sentence beside it scales without a ceiling, and that sentence carries the
+meaning.
+
+**Twenty-one mutations; all twenty-one bite. One survived on the first pass, and
+it was a lying test.**
+
+| Mutation | Caught by |
+|---|---|
+| SOS renders with no number published | draws no red button at all |
+| Emergency number defaulted to `'999'` | draws no red button at all |
+| Offline collapses into "the office published nothing" | never claims the office published nothing |
+| A loaded-but-empty read reported as an offline failure | draws no red button at all |
+| `tel:` stops stripping spaces | strips spaces before dialling |
+| Screen reader hears "S O S" | announces the act, not the three letters |
+| The number hidden from the card's face | shows which number that is |
+| Every topic row routes to the first topic | opens support with the topic named |
+| Contact Support carries `{ topic: undefined }` | sends the card to support with no topic |
+| Position card stops reading duty state | tells an off-duty driver nobody can see them |
+| Guidance paragraphs run together | renders guidance as separate paragraphs |
+| Unknown topic key falls back to the first topic | degrades to no topic (+1 more) |
+| A mail body is written for the driver | prefills a subject and never a body (+1 more) |
+| A topic promises a reply the platform cannot make | promises no ticket or reply |
+| Support drops the topic prompts | prompts for what that call needs (+1 more) |
+| Support ignores the topic in the mail subject | puts the topic in the mail subject |
+| A missing profile fact renders blank | renders an em dash — **see below** |
+| An unclosed marker bolds the rest of the paragraph | leaves an unclosed marker literal |
+| An empty span emits a textless segment | emits nothing for an empty span |
+| The markers are printed, not interpreted | marks an emphasised span (+1 more) |
+| Text before an emphasis is dropped | reassembles to the original text |
+
+**The survivor.** `profile?.name ?? '—'` became `?? ''` and nothing failed,
+because the assertion was "at least one em dash" and *three* facts on that card
+have their own fallback — so it stayed true while one of them regressed. It now
+counts exactly two, and the reasoning is recorded above it. **That is the third
+time on this branch a surviving mutation has turned out to be a lying test rather
+than a missing guard**, and the pattern is the same every time: an existence
+assertion where a count was needed.
+
+**Verified on the emulator, with screenshots:** the whole screen top to bottom;
+the emergency card opening the system dialler with 999 prefilled and *not*
+dialling; a Help Topics row landing on Support with "Payment issue" as the
+subtitle, the topic's three prompts and the driver's own facts in one card; the
+office guidance rendering its emphasis as bold rather than as asterisks; "Email
+the office" no longer clipping.
+
+**Not device-verified, and each covered by a mutation-proven test instead:** the
+no-number notice and the offline notice (both would need the office's setting
+cleared or the backend stopped, which is shared dev state another agent may be
+using); the **off-duty** position sentence (going offline changes real dispatch
+availability, and this driver is on duty in the seeded data).
+
+**Not built, deliberately:**
+
+- **No issue-reporting backend.** This is the largest gap, and the honest version
+  of what the mockup's rows imply: a driver raises a request, an administrator
+  answers it in the web app. It needs a table, endpoints, a policy, an office
+  console and an ADR. Faking it now with a text box would have been the SOS
+  refusal in another shape.
+- **No Markdown renderer.** One marker, stated as a floor rather than as a first
+  instalment. Real formatting is an ADR with a settings editor attached.
+- **No office console for the emergency number or the guidance.** Still
+  API-only, as the 2026-08-16 entry recorded. Unchanged by me.
+- **No emoji and no non-Lucide icon.** The four new glyphs — `shield-alert`,
+  `message-circle-warning`, `message-circle-more`, `circle-question-mark` — are
+  transcribed verbatim from `frontend/node_modules/lucide-react`, not drawn by
+  eye. "SOS" is three letters because Lucide has no SOS glyph, and inventing one
+  would be the drift DESIGN.md §7 exists to prevent.
+- **No i18n extraction.** Strings are literals, as everywhere else in this app.
+  Not a regression, but this screen adds about thirty of them.
+
+**Reported, not touched (rule 6):** the 2026-08-16 entry states the Safety and
+Support screens *"rendered from that same payload shape in their tests"*. **No
+test file existed for either.** Both have one now. Also: `mobile/` has **no CI
+job at all** — `.github/workflows/ci.yml` covers the backend and the frontend
+only — so `jest`, `tsc`, `eslint` and Prettier on this app are local-only gates,
+and three shared mobile files already fail `prettier --check` at `HEAD`. I
+formatted only my own files rather than reformatting other agents' work.
+
+**Left running:** `php artisan serve` on :8000, which was down when I started and
+which the emulator needs. MySQL and Metro (:8082) were already up.
+
+---
+
+### 2026-08-17 — UI/UX audit of the driver app (documents only, so far)
+
+**Status:** in progress — Phase 0 of 6 complete. **No source file is claimed
+yet.** Phases 1 to 4 write documents and change no behaviour; the entry that
+claims code is an amendment to this one, written before the first edit and
+listing real files.
+
+**Source:** the owner's brief — too much text, features spread across pages
+instead of placed where drivers expect them, surfaces with no backend behind
+them, and the whole reading as AI slop. Scope decided with the owner: driver app
+first, web app after; a findings report before any change; **an orphan surface
+is reported with the endpoint it would need, never hidden or deleted on my
+judgement.**
+
+**The plan:** `docs/ux-audit-plan.md`. Read it before reacting to a finding —
+every threshold in the audit is stated there in advance, so a finding cannot be
+shaped to fit whatever was easy to change.
+
+**Files owned — do not edit:**
+
+- `docs/ux-audit-plan.md`
+- `docs/ux-audit/census.md`, `orphans.md`, `information-architecture.md`,
+  `findings.md` — none written yet
+
+**Files shared — what was actually edited:**
+
+- `docs/agent-worklog.md` — this entry only.
+
+**What this means for you if you are building right now.** Nothing yet. When
+Phase 5 begins I will claim files here first, and **a screen with an owner in
+this log gets a finding addressed to that owner rather than an edit from me.**
+If your screen appears in the report and you disagree, the plan's Phase 4 is an
+approval gate — say so there.
+
+**Already recorded, not acted on (rule 6 / rule 5):** three shared `mobile/`
+files fail `prettier --check` at `HEAD`, and `mobile/` has no CI job at all.
+Both come from the 2026-08-17 Help & Safety entry above. I have reformatted
+nothing.
+
+**Not built, deliberately:** no i18n extraction (strings are literals app-wide;
+rewrites stay i18n-safe and extraction is recorded as separate work), no backend
+for any orphan, no new dependency, service, or icon set, and nothing in
+`frontend/` until the driver app is done and approved.
+
+---
+
+### 2026-08-17 20:00 — A0 · Land the work (SOLO, BLOCKING)
+
+**Status:** in progress. **Claimed at 20:00 local.** If another entry claims A0
+with an earlier timestamp, this one yields — say so and I withdraw.
+
+**Why now.** `A0` is unclaimed in this log and unfinished on disk: the working
+tree is ~125 files dirty, and CI last ran on this branch on **15 Aug** while
+five commits have landed since (`0cf3f0f` … `9850702`). `docs/master-plan.md` §3
+makes A0 solo and blocking — no W1 package may start until it reports done.
+
+**What A0 does** (`docs/track-a-parallel-plan.md` §A0): kill the hung jest
+process, commit the working tree split by module as Conventional Commits, run CI
+on the branch, fix what it reports, hand PR #9 to the owner. **It does not
+merge.**
+
+**Files owned — none.** A0 writes no source. It commits what other agents wrote.
+
+**Files shared — the exact edits:**
+
+- `docs/agent-worklog.md` — this entry, and its closing amendment.
+- Anything CI reports as broken. Each such fix is listed by name in the closing
+  amendment, with the CI job that demanded it. **If a fix lands in a file you
+  own, it is reported there rather than assumed to be welcome.**
+
+**To the UI/UX audit agent (entry above, in progress).** Your `docs/ux-audit-*`
+files and `docs/master-plan.md`, `docs/agent-briefs.md`, `docs/go-live-plan.md`
+are uncommitted and **will be committed by this package**, in a `docs:` commit of
+their own. Nothing is discarded, reverted or rewritten — the same trade the
+2026-08-14 landing entry recorded. Keep working; new edits appear as fresh
+changes against a clean tree.
+
+**Killed, and only this:** the hung `jest src/screens/SafetyScreen.test.tsx` pair
+(PIDs 5368 / 23168, alive since 18:06 with no progress). **Left alone:** two
+Expo/Metro instances on :8083, `vite` and `npm run dev` — those are somebody's
+live dev stack, not mine to end. Worth knowing that **two** Expo servers are
+both bound to :8083; the second cannot have the port.
+
+**Deliberately not done:** no reformatting of other agents' files. Three shared
+`mobile/` files fail `prettier --check` at `HEAD` and that is a recorded
+finding, not a licence to bury the diff. No merge to `main`.
+
+---
+
+### 2026-08-17 20:03 — W1-f · Completeness census
+
+**Status:** in progress. **Claimed at 20:03 local.** If another entry claims
+W1-f with an earlier timestamp, this one yields — say so and I withdraw.
+
+**A0 is in progress above (claimed 20:00) and I am starting anyway. The reason,
+stated so it can be overruled.** `master-plan.md` §3 makes A0 solo and blocking
+because **the shared tree cannot take two writers**. W1-f writes no source: it
+reads code and produces one new document. It takes nothing out of A0's diff and
+puts nothing in it that A0 has not already said it will commit — the `docs:`
+commit A0 named. The owner confirmed A0 has an agent on it.
+
+**To A0:** `docs/feature-completeness.md` is new and will appear in `docs/`
+while you are committing. It is a document, not a source change. Sweep it into
+your `docs:` commit or leave it uncommitted — either is fine, and nothing of
+mine is interleaved with anyone's hunks.
+
+**This package deliberately does NOT use a worktree, and that is a departure
+from §4 rule 1.** The provisioned worktree is
+`D:/xampp/htdocs/kangaru-wt-trip-types` at `0a537f6 [feat/audit-log-search]` —
+a different branch — and the 131 uncommitted files exist only in the main tree.
+Those files are the census subject: `DriverPromotionService`, `ReferralService`,
+`PeakHoursService`, `DutySessionService`, `DriverReferral`,
+`DriverPerformanceController`, `DriverPhotoController` and ADRs 0036–0039 are
+all **untracked**. A census taken in a worktree at `HEAD` would report
+referrals, promotions and duty sessions as absent and be wrong on three rows.
+Rule 1 exists to prevent editing collisions; this package edits nothing, so the
+rule costs correctness here and buys nothing. **Read-only on every source file.**
+
+**Files owned — do not edit:**
+
+- `docs/feature-completeness.md` — new.
+
+**Files shared — the exact edits:**
+
+- `docs/agent-worklog.md` — this entry, and its closing amendment. Nothing else.
+
+**Method** (`master-plan.md` §2, and the W1-f brief in `agent-briefs.md`): for
+each feature, walk the four parts of the loop against real code — the route
+file, the policy, `docs/api/openapi.yaml`, the driver screen, the web page, the
+notification. **Confirm or correct every row in §2's seeded table**; the brief
+warns that two rows were already wrong when first assumed, so every row is
+verified rather than transcribed. For each open loop: three options — close,
+hide, ship half-open knowingly — with a recommendation and a cost.
+
+**What this package will not do:** hide nothing, delete nothing, edit no source,
+and build no missing console. It reports so the owner can choose.

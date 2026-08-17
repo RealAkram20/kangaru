@@ -493,16 +493,16 @@ paths:
   /api/v1/public/legal:
     get:
       summary: >
-        The Terms and Privacy notices, unauthenticated (ADR-0014, `legal`
-        group). Read by the Driver App's sign-up form, which asks for
-        consent to both before an account exists — so it cannot sit behind
-        one. Kept off /public/settings because these are long and rarely
-        wanted, and that endpoint is fetched on every page load.
+        The Terms, Privacy and Safety notices, unauthenticated (ADR-0014,
+        `legal` group). Read by the Driver App's sign-up form, which asks for
+        consent to the first two before an account exists — so it cannot sit
+        behind one. Kept off /public/settings because these are long and
+        rarely wanted, and that endpoint is fetched on every page load.
         Editable by Super Admin through PATCH /settings/legal.
         Throttled 30/min/IP.
       responses:
         '200':
-          description: Both documents, as plain text.
+          description: The three documents, as plain text.
           content:
             application/json:
               schema:
@@ -514,9 +514,18 @@ paths:
                   message: { type: string }
                   data:
                     type: object
-                    required: [terms, privacy]
+                    required: [terms, privacy, safety]
                     additionalProperties: false
                     properties:
+                      safety:
+                        type: string
+                        description: >
+                          Office-authored safety guidance for the driver app's
+                          Safety screen (ADR-0040). Plain text. Not a consent
+                          document — nobody agrees to it — but it lives with
+                          the other two because it is the same kind of thing:
+                          office-authored prose, editable without a deploy,
+                          fetched only when somebody opens it.
                       terms:
                         type: string
                         description: >
@@ -2737,6 +2746,148 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/me/performance:
+    get:
+      summary: >
+        How the signed-in driver is doing — the app's Performance screen:
+        six dials and progress towards the weekly bonus.
+      description: >
+        Separate from `/me/stats` rather than a fatter payload on it, for the
+        reason `/me/profile` is: stats is polled every sixty seconds by the
+        home screen, and a roster walk, a duty-session sum and a week of trips
+        must not ride along on every poll of a screen rendering none of them.
+        The 30-day rates the two share are computed once, in
+        `DriverStatsService::qualityFor()`, so they cannot disagree.
+
+        **Every ratio on this screen has a real denominator or none at all.**
+        `rostered_seconds_this_week` and `bonus` are both nullable, and null is
+        served rather than zero — a driver with no shift windows is available
+        at any hour (ADR-0017 §3), and the bonus scheme is off by default
+        (ADR-0034). The app draws no arc in either case, because a ring against
+        an invented ceiling is the fabricated figure `docs/screen-rules.md` §1
+        forbids, drawn as a shape.
+
+        `online_seconds_this_week` is measured from duty sessions (ADR-0038)
+        and is **conservative by design**: it counts time the platform could
+        actually reach the driver, so a spell in a dead zone is lost. That is
+        the right direction for the error to run in a figure that will be
+        quoted at somebody in a conversation about their hours.
+      responses:
+        '200':
+          description: The driver's performance.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required:
+                      - acceptance_rate
+                      - completion_rate
+                      - cancellation_rate
+                      - rating
+                      - rating_count
+                      - window_days
+                      - trips_total
+                      - week_start
+                      - timezone
+                      - trips_this_week
+                      - online_seconds_this_week
+                      - rostered_seconds_this_week
+                      - bonus
+                    additionalProperties: false
+                    properties:
+                      acceptance_rate:
+                        type: ['number', 'null']
+                        description: Percentage 0–100, one decimal, over `window_days`. Null when no offer has been answerable yet.
+                      completion_rate:
+                        type: ['number', 'null']
+                        description: Percentage 0–100, one decimal. Null when no trip has reached an ending yet.
+                      cancellation_rate:
+                        type: ['number', 'null']
+                        description: >
+                          Percentage 0–100, one decimal, over the same
+                          terminal-status window as `completion_rate`.
+                          **Not the complement of it** — `no_show` is the third
+                          ending, so the two sum to 100 only for a driver who
+                          has never had one. A no-show is the passenger's act
+                          and has no dial of its own.
+                      rating:
+                        type: ['number', 'null']
+                        description: Mean of the last 50 ratings, one decimal. Null until five exist (ADR-0030 §3).
+                      rating_count: { type: integer }
+                      window_days:
+                        type: integer
+                        description: The rolling window the three rates are measured over.
+                      trips_total:
+                        type: integer
+                        description: >
+                          Completed trips, ever. Cancellations excluded — the
+                          figure sits beside a rating and must not read flatter
+                          than the driver's work. The same count `/me/profile`
+                          serves, from the same query.
+                      week_start:
+                        type: string
+                        format: date
+                        description: >
+                          Monday of the week in progress, in `timezone`.
+                          Served rather than derived on the handset: the week
+                          is the fleet's, and a driver near a border must not
+                          draw their own.
+                      timezone:
+                        type: string
+                        description: The fleet's zone, from `settings.regional.timezone`.
+                      trips_this_week:
+                        type: integer
+                        description: >
+                          Completed trips since `week_start`, counted by the
+                          same rule that decides the bonus — a screen counting
+                          differently from the command that pays out would
+                          eventually promise a target and not honour it.
+                      online_seconds_this_week:
+                        type: integer
+                        description: Duty-session seconds since `week_start` (ADR-0038).
+                      rostered_seconds_this_week:
+                        type: ['integer', 'null']
+                        description: >
+                          Rostered seconds for the **whole** week, from
+                          `driver_shift_windows` — the denominator the online
+                          hours dial draws against. Null for a driver with no
+                          roster, which ADR-0017 §3 makes mean "available at
+                          any hour"; that is not a number, and a zero here
+                          would be a division waiting to happen.
+                      bonus:
+                        type: ['object', 'null']
+                        description: >
+                          Progress towards the weekly target bonus, or **null**
+                          when `billing.bonus_enabled` is false — in which case
+                          the app renders no card and no arc. The open week is
+                          reported; nothing has been earned until it closes and
+                          the award command runs (ADR-0034 §4).
+                        required: [trips, trip_target, amount_minor, currency, week_start, ends_at, achieved]
+                        additionalProperties: false
+                        properties:
+                          trips: { type: integer }
+                          trip_target: { type: integer }
+                          amount_minor: { type: integer }
+                          currency: { type: string }
+                          week_start: { type: string }
+                          ends_at: { type: string }
+                          achieved:
+                            type: boolean
+                            description: >
+                              Server-computed, rather than left to the app to
+                              derive from `trips >= trip_target`. Two
+                              implementations of one comparison is one that
+                              gains a `>` and one that does not.
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/me/earnings:
     get:
       summary: >
@@ -2945,6 +3096,56 @@ paths:
                       yesterday:
                         type: string
                         format: date
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/me/promotions:
+    get:
+      summary: >
+        What the platform is currently offering this driver — the Promotions
+        screen.
+      description: >
+        The one `/me` read that looks **forward**. Earnings, the ledger and the
+        trip history are all records of what has happened; this is the weekly
+        target still open, tonight's peak window, and what a referral would pay
+        (ADR-0036 §6, ADR-0037 §6).
+
+        **Every scheme is nullable, and a switched-off scheme is `null` rather
+        than a zeroed card.** `docs/screen-rules.md` §1 refuses a zero standing
+        in for a figure that does not exist — a Weekly Challenge card reading
+        "0 of 40 trips" on a fleet running no bonus scheme is exactly that,
+        dressed as a measurement. A driver on a fleet running one scheme sees
+        one card, and that is correct rather than broken.
+
+        **The app is never told the rules.** Not `peak_starts_at`, not the trip
+        target as a policy to apply — it receives values *resolved on the
+        server for this driver at this moment*, and re-pulls to learn that the
+        office changed something. A threshold shipped inside a handset goes on
+        asserting the old number after the office changes it, on devices nobody
+        can reach.
+
+        Deliberately **not** folded into `GET /me/stats`, which the home screen
+        polls every sixty seconds: three settings reads, a weekly trip count
+        and a referral scan must not ride along on a poll of a screen that
+        renders none of them.
+
+        Reading this endpoint **mints the driver's referral code** if they do
+        not have one, which is the first moment anybody could use it.
+
+        403 `NOT_A_DRIVER` when the account has no driver profile.
+      responses:
+        '200':
+          description: The schemes currently running, as they apply to this driver.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DriverPromotions' }
         default:
           $ref: '#/components/responses/Error'
 
@@ -3994,6 +4195,48 @@ paths:
       summary: One rate card, with versions and rates.
       parameters:
         - { name: rate_card, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          $ref: '#/components/responses/RateCardResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/rate-cards/{rateCard}:
+    patch:
+      summary: >
+        Renames a rate card, redescribes it, or archives it — never its
+        prices.
+      description: >
+        The labels **on** a pricing document, not the terms **of** one. No
+        field here reaches a version, and `PricedRate` throws
+        `FinancialRecordImmutableException` on update regardless: an invoice
+        already issued must stay reproducible from the version that priced it.
+        Changing what a client is charged is `POST /rate-cards/{id}/versions`.
+
+        `is_default` is deliberately absent. Promoting a card must demote
+        whichever card currently holds the flag in the same transaction, and
+        `PUT /rate-cards/{id}/default` owns that.
+
+        A PATCH: omit a field and it is left alone rather than cleared. There
+        is no DELETE — a card that priced an invoice is evidence, and
+        `status: archived` is how one is taken out of the way.
+      parameters:
+        - { name: rateCard, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                  maxLength: 100
+                  description: Unique within the card's own tenant, ignoring itself.
+                description: { type: ['string', 'null'], maxLength: 1000 }
+                status: { type: string, enum: [active, archived] }
       responses:
         '200':
           $ref: '#/components/responses/RateCardResponse'
@@ -5788,11 +6031,40 @@ components:
             GET /public/legal — deliberately absent from PublicSettings,
             which every page load fetches.
           type: object
-          required: [terms, privacy]
+          required: [terms, privacy, safety]
           additionalProperties: false
           properties:
             terms: { type: ['string', 'null'] }
             privacy: { type: ['string', 'null'] }
+            safety:
+              description: >
+                Office-authored safety guidance, shown on the driver app's
+                Safety screen (ADR-0040). In this group rather than in
+                `safety` below for the reason the group docblock gives: it is
+                a document, read only when somebody opens that screen, and
+                riding it along with every cold start would be a cost paid by
+                people who never opened it.
+              type: ['string', 'null']
+        safety:
+          description: >
+            Getting help when something goes wrong (ADR-0040).
+          type: object
+          required: [emergency_number]
+          additionalProperties: false
+          properties:
+            emergency_number:
+              description: >
+                **Public and short**, so the Safety screen can offer it on a
+                cold start with no token — a driver in trouble is the worst
+                moment to discover the app needed a round trip first.
+
+                A setting rather than a constant: 999 is Uganda's, and
+                PRODUCT.md's international readiness means no emergency number
+                is ever hardcoded. **Empty by default** — an operator who has
+                published none gets a screen that says so, where a plausible
+                default would be a driver dialling a number that does not
+                answer in their country.
+              type: ['string', 'null']
         auth:
           description: >
             Which ways into the Driver App are on (ADR-0028), and the
@@ -5847,6 +6119,13 @@ components:
             - bonus_enabled
             - bonus_weekly_trip_target
             - bonus_weekly_amount_minor
+            - peak_enabled
+            - peak_starts_at
+            - peak_ends_at
+            - peak_uplift_percent
+            - referral_enabled
+            - referral_trip_target
+            - referral_reward_amount_minor
           additionalProperties: false
           properties:
             driver_commission_percent: { type: integer, minimum: 0, maximum: 100 }
@@ -5871,12 +6150,84 @@ components:
               type: integer
               minimum: 0
               description: >
-                What clearing the target pays, in minor units. **Never served
-                to the driver app**: it is settable here, so a handset that
-                held it would go on asserting the old figure. The app reads
-                the award that was actually made, and the amount is written
-                into that entry's description so an old one still explains
-                itself.
+                What clearing the target pays, in minor units.
+
+                **Never served to the driver app as a rule.** It is settable
+                here, so a handset that *held* it would go on asserting the old
+                figure. ADR-0036 §6 added `GET /me/promotions`, which does
+                include this amount — but as a value the server resolved for
+                one driver at one moment, re-read on every pull, never as a
+                policy the app stores and applies. The distinction is the whole
+                of the rule: the app is told what *is*, not what to compute.
+            peak_enabled:
+              type: boolean
+              description: >
+                The peak-hour earnings uplift (ADR-0036). **Defaults to
+                false**, for `bonus_enabled`'s reason and more urgently: a
+                weekly bonus bills once a week, an uplift bills on **every
+                trip** inside the window.
+            peak_starts_at:
+              type: string
+              pattern: '^[0-9]{2}:[0-9]{2}$'
+              description: >
+                `HH:MM` in the fleet's zone (`regional.timezone`). Modelled on
+                `rate_card_versions.night_starts_at` deliberately — a second
+                way of writing "a window of the day" is a second way of getting
+                the midnight wrap wrong.
+            peak_ends_at:
+              type: string
+              pattern: '^[0-9]{2}:[0-9]{2}$'
+              description: >
+                `HH:MM`. **Half open** — a trip completing at exactly this time
+                is outside. A window that wraps past midnight (22:00 to 02:00)
+                is the normal case, not a misconfiguration. Setting this equal
+                to `peak_starts_at` is an **empty** window, not a whole day;
+                reading a typo as "always" would pay the uplift on every trip
+                on the platform.
+            peak_uplift_percent:
+              type: integer
+              minimum: 1
+              maximum: 100
+              description: >
+                A percentage of the driver's **share** of the fare, never of
+                the gross — a percentage of the gross would pay more for one
+                expensive corporate journey than for three short rides taking
+                the same three hours, rewarding the dispatch board rather than
+                the driver's evening.
+
+                Nothing here changes what a passenger is charged; the uplift is
+                the platform's own money. Capped at 100 because a driver
+                earning more than double their share is far likelier to be a
+                typed extra zero than a policy, and this setting spends real
+                money on every trip until somebody notices.
+            referral_enabled:
+              type: boolean
+              description: >
+                Driver referrals (ADR-0037). **Defaults to false**, with a
+                second reason beyond cost: the office's approval of every
+                application is the fraud control, so switching this on also
+                takes on the job of reading the applications it attracts.
+            referral_trip_target:
+              type: integer
+              minimum: 1
+              maximum: 1000
+              description: >
+                Completed trips the **referred** driver must do before the
+                referrer is paid. Not a hurdle in front of the reward — it *is*
+                the verification: a sign-up costs nothing to manufacture, and
+                ten real trips means real work dispatched and real fares
+                priced.
+            referral_reward_amount_minor:
+              type: integer
+              minimum: 0
+              description: >
+                What one qualified referral pays, in minor units, uncommissioned
+                — taking a cut of an advertised reward would mean the figure a
+                driver was shown and the figure they were paid differ.
+
+                Frozen onto each `driver_referrals` row when the referral is
+                attached, so changing it here never restates what somebody was
+                already promised.
         booking:
           type: object
           required: [approval_required, max_advance_days]
@@ -6035,10 +6386,18 @@ components:
         The unauthenticated branding subset: catalogue keys flagged
         public only, asset paths as absolute URLs.
       type: object
-      required: [branding, auth, regional, ordering]
+      required: [branding, auth, regional, ordering, safety]
       additionalProperties: false
       properties:
         branding: { $ref: '#/components/schemas/BrandingSettings' }
+        safety:
+          description: >
+            The emergency number, and nothing else from that group (ADR-0040).
+          type: object
+          required: [emergency_number]
+          additionalProperties: false
+          properties:
+            emergency_number: { type: ['string', 'null'] }
         auth:
           description: >
             Which sign-in methods the Driver App should offer (ADR-0028),
@@ -6526,6 +6885,7 @@ components:
       type: object
       required:
         - name
+        - photo_url
         - phone
         - email
         - member_since
@@ -6535,6 +6895,25 @@ components:
       additionalProperties: false
       properties:
         name: { type: string }
+        photo_url:
+          description: >
+            Where to fetch this driver's photograph, or null (ADR-0041).
+
+            A **route on this API**, never a storage URL: the file is on the
+            private disk and is streamed, because a signed link to a
+            photograph of somebody is addressable by anyone who ever saw it —
+            and this one is loaded every time the app's drawer opens, so the
+            link would travel through proxies, caches and crash reports dozens
+            of times a day.
+
+            Carries a short `?v=` derived from the stored path, so a client's
+            image cache cannot go on showing the previous portrait after an
+            upload.
+
+            **Null is the ordinary case, not an error.** A driver who has never
+            sent one gets their initials, which is what everybody had before
+            this field existed.
+          type: ['string', 'null']
         phone:
           type: ['string', 'null']
           description: >
@@ -6731,6 +7110,146 @@ components:
             request behind it (a walk-in a dispatcher fulfilled by hand) — the
             client falls back to `kind_label`, which is always true.
         created_at: { type: ['string', 'null'], format: date-time }
+
+    DriverPromotions:
+      description: >
+        The three schemes, as they apply to one driver right now (ADR-0036,
+        ADR-0037).
+
+        **Each scheme is nullable and a null means "not running".** Never a
+        zeroed card: `docs/screen-rules.md` §1 refuses a zero standing in for a
+        figure that does not exist. The app draws only the cards that are
+        present.
+      type: object
+      required: [currency, timezone, weekly_challenge, peak_hours, referral]
+      additionalProperties: false
+      properties:
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          description: >
+            ISO 4217, from `settings.regional.currency`. Every minor-unit
+            amount below is in it. Served rather than assumed, because
+            hardcoding `UGX` is the first thing that breaks in a second market.
+        timezone:
+          type: string
+          description: >
+            The fleet's zone, from `settings.regional.timezone`. Every instant
+            below is meant to be rendered against it — a driver crossing a
+            border does not want their peak hours to move.
+        weekly_challenge:
+          nullable: true
+          description: >
+            Progress against the weekly trip target, in the week **now
+            running** (ADR-0034 §4).
+
+            **Nothing here has been earned yet.** The bonus is awarded by a
+            scheduled command over a *closed* week, so a driver at 18 of 30 is
+            being shown where they are, not what they are owed. `ends_at` is
+            when the week closes and the question gets answered.
+
+            Null when `billing.bonus_enabled` is false, which is the default.
+          type: object
+          required: [trips, trip_target, amount_minor, currency, week_start, ends_at, achieved]
+          additionalProperties: false
+          properties:
+            trips:
+              type: integer
+              description: >
+                Completed trips so far this week, counted by the same rule the
+                awarding command uses. A screen that counted differently from
+                the command that pays would eventually tell somebody they had
+                hit the target and then not pay them.
+            trip_target: { type: integer }
+            amount_minor: { type: integer }
+            currency: { type: string, minLength: 3, maxLength: 3 }
+            week_start:
+              type: string
+              format: date-time
+              description: The Monday, in the fleet's zone.
+            ends_at:
+              type: string
+              format: date-time
+              description: >
+                When the week closes — **not** when the money arrives.
+            achieved:
+              type: boolean
+              description: >
+                Whether the target is cleared. Served rather than left to the
+                app to derive from `trips >= trip_target`, because two
+                implementations of one comparison is one that gains a `>` and
+                one that does not.
+        peak_hours:
+          nullable: true
+          description: >
+            Today's peak window, resolved to instants, and what it pays
+            (ADR-0036).
+
+            The uplift is a percentage of the driver's **share** of a fare, not
+            of the gross, and it is the platform's own money — nothing here
+            changes what a passenger is charged.
+
+            Null when `billing.peak_enabled` is false, which is the default.
+          type: object
+          required: [starts_at, ends_at, active, uplift_percent]
+          additionalProperties: false
+          properties:
+            starts_at: { type: string, format: date-time }
+            ends_at:
+              type: string
+              format: date-time
+              description: >
+                On the **following day** for a window that wraps past midnight
+                (22:00–02:00 is a plausible peak, not a misconfiguration).
+            active:
+              type: boolean
+              description: Whether the window is open at the moment of the request.
+            uplift_percent:
+              type: integer
+              description: >
+                A number, not a sentence. "Earn 20% more" is English and the
+                app owns the wording — PRODUCT.md's i18n-ready constraint.
+        referral:
+          nullable: true
+          description: >
+            This driver's referral code and how their introductions are getting
+            on (ADR-0037).
+
+            **Reading this mints the code** if they have none. `trip_target`
+            and `reward_amount_minor` describe what a *new* referral would
+            promise; `earned_minor` sums what past ones actually promised, and
+            the two legitimately disagree after the office changes the reward.
+
+            Null when `billing.referral_enabled` is false, which is the default.
+          type: object
+          required: [code, trip_target, reward_amount_minor, introduced, qualified, earned_minor]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              maxLength: 16
+              description: >
+                Eight characters, with no `O`, `0`, `I`, `1` or `L` — it is
+                read aloud across a table and typed by somebody who has never
+                seen it written down.
+            trip_target:
+              type: integer
+              description: Completed trips the referred driver must do before the reward is paid.
+            reward_amount_minor: { type: integer }
+            introduced:
+              type: integer
+              description: How many people this driver has introduced, qualified or not.
+            qualified:
+              type: integer
+              description: How many of those have cleared the target and been paid for.
+            earned_minor:
+              type: integer
+              description: >
+                Summed from the **frozen** amount on each qualified referral,
+                never the count times the current setting — a driver who earned
+                two rewards at 10,000 is owed 20,000 after the office moves the
+                figure to 15,000.
 
     DriverHistoryTrip:
       description: >
@@ -6948,9 +7467,32 @@ components:
         in the window between a completion arriving and the listener crediting
         it. A client renders that as "not confirmed yet" — never as a zero.
       type: object
-      required: [earned_minor, commission_minor, total_minor, currency, recorded_at]
+      required: [lines, earned_minor, commission_minor, total_minor, currency, recorded_at]
       additionalProperties: false
       properties:
+        lines:
+          description: >
+            Every movement this one trip made in the driver's wallet, oldest
+            first — the fare share, a tip the office confirmed (ADR-0034), a
+            peak uplift (ADR-0036), a bonus, and the cash counterpart on a cash
+            job.
+
+            **The identical shape `GET /me/ledger` serves**, deliberately: the
+            driver app renders these with the component it already uses for the
+            wallet statement, so a tip on the trip record is worded exactly as
+            the same tip is worded in the wallet. Two shapes for one fact about
+            somebody's pay is two vocabularies to keep in step.
+
+            `description` is the load-bearing member. ADR-0029 §3 freezes the
+            commission rate that applied *in that string*, which is what lets a
+            driver open a trip from March and read the rate that governed it.
+
+            This is why the fare *components* — base fare, distance, waiting —
+            are not here: `TripPricingEngine` is pure and writes nothing, so on
+            a walk-in only the single total survives. These are the rows that
+            were actually stored.
+          type: array
+          items: { $ref: '#/components/schemas/DriverLedgerEntry' }
         earned_minor:
           description: >
             The driver's share, in minor units — the `fare_earned` entry
@@ -6996,6 +7538,9 @@ components:
         - destination
         - pickup
         - dropoff
+        - service_type
+        - reference
+        - package
         - status
         - allowed_transitions
         - pickup_wait_target_seconds
@@ -7065,6 +7610,46 @@ components:
             off Ghana — the swap ADR-0020 records this codebase hitting.
           $ref: '#/components/schemas/TripPlace'
         dropoff: { $ref: '#/components/schemas/TripPlace' }
+        service_type:
+          description: >
+            What kind of job this was — `ride`, `delivery` or `self_drive`, from
+            the walk-in order behind the trip.
+
+            A real column beside `order_requests.details`, never a key inside
+            it, so reading it goes nowhere near the JSON that carries the two
+            phone numbers ADR-0024 §7 withholds.
+
+            **Null on every corporate booking**, which has a contract rather
+            than an order request, and on any endpoint that did not eager-load
+            the relation. A client that defaulted null to `ride` would label a
+            parcel run a taxi fare.
+          type: ['string', 'null']
+        reference:
+          description: >
+            The reference the customer was given and the one they quote —
+            `order_requests.reference`, unique, twelve characters.
+
+            Served so the driver, the customer and the office are all reading
+            the same identifier when somebody rings about a job: the trip's `id`
+            is the platform's, this is theirs.
+
+            Null on a corporate trip, and null wherever the order relation was
+            not loaded. A client showing the trip id instead must say which of
+            the two it is showing.
+          type: ['string', 'null']
+        package:
+          description: >
+            What is in the parcel and how big it is, **on a delivery only** —
+            null on a ride, rather than an object full of nulls, because the
+            absence is the fact.
+
+            Allow-listed through `Bookings\Support\OrderDetails::packageFor()`,
+            the single reader of `order_requests.details`. The same two keys the
+            offer card carries, from the same guard, so nothing new escapes that
+            column.
+          anyOf:
+            - { $ref: '#/components/schemas/OfferPackage' }
+            - { enum: [null] }
         status: { $ref: '#/components/schemas/TripStatus' }
         allowed_transitions:
           description: What is legal from this state — not what this user may do.
@@ -7199,7 +7784,7 @@ components:
 
     TripEvent:
       type: object
-      required: [id, trip_id, from_status, to_status, user_id, notes, created_at]
+      required: [id, trip_id, from_status, to_status, user_id, notes, created_at, local_day, local_time]
       additionalProperties: false
       properties:
         id: { type: integer }
@@ -7213,6 +7798,23 @@ components:
             - { enum: [null] }
         notes: { type: ['string', 'null'] }
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        local_day:
+          description: >
+            `created_at` in `settings.regional.timezone`, as `YYYY-MM-DD`.
+
+            **`created_at` is UTC** (`config/app.php`), so a client deriving a
+            day or a clock reading from it locally is wrong twice over: by the
+            server's offset, and again on a handset that has picked up a
+            neighbouring country's zone. The driver app puts these times on a
+            route rail beside a pickup address, where an hour's error reads as a
+            record of a different journey.
+
+            Same two keys and same reasoning as `DriverTrip.local_day` /
+            `local_time`. Null only when the row has no timestamp at all.
+          type: ['string', 'null']
+        local_time:
+          description: The same instant as `HH:MM` in the fleet's zone. See `local_day`.
+          type: ['string', 'null']
 
     TripLocation:
       type: object
