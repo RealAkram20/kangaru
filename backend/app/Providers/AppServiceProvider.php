@@ -69,7 +69,10 @@ use Modules\Reports\Enums\ReportType;
 use Modules\Reports\Events\ReportExportCompleted;
 use Modules\Support\Models\SupportRequest;
 use Modules\Support\Policies\SupportRequestPolicy;
+use Modules\Trips\Distance\MeasurementRouter;
+use Modules\Trips\Distance\OsrmMeasurementRouter;
 use Modules\Trips\Events\TripCompleted;
+use Modules\Trips\Listeners\ScheduleDistanceResolution;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Models\TripRating;
 use Modules\Trips\Policies\TripPolicy;
@@ -119,6 +122,13 @@ class AppServiceProvider extends ServiceProvider
                 ? $app->make(GoogleDirectionsProvider::class)
                 : $app->make(OsrmProvider::class);
         });
+
+        // The measuring engine (ADR-0045) — a separate seam from the map's
+        // `RouteProvider` above, deliberately: this one runs once per
+        // completed trip and must never resolve to a metered vendor. OSRM
+        // is the only implementation and the interface exists so a second
+        // self-hosted engine (Valhalla) is a binding, not a rewrite.
+        $this->app->bind(MeasurementRouter::class, OsrmMeasurementRouter::class);
     }
 
     /**
@@ -232,6 +242,11 @@ class AppServiceProvider extends ServiceProvider
         // `trips`, not a fare, and it credits a *different* driver — the one
         // who introduced the person who just finished a job.
         Event::listen(TripCompleted::class, QualifyReferralForCompletedTrip::class);
+        // ADR-0045. Order-independent: it only queues a delayed job. The
+        // resolution itself runs after the grace period, once the last ping
+        // batches have had time to land, and touches no fare (Phase 1 of
+        // `docs/measured-distance-plan.md` runs in shadow).
+        Event::listen(TripCompleted::class, ScheduleDistanceResolution::class);
 
         Event::listen(BookingApproved::class, [SendBookingDecisionNotification::class, 'approved']);
         Event::listen(BookingRejected::class, [SendBookingDecisionNotification::class, 'rejected']);

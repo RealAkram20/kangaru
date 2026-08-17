@@ -7117,3 +7117,94 @@ the deploy runs `migrate --force` and nothing else, because the guard belongs in
 the deploy script W1-a writes, and a guard in the application would be the wrong
 place to stop a command nobody should be running.
 
+
+
+### 2026-08-18 — Measured distance, Phase 1: the measuring is built and runs in shadow (backend only)
+
+**Status:** built, on `feat/measured-distance` in the `kangaru-wt-trip-types`
+worktree, branched from `feat/driver-app-screens-and-earnings` at 33b08a1
+(`main` lacks ADR-0035 and `OsrmProvider`). **Nothing prices from it. The
+driver app is untouched. The console is untouched.** Full backend suite green —
+**1,300 tests, 0 failures** — run as `vendor/bin/pest -d memory_limit=1G`
+(this machine's CLI default of 128M dies inside dompdf in the Reports PDF
+export, unrelated to this work; note the `-d` must go to Pest itself,
+`artisan test -d` does not reach the child process); Pint and PHPStan level 8
+clean on every file touched. **Three mutations proved and restored** — see below.
+
+**Source:** the owner, in three steps today. First *"use both figures"*
+(recorded by another agent in `distance-and-fare-integrity-plan.md` §8, which
+declined to design the unit). Then, asked what would be most accurate and
+hardest to fault in Uganda, and shown a three-witness model with OSRM: *"so we
+can start building this … so let's have plan before"* → `docs/measured-
+distance-plan.md`. Then: *"let's build the measuring but we will wait to
+connect to the app"* — and, refining the ruling: **not odometer based, the
+odometer is the backup.** That is what is built.
+
+**What exists now** — `backend/Modules/Trips/Distance/`, ADR-0045, and the
+README section *Measured distance (ADR-0045) — built, in shadow*:
+
+- `TracePoint`, `DistanceThresholds` (twelve new `tracking` settings + the
+  config noise floor, read once, recorded per row), `TraceCleaner` →
+  `CleanedTrace` (mock / accuracy / duplicate / teleport / jitter, plus a
+  *presence* timeline), `TraceMeasurer` → `MeasuredTrace` (runs split at
+  silences, ≤100-point chunks sharing a boundary, gaps routed, coverage
+  skew-tolerant), `MeasurementRouter` + `OsrmMeasurementRouter` (`match` and
+  `route`, its own switch, never Google), `RouteReference` (pins, else the
+  trace's ends), `DistanceResolver` → `DistanceDecision` (pure; the rule),
+  `DistanceResolutionService` (`inspect()` computes, `resolve()` writes),
+  `DistanceResolutionScheduler` + `ResolveTripDistance` (unique, delayed by
+  the grace period, re-run on late pings from `RecordTripLocations`),
+  `TripDistanceResolved` (raised, unlistened), `DistanceEvidence` (append-only,
+  scope-free read via `scopeForTrip`), `trips:replay-distance`.
+- Schema: `trip_locations.is_mock`, `trips.billed_distance_km /
+  distance_grade / distance_resolved_at`, `trip_distance_evidence`. All
+  reversible; rolled back and re-applied on the worktree's own testing DB.
+- Contract: `pings.*.is_mock` and the twelve keys, documented in
+  `docs/api/openapi.yaml`.
+
+**Four facts that changed the design, all verified on the branch** — in the
+plan's §1 and ADR-0045's Context. The one to know if you touch this: **the
+resolver cannot run at completion**, because pings land through a queue and
+the completion through the outbox, so it runs after `resolution_grace_seconds`
+and again when late pings arrive; and **the trip's fare therefore cannot be
+settled from this figure at the kerb** — Phase 2's provisional handset fare is
+the answer, and `TripDistanceResolved` is already raised so that Phase 2 is a
+listener move.
+
+**Two things I got wrong on the way, both caught by the tests and both worth
+knowing:**
+
+1. `GpsFixtures::straightLine(…, 101, 500)` — the fixture every
+   reconciliation test uses — is **180 km/h** (500 m per ten seconds). The
+   cleaner dropped every ping as a teleport and the first end-to-end run
+   measured nothing. The new tests use 201 × 250 m (90 km/h). The old
+   fixture is fine for the old watchdog, which has no speed rule; if anyone
+   ever runs the resolver against it and sees `pings_kept = 1`, that is why.
+2. Coverage from *kept* points read a parked vehicle as a dead zone, because
+   every parked ping is rightly dropped as jitter. Coverage is now from
+   *presence* — every non-mock timestamp — and only a mock ping proves
+   nothing. And a trip whose transitions all happen in one second (every
+   feature test) has zero duration; coverage divides by the longer of the
+   trip's duration and the presence span, and answers null only when both
+   are zero.
+
+**Mutations proved and restored** (`tests/Unit/Distance`, 57 tests, 0.4 s):
+
+| Mutation | Test that caught it |
+|---|---|
+| chunk stride `$size - 1` → `$size` (boundary point no longer shared) | *chunks a long run at the engine limit, sharing the boundary point so no leg is lost* |
+| coverage from kept points instead of presence | *does not lose coverage to a parked stretch whose pings were dropped as jitter* |
+| drop the `mockDropped === 0` bar from trust | *does not trust a trace with a single mock-location ping in it* |
+
+**Not built, deliberately, and where it is written down:** the shadow report
+(plan Phase 1 step 5 — a Reports-module piece, the instrument the flip is
+judged on); the console's tracking card for the new keys (API-only until then,
+same as `billing` was before ADR-0035); `rate_card_versions.distance_policy`
+(Phase 2, with billing); the grade-C gate; anything on the handset. The five
+decisions in the plan's §7 are still the owner's.
+
+**Operations, before any of this measures anything real:** stand up OSRM on
+the Uganda extract, point `maps.osrm_base_url` at it, set
+`tracking.trace_matching_enabled` to true, and keep a queue worker running.
+Until then every row says `provider: haversine` and every grade is C, and the
+README says why.

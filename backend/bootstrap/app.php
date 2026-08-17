@@ -22,6 +22,7 @@ use Modules\Drivers\Console\AwardWeeklyBonuses;
 use Modules\Fleet\Console\CloseStaleDutySessions;
 use Modules\Reports\Console\PruneReportExports;
 use Modules\Trips\Console\MaintainTripLocationPartitions;
+use Modules\Trips\Console\ReplayTripDistance;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
@@ -39,6 +40,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withCommands([
         PruneReportExports::class,
         MaintainTripLocationPartitions::class,
+        ReplayTripDistance::class,
         AdvanceDispatchOffers::class,
         AwardWeeklyBonuses::class,
         CloseStaleDutySessions::class,

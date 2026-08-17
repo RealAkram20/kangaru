@@ -388,6 +388,58 @@ until proven otherwise:
 php artisan tinker --execute="echo DB::table('jobs')->count();"
 ```
 
+### Measured distance (ADR-0045) — built, in shadow
+
+`Modules/Trips/Distance/` is the pipeline `docs/measured-distance-plan.md`
+describes: the fare's distance from the **measured trace**, checked against a
+**road-routed reference**, with the **odometer as a backup witness**. It is
+built and it runs on every completed trip; **nothing prices from it yet.**
+`TripPricingEngine` still reads `distance_km`, `SettleWalkInFare` still fires
+on `TripCompleted`, and the driver app is untouched. Phase 1 of the plan is
+this — shadow — so the grade distribution is known before money depends on
+it.
+
+What runs, per completed trip, in `ResolveTripDistance` after
+`tracking.resolution_grace_seconds` (and again whenever pings land for a trip
+that has already completed — `DistanceResolutionScheduler`, from the
+`TripCompleted` listener and from `RecordTripLocations`):
+
+| Step | Class | Does |
+|---|---|---|
+| load | `TraceLoader` | the trip's pings as `TracePoint`s, in order, scope-free |
+| clean | `TraceCleaner` | drops mock, poor-accuracy, duplicate-second, teleport and jitter pings; keeps every non-mock timestamp as *presence* |
+| measure | `TraceMeasurer` + `MeasurementRouter` | splits into runs at silences, snaps each run to roads in ≤100-point chunks (OSRM `match`), routes across gaps; `gpsKm = matchedKm + inferredKm`, coverage, inferred share |
+| reference | `RouteReference` | the road from the order's pins, or the trace's own ends |
+| decide | `DistanceResolver` | pure: `(billedKm, grade A/B/C, reason)` from `DistanceWitnesses` + `DistancePolicy` + `DistanceThresholds` |
+| record | `DistanceResolutionService` | one `trip_distance_evidence` row (append-only) + `trips.billed_distance_km / distance_grade / distance_resolved_at`; raises `TripDistanceResolved` (no listeners yet) |
+
+**The engine is OSRM and the switch is `tracking.trace_matching_enabled`
+(default false)** — a separate seam from the map's `RouteProvider`, so the
+per-trip path can never resolve to a metered vendor. Off, the measurer falls
+back to haversine with everything counted as inferred, and with no reference
+route every trip is grade C: that is the honest state of a deployment that
+has not pointed `maps.osrm_base_url` at its own box yet, and it is what the
+shadow data will show until it does.
+
+**Coverage is skew-tolerant.** `started_at` is the server's clock and pings
+are the handset's; coverage is the presence span less its internal gaps over
+the longer of that span and the trip's duration, so a clock offset is not a
+dead zone but a trace that started late still loses coverage.
+
+`php artisan trips:replay-distance {trip} [--policy=] [--commit]` prints every
+witness and the decision for a trip from stored data under today's
+thresholds, and writes nothing unless told to. It is the tool for arguing
+with a fare.
+
+Every threshold is in the `tracking` settings group and every evidence row
+records the thresholds *as applied*. `distance_km`, `gps_distance_km` and
+`distance_variance_flagged` are untouched and mean what the sections above
+say. Tests: `tests/Unit/Distance/*` (the rule and the bookkeeping, pure, with
+a mutation pass on record in `docs/agent-worklog.md`),
+`tests/Feature/Trips/OsrmMeasurementRouterTest.php` (the engine's HTTP,
+faked), `tests/Feature/Trips/DistanceResolutionTest.php` (the pipeline end
+to end).
+
 ## Frontend
 
 `frontend/src/pages/TripsPage.tsx` — the list, the six bank facts, the

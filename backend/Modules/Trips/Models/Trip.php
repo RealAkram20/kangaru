@@ -21,6 +21,7 @@ use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Models\OrderRequest;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverLedgerEntry;
+use Modules\Trips\Distance\DistanceGrade;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Vehicles\Models\Vehicle;
 
@@ -49,6 +50,10 @@ use Modules\Vehicles\Models\Vehicle;
  * @property string|null $distance_km
  * @property string|null $gps_distance_km
  * @property bool $distance_variance_flagged
+ * @property string|null $billed_distance_km The resolver's figure (ADR-0045). Nothing
+ *                                           prices from it yet — Phase 1 of `docs/measured-distance-plan.md` runs in shadow.
+ * @property DistanceGrade|null $distance_grade
+ * @property CarbonInterface|null $distance_resolved_at
  * @property bool|null $cancellation_charge_applicable
  * @property int|null $fare_minor Whole shillings — UGX is zero-decimal. Null
  *                                until `WalkInFareService::settle()` prices the completed trip, and null
@@ -129,6 +134,9 @@ class Trip extends Model
         'distance_km',
         'gps_distance_km',
         'distance_variance_flagged',
+        'billed_distance_km',
+        'distance_grade',
+        'distance_resolved_at',
         'cancellation_charge_applicable',
         'started_at',
         'completed_at',
@@ -150,6 +158,9 @@ class Trip extends Model
             'distance_km' => 'decimal:2',
             'gps_distance_km' => 'decimal:2',
             'distance_variance_flagged' => 'boolean',
+            'billed_distance_km' => 'decimal:2',
+            'distance_grade' => DistanceGrade::class,
+            'distance_resolved_at' => 'datetime',
             'cancellation_charge_applicable' => 'boolean',
             'started_at' => 'datetime',
             'completed_at' => 'datetime',
@@ -240,6 +251,20 @@ class Trip extends Model
     public function isWalkIn(): bool
     {
         return $this->tenant_id === null;
+    }
+
+    /**
+     * The current resolution of this trip's distance, or null when the
+     * resolver has not run (ADR-0045).
+     *
+     * A query through `DistanceEvidence::scopeForTrip` rather than a
+     * `HasOne`, because the evidence table's tenant is nullable and a
+     * relation through `TenantScope` would return nothing for a walk-in —
+     * the trap `TripEvent::scopeForTrip` documents.
+     */
+    public function latestDistanceEvidence(): ?DistanceEvidence
+    {
+        return DistanceEvidence::query()->forTrip($this)->first();
     }
 
     /**

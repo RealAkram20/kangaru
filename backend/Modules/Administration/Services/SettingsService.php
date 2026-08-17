@@ -308,6 +308,114 @@ This is a short-form notice. Ask the office for the full safety policy.",
                 'default' => 2000,
                 'rules' => ['required', 'integer', 'min:1', 'max:100000'],
             ],
+
+            /*
+             * Measured distance (ADR-0045, `docs/measured-distance-plan.md`).
+             *
+             * The knobs the distance resolver turns on. Every one is an
+             * operator's business rule about when a trace is believed, not a
+             * property of the receiver — the noise floor stays in
+             * `config/tracking.php` for the reason ADR-0035 gives. Each row
+             * of `trip_distance_evidence` records these as they stood when
+             * the trip was resolved, so changing one tomorrow does not
+             * restate what yesterday's fare was decided on.
+             *
+             * `trace_matching_enabled` defaults to **false**, like every
+             * scheme in this catalogue that costs something or calls
+             * somebody. Here what it calls is the OSRM server at
+             * `maps.osrm_base_url` — whose default is the project's public
+             * demo, rate-limited and explicitly not for production. Matching
+             * every completed trip against it would be a breach of that
+             * policy, so the switch is off until an operator has pointed the
+             * URL at their own box. With it off the resolver still runs: it
+             * measures by haversine, treats the whole trace as unmatched, and
+             * grades accordingly — which is honest, and is what the shadow
+             * report will show until the box exists.
+             */
+            'trace_matching_enabled' => ['default' => false, 'rules' => ['required', 'boolean']],
+            /*
+             * A trace is trustworthy — billed as measured — only when it
+             * covers at least this share of the trip's duration with kept
+             * pings, and at most this share of its distance was inferred by
+             * routing across gaps rather than matched from pings.
+             */
+            'min_coverage_percent' => [
+                'default' => 80,
+                'rules' => ['required', 'numeric', 'min:1', 'max:100'],
+            ],
+            'max_inferred_share_percent' => [
+                'default' => 25,
+                'rules' => ['required', 'numeric', 'min:0', 'max:100'],
+            ],
+            /*
+             * Cleaning. A ping the device itself rated less accurate than
+             * this is dropped; a ping implying a faster move than this from
+             * the previous kept one is a teleport and dropped; more than
+             * this many teleports and the trace is not believed at all. Two
+             * kept pings further apart in time than `gap_seconds` open a gap,
+             * which is routed rather than assumed straight.
+             */
+            'max_ping_accuracy_metres' => [
+                'default' => 50,
+                'rules' => ['required', 'numeric', 'min:1', 'max:1000'],
+            ],
+            'max_plausible_speed_kph' => [
+                'default' => 160,
+                'rules' => ['required', 'numeric', 'min:10', 'max:400'],
+            ],
+            'max_teleports' => [
+                'default' => 2,
+                'rules' => ['required', 'integer', 'min:0', 'max:100'],
+            ],
+            'gap_seconds' => [
+                'default' => 120,
+                'rules' => ['required', 'integer', 'min:10', 'max:3600'],
+            ],
+            /*
+             * The road's opinion. A trustworthy trace within this share of
+             * the routed reference (plus half a kilometre, so a short hop is
+             * not graded on a rounding error) is grade A; further out it is
+             * grade B — a detour, or a road the map lacks — and still billed.
+             * When the trace is *not* trustworthy the odometer stands in,
+             * held between floor and ceiling of the reference; a reading
+             * inside the corridor is grade B, one that had to be clamped is
+             * grade C and held for review.
+             */
+            'route_tolerance_percent' => [
+                'default' => 15,
+                'rules' => ['required', 'numeric', 'min:0', 'max:100'],
+            ],
+            'corridor_floor_percent' => [
+                'default' => 90,
+                'rules' => ['required', 'numeric', 'min:1', 'max:100'],
+            ],
+            'corridor_ceiling_percent' => [
+                'default' => 125,
+                'rules' => ['required', 'numeric', 'min:100', 'max:300'],
+            ],
+            /*
+             * Only under the `route_capped` policy: the billed figure may not
+             * exceed the reference by more than this. It is a commercial
+             * term — "you never pay for a detour" — and lives here so its
+             * value is the operator's while its *application* is the rate
+             * card version's.
+             */
+            'detour_cap_percent' => [
+                'default' => 15,
+                'rules' => ['required', 'numeric', 'min:0', 'max:100'],
+            ],
+            /*
+             * How long after Trip Completed the resolver waits before
+             * measuring. Pings arrive through a queue and the completion
+             * itself through the handset's outbox, so at the moment the trip
+             * completes the last batch may not have landed. Late pings after
+             * this re-run the resolution; the wait just makes the first
+             * answer usually the final one.
+             */
+            'resolution_grace_seconds' => [
+                'default' => 120,
+                'rules' => ['required', 'integer', 'min:0', 'max:3600'],
+            ],
         ],
         /**
          * Maps and routing (ADR-0031 pending).

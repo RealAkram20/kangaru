@@ -4673,6 +4673,16 @@ paths:
                       speed_kph: { type: ['number', 'null'], minimum: 0, maximum: 400 }
                       heading_degrees: { type: ['integer', 'null'], minimum: 0, maximum: 359 }
                       accuracy_metres: { type: ['number', 'null'], minimum: 0, maximum: 10000 }
+                      is_mock:
+                        description: >
+                          Whether the OS marked the fix as coming from a
+                          mock-location provider (ADR-0045). Optional; a
+                          handset that predates the field still posts, and
+                          absent is stored as false. Stored and counted by
+                          the distance resolver — a trace with any mock ping
+                          in it is never billed as measured — but not yet
+                          refused at ingestion.
+                        type: ['boolean', 'null']
       responses:
         '202':
           description: Accepted for asynchronous ingestion.
@@ -7006,7 +7016,21 @@ components:
             in config. Those are properties of the measuring apparatus rather
             than business rules.
           type: object
-          required: [variance_threshold_percent, odometer_max_km_per_trip]
+          required:
+            - variance_threshold_percent
+            - odometer_max_km_per_trip
+            - trace_matching_enabled
+            - min_coverage_percent
+            - max_inferred_share_percent
+            - max_ping_accuracy_metres
+            - max_plausible_speed_kph
+            - max_teleports
+            - gap_seconds
+            - route_tolerance_percent
+            - corridor_floor_percent
+            - corridor_ceiling_percent
+            - detour_cap_percent
+            - resolution_grace_seconds
           additionalProperties: false
           properties:
             variance_threshold_percent:
@@ -7036,6 +7060,78 @@ components:
 
                 This is the ceiling to the floor that already refuses a closing
                 reading below the opening one.
+            trace_matching_enabled:
+              type: boolean
+              description: >
+                Measured distance (ADR-0045, `docs/measured-distance-plan.md`).
+                Whether the distance resolver may snap traces to roads and
+                route across gaps against the OSRM server at
+                `maps.osrm_base_url`. Defaults to false because that URL
+                defaults to the project's public demo, which is not for
+                production; switch on once it points at your own box. Off,
+                the resolver still runs — by haversine, all of it inferred —
+                and grades accordingly.
+
+
+                Every key below is a bar the resolver holds a trace to or a
+                bound it holds the odometer inside; each evidence row records
+                them as they stood, so changing one restates nothing already
+                decided. Nothing prices from the resolver's figure yet.
+            min_coverage_percent:
+              type: number
+              minimum: 1
+              maximum: 100
+              description: A trace is trusted only when pings cover at least this share of the trip's duration.
+            max_inferred_share_percent:
+              type: number
+              minimum: 0
+              maximum: 100
+              description: …and at most this share of its distance was routed across gaps rather than matched from pings.
+            max_ping_accuracy_metres:
+              type: number
+              minimum: 1
+              maximum: 1000
+              description: A ping the device rated less accurate than this is dropped before measuring.
+            max_plausible_speed_kph:
+              type: number
+              minimum: 10
+              maximum: 400
+              description: A ping implying a faster move than this from the previous kept one is a teleport and dropped.
+            max_teleports:
+              type: integer
+              minimum: 0
+              maximum: 100
+              description: More teleports than this and the trace is not trusted at all.
+            gap_seconds:
+              type: integer
+              minimum: 10
+              maximum: 3600
+              description: Two kept pings further apart in time than this open a gap, which is routed rather than assumed straight.
+            route_tolerance_percent:
+              type: number
+              minimum: 0
+              maximum: 100
+              description: A trusted trace within this share of the routed reference (plus 0.5 km) is grade A; beyond it grade B, still billed.
+            corridor_floor_percent:
+              type: number
+              minimum: 1
+              maximum: 100
+              description: When the trace is not trusted, the odometer stands in, held between this share of the reference…
+            corridor_ceiling_percent:
+              type: number
+              minimum: 100
+              maximum: 300
+              description: …and this share. Inside untouched is grade B; clamped is grade C, held for review.
+            detour_cap_percent:
+              type: number
+              minimum: 0
+              maximum: 100
+              description: Under the `route_capped` policy only, the billed figure may not exceed the reference by more than this unless a stop was declared.
+            resolution_grace_seconds:
+              type: integer
+              minimum: 0
+              maximum: 3600
+              description: How long after Trip Completed the resolver waits before measuring, so the last ping batches can land. Late pings re-run it.
         maps:
           description: >
             Road routing for the driver app's maps (ADR-0031 pending). The
