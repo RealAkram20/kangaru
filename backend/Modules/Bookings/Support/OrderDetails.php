@@ -2,6 +2,7 @@
 
 namespace Modules\Bookings\Support;
 
+use Modules\Bookings\Enums\OrderRequestServiceType;
 use Modules\Bookings\Models\OrderRequest;
 
 /**
@@ -65,6 +66,38 @@ class OrderDetails
      * @var list<string>
      */
     public const PAYMENT_FIELDS = ['payment_method', 'payer'];
+
+    /**
+     * The parcel fields, and only on a delivery.
+     *
+     * ## Why the service-type test lives here
+     *
+     * It was a private method on `DispatchOfferResource` and a second resource
+     * now asks the same question: the driver app shows what is in the parcel on
+     * the offer card *and* again on the trip record, because a driver settling a
+     * dispute a week later needs to know what they carried.
+     *
+     * Copying the three lines is the failure this class exists to prevent — see
+     * the docblock above. The keys are here, so the rule about *when* they are
+     * released belongs here too; a copy in a second resource is the copy that
+     * does not get updated when a key is added.
+     *
+     * **Null on anything that is not a delivery**, rather than an object full of
+     * nulls. A ride genuinely has no parcel, so the absence *is* the fact — and
+     * that is the opposite of `PAYMENT_FIELDS`, where an absent method means
+     * only that nobody said. `payment()` on both resources keeps returning an
+     * object for exactly that reason.
+     *
+     * @return array<string, string|null>|null
+     */
+    public static function packageFor(?OrderRequest $order): ?array
+    {
+        if ($order?->service_type !== OrderRequestServiceType::DELIVERY) {
+            return null;
+        }
+
+        return self::allowed($order, self::PACKAGE_FIELDS);
+    }
 
     /**
      * The allow-listed subset, with every requested key present.

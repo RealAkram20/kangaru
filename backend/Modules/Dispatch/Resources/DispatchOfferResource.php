@@ -6,7 +6,6 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Modules\Billing\Pricing\RateCardNotConfiguredException;
 use Modules\Billing\Services\WalkInFareService;
-use Modules\Bookings\Enums\OrderRequestServiceType;
 use Modules\Bookings\Models\OrderRequest;
 use Modules\Bookings\Support\OrderDetails;
 use Modules\Dispatch\Models\DispatchOffer;
@@ -154,19 +153,16 @@ class DispatchOfferResource extends JsonResource
     /**
      * What is in the parcel, and how big it is — nothing else.
      *
-     * See `OrderDetails::PACKAGE_FIELDS`. Null on anything that is not a
-     * delivery, so a
-     * ride does not carry an object full of nulls a client has to interpret.
+     * The rule and the keys both live in `OrderDetails::packageFor()` now that
+     * `TripResource` asks the same question: the driver sees the parcel on this
+     * card and again on the trip record afterwards. Three lines copied into a
+     * second resource is precisely the drift that class exists to stop.
      *
      * @return array<string, string|null>|null
      */
     private function package(?OrderRequest $order): ?array
     {
-        if ($order?->service_type !== OrderRequestServiceType::DELIVERY) {
-            return null;
-        }
-
-        return OrderDetails::allowed($order, OrderDetails::PACKAGE_FIELDS);
+        return OrderDetails::packageFor($order);
     }
 
     /**

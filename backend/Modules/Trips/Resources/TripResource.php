@@ -4,12 +4,15 @@ namespace Modules\Trips\Resources;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Collection;
 use Modules\Administration\Services\SettingsService;
 use Modules\Billing\Pricing\RateCardNotConfiguredException;
 use Modules\Billing\Services\WalkInFareService;
 use Modules\Bookings\Models\OrderRequest;
 use Modules\Bookings\Support\OrderDetails;
 use Modules\Drivers\Enums\LedgerEntryKind;
+use Modules\Drivers\Models\DriverLedgerEntry;
+use Modules\Drivers\Resources\DriverLedgerEntryResource;
 use Modules\Drivers\Resources\DriverResource;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
@@ -65,6 +68,45 @@ class TripResource extends JsonResource
                 $this->order()?->dropoff_latitude,
                 $this->order()?->dropoff_longitude,
             ),
+            /*
+             * What kind of job this was — `ride`, `delivery` or `self_drive`.
+             *
+             * A real column on the order request, not a key inside `details`,
+             * so nothing here goes near the JSON that carries the two withheld
+             * phone numbers. Null on a trip with no walk-in order behind it,
+             * which is every corporate booking: a client's trip is whatever
+             * their contract says it is, and this platform does not classify it.
+             *
+             * The driver app's trip record needs it for the same reason the
+             * wallet statement does — a delivery and a ride are different jobs,
+             * and one screen that says neither reads as a screen about nothing.
+             */
+            'service_type' => $this->order()?->service_type->value,
+            /*
+             * The reference the customer was given, and the one they quote.
+             *
+             * `order_requests.reference` — a unique twelve-character column
+             * that has existed since ADR-0012 and had no way out onto a trip.
+             * It is served here so the driver and the office are reading the
+             * same identifier when somebody rings about this job; a database
+             * id is ours, a reference is theirs.
+             *
+             * Null on a corporate trip, which has a booking rather than an
+             * order. The app falls back to the trip's own number and says which
+             * it is showing.
+             */
+            'reference' => $this->order()?->reference,
+            /*
+             * What was in the parcel, on a delivery — nothing on a ride.
+             *
+             * Allow-listed through `OrderDetails::packageFor()`, the single
+             * reader of `order_requests.details`. The rule about *when* the
+             * parcel fields are released lives there rather than here for the
+             * reason that class documents at length: this column also holds
+             * `sender_phone` and `recipient_phone`, and a second copy of the
+             * guard is the copy that misses the next key.
+             */
+            'package' => OrderDetails::packageFor($this->order()),
             'status' => $this->status->value,
             // Served so the UI never has to carry its own copy of the
             // transition graph. TripStatus stays the single source of
@@ -283,6 +325,37 @@ class TripResource extends JsonResource
         $share = (int) $earned->amount_minor;
 
         return [
+            /*
+             * Every movement this trip made in the driver's wallet, oldest
+             * first — the fare share, a tip the office confirmed (ADR-0034), a
+             * peak uplift (ADR-0036), a bonus, and the cash counterpart on a
+             * cash job.
+             *
+             * ## Why the whole row and not just an amount
+             *
+             * These are `DriverLedgerEntryResource`s, the identical shape the
+             * wallet statement already serves — so the driver app renders them
+             * with `StatementRow`, the component it already has, and a tip on
+             * this screen is worded exactly as the same tip is worded in the
+             * wallet. AGENTS.md's rule against duplicating UI applies to the
+             * payload that feeds it: two shapes for one fact about somebody's
+             * pay is two vocabularies to keep in step.
+             *
+             * `description` is the load-bearing field. ADR-0029 §3 freezes the
+             * commission rate that applied *in that string*, which is what lets
+             * a driver open a trip from March and see the rate that actually
+             * governed it.
+             *
+             * ## The service map is one entry, and it is built the cheap way
+             *
+             * `DriverLedgerEntryResource` labels a row "Ride earnings" rather
+             * than "Fare earned" from a trip-id → service-type map, because
+             * `->with('trip.orderRequest')` **silently returns nothing** on a
+             * walk-in: `TenantScope` fails closed, and a customer-owned trip
+             * has no tenant bound. Here the answer is already in hand — this is
+             * that trip — so the map is a single pair and no query is needed.
+             */
+            'lines' => $this->earningLines(),
             'earned_minor' => $share,
             // Never negative, whatever the data says: a commission larger
             // than the fare is not a thing the ledger can produce, and if it
@@ -298,6 +371,34 @@ class TripResource extends JsonResource
             'currency' => $earned->currency,
             'recorded_at' => $earned->created_at?->toIso8601String(),
         ];
+    }
+
+    /**
+     * The ledger rows this trip wrote, oldest first.
+     *
+     * Only reached from `driverEarningsFor()`, which has already checked that
+     * the caller is this trip's driver and that the relation was eager-loaded —
+     * so this method carries no gate of its own and must not be called from
+     * anywhere else.
+     *
+     * **The service-type map is a single pair, and it is absent rather than
+     * empty when there is no order.** `DriverLedgerEntryResource` reads
+     * `$map[$tripId] ?? null` and falls back to the kind's own label, so a
+     * missing key means "we do not know what kind of job this was" and an empty
+     * string would mean "it was a job of kind ''" — which would reach the
+     * handset as a row titled " earnings".
+     *
+     * @return Collection<int, DriverLedgerEntryResource>
+     */
+    private function earningLines(): Collection
+    {
+        $serviceType = $this->order()?->service_type->value;
+        $serviceTypes = $serviceType === null ? [] : [$this->id => $serviceType];
+
+        return $this->ledgerEntries
+            ->sortBy('id')
+            ->values()
+            ->map(fn (DriverLedgerEntry $entry) => new DriverLedgerEntryResource($entry, $serviceTypes));
     }
 
     /**
