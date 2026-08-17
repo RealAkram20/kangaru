@@ -133,6 +133,13 @@ final class ClientScope
                 // and the `drivers.documents.*` routes are absent from this
                 // list for that reason rather than by omission.
                 'me.profile.show',
+                // Correcting their own name or phone number. The seventh
+                // omission, and the one that proves the pattern is not about
+                // any single feature: the Profile screen's inline editor was
+                // 403 from the day it shipped. The office's own
+                // `drivers.update` stays off this list — a driver may correct
+                // two fields on their own row, not seven on anybody's.
+                'me.profile.update',
                 // Their own photograph (ADR-0041). All three are keyed off the
                 // token — there is no id in any path, so none can name another
                 // driver's portrait.
@@ -171,6 +178,37 @@ final class ClientScope
                 // the write is as safe as the read beside it.
                 'me.settlement-requests.index',
                 'me.settlement-requests.store',
+                // Where the office should send their money (ADR-0042), and
+                // asking for the account to be closed (ADR-0043).
+                //
+                // **The same omission, twice more, and found the same way.**
+                // Both shipped with a screen and neither reached this array,
+                // so Bank Details and the profile's danger zone answered 403
+                // to the only client that draws them — the fifth and sixth
+                // endpoints to do it. Caught here by a `curl` against the
+                // running server with a real driver token, which is the only
+                // thing that ever catches it: every backend test signs in
+                // without a `client` and gets an unscoped console token, so
+                // both suites are green while both screens are dead.
+                //
+                // Every one is keyed off the token with no id in the path, so
+                // none can name another driver's bank account or close
+                // somebody else's account.
+                'me.payout-account.show',
+                'me.payout-account.update',
+                'me.payout-account.destroy',
+                'me.closure-request.show',
+                'me.closure-request.store',
+                'me.closure-request.destroy',
+                // Reporting something to the office in writing, and reading
+                // the answer (ADR-0044). **Named here rather than left to be
+                // discovered**: this list fails closed, every backend test
+                // mints an unscoped console token, and four endpoints have
+                // already shipped 403 to the only client that has a screen for
+                // them by being omitted from exactly this array. There is a
+                // test asserting both names are on it.
+                'me.support-requests.index',
+                'me.support-requests.store',
 
                 // Going on duty, and saying where they are (ADR-0024 §2).
                 // The app cannot be offered work without these, and the

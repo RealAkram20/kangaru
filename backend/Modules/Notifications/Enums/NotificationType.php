@@ -37,6 +37,28 @@ enum NotificationType: string
      */
     case TRIP_OFFERED = 'trip.offered';
 
+    /**
+     * What the office decided about closing a driver's account (ADR-0043 §4).
+     *
+     * **The first return path this platform has built for a driver-facing
+     * decision**, and it earns the addition on this enum's own test: the
+     * recipient has no other surface. A confirmed closure detaches their
+     * sign-in, so the in-app row every other type relies on is not readable
+     * by the one person it concerns.
+     */
+    case DRIVER_CLOSURE_ANSWERED = 'driver.closure.answered';
+
+    /**
+     * The office's answer to a report the driver wrote (ADR-0044 §4).
+     *
+     * The argument this enum asks for: **it is the only message here the
+     * recipient explicitly asked for.** Everything else announces an event to
+     * somebody who did not ask; this answers a question a driver wrote down,
+     * and it is bounded at one per report by construction — there is no
+     * threading and no reopening (ADR-0044 §5).
+     */
+    case DRIVER_SUPPORT_ANSWERED = 'driver.support.answered';
+
     public function label(): string
     {
         return match ($this) {
@@ -45,6 +67,8 @@ enum NotificationType: string
             self::REPORT_EXPORT_READY => 'Export ready',
             self::ORDER_REQUEST_RECEIVED => 'Walk-in order received',
             self::TRIP_OFFERED => 'New job',
+            self::DRIVER_CLOSURE_ANSWERED => 'Account closure',
+            self::DRIVER_SUPPORT_ANSWERED => 'Report answered',
         };
     }
 
@@ -82,6 +106,30 @@ enum NotificationType: string
             self::TRIP_OFFERED => [
                 NotificationChannel::PUSH,
                 NotificationChannel::DATABASE,
+            ],
+            /*
+             * **Mail only, and the omissions are the point.** A confirmed
+             * closure has just detached this driver's sign-in, so a `DATABASE`
+             * row would be written into an inbox nobody can open and a `PUSH`
+             * would go to a device that can no longer authenticate. Email is
+             * the one channel that still reaches somebody whose account has
+             * stopped working.
+             */
+            self::DRIVER_CLOSURE_ANSWERED => [NotificationChannel::MAIL],
+            /*
+             * **The in-app row and a push, never mail.** The row is where the
+             * driver goes looking and survives a refused OS permission; the
+             * push is justified by the recipient having asked the question
+             * themselves, which no other type here can say.
+             *
+             * Mail is wrong for the reason it was right one case above: that
+             * driver's account had just stopped working, and this one's has
+             * not. A driver with a working app does not need an email about a
+             * message already waiting in it.
+             */
+            self::DRIVER_SUPPORT_ANSWERED => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::PUSH,
             ],
         };
     }

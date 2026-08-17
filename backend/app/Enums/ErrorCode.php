@@ -212,4 +212,8 @@ enum ErrorCode: string
      * duplicates is a queue the office stops reading.
      */
     case SETTLEMENT_REQUEST_ALREADY_OPEN = 'SETTLEMENT_REQUEST_ALREADY_OPEN';
+    /** ADR-0043. One open closure request per driver; withdraw it to change it. */
+    case CLOSURE_REQUEST_ALREADY_OPEN = 'CLOSURE_REQUEST_ALREADY_OPEN';
+    /** ADR-0043. A second reviewer answering a queue row a colleague just answered. */
+    case CLOSURE_REQUEST_ALREADY_DECIDED = 'CLOSURE_REQUEST_ALREADY_DECIDED';
 }

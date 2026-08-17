@@ -44,8 +44,10 @@ use Modules\Drivers\Listeners\CreditDriverForCompletedTrip;
 use Modules\Drivers\Listeners\QualifyReferralForCompletedTrip;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverApplication;
+use Modules\Drivers\Models\DriverClosureRequest;
 use Modules\Drivers\Models\DriverDocument;
 use Modules\Drivers\Models\DriverLedgerEntry;
+use Modules\Drivers\Models\DriverPayoutAccount;
 use Modules\Drivers\Models\DriverSettlementRequest;
 use Modules\Drivers\Policies\DriverApplicationPolicy;
 use Modules\Drivers\Policies\DriverDocumentPolicy;
@@ -65,6 +67,8 @@ use Modules\Notifications\Listeners\SendBookingDecisionNotification;
 use Modules\Notifications\Listeners\SendReportExportReadyNotification;
 use Modules\Reports\Enums\ReportType;
 use Modules\Reports\Events\ReportExportCompleted;
+use Modules\Support\Models\SupportRequest;
+use Modules\Support\Policies\SupportRequestPolicy;
 use Modules\Trips\Events\TripCompleted;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Models\TripRating;
@@ -189,6 +193,8 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(AvailabilityBlock::class, AvailabilityBlockPolicy::class);
         Gate::policy(Customer::class, CustomerPolicy::class);
         Gate::policy(Zone::class, ZonePolicy::class);
+        // ADR-0044. The office's side of a driver's written report.
+        Gate::policy(SupportRequest::class, SupportRequestPolicy::class);
 
         // A Gate rather than a Policy: reports are not a model, and
         // AGENTS.md's authorization rule names Gates alongside Policies.
@@ -271,6 +277,21 @@ class AppServiceProvider extends ServiceProvider
             // the first staff decision on this platform about a legal
             // document — who looked, when, and from which IP is the point.
             'driver_document' => DriverDocument::class,
+            // ADR-0042. A changed account number is the most valuable edit an
+            // attacker could make to a driver's record, and the morph map is
+            // what lets the audit log name the row it happened to. An
+            // `Auditable` model missing from this array throws on every insert
+            // — `VehicleAllocation` once shipped a table where it did.
+            'driver_payout_account' => DriverPayoutAccount::class,
+            // ADR-0043. Confirming one ends somebody's ability to work, which
+            // is a decision the office may be asked to account for.
+            'driver_closure_request' => DriverClosureRequest::class,
+            // ADR-0044. Answering a report is a staff act on somebody else's
+            // account of what happened to them — "who told this driver their
+            // fare was correct, and when" is the question a disputed payment
+            // asks a month later, and the morph map is what lets the audit log
+            // name the row it happened to.
+            'support_request' => SupportRequest::class,
             'trip' => Trip::class,
             // ADR-0030. A rating cannot be edited or withdrawn, so the only
             // mutation an audit trail will ever see here is an administrator

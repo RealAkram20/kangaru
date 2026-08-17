@@ -52,5 +52,10 @@ Route::prefix('v1')->group(function () {
         require base_path('Modules/Billing/Routes/api.php');
         require base_path('Modules/Reports/Routes/api.php');
         require base_path('Modules/Notifications/Routes/api.php');
+        // ADR-0044. Both halves of driver issue reporting — the driver's `/me`
+        // writes and the office queue — in one module, because they are one
+        // feature and splitting them is how the office half comes to be
+        // skipped.
+        require base_path('Modules/Support/Routes/api.php');
     });
 });
