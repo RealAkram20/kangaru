@@ -7196,15 +7196,75 @@ knowing:**
 | coverage from kept points instead of presence | *does not lose coverage to a parked stretch whose pings were dropped as jitter* |
 | drop the `mockDropped === 0` bar from trust | *does not trust a trace with a single mock-location ping in it* |
 
-**Not built, deliberately, and where it is written down:** the shadow report
-(plan Phase 1 step 5 — a Reports-module piece, the instrument the flip is
-judged on); the console's tracking card for the new keys (API-only until then,
-same as `billing` was before ADR-0035); `rate_card_versions.distance_policy`
-(Phase 2, with billing); the grade-C gate; anything on the handset. The five
-decisions in the plan's §7 are still the owner's.
+**Not built, deliberately, and where it is written down:**
+`rate_card_versions.distance_policy` (Phase 2, with billing); the grade-C
+gate; anything on the handset. The five decisions in the plan's §7 are still
+the owner's. *(The shadow report and the console's tracking card, listed here
+as not built when this entry was written, landed in the entry below.)*
 
 **Operations, before any of this measures anything real:** stand up OSRM on
 the Uganda extract, point `maps.osrm_base_url` at it, set
 `tracking.trace_matching_enabled` to true, and keep a queue worker running.
 Until then every row says `provider: haversine` and every grade is C, and the
 README says why.
+
+### 2026-08-18 — Measured distance, Phase 1 step 5: the shadow report and the console's dials
+
+**Status:** built, on `feat/measured-distance` in the worktree, following the
+entry above. **Not driven in a browser** — see the last paragraph. Backend:
+`tests/Feature/Reports/DistanceReportTest.php` (7) and the contract tests
+green; Pint and PHPStan L8 clean. Frontend: **42 files, 399 tests green**,
+`tsc -b --force` clean, eslint and prettier clean. **Two frontend mutations
+proved and restored.**
+
+**Source:** the owner: *"go on."*
+
+**What exists now:**
+
+- `GET /api/v1/reports/distance` — `DistanceReportController`,
+  `DistanceReportRequest`, `DistanceReportRepository`,
+  `DistanceReportRowResource` in `Modules/Reports`. One row per completed
+  trip (latest evidence), whole-set summary: grades, engine, no-trace,
+  no-reference, variance-flagged, mock-ping count, mean coverage, coverage
+  buckets, trace-vs-odometer and trace-vs-route deviation buckets, and
+  **`unresolved`** — completed trips with no resolution, the queue-health
+  figure. Filters `from`, `to`, `grade`, `provider`, `tenant_id` (platform
+  only). Documented in `openapi.yaml` (`DistanceReportRow`,
+  `DistanceReportSummary`, `DistanceDeviationBuckets`, `DistanceGrade`).
+- **Not a `ReportType`**, deliberately — it is not exportable, and that enum
+  is the export seam. The request class says when it would become one.
+- `frontend/src/pages/reports/DistanceReport.tsx` — "Measured distance" in
+  the Reports picker: six KPI tiles (resolved / A / B / C / mean coverage /
+  engine), three distributions with proportional bars *and* counts (never
+  colour alone), grade + engine filters, the row table with the resolver's
+  one-sentence reason on hover, cursor `LoadMore`. The export panel is
+  withheld on it. The Engine tile says **"Off — switch on trace matching once
+  OSRM is self-hosted"** when every trip was measured by straight line, so a
+  wall of C reads as unconfigured, not fraudulent; the Resolved tile says
+  **"N completed but not yet resolved — check the queue worker."**
+- `SystemSettingsPage` `TrackingCard`: the *Snap GPS traces to roads*
+  switch and all eleven dials, saved as one group (the existing test's
+  payload widened; a new test flips the switch and asserts every dial
+  travels back unchanged).
+- Reports README section; ADR-0045 Consequences corrected.
+
+**Two things caught on the way:** a trip with *no* pings has 0 % coverage,
+not null — a handset that never reported is not an unknown — so the summary's
+mean is over every resolved trip; and Laravel's `expectsOutputToContain`
+consumes lines against earlier expectations in order (Mockery), so the
+replay-command test names distinct lines. Both are in the code comments.
+
+**Mutations proved and restored (frontend):**
+
+| Mutation | Test that caught it |
+|---|---|
+| Engine tile shows "Off" over an empty set instead of "—" | *shows the empty state, and never a zero, when nothing has been resolved* |
+| grade filter not sent to the server | *re-fetches with the grade and engine filters and the chosen client* |
+
+**Not driven in a browser.** The worktree shares the dev database with the
+main tree's session and has none of the new migrations applied there; running
+`artisan serve` against the worktree's testing database plus a seeded login
+was more disturbance to the other session than the check is worth tonight.
+The panel is rendered by RTL under StrictMode in six tests and the page test
+suite passes with it wired in; **the first person to open Reports → Measured
+distance on a running stack should look at it and say so here.**

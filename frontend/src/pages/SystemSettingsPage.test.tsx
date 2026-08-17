@@ -49,7 +49,22 @@ const SETTINGS = {
     referral_trip_target: 10,
     referral_reward_amount_minor: 10000,
   },
-  tracking: { variance_threshold_percent: 10, odometer_max_km_per_trip: 2000 },
+  tracking: {
+    variance_threshold_percent: 10,
+    odometer_max_km_per_trip: 2000,
+    trace_matching_enabled: false,
+    min_coverage_percent: 80,
+    max_inferred_share_percent: 25,
+    max_ping_accuracy_metres: 50,
+    max_plausible_speed_kph: 160,
+    max_teleports: 2,
+    gap_seconds: 120,
+    route_tolerance_percent: 15,
+    corridor_floor_percent: 90,
+    corridor_ceiling_percent: 125,
+    detour_cap_percent: 15,
+    resolution_grace_seconds: 120,
+  },
   mail: {
     enabled: false,
     host: null,
@@ -163,9 +178,7 @@ describe('SystemSettingsPage', () => {
 
     render(<SystemSettingsPage />)
 
-    expect(
-      await screen.findByText(/not available to your role/i),
-    ).toBeInTheDocument()
+    expect(await screen.findByText(/not available to your role/i)).toBeInTheDocument()
     expect(screen.queryByLabelText(/app name/i)).not.toBeInTheDocument()
   })
 
@@ -190,13 +203,15 @@ describe('SystemSettingsPage', () => {
     await user.type(name, 'Shanitah Rides')
     await user.click(screen.getAllByRole('button', { name: /save changes/i })[0])
 
-    await waitFor(() => expect(patch).toHaveBeenCalledWith('/settings/branding', {
-      app_name: 'Shanitah Rides',
-      tagline: 'For Safety and Reliability',
-      meta_description: null,
-      contact_email: 'operations@kangaruride.com',
-      contact_phone: null,
-    }))
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith('/settings/branding', {
+        app_name: 'Shanitah Rides',
+        tagline: 'For Safety and Reliability',
+        meta_description: null,
+        contact_email: 'operations@kangaruride.com',
+        contact_phone: null,
+      }),
+    )
     // The save feedback: the button itself says so, quietly.
     expect(await screen.findByRole('button', { name: /saved/i })).toBeInTheDocument()
   })
@@ -218,10 +233,12 @@ describe('SystemSettingsPage', () => {
     const paymentsSave = screen.getAllByRole('button', { name: /save changes/i }).at(-1)!
     await user.click(paymentsSave)
 
-    await waitFor(() => expect(patch).toHaveBeenCalledWith('/settings/payments', {
-      mtn_momo_api_user: 'momo-user',
-      airtel_money_client_id: null,
-    }))
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith('/settings/payments', {
+        mtn_momo_api_user: 'momo-user',
+        airtel_money_client_id: null,
+      }),
+    )
   })
 
   it('gives the driver-pay group a card at last, and saves the whole group', async () => {
@@ -293,7 +310,45 @@ describe('SystemSettingsPage', () => {
       expect(patch).toHaveBeenCalledWith('/settings/tracking', {
         variance_threshold_percent: 10,
         odometer_max_km_per_trip: 300,
+        trace_matching_enabled: false,
+        max_ping_accuracy_metres: 50,
+        max_plausible_speed_kph: 160,
+        max_teleports: 2,
+        gap_seconds: 120,
+        min_coverage_percent: 80,
+        max_inferred_share_percent: 25,
+        route_tolerance_percent: 15,
+        corridor_floor_percent: 90,
+        corridor_ceiling_percent: 125,
+        detour_cap_percent: 15,
+        resolution_grace_seconds: 120,
       }),
+    )
+  })
+
+  it('switches trace matching on and saves the whole tracking group with it (ADR-0045)', async () => {
+    const user = userEvent.setup()
+    get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+    patch.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+    render(<SystemSettingsPage />)
+
+    const toggle = await screen.findByLabelText(/snap gps traces to roads/i)
+    expect(toggle).not.toBeChecked()
+
+    await user.click(toggle)
+    await user.click(within(toggle.closest('form')!).getByRole('button', { name: /save changes/i }))
+
+    // The switch travels with every dial, unchanged — a partial PATCH would
+    // reset the corridor the moment somebody flipped the engine on.
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith(
+        '/settings/tracking',
+        expect.objectContaining({
+          trace_matching_enabled: true,
+          corridor_ceiling_percent: 125,
+          resolution_grace_seconds: 120,
+        }),
+      ),
     )
   })
 

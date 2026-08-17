@@ -185,8 +185,10 @@ weeks of shadow data and against the flip criteria the plan proposes.
 ## Consequences
 
 - Every completed trip now carries a figure and a grade it *would* be billed
-  on, and a row explaining why. The shadow report over those rows is the
-  instrument the flip is judged on; it is not built yet (Phase 1 step 5).
+  on, and a row explaining why. The shadow report over those rows —
+  `GET /reports/distance`, "Measured distance" on the console's Reports page
+  — is the instrument the flip is judged on, and the tracking settings card
+  carries the switch and every dial.
 - Two new columns on `trips` are written from the queue, on a model with
   `Auditable`; each resolution appends an `updated` audit entry with the
   diff. Acceptable and, for a figure that will be billed, arguably right.

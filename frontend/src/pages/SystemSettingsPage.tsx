@@ -77,10 +77,25 @@ interface Settings {
     referral_trip_target: number
     referral_reward_amount_minor: number
   }
-  /** ADR-0035: the two numbers that decide whether a reading is believed. */
+  /**
+   * ADR-0035: the two numbers that decide whether a reading is believed;
+   * ADR-0045: the switch and the dials the distance resolver turns on.
+   */
   tracking: {
     variance_threshold_percent: number
     odometer_max_km_per_trip: number
+    trace_matching_enabled: boolean
+    min_coverage_percent: number
+    max_inferred_share_percent: number
+    max_ping_accuracy_metres: number
+    max_plausible_speed_kph: number
+    max_teleports: number
+    gap_seconds: number
+    route_tolerance_percent: number
+    corridor_floor_percent: number
+    corridor_ceiling_percent: number
+    detour_cap_percent: number
+    resolution_grace_seconds: number
   }
   mail: {
     enabled: boolean
@@ -195,7 +210,11 @@ export function SystemSettingsPage() {
       <MapsCard maps={settings.maps} onSaved={setSettings} />
       <RegionalCard regional={settings.regional} onSaved={setSettings} />
       <LegalCard legal={settings.legal} onSaved={setSettings} />
-      <AuthMethodsCard auth={settings.auth} mailEnabled={settings.mail.enabled} onSaved={setSettings} />
+      <AuthMethodsCard
+        auth={settings.auth}
+        mailEnabled={settings.mail.enabled}
+        onSaved={setSettings}
+      />
       <MailCard mail={settings.mail} onSaved={setSettings} />
       <SmsCard sms={settings.sms} onSaved={setSettings} />
       <PaymentsCard payments={settings.payments} onSaved={setSettings} />
@@ -355,7 +374,11 @@ function BrandingCard({
         </FormField>
 
         <FormField label="Tagline" htmlFor="settings-tagline" error={errors.tagline}>
-          <Input id="settings-tagline" value={tagline} onChange={(e) => setTagline(e.target.value)} />
+          <Input
+            id="settings-tagline"
+            value={tagline}
+            onChange={(e) => setTagline(e.target.value)}
+          />
         </FormField>
 
         <FormField
@@ -387,7 +410,11 @@ function BrandingCard({
           />
         </FormField>
 
-        <FormField label="Contact phone" htmlFor="settings-contact-phone" error={errors.contact_phone}>
+        <FormField
+          label="Contact phone"
+          htmlFor="settings-contact-phone"
+          error={errors.contact_phone}
+        >
           <Input
             id="settings-contact-phone"
             iconLeft="phone"
@@ -631,17 +658,16 @@ function MapsCard({ maps, onSaved }: { maps: Settings['maps']; onSaved: (s: Sett
 
         {provider === 'google' ? (
           <Alert tone="info" title="This one costs money per trip">
-            Google charges for every route it calculates, so this is the one setting on
-            this page with a running cost attached. It buys live traffic, which is the
-            whole difference from OSRM below.
+            Google charges for every route it calculates, so this is the one setting on this page
+            with a running cost attached. It buys live traffic, which is the whole difference from
+            OSRM below.
           </Alert>
         ) : (
           <Alert tone="info" title="Free, and not yet ready for a real fleet">
-            OSRM needs no key and costs nothing, so routing works as soon as you turn it
-            on. It routes on road geometry rather than live traffic, so its arrival
-            times read optimistic in rush hour. The default address is the project&rsquo;s
-            public demo server, which is rate-limited and not meant for production —
-            run your own before drivers depend on it.
+            OSRM needs no key and costs nothing, so routing works as soon as you turn it on. It
+            routes on road geometry rather than live traffic, so its arrival times read optimistic
+            in rush hour. The default address is the project&rsquo;s public demo server, which is
+            rate-limited and not meant for production — run your own before drivers depend on it.
           </Alert>
         )}
 
@@ -687,14 +713,14 @@ function MapsCard({ maps, onSaved }: { maps: Settings['maps']; onSaved: (s: Sett
         )}
 
         {provider === 'google' && (
-        <SecretField
-          label="Google Directions API key"
-          htmlFor="settings-maps-api-key"
-          secret={maps.api_key}
-          value={apiKey}
-          onChange={setApiKey}
-          error={errors.api_key}
-        />
+          <SecretField
+            label="Google Directions API key"
+            htmlFor="settings-maps-api-key"
+            secret={maps.api_key}
+            value={apiKey}
+            onChange={setApiKey}
+            error={errors.api_key}
+          />
         )}
 
         <SaveButton state={state} />
@@ -932,9 +958,7 @@ function BillingCard({
   const [peakPercent, setPeakPercent] = useState(String(billing.peak_uplift_percent))
   const [referralEnabled, setReferralEnabled] = useState(billing.referral_enabled)
   const [referralTarget, setReferralTarget] = useState(String(billing.referral_trip_target))
-  const [referralReward, setReferralReward] = useState(
-    String(billing.referral_reward_amount_minor),
-  )
+  const [referralReward, setReferralReward] = useState(String(billing.referral_reward_amount_minor))
   const { state, errors, message, setMessage, save } = useSave('billing', onSaved)
 
   return (
@@ -1154,6 +1178,13 @@ function BillingCard({
  * partition headroom and the GPS noise floor are properties of the measuring
  * apparatus rather than business rules, and a noise floor in an admin form is
  * an invitation to break distance measurement for the whole fleet.
+ *
+ * The second half of the card is ADR-0045's: the switch that lets the
+ * distance resolver snap traces to roads against the operator's own OSRM,
+ * and every bar it holds a trace to. Off by default because the OSRM URL
+ * defaults to the public demo server; the hint says what to do about that.
+ * None of these prices a fare yet — the resolver runs in shadow and the
+ * Measured distance report shows what it found.
  */
 function TrackingCard({
   tracking,
@@ -1164,12 +1195,23 @@ function TrackingCard({
 }) {
   const [threshold, setThreshold] = useState(String(tracking.variance_threshold_percent))
   const [ceiling, setCeiling] = useState(String(tracking.odometer_max_km_per_trip))
+  const [matching, setMatching] = useState(tracking.trace_matching_enabled)
+  // The resolver's dials, as strings while edited (ADR-0045). Keyed by the
+  // setting name so the save payload is a map over this list rather than a
+  // hand-typed object that can drift from it.
+  const [dials, setDials] = useState<Record<DistanceDial, string>>(
+    () =>
+      Object.fromEntries(DISTANCE_DIALS.map((d) => [d.key, String(tracking[d.key])])) as Record<
+        DistanceDial,
+        string
+      >,
+  )
   const { state, errors, message, setMessage, save } = useSave('tracking', onSaved)
 
   return (
     <Card
       title="Distance checks"
-      subtitle="How far a single trip may plausibly be, and how far the odometer may disagree with the GPS trace before somebody looks at it."
+      subtitle="How far a single trip may plausibly be, how far the odometer may disagree with the GPS trace before somebody looks at it, and how the measured trace is judged."
     >
       <form
         onSubmit={(e) => {
@@ -1177,6 +1219,8 @@ function TrackingCard({
           void save({
             variance_threshold_percent: Number(threshold),
             odometer_max_km_per_trip: Number(ceiling),
+            trace_matching_enabled: matching,
+            ...Object.fromEntries(DISTANCE_DIALS.map((d) => [d.key, Number(dials[d.key])])),
           })
         }}
         style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
@@ -1226,16 +1270,152 @@ function TrackingCard({
         </FormField>
 
         <Alert tone="info" title="This only flags — it does not stop anything">
-          A flagged trip is still invoiced and still pays the driver. Reviewing
-          flagged trips is a manual job today, and the fare is priced from the
-          odometer rather than the GPS trace.
+          A flagged trip is still invoiced and still pays the driver. Reviewing flagged trips is a
+          manual job today, and the fare is priced from the odometer rather than the GPS trace.
         </Alert>
+
+        <Checkbox
+          label="Snap GPS traces to roads (measured distance)"
+          hint="Lets the distance resolver match every completed trip's trace to the road network and route across gaps, against the OSRM server on the Maps card. Off by default because that URL starts as OSRM's public demo, which is not for production — switch this on once it points at your own server. Off, every trip is measured by straight line and graded accordingly; nothing is billed from the result either way yet."
+          checked={matching}
+          onChange={(e) => setMatching(e.target.checked)}
+        />
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+            gap: 'var(--space-4)',
+          }}
+        >
+          {DISTANCE_DIALS.map((dial) => (
+            <FormField
+              key={dial.key}
+              label={dial.label}
+              htmlFor={`settings-${dial.key}`}
+              hint={dial.hint}
+              error={errors[dial.key]}
+              required
+            >
+              <Input
+                id={`settings-${dial.key}`}
+                type="number"
+                min={dial.min}
+                max={dial.max}
+                value={dials[dial.key]}
+                onChange={(e) => setDials({ ...dials, [dial.key]: e.target.value })}
+                required
+                style={{ maxWidth: 140 }}
+              />
+            </FormField>
+          ))}
+        </div>
 
         <SaveButton state={state} />
       </form>
     </Card>
   )
 }
+
+/** The `tracking` keys ADR-0045 added, in the order they act on a trip. */
+type DistanceDial =
+  | 'max_ping_accuracy_metres'
+  | 'max_plausible_speed_kph'
+  | 'max_teleports'
+  | 'gap_seconds'
+  | 'min_coverage_percent'
+  | 'max_inferred_share_percent'
+  | 'route_tolerance_percent'
+  | 'corridor_floor_percent'
+  | 'corridor_ceiling_percent'
+  | 'detour_cap_percent'
+  | 'resolution_grace_seconds'
+
+const DISTANCE_DIALS: {
+  key: DistanceDial
+  label: string
+  hint: string
+  min: number
+  max: number
+}[] = [
+  {
+    key: 'max_ping_accuracy_metres',
+    label: 'Drop pings less accurate than (m)',
+    hint: 'The handset rates each fix; worse than this and it is not evidence.',
+    min: 1,
+    max: 1000,
+  },
+  {
+    key: 'max_plausible_speed_kph',
+    label: 'Fastest plausible move (km/h)',
+    hint: 'A ping implying more than this since the last kept one is a teleport — a bad fix or a spoofing app — and is dropped.',
+    min: 10,
+    max: 400,
+  },
+  {
+    key: 'max_teleports',
+    label: 'Teleports tolerated per trip',
+    hint: 'More than this and the trace is not believed at all.',
+    min: 0,
+    max: 100,
+  },
+  {
+    key: 'gap_seconds',
+    label: 'Silence that opens a gap (s)',
+    hint: 'Two pings further apart than this are a gap; the road between them is routed rather than assumed straight.',
+    min: 10,
+    max: 3600,
+  },
+  {
+    key: 'min_coverage_percent',
+    label: 'Minimum trip coverage (%)',
+    hint: 'A trace is billed as measured only when pings cover at least this share of the trip.',
+    min: 1,
+    max: 100,
+  },
+  {
+    key: 'max_inferred_share_percent',
+    label: 'Maximum inferred across gaps (%)',
+    hint: '…and at most this share of its distance was routed across gaps rather than matched from pings.',
+    min: 0,
+    max: 100,
+  },
+  {
+    key: 'route_tolerance_percent',
+    label: 'Road agreement tolerance (%)',
+    hint: 'A trusted trace within this of the reference route (plus 0.5 km) is grade A; beyond it grade B, still billed.',
+    min: 0,
+    max: 100,
+  },
+  {
+    key: 'corridor_floor_percent',
+    label: 'Odometer corridor floor (% of road)',
+    hint: 'When the trace is not trusted the odometer stands in, held between this share of the reference route…',
+    min: 1,
+    max: 100,
+  },
+  {
+    key: 'corridor_ceiling_percent',
+    label: 'Odometer corridor ceiling (% of road)',
+    hint: '…and this. Inside untouched is grade B; a reading that had to be clamped is grade C and held for review.',
+    min: 100,
+    max: 300,
+  },
+  {
+    key: 'detour_cap_percent',
+    label: 'Detour allowance (%)',
+    hint: 'Under a route-capped contract only: the billed figure may not exceed the reference route by more than this unless the driver declared a stop.',
+    min: 0,
+    max: 100,
+  },
+  {
+    key: 'resolution_grace_seconds',
+    label: 'Wait after completion (s)',
+    hint: 'How long the resolver waits for the last ping batches to land before measuring. Late pings re-run it anyway.',
+    min: 0,
+    max: 3600,
+  },
+]
 
 function BookingCard({
   booking,
@@ -1249,10 +1429,7 @@ function BookingCard({
   const { state, errors, message, setMessage, save } = useSave('booking', onSaved)
 
   return (
-    <Card
-      title="Booking rules"
-      subtitle="How corporate bookings move from request to dispatch."
-    >
+    <Card title="Booking rules" subtitle="How corporate bookings move from request to dispatch.">
       <form
         onSubmit={(e) => {
           e.preventDefault()
@@ -1410,7 +1587,12 @@ function MailCard({ mail, onSaved }: { mail: Settings['mail']; onSaved: (s: Sett
           error={errors.password}
         />
 
-        <FormField label="Encryption" htmlFor="settings-mail-encryption" error={errors.encryption} required>
+        <FormField
+          label="Encryption"
+          htmlFor="settings-mail-encryption"
+          error={errors.encryption}
+          required
+        >
           <Select
             id="settings-mail-encryption"
             value={encryption}
@@ -1592,7 +1774,11 @@ function PaymentsCard({
           </Alert>
         )}
 
-        <FormField label="MTN MoMo API user" htmlFor="settings-mtn-user" error={errors.mtn_momo_api_user}>
+        <FormField
+          label="MTN MoMo API user"
+          htmlFor="settings-mtn-user"
+          error={errors.mtn_momo_api_user}
+        >
           <Input
             id="settings-mtn-user"
             autoComplete="off"
@@ -1697,7 +1883,12 @@ function RegionalCard({
           />
         </FormField>
 
-        <FormField label="Date format" htmlFor="settings-date-format" error={errors.date_format} required>
+        <FormField
+          label="Date format"
+          htmlFor="settings-date-format"
+          error={errors.date_format}
+          required
+        >
           <Input
             id="settings-date-format"
             value={dateFormat}

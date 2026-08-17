@@ -16,6 +16,7 @@ import type {
   TripReportSummary,
 } from '../types/report'
 import type { Vehicle } from '../types/vehicle'
+import { DistanceReport } from './reports/DistanceReport'
 import { ExportPanel } from './reports/ExportPanel'
 import { FinancialReport } from './reports/FinancialReport'
 import { FleetReport } from './reports/FleetReport'
@@ -175,19 +176,35 @@ async function fetchReport(filters: TripReportFilters, client: string) {
   }
 }
 
-/** PROJECT.md's four Phase 1 reports, in the order it lists them. */
-const REPORTS: { value: ReportType; subtitle: string }[] = [
+/**
+ * What this page can show: the four exportable reports (`ReportType`, which
+ * mirrors the server enum the export endpoint accepts) plus the
+ * measured-distance shadow report (ADR-0045), which is on-screen only — it
+ * is the operator's instrument for judging the trace before the fare is
+ * priced from it, and the export panel is not offered on it because the
+ * server would refuse the request.
+ */
+type PageReport = ReportType | 'distance'
+
+/** PROJECT.md's four Phase 1 reports, in the order it lists them, then ADR-0045's. */
+const REPORTS: { value: PageReport; subtitle: string }[] = [
   { value: 'trips', subtitle: 'Every trip that commenced in the selected period' },
   { value: 'drivers', subtitle: 'Every driver who commenced a trip in the selected period' },
   { value: 'vehicles', subtitle: 'Every vehicle that commenced a trip in the selected period' },
   { value: 'financial', subtitle: 'Invoiced, credited and outstanding per period' },
+  {
+    value: 'distance',
+    subtitle:
+      'How each completed trip’s distance was measured, graded and would be billed — nothing is billed from it yet',
+  },
 ]
 
-const REPORT_LABELS: Record<ReportType, string> = {
+const REPORT_LABELS: Record<PageReport, string> = {
   trips: 'Trip report',
   drivers: 'Driver report',
   vehicles: 'Vehicle report',
   financial: 'Financial report',
+  distance: 'Measured distance',
 }
 
 const GROUP_BY: { value: FinancialPeriod; label: string }[] = [
@@ -208,7 +225,7 @@ export function ReportsPage() {
     () => REPORTS.filter((r) => r.value !== 'financial' || canViewInvoices(user)),
     [user],
   )
-  const [report, setReport] = useState<ReportType>('trips')
+  const [report, setReport] = useState<PageReport>('trips')
   // Bumped by Run report, so the aggregate reports re-fetch on demand
   // rather than on every keystroke in a date field.
   const [fleetToken, setFleetToken] = useState(0)
@@ -318,7 +335,7 @@ export function ReportsPage() {
             <Select
               id="r-report"
               value={report}
-              onChange={(e) => setReport(e.target.value as ReportType)}
+              onChange={(e) => setReport(e.target.value as PageReport)}
               options={available.map((r) => ({ value: r.value, label: REPORT_LABELS[r.value] }))}
             />
           </FormField>
@@ -452,6 +469,17 @@ export function ReportsPage() {
         </PanelBoundary>
       )}
 
+      {report === 'distance' && (
+        <PanelBoundary label="the measured-distance report">
+          <DistanceReport
+            from={filters.from}
+            to={filters.to}
+            client={client}
+            reloadToken={fleetToken}
+          />
+        </PanelBoundary>
+      )}
+
       {report === 'trips' && summary && (
         <PanelBoundary label="the trip summary">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
@@ -511,9 +539,13 @@ export function ReportsPage() {
         </PanelBoundary>
       )}
 
-      <PanelBoundary label="the export panel">
-        <ExportPanel filters={filters} report={report} />
-      </PanelBoundary>
+      {/* Not on the distance report: it is on-screen only, and the export
+          endpoint would refuse it (see `PageReport`). */}
+      {report !== 'distance' && (
+        <PanelBoundary label="the export panel">
+          <ExportPanel filters={filters} report={report} />
+        </PanelBoundary>
+      )}
 
       {report === 'trips' && (
         // The table carrying the Bank's six acceptance criteria. If any

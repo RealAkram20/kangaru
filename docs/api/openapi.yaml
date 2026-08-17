@@ -5083,6 +5083,58 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/reports/distance:
+    get:
+      summary: The measured-distance shadow report — every completed trip's latest resolution, and the distributions the flip is judged on (ADR-0045).
+      description: >
+        Phase 1 of `docs/measured-distance-plan.md` runs the distance resolver
+        on every completed trip and prices nothing from it. This report is
+        how an operator reads what it found: one row per trip (its **latest**
+        resolution), and over the whole filtered set the grade counts, the
+        engine used, how the trace compares with the odometer and with the
+        road, how much of each trip the handset covered, and how many
+        completed trips have no resolution at all — the "is the queue
+        running" figure.
+
+
+        Tenant filter as the trip report: optional for platform staff,
+        refused for a client's user (ADR-0007). A walk-in trip has no tenant
+        and appears in the all-clients scope only. Not exportable.
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date }, description: 'Against the trip''s completion time.' }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: grade, in: query, schema: { $ref: '#/components/schemas/DistanceGrade' } }
+        - { name: provider, in: query, schema: { type: string, enum: [osrm, haversine] } }
+        - { name: tenant_id, in: query, schema: { type: integer }, description: 'Platform staff only; omitted, the report spans all clients.' }
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          description: Report rows plus a whole-set summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DistanceReportRow' }
+                  meta:
+                    type: object
+                    required: [cursor, summary, scope, covers, filters]
+                    additionalProperties: false
+                    properties:
+                      cursor: { $ref: '#/components/schemas/Cursor' }
+                      summary: { $ref: '#/components/schemas/DistanceReportSummary' }
+                      scope: { $ref: '#/components/schemas/Scope' }
+                      covers: { type: string }
+                      filters: { $ref: '#/components/schemas/ClientsFilter' }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/reports/drivers:
     get:
       summary: Driver activity aggregate — one row per driver (ADR-0007 rule 3).
@@ -9237,6 +9289,144 @@ components:
         expires_at: { $ref: '#/components/schemas/NullableTimestamp' }
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
         finished_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    DistanceGrade:
+      description: >
+        How far a trip's billed distance can be trusted (ADR-0045). `A` —
+        measured, and the road agrees ("GPS-verified"). `B` — bounded: a
+        measured trace that strayed from the reference, or an odometer held
+        inside the road's corridor; billed. `C` — held: the evidence does not
+        support a figure; nothing bills from it until a person clears it.
+      type: string
+      enum: [A, B, C]
+
+    DistanceReportRow:
+      description: One completed trip's latest distance resolution (ADR-0045).
+      type: object
+      required:
+        - trip_id
+        - tenant_id
+        - origin
+        - destination
+        - completed_at
+        - driver_name
+        - vehicle_registration
+        - resolved_at
+        - policy
+        - grade
+        - billed_km
+        - reason
+        - odometer_km
+        - gps_km
+        - matched_km
+        - inferred_km
+        - route_km
+        - reference_source
+        - coverage_percent
+        - inferred_share_percent
+        - pings_total
+        - pings_kept
+        - provider
+        - variance_flagged
+      additionalProperties: false
+      properties:
+        trip_id: { type: integer }
+        tenant_id: { type: ['integer', 'null'], description: 'Null for a walk-in — the platform''s own trip.' }
+        origin: { type: string }
+        destination: { type: string }
+        completed_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        driver_name: { type: ['string', 'null'] }
+        vehicle_registration: { type: ['string', 'null'] }
+        resolved_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        policy: { type: string, enum: [gps_primary, route_capped, odometer] }
+        grade: { $ref: '#/components/schemas/DistanceGrade' }
+        billed_km: { type: number, description: 'The figure the trip *would* be billed on. Nothing prices from it yet.' }
+        reason: { type: string, description: 'One sentence — which branch decided, and on what.' }
+        odometer_km: { type: ['number', 'null'] }
+        gps_km: { type: ['number', 'null'], description: 'Null — not zero — when there was no usable trace.' }
+        matched_km: { type: ['number', 'null'], description: 'Road the engine snapped pings to.' }
+        inferred_km: { type: ['number', 'null'], description: 'Routed across gaps, or the whole haversine figure when the engine was off.' }
+        route_km: { type: ['number', 'null'], description: 'The road through the order pins, or between the trace''s ends.' }
+        reference_source: { type: ['string', 'null'], enum: [pins, trace, null] }
+        coverage_percent: { type: ['number', 'null'] }
+        inferred_share_percent: { type: ['number', 'null'] }
+        pings_total: { type: integer }
+        pings_kept: { type: integer }
+        provider: { type: ['string', 'null'], enum: [osrm, haversine, null] }
+        variance_flagged: { type: boolean, description: 'The old odometer-vs-GPS watchdog, unchanged.' }
+
+    DistanceReportSummary:
+      description: >
+        The whole filtered set's distribution (ADR-0045). Every bucket is a
+        count of trips. `unresolved` is completed trips in the same period
+        and scope with no resolution — non-zero and growing means the queue
+        worker is not running.
+      type: object
+      required:
+        - resolved
+        - unresolved
+        - grades
+        - providers
+        - no_trace
+        - no_reference
+        - variance_flagged
+        - with_mock_pings
+        - mean_coverage_percent
+        - mean_inferred_share_percent
+        - coverage
+        - trace_vs_odometer
+        - trace_vs_route
+      additionalProperties: false
+      properties:
+        resolved: { type: integer }
+        unresolved: { type: integer }
+        grades:
+          type: object
+          required: [A, B, C]
+          additionalProperties: false
+          properties:
+            A: { type: integer }
+            B: { type: integer }
+            C: { type: integer }
+        providers:
+          type: object
+          required: [osrm, haversine]
+          additionalProperties: false
+          properties:
+            osrm: { type: integer }
+            haversine: { type: integer }
+        no_trace: { type: integer }
+        no_reference: { type: integer }
+        variance_flagged: { type: integer }
+        with_mock_pings: { type: integer }
+        mean_coverage_percent: { type: ['number', 'null'] }
+        mean_inferred_share_percent: { type: ['number', 'null'] }
+        coverage:
+          type: object
+          required: [under_50, 50_to_80, 80_to_95, 95_up, unknown]
+          additionalProperties: false
+          properties:
+            under_50: { type: integer }
+            50_to_80: { type: integer }
+            80_to_95: { type: integer }
+            95_up: { type: integer }
+            unknown: { type: integer }
+        trace_vs_odometer:
+          $ref: '#/components/schemas/DistanceDeviationBuckets'
+        trace_vs_route:
+          $ref: '#/components/schemas/DistanceDeviationBuckets'
+
+    DistanceDeviationBuckets:
+      description: 'How far the trace''s figure sits from another witness, as a share of that witness. `unknown` when either is missing or zero.'
+      type: object
+      required: [within_5, 5_to_15, 15_to_30, over_30, unknown]
+      additionalProperties: false
+      properties:
+        within_5: { type: integer }
+        5_to_15: { type: integer }
+        15_to_30: { type: integer }
+        over_30: { type: integer }
+        unknown: { type: integer }
 
     TripReportRow:
       description: One row of the trip report — the Bank's six criteria plus identifiers.
