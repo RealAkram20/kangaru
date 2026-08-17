@@ -1,13 +1,16 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Drivers\Controllers\ClosureRequestController;
 use Modules\Drivers\Controllers\DriverAccountController;
 use Modules\Drivers\Controllers\DriverApplicationController;
+use Modules\Drivers\Controllers\DriverClosureRequestController;
 use Modules\Drivers\Controllers\DriverController;
 use Modules\Drivers\Controllers\DriverDocumentController;
 use Modules\Drivers\Controllers\DriverDocumentReviewController;
 use Modules\Drivers\Controllers\DriverEarningsController;
 use Modules\Drivers\Controllers\DriverLedgerController;
+use Modules\Drivers\Controllers\DriverPayoutAccountController;
 use Modules\Drivers\Controllers\DriverPerformanceController;
 use Modules\Drivers\Controllers\DriverPhotoController;
 use Modules\Drivers\Controllers\DriverProfileController;
@@ -15,6 +18,7 @@ use Modules\Drivers\Controllers\DriverPromotionController;
 use Modules\Drivers\Controllers\DriverSettlementRequestController;
 use Modules\Drivers\Controllers\DriverStatsController;
 use Modules\Drivers\Controllers\DriverTripHistoryController;
+use Modules\Drivers\Controllers\PayoutAccountController;
 use Modules\Drivers\Controllers\SettlementRequestController;
 
 // PATCH only, not PUT|PATCH — see Modules/Clients/Routes/api.php.
@@ -45,6 +49,10 @@ Route::get('me/performance', [DriverPerformanceController::class, 'show'])
 // seconds on the home screen, and a lifetime trip count, a vehicle join and a
 // documents summary should not ride along on every poll.
 Route::get('me/profile', [DriverProfileController::class, 'show'])->name('me.profile.show');
+// PATCH only, not PUT|PATCH — the route census compares method and path exactly,
+// and the spec documents PATCH alone. Two fields, and the five the office keeps
+// are argued in `UpdateDriverProfileRequest`.
+Route::patch('me/profile', [DriverProfileController::class, 'update'])->name('me.profile.update');
 
 // Their papers (ADR-0033). `index` returns **every type, held or not** — a
 // driver opening the screen is asking what they still owe the office, and only
@@ -73,6 +81,57 @@ Route::get('me/documents/{document}/file', [DriverDocumentController::class, 'fi
 Route::get('me/photo', [DriverPhotoController::class, 'show'])->name('me.photo.show');
 Route::post('me/photo', [DriverPhotoController::class, 'store'])->name('me.photo.store');
 Route::delete('me/photo', [DriverPhotoController::class, 'destroy'])->name('me.photo.destroy');
+
+// Where their money is sent (ADR-0042) — the Bank Details screen. Singular,
+// because a driver has one destination or none: `PUT` attaches or replaces,
+// `DELETE` takes it away, the shape ADR-0016 chose for the sign-in account.
+//
+// **Nothing here moves money.** ADR-0029 §6's boundary is unchanged; this
+// records a destination so the office knows where to send what ADR-0032's
+// confirm flow says is owed. The number comes back masked — the whole one is
+// on the office route below, because a clerk cannot wire money to a mask.
+Route::get('me/payout-account', [DriverPayoutAccountController::class, 'show'])
+    ->name('me.payout-account.show');
+Route::put('me/payout-account', [DriverPayoutAccountController::class, 'update'])
+    ->name('me.payout-account.update');
+Route::delete('me/payout-account', [DriverPayoutAccountController::class, 'destroy'])
+    ->name('me.payout-account.destroy');
+
+// The office half, and the loop is not closed without it: a payout destination
+// the office cannot read is a form a driver filled in for nobody. Returns the
+// whole account number, gated on `drivers.manage` through `DriverPolicy@view`.
+Route::get('drivers/{driver}/payout-account', [PayoutAccountController::class, 'show'])
+    ->name('drivers.payout-account.show');
+
+// Closing an account, on the driver's own request (ADR-0043). Singular under
+// `/me`: a driver has one current request or none.
+//
+// **Asking closes nothing.** The office's confirmation deactivates the driver
+// and detaches their sign-in, and they are told by email — because by then they
+// cannot sign in to be told any other way. `DELETE` is the driver withdrawing
+// their own ask, which ADR-0032 left out of settlement requests and recorded as
+// more annoying than it looked.
+Route::get('me/closure-request', [DriverClosureRequestController::class, 'show'])
+    ->name('me.closure-request.show');
+Route::post('me/closure-request', [DriverClosureRequestController::class, 'store'])
+    ->name('me.closure-request.store');
+Route::delete('me/closure-request', [DriverClosureRequestController::class, 'destroy'])
+    ->name('me.closure-request.destroy');
+
+// The office queue, shipping with the feature rather than after it: a request
+// to stop working, into silence, is the worst of the half-built loops the
+// completeness census found. `drivers.manage`.
+//
+// Confirm and decline are POSTs to sub-paths rather than a PATCH on a status
+// field, for the reason the settlement and document decisions are: each is a
+// decision with its own audit meaning, and confirming ends somebody's ability
+// to work. A status field would make that look like an edit.
+Route::get('closure-requests', [ClosureRequestController::class, 'index'])
+    ->name('closure-requests.index');
+Route::post('closure-requests/{closureRequest}/confirm', [ClosureRequestController::class, 'confirm'])
+    ->name('closure-requests.confirm');
+Route::post('closure-requests/{closureRequest}/decline', [ClosureRequestController::class, 'decline'])
+    ->name('closure-requests.decline');
 
 // The same driver's earnings over a day, a week or a month — the earnings
 // screen. Separate from `me/stats` rather than a fatter payload on it: stats

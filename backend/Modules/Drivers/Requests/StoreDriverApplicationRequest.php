@@ -45,11 +45,16 @@ class StoreDriverApplicationRequest extends FormRequest
             // is worse than storing the spaces.
             'phone' => ['required', 'string', 'min:9', 'max:32'],
             'email' => ['required', 'email', 'max:190'],
-            // The same minimum `StoreDriverAccountRequest` and
-            // `ChangePasswordRequest` hold. It has to match: this is the
-            // password that becomes the account's, so a looser rule here
-            // would mint accounts the platform's own rules would reject.
-            'password' => ['required', 'string', 'confirmed', Password::min(12)],
+            // The same minimum `ChangePasswordRequest` and
+            // `PasswordResetController` hold, because those are the two doors
+            // an applicant walks through next: a floor here that the change
+            // screen did not share would refuse a driver the password they
+            // signed up with.
+            //
+            // `StoreDriverAccountRequest` is deliberately *not* in that set —
+            // an office-minted account is typed by staff at a desk and keeps
+            // the twelve-character rule.
+            'password' => ['required', 'string', 'confirmed', Password::min(8)],
             // Consent is refused rather than inferred. `accepted` means
             // literally true/"1"/"yes" — a missing field or a false one
             // fails, so an applicant cannot arrive without having agreed.

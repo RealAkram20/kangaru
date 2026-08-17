@@ -126,7 +126,20 @@ it('accepts a document that expires today, because today it is still valid', fun
         ->postJson('/api/v1/me/documents', [
             'type' => DriverDocumentType::DRIVING_LICENCE->value,
             'file' => documentFile(),
-            'expires_at' => Carbon::now()->toDateString(),
+            /*
+                **`Africa/Kampala`, not `now()`, and the difference is a whole
+                day.** `config('app.timezone')` is UTC while `hasExpired()`
+                compares against `Carbon::now($operatorTimezone)` — the fleet's,
+                per ADR-0033 §3. Between 21:00 and 24:00 UTC those name
+                different dates, so a bare `Carbon::now()` here builds
+                *yesterday* in Kampala terms and the assertion below correctly
+                reports it expired. This test failed for exactly that window,
+                and it was read as a driver-facing bug rather than as its own
+                defect. The subject under test is a date in the operator's
+                timezone; the test has to say so, the same way
+                `DriverEarningsTest` pins its times.
+            */
+            'expires_at' => Carbon::now('Africa/Kampala')->toDateString(),
         ])
         ->assertCreated()
         // Not expired: the last day of a licence is a day the driver can work.

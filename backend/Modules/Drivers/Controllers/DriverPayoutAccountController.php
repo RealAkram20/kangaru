@@ -1,0 +1,118 @@
+<?php
+
+namespace Modules\Drivers\Controllers;
+
+use App\Enums\ErrorCode;
+use App\Http\Controllers\Controller;
+use App\Models\User;
+use App\Support\Api\ApiResponse;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Modules\Drivers\Models\Driver;
+use Modules\Drivers\Models\DriverPayoutAccount;
+use Modules\Drivers\Requests\StorePayoutAccountRequest;
+use Modules\Drivers\Resources\DriverPayoutAccountResource;
+
+/**
+ * The driver's own payout destination (ADR-0042).
+ *
+ * Under `/me` like `me/profile` and `me/photo`, for the reason those give:
+ * **the driver is the token.** No id in the path, so no policy question and no
+ * way to spell a cross-driver read or write.
+ *
+ * Singular, because a driver has one destination or none — the same shape
+ * ADR-0016 chose for `drivers/{driver}/account`. `PUT` attaches or replaces;
+ * `DELETE` takes it away.
+ *
+ * **Nothing here moves money.** ADR-0029 §6's boundary is unchanged and
+ * ADR-0032's request-and-confirm flow is still the only thing that writes a
+ * ledger entry.
+ */
+class DriverPayoutAccountController extends Controller
+{
+    public function show(Request $request): JsonResponse
+    {
+        $driver = $this->driverFor($request);
+
+        if ($driver === null) {
+            return $this->notADriver();
+        }
+
+        $account = DriverPayoutAccount::query()->where('driver_id', $driver->getKey())->first();
+
+        // Null rather than a 404. "You have not told us where to send your
+        // money" is a normal state for a new driver and the screen renders it
+        // as an empty form; a 404 would make the app treat an ordinary first
+        // visit as an error.
+        return ApiResponse::success(
+            ['payout_account' => $account === null ? null : new DriverPayoutAccountResource($account)],
+            'Payout account retrieved.',
+        );
+    }
+
+    /**
+     * Sets or replaces it.
+     *
+     * `updateOrCreate` on `driver_id`, which is what makes this idempotent: a
+     * driver on a bad connection who taps Save twice gets one destination, not
+     * a unique-constraint 500 on the second.
+     */
+    public function update(StorePayoutAccountRequest $request): JsonResponse
+    {
+        $driver = $this->driverFor($request);
+
+        if ($driver === null) {
+            return $this->notADriver();
+        }
+
+        $account = DriverPayoutAccount::updateOrCreate(
+            ['driver_id' => $driver->getKey()],
+            $request->validated(),
+        );
+
+        return ApiResponse::success(
+            ['payout_account' => new DriverPayoutAccountResource($account)],
+            'Payout details saved. The office pays into this account.',
+        );
+    }
+
+    /**
+     * Removes it.
+     *
+     * Answers the same shape whether or not one was held, so a driver who taps
+     * twice does not get an error for the second tap.
+     */
+    public function destroy(Request $request): JsonResponse
+    {
+        $driver = $this->driverFor($request);
+
+        if ($driver === null) {
+            return $this->notADriver();
+        }
+
+        DriverPayoutAccount::query()->where('driver_id', $driver->getKey())->delete();
+
+        return ApiResponse::success(
+            ['payout_account' => null],
+            'Payout details removed. Ask the office how you will be paid.',
+        );
+    }
+
+    private function driverFor(Request $request): ?Driver
+    {
+        /** @var User $user */
+        $user = $request->user();
+
+        return Driver::query()->where('user_id', $user->id)->first();
+    }
+
+    private function notADriver(): JsonResponse
+    {
+        return ApiResponse::error(
+            ErrorCode::NOT_A_DRIVER,
+            'This account is not linked to a driver profile.',
+            [],
+            403,
+        );
+    }
+}

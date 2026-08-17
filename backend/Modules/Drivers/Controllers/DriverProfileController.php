@@ -9,6 +9,7 @@ use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Modules\Drivers\Models\Driver;
+use Modules\Drivers\Requests\UpdateDriverProfileRequest;
 use Modules\Drivers\Services\DriverProfileService;
 
 /**
@@ -44,5 +45,40 @@ class DriverProfileController extends Controller
         }
 
         return ApiResponse::success($this->profile->forDriver($driver), 'Driver profile retrieved.');
+    }
+
+    /**
+     * A driver correcting their own name or phone number.
+     *
+     * `PATCH`, not `PUT`, and not `POST` to a sub-path: this is an edit to
+     * fields on an existing record, which is exactly what the other `PATCH` in
+     * this module (`drivers/{driver}`) is. The decisions in this module that
+     * are `POST`-to-a-sub-path — approve, reject, verify, confirm — are all
+     * acts by *somebody else* with their own audit meaning. Correcting your own
+     * phone number is not one of those.
+     *
+     * No policy, for the reason this whole controller has none: there is no id
+     * in the path, so there is no cross-driver write to spell.
+     */
+    public function update(UpdateDriverProfileRequest $request): JsonResponse
+    {
+        /** @var User $user */
+        $user = $request->user();
+
+        $driver = Driver::query()->where('user_id', $user->id)->first();
+
+        if ($driver === null) {
+            return ApiResponse::error(
+                ErrorCode::NOT_A_DRIVER,
+                'This account is not linked to a driver profile.',
+                [],
+                403,
+            );
+        }
+
+        return ApiResponse::success(
+            $this->profile->update($driver, $request->validated()),
+            'Profile updated.',
+        );
     }
 }

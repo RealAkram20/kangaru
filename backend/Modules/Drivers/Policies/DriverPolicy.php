@@ -24,6 +24,25 @@ class DriverPolicy
         return $this->viewAny($user);
     }
 
+    /**
+     * Reading where a driver's money is sent (ADR-0042 §4).
+     *
+     * **`DRIVERS_MANAGE`, not `DRIVERS_VIEW`, and the difference is the whole
+     * point.** `view()` above governs seeing a driver's name in a list, which a
+     * dispatcher needs; this governs seeing their full bank account number,
+     * which a dispatcher does not. Reusing `view()` would have handed every
+     * role that can open the drivers page a payout destination in clear.
+     *
+     * **Noted as a refinement, exactly as ADR-0032 §5 noted it for settlement
+     * confirmation:** reading somebody's bank account is arguably a Finance
+     * act rather than a Fleet one, and when that role separates this method
+     * and `DriverSettlementRequestPolicy` are the same seam to cut.
+     */
+    public function viewPayoutAccount(User $user, Driver $driver): bool
+    {
+        return $user->hasPermission(Permission::DRIVERS_MANAGE);
+    }
+
     public function create(User $user): bool
     {
         return $user->hasPermission(Permission::DRIVERS_MANAGE);

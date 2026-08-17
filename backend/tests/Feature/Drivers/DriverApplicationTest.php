@@ -100,11 +100,20 @@ it('refuses an application without affirmative consent', function () {
     )->assertStatus(422);
 });
 
-it('holds the same password floor the account it becomes will hold', function () {
+it('holds the same eight-character floor the change and reset doors hold', function () {
+    // Seven. Mutation check — drop `Password::min(8)` here and an applicant
+    // can mint an account with a password the change-password screen would
+    // then refuse to let them keep.
     $this->postJson('/api/v1/driver-applications', applicationPayload([
-        'password' => 'elevenchars',
-        'password_confirmation' => 'elevenchars',
+        'password' => '2short!',
+        'password_confirmation' => '2short!',
     ]))->assertStatus(422)->assertJsonValidationErrors('password');
+
+    $this->postJson('/api/v1/driver-applications', applicationPayload([
+        'email' => 'eight@kangaruride.test',
+        'password' => '8chars!!',
+        'password_confirmation' => '8chars!!',
+    ]))->assertStatus(202);
 });
 
 /**

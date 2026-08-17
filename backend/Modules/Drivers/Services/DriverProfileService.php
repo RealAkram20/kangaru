@@ -2,6 +2,7 @@
 
 namespace Modules\Drivers\Services;
 
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Modules\Drivers\Models\Driver;
 use Modules\Trips\Enums\TripStatus;
@@ -21,9 +22,36 @@ use Modules\Trips\Enums\TripStatus;
  * it under ADR-0030's withholding rule, and a second reading of a number that
  * is suppressed below five ratings is a second chance to publish it by
  * mistake.
+ *
+ * The payload shape is an alias rather than a docblock repeated on the two
+ * methods that return it — `update()` returns exactly what `forDriver()` does,
+ * because a screen that has just saved should re-render from the same facts it
+ * would have fetched.
+ *
+ * @phpstan-type DriverProfilePayload array{
+ *     name: string,
+ *     phone: string|null,
+ *     email: string|null,
+ *     photo_url: string|null,
+ *     member_since: string|null,
+ *     trips_total: int,
+ *     vehicle: array{make: string|null, model: string|null, registration_number: string, category: string, category_label: string}|null,
+ *     documents: array{state: string, verified: int, total: int, action_needed: int, pending: int}
+ * }
  */
 class DriverProfileService
 {
+    /**
+     * The only columns a driver may write on their own record.
+     *
+     * Asserted by a test rather than left as a convention: the cost of a fifth
+     * entry appearing here unnoticed is a driver editing their own licence
+     * expiry or lifting their own suspension. See `update()`.
+     *
+     * @var list<string>
+     */
+    public const SELF_EDITABLE = ['name', 'phone'];
+
     public function __construct(private readonly DriverDocumentService $documents) {}
 
     /**
@@ -46,16 +74,41 @@ class DriverProfileService
     }
 
     /**
-     * @return array{
-     *     name: string,
-     *     phone: string|null,
-     *     email: string|null,
-     *     photo_url: string|null,
-     *     member_since: string|null,
-     *     trips_total: int,
-     *     vehicle: array{make: string|null, model: string|null, registration_number: string, category: string, category_label: string}|null,
-     *     documents: array{state: string, verified: int, total: int, action_needed: int, pending: int}
-     * }
+     * A driver correcting their own name or phone number.
+     *
+     * **Writes only the keys that arrived.** `UpdateDriverProfileRequest`
+     * allows either field alone, and `fill()` over the validated array keeps
+     * that promise — a PATCH carrying a phone number cannot blank a name.
+     *
+     * **The allow-list here is not redundant with the form request, and
+     * `$fillable` is no help at all.** `Driver::$fillable` contains `status`,
+     * `license_number`, `license_expiry` and `vehicle_id` — it has to, because
+     * the office's own update path fills them. So mass assignment protects
+     * nothing on this route, and the *only* thing standing between a driver and
+     * their own suspension flag would be one form request's rules. A key added
+     * to that file by somebody solving a different problem would reach this
+     * `fill()` unopposed.
+     *
+     * Naming the two fields at the write site is the second lock, and it is the
+     * same instinct `docs/screen-rules.md` §2 applies to responses: allow-list,
+     * never spread. `SELF_EDITABLE` is asserted directly by a test, so adding a
+     * field to it is a deliberate act with a diff somebody reviews.
+     *
+     * The audit trail comes free: `Driver` is `Auditable`, so the office can
+     * see that the driver changed it and what it was before.
+     *
+     * @param  array<string, mixed>  $attributes  already validated
+     * @return DriverProfilePayload
+     */
+    public function update(Driver $driver, array $attributes): array
+    {
+        $driver->fill(Arr::only($attributes, self::SELF_EDITABLE))->save();
+
+        return $this->forDriver($driver->refresh());
+    }
+
+    /**
+     * @return DriverProfilePayload
      */
     public function forDriver(Driver $driver): array
     {
