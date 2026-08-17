@@ -2406,6 +2406,123 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/me/photo:
+    get:
+      summary: The signed-in driver's photograph, streamed.
+      description: >
+        Never a storage URL, on ADR-0033 §5's argument — and it applies more
+        strongly here than to a licence scan, not less. A signed link is
+        addressable by anyone who ever saw it; a licence is fetched once by a
+        reviewer, while this image is loaded every time a driver opens the
+        drawer, travelling through proxies, caches and crash reports dozens of
+        times a day.
+
+        No id in the path, so no policy question: the driver **is** the token
+        and this route cannot name anybody else. `404` where nothing is held —
+        the app falls back to the driver's initials rather than a broken image.
+      responses:
+        '200':
+          description: >
+            The photograph, under **the stored file's own content type** —
+            verified against a running server, which answers `image/png` for a
+            PNG rather than the `application/octet-stream` its sibling
+            `/me/documents/{document}/file` declares.
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+            image/webp:
+              schema: { type: string, format: binary }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Sets or replaces the photograph.
+      description: >
+        `multipart/form-data`. A driver has **one** photograph: the previous
+        file is deleted in the same act that records the new path, because the
+        alternative is a private disk that accumulates a portrait every time
+        somebody dislikes their haircut — and photographs of people are the
+        last thing that should accumulate untracked.
+
+        The delete runs **after** the new path is committed, never before. The
+        other order leaves a row pointing at a file that no longer exists,
+        which renders as a broken image instead of falling back to initials.
+
+        `photo_url` carries a **cache-busting query derived from the stored
+        path**. Without it the app's image cache goes on showing the previous
+        portrait, on the one screen whose whole job is telling a driver this
+        account is theirs.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              additionalProperties: false
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: >
+                    `jpg`, `jpeg`, `png` or `webp`, up to 4 MB — **half the
+                    document ceiling, and no PDF**. A licence has to be legible
+                    enough to read a number off; a portrait is rendered at 64
+                    points and never read, and the uploader pays for their own
+                    data. A PDF in this slot would be a file the app cannot
+                    render in the one place whose whole job is being rendered.
+      responses:
+        '200':
+          description: The photograph was stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [photo_url]
+                    additionalProperties: false
+                    properties:
+                      photo_url: { type: ['string', 'null'] }
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Removes the photograph, file and row together.
+      description: >
+        A thing a driver is entitled to do, and the file goes with the row. A
+        photograph of somebody kept after they asked for it to be removed is
+        exactly what the privacy notice promises not to do — *"ask us to delete
+        it when it is no longer needed"*.
+
+        Answers `200` with `photo_url: null` whether or not one was held:
+        removing something already absent is the state the caller asked for.
+      responses:
+        '200':
+          description: Nothing is held.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [photo_url]
+                    additionalProperties: false
+                    properties:
+                      photo_url: { enum: [null] }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/me/documents:
     get:
       summary: The signed-in driver's papers — every type, held or not.
