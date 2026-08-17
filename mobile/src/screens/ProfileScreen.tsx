@@ -1,5 +1,5 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '../auth/AuthProvider';
 import type { ProfileStackParams } from '../navigation/types';
@@ -16,15 +16,7 @@ import {
 import { useDriverStats } from '../trips/queries';
 import { ratingNote, ratingValue } from '../trips/statsPresentation';
 import { Card, MenuRow, Screen, ScreenHeader } from '../ui/components';
-import {
-  AlertTriangleIcon,
-  CalendarIcon,
-  FileTextIcon,
-  LockIcon,
-  LogOutIcon,
-  StarIcon,
-  WalletIcon,
-} from '../ui/icons';
+import { FileTextIcon, StarIcon } from '../ui/icons';
 import { SyncBanner } from '../ui/SyncBanner';
 import { colors, radius, spacing, typography } from '../ui/theme';
 
@@ -42,28 +34,32 @@ type Props = NativeStackScreenProps<ProfileStackParams, 'ProfileHome'>;
  *
  * ## What the mockup asked for that this platform cannot produce
  *
- * - **A photograph of the driver.** There is no avatar anywhere — no column,
- *   no upload, no storage. A stock face is the defect three screens have
- *   already refused for passengers. The monogram is derived from the driver's
- *   own name, so it is a fact rather than a picture of somebody else.
+ * - **A photograph of the driver.** ADR-0041 has since built driver photos, so
+ *   this paragraph's original claim — that no avatar existed anywhere — is no
+ *   longer true and is corrected rather than left to mislead. The photo is
+ *   shown in the **drawer**, which is where the mockup for it put one; this
+ *   screen keeps the monogram, because a driver reading their own profile
+ *   already knows what they look like and the space buys a fact instead.
  * - **A bare "4.8".** ADR-0030 §3 withholds a score below five ratings, and
  *   `ratingValue`/`ratingNote` are the same pair the home screen uses — one
  *   vocabulary for one number, and the threshold stays on the server.
  * - **"Bank Details".** No bank rail exists and ADR-0029 §6 rules one out by
  *   name. Settling up is a *request the office answers* (ADR-0032) and already
  *   lives on the Wallet tab, so the row names the real destination.
- * - **"Settings".** This app has none. The rows underneath are what a driver
- *   would have gone looking in a settings screen for, one tap earlier.
+ * - **"Settings".** It has one now, and the rows that used to be underneath
+ *   here are in it. See the note above the remaining card.
  *
  * **"Documents — Verified" is the one the owner chose to build rather than
  * drop** (ADR-0033). Printing "Verified" against a compliance fact the
  * platform did not hold would be relied on by a driver at a checkpoint.
  */
 export function ProfileScreen({ navigation }: Props) {
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
   const { data: profile } = useDriverProfile();
   const { data: stats } = useDriverStats();
-  const { parked, pending } = useSync();
+  // Only for the banner. The parked-queue *row* moved to Settings with the
+  // rest of the account actions; `SyncBanner` below still needs the provider.
+  useSync();
 
   // The driver's own record is the subject of this screen, but a driver whose
   // profile has not loaded still knows their own name — the account carries
@@ -71,18 +67,6 @@ export function ProfileScreen({ navigation }: Props) {
   const name = profile?.name ?? user?.name ?? 'Driver';
 
   const documents = documentsSummary(profile?.documents);
-
-  const confirmSignOut = () => {
-    const warning =
-      pending > 0
-        ? `${pending} ${pending === 1 ? 'update is' : 'updates are'} still waiting to send. They stay on this phone and will go out when you sign in again.`
-        : 'You will need your password to sign back in.';
-
-    Alert.alert('Sign out?', warning, [
-      { text: 'Stay signed in', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: () => void signOut() },
-    ]);
-  };
 
   return (
     <Screen>
@@ -144,90 +128,33 @@ export function ProfileScreen({ navigation }: Props) {
           <Fact label="Member since" value={monthYear(profile?.member_since)} />
         </Card>
 
+        {/*
+          **The navigation rows are gone, and that is the change.** This screen
+          carried eight of them — Documents, Performance, Promotions, Time off,
+          Settling up, Change password, Updates & sync, Log out — and the drawer
+          now carries the whole map of the app. The owner's instruction was "we
+          don't need to repeat the menus", and two lists that drift is worse
+          than either: a driver who learned the app from one would find rows
+          missing from the other.
+
+          **Nothing was deleted.** The places went to the drawer; the acts on
+          this account went to Settings, which the drawer opens. Every one of
+          the eight is still one or two taps away.
+
+          What is left is what this screen is actually for: who the driver is,
+          what they drive, and whether their papers are in order.
+        */}
         <Card style={styles.menu}>
           <MenuRow
             icon={<FileTextIcon color={colors.primary} size={22} strokeWidth={2} />}
-            label="Documents"
+            label="Vehicle & Documents"
             value={documents.label}
             tone={documents.tone}
-            announcement={`Documents. ${documents.label}.`}
+            announcement={`Vehicle and documents. ${documents.label}.`}
             onPress={() => navigation.navigate('Documents')}
           />
-
-          <View style={styles.separator} />
-
-          <MenuRow
-            icon={<CalendarIcon color={colors.primary} size={22} strokeWidth={2} />}
-            label="Time off"
-            onPress={() => navigation.navigate('TimeOff')}
-          />
-
-          <View style={styles.separator} />
-
-          {/*
-            Where "Bank Details" was. Settling up is a request the office
-            answers (ADR-0032), not a transfer, and it lives on the Wallet tab
-            — so this points there rather than implying a rail that does not
-            exist.
-          */}
-          <MenuRow
-            icon={<WalletIcon color={colors.primary} size={22} strokeWidth={2} />}
-            label="Settling up"
-            value="Wallet"
-            announcement="Settling up. Opens the wallet, where you ask the office to settle."
-            onPress={() => navigation.getParent()?.navigate('Wallet')}
-          />
-
-          <View style={styles.separator} />
-
-          <MenuRow
-            icon={<LockIcon color={colors.primary} size={22} strokeWidth={2} />}
-            label="Change password"
-            onPress={() => navigation.navigate('ChangePassword')}
-          />
-
-          <View style={styles.separator} />
-
-          {/*
-            The parked queue, and the sync state around it. The row is always
-            here rather than only when something is stuck: a driver who has
-            never seen it cannot go looking for it on the day their closing
-            odometer is refused.
-          */}
-          <MenuRow
-            icon={
-              <AlertTriangleIcon
-                color={parked.length > 0 ? colors.danger : colors.primary}
-                size={22}
-                strokeWidth={2}
-              />
-            }
-            label="Updates & sync"
-            value={
-              parked.length > 0
-                ? `${parked.length} ${parked.length === 1 ? 'needs' : 'need'} you`
-                : 'Nothing stuck'
-            }
-            tone={parked.length > 0 ? 'danger' : 'muted'}
-            announcement={
-              parked.length > 0
-                ? `Updates and sync. ${parked.length} ${parked.length === 1 ? 'update needs' : 'updates need'} your attention.`
-                : 'Updates and sync. Nothing is stuck.'
-            }
-            onPress={() => navigation.navigate('SyncQueue')}
-          />
         </Card>
 
-        <Card style={styles.menu}>
-          <MenuRow
-            icon={<LogOutIcon color={colors.danger} size={22} strokeWidth={2} />}
-            label="Log out"
-            // No chevron: this opens a confirmation in place rather than going
-            // anywhere, and an arrow would promise a destination.
-            showsChevron={false}
-            onPress={confirmSignOut}
-          />
-        </Card>
       </ScrollView>
     </Screen>
   );

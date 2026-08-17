@@ -65,6 +65,11 @@ function startEvent(createdAt: string | null = STARTED_AT): TripEvent {
     user_id: 3,
     notes: null,
     created_at: createdAt,
+    // The server's fleet-zone rendering of the same instant. This screen does
+    // arithmetic on `created_at` and never reads these; the trip record draws
+    // its rail from them.
+    local_day: null,
+    local_time: null,
   };
 }
 
@@ -80,6 +85,9 @@ function trip(overrides: Partial<Trip> = {}): Trip {
     destination: 'Kololo Airstrip',
     pickup: { label: 'Acacia Mall, 14-18 Cooper Rd', latitude: 0.3476, longitude: 32.5825 },
     dropoff: { label: 'Kololo Airstrip', latitude: 0.3676, longitude: 32.5825 },
+    service_type: 'ride',
+    reference: null,
+    package: null,
     status: 'trip_started',
     allowed_transitions: ['waiting', 'trip_completed'],
     pickup_wait_target_seconds: 300,
@@ -301,6 +309,8 @@ function heldEvents(): TripEvent[] {
       user_id: 3,
       notes: null,
       created_at: new Date(Date.parse(STARTED_AT) + 542_000).toISOString(),
+      local_day: null,
+      local_time: null,
     },
   ];
 }

@@ -16,6 +16,10 @@ function event(to: TripEvent['to_status'], createdAt: string | null): TripEvent 
     user_id: null,
     notes: null,
     created_at: createdAt,
+    // `waiting.ts` is arithmetic on `created_at`; the server's fleet-zone
+    // rendering is the trip record's business, not this module's.
+    local_day: null,
+    local_time: null,
   };
 }
 

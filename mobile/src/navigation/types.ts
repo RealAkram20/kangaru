@@ -167,6 +167,71 @@ export type ProfileStackParams = {
    */
   Documents: undefined;
   SyncQueue: undefined;
+  /**
+   * How the driver is doing — six dials and the current bonus week
+   * (ADR-0038).
+   *
+   * On the Profile stack rather than a tab of its own, and the mockup's own
+   * tab bar agrees: it draws Profile as the active tab. It is also the right
+   * home by what it answers. Home asks "what now", Earnings asks "what did I
+   * make", Wallet asks "what am I owed" — this asks "how am I doing", which
+   * is a question about the driver rather than about the work, and that is
+   * what the Profile tab already holds.
+   */
+  Performance: undefined;
+  /**
+   * What the platform is currently offering — the weekly trip target still
+   * open, tonight's peak window, and the referral code (ADR-0036, ADR-0037).
+   *
+   * On the Profile stack beside `Performance`, for the same reason and with
+   * the same evidence: the mockup draws Profile as the active tab. The two are
+   * neighbours rather than one screen because they answer opposite questions —
+   * Performance is the record of how a driver has done, this is what is on
+   * offer if they keep going.
+   */
+  Promotions: undefined;
+  /**
+   * What the office has told this driver (ADR-0039).
+   *
+   * On the Profile stack rather than as a drawer screen of its own, so it
+   * keeps the tab bar like every other pushed screen in the app. The bell on
+   * the home screen is **not** an entry point to it and does not count these —
+   * that badge counts job offers, which have a fifteen-second clock. Two
+   * different things, deliberately kept apart.
+   */
+  Notifications: undefined;
+  /** Device and account preferences — what this app does, not what the platform does. */
+  Settings: undefined;
+  /** Getting help, and what to do when something goes wrong (ADR-0040). */
+  Safety: undefined;
+  /**
+   * Reaching a person at the office.
+   *
+   * **The param is optional and must stay optional.** Three things route here
+   * — the drawer, the Contact Support card on `Safety`, and the five Help
+   * Topics rows — and only the last carries a topic. Without one the screen
+   * renders exactly what it always did; with one it names the subject and lists
+   * what the office will ask for.
+   *
+   * A `topic` is a `HelpTopicKey`, but this file deliberately does **not**
+   * import that type: a navigation param table that reaches into a feature
+   * module inverts the dependency, and `findHelpTopic` already treats an
+   * unrecognised key as "no topic" so a stale deep link cannot crash the app.
+   */
+  Support: { topic?: string } | undefined;
+};
+
+/**
+ * The drawer, which wraps everything above.
+ *
+ * **One screen.** Every destination the drawer lists lives inside one of the
+ * four tab stacks, so the drawer holds the tab navigator and nothing else and
+ * its content component navigates into the nesting. Registering the four new
+ * screens as drawer screens instead would have taken the tab bar away from
+ * exactly those four and made them the odd ones out.
+ */
+export type RootDrawerParams = {
+  Main: undefined;
 };
 
 /**

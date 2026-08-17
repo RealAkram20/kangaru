@@ -4,6 +4,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { StatusBar } from 'expo-status-bar';
 import { View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AuthProvider } from './src/auth/AuthProvider';
@@ -53,18 +54,40 @@ export default function App() {
   }
 
   return (
-    <SafeAreaProvider>
-      <StatusBar style="dark" />
-      <PersistQueryClientProvider
-        client={queryClient}
-        persistOptions={{ persister, maxAge: 24 * 60 * 60 * 1000 }}
-      >
-        <AuthProvider>
-          <SyncProvider>
-            <RootNavigator />
-          </SyncProvider>
-        </AuthProvider>
-      </PersistQueryClientProvider>
-    </SafeAreaProvider>
+    /*
+      **`GestureHandlerRootView` is required, not optional, and its absence is
+      a native crash rather than a degraded gesture.**
+
+      React Navigation's drawer is built on `react-native-gesture-handler`, and
+      that library needs this at the root of the tree to attach its Android
+      root view. Without it the app mounts, starts the navigator, throws inside
+      the drawer, and closes — which from the outside looks like "it opens and
+      then shuts", with **nothing in the Metro log**, because the failure is
+      native and JS never gets to report it.
+
+      Nothing caught this: the bundle compiles, `tsc` passes, eslint passes, and
+      every Jest suite passes because `jest.setup.ts` mocks gesture-handler.
+      Only running it on a handset finds it. It is the clearest example on this
+      branch of why "run or render it" is a rule.
+
+      `flex: 1` is part of the requirement — the library's own docs are explicit
+      that this view must fill its parent, and a root view with no height
+      renders an app that is present, correct and invisible.
+    */
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <StatusBar style="dark" />
+        <PersistQueryClientProvider
+          client={queryClient}
+          persistOptions={{ persister, maxAge: 24 * 60 * 60 * 1000 }}
+        >
+          <AuthProvider>
+            <SyncProvider>
+              <RootNavigator />
+            </SyncProvider>
+          </AuthProvider>
+        </PersistQueryClientProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

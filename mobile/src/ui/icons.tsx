@@ -288,6 +288,42 @@ export function CheckCircleIcon(props: IconProps) {
   );
 }
 
+/** Lucide `copy`. The trip record's reference, for reading out to the office. */
+export function CopyIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Rect x="8" y="8" width="14" height="14" rx="2" ry="2" {...strokeProps(color, strokeWidth)} />
+      <Path
+        d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"
+        {...strokeProps(color, strokeWidth)}
+      />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `circle-x` — the counterpart to `CheckCircleIcon` above.
+ *
+ * Drawn as a pair with it deliberately: the inbox distinguishes an approved
+ * booking from a rejected one, and two glyphs that share a circle and differ
+ * only in the mark inside it are read as one question with two answers. An
+ * `AlertTriangleIcon` would have said "something is wrong" instead, which is
+ * a different sentence.
+ */
+export function CircleXIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Circle cx="12" cy="12" r="10" {...strokeProps(color, strokeWidth)} />
+      <Path d="m15 9-6 6" {...strokeProps(color, strokeWidth)} />
+      <Path d="m9 9 6 6" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
 /**
  * Lucide `star`, filled rather than stroked: a star reads as a rating only
  * when solid, and the fill colour is the theme's one warm token.
@@ -627,6 +663,139 @@ export function AwardIcon(props: IconProps) {
   );
 }
 
+/**
+ * Lucide `trending-up`. The peak-hours card (ADR-0036).
+ *
+ * The mockup drew a figure on a podium here. An illustration is not an icon
+ * and this app has no illustration set — DESIGN.md § Icons makes Lucide the
+ * one vocabulary, and a stock character would also be the only depiction of a
+ * person anywhere in the app, which is a bigger decision than a card.
+ *
+ * A rising line is the honest glyph for *earning more*, and it is not
+ * `AwardIcon`: that one already means a bonus on the wallet statement, and one
+ * glyph for two schemes would make the two cards read as the same offer.
+ */
+export function TrendingUpIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="M16 7h6v6" {...strokeProps(color, strokeWidth)} />
+      <Path d="m22 7-8.5 8.5-5-5L2 17" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `user-plus`. The referral card (ADR-0037).
+ *
+ * A person being added, which is literally what a referral is. Lucide's
+ * `gift` was the other candidate and is wrong: the reward is money credited to
+ * the *referrer*, not a present given to the person joining, and a gift box
+ * beside a cash figure suggests something the platform does not do.
+ */
+export function UserPlusIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" {...strokeProps(color, strokeWidth)} />
+      <Circle cx="9" cy="7" r="4" {...strokeProps(color, strokeWidth)} />
+      <Line x1="19" x2="19" y1="8" y2="14" {...strokeProps(color, strokeWidth)} />
+      <Line x1="22" x2="16" y1="11" y2="11" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `share-2`. Passing a referral code to somebody.
+ *
+ * The action is the platform's own share sheet rather than a clipboard copy —
+ * no new dependency (`expo-clipboard` is not installed and a referral card is
+ * not a reason to add one), and a driver sending a code through WhatsApp is
+ * what actually happens, where "Copied!" leaves them to find the app
+ * themselves.
+ */
+export function ShareIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Circle cx="18" cy="5" r="3" {...strokeProps(color, strokeWidth)} />
+      <Circle cx="6" cy="12" r="3" {...strokeProps(color, strokeWidth)} />
+      <Circle cx="18" cy="19" r="3" {...strokeProps(color, strokeWidth)} />
+      <Line x1="8.59" x2="15.42" y1="13.51" y2="17.49" {...strokeProps(color, strokeWidth)} />
+      <Line x1="15.41" x2="8.59" y1="6.51" y2="10.49" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `gift`. Promotions, in the drawer.
+ *
+ * The mockup draws this and it is right *here*, where `AwardIcon` is not: in a
+ * thirteen-row menu `award` sits two rows from `gauge` (Performance) and the
+ * two read as the same idea at a glance. On the Promotions screen itself and
+ * on the wallet statement, `award` still means a bonus — the vocabulary is per
+ * concept, and "the promotions section" and "a bonus credit" are two.
+ */
+export function GiftIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="M12 7v14" {...strokeProps(color, strokeWidth)} />
+      <Path
+        d="M20 11v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Rect x="3" y="7" width="18" height="4" rx="1" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/** Lucide `headset`. Support — reaching a person at the office. */
+export function HeadsetIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M3 11h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5Zm0 0a9 9 0 1 1 18 0m0 0v5a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3Z"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path d="M21 16v2a4 4 0 0 1-4 4h-5" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/** Lucide `power`. Going off duty, from the drawer. */
+export function PowerIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="M12 2v10" {...strokeProps(color, strokeWidth)} />
+      <Path d="M18.4 6.6a9 9 0 1 1-12.77.04" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/** Lucide `settings`. */
+export function SettingsIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Circle cx="12" cy="12" r="3" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
 /** Lucide `square-arrow-up`. The wallet's Withdraw button. */
 export function SquareArrowUpIcon(props: IconProps) {
   const { size, color, strokeWidth } = base(props);
@@ -824,6 +993,104 @@ export function ClockIcon(props: IconProps) {
     <Outline size={size}>
       <Circle cx="12" cy="12" r="10" {...strokeProps(color, strokeWidth)} />
       <Path d="M12 6v6l4 2" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `shield-alert`. Something went wrong and it is being reported.
+ *
+ * Transcribed verbatim from `lucide-react/dist/esm/icons/shield-alert.mjs`.
+ *
+ * **Not `ShieldIcon` and not `ShieldCheckIcon`.** The plain shield is the
+ * safety-net glyph this app uses for "the office can see you"; the check is a
+ * verified document. This is the one with the exclamation in it, and on the
+ * Help & Safety screen all three would otherwise be the same shape saying
+ * three different things.
+ */
+export function ShieldAlertIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path d="M12 8v4" {...strokeProps(color, strokeWidth)} />
+      <Path d="M12 16h.01" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `message-circle-warning`. A problem with a person.
+ *
+ * Transcribed verbatim from
+ * `lucide-react/dist/esm/icons/message-circle-warning.mjs`.
+ *
+ * A speech bubble here is **not** a promise of messaging — this app has none,
+ * deliberately (`trips/contact.ts`). It is the passenger-shaped glyph on a
+ * list of things to tell the office about, and the row it labels opens the
+ * dialler like every other route out of this screen.
+ */
+export function MessageCircleWarningIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path d="M12 8v4" {...strokeProps(color, strokeWidth)} />
+      <Path d="M12 16h.01" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `message-circle-more`. Talking to the office.
+ *
+ * Transcribed verbatim from
+ * `lucide-react/dist/esm/icons/message-circle-more.mjs`.
+ *
+ * The mockup's Contact Support glyph. `HeadsetIcon` is the other candidate and
+ * is already used for "call the office" on this same screen — two identical
+ * headsets one card apart would read as the same control twice.
+ */
+export function MessageCircleMoreIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path d="M8 12h.01" {...strokeProps(color, strokeWidth)} />
+      <Path d="M12 12h.01" {...strokeProps(color, strokeWidth)} />
+      <Path d="M16 12h.01" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `circle-question-mark`. Something whose whereabouts are unknown.
+ *
+ * Transcribed verbatim from
+ * `lucide-react/dist/esm/icons/circle-question-mark.mjs`. Lucide still exports
+ * it under the older alias `circle-help`, which re-exports this file — the name
+ * here follows the file that holds the geometry.
+ */
+export function CircleQuestionMarkIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Circle cx="12" cy="12" r="10" {...strokeProps(color, strokeWidth)} />
+      <Path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" {...strokeProps(color, strokeWidth)} />
+      <Path d="M12 17h.01" {...strokeProps(color, strokeWidth)} />
     </Outline>
   );
 }

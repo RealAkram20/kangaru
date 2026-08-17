@@ -107,6 +107,68 @@ export type TripPayment = {
 };
 
 /**
+ * One movement in a driver's account (ADR-0029 §2) — a row of the wallet
+ * statement, and a row of a trip's own money record.
+ *
+ * Hand-transcribed from `docs/api/openapi.yaml`, like every type in this file.
+ *
+ * Lived in `endpoints.ts` until `TripEarnings.lines` needed it; it is exported
+ * from there still, so nothing that imports it had to change. **The kinds below
+ * are the whole vocabulary** — a screen showing any other transaction type
+ * would be inventing one.
+ */
+export type DriverLedgerEntry = {
+  id: number;
+  kind:
+    | 'fare_earned'
+    | 'cash_collected'
+    | 'settlement'
+    | 'adjustment'
+    /**
+     * The tip pair and the weekly bonus (ADR-0034).
+     *
+     * `tip_earned` is the driver's share **after commission** — the owner
+     * ruled that the platform takes its usual cut of a tip, which is what
+     * lets a tip reuse the pair a cash fare writes. `tip_cash_collected` is
+     * the gross in their hand, and the net of the two is the commission now
+     * owed.
+     *
+     * `bonus` is **unpaired**: it is not cash in anybody's hand, so the
+     * balance moves by the whole amount.
+     */
+    | 'tip_earned'
+    | 'tip_cash_collected'
+    | 'bonus';
+  /** The kind in words, from the server's own enum, so nothing re-spells them. */
+  kind_label: string;
+  /**
+   * **Signed, and the sign is the meaning**: positive means the platform owes
+   * the driver, negative means the driver owes the platform. Minor units —
+   * UGX is zero-decimal, so whole shillings, and never divide.
+   *
+   * Direction must not be inferred from `kind`: `settlement` legitimately
+   * runs both ways, which is why ADR-0029 §2 replaced a one-way `payout`.
+   */
+  amount_minor: number;
+  currency: string;
+  /**
+   * Server-written prose, and load-bearing rather than decorative: ADR-0029
+   * §3 records the commission rate in force *at completion* in this string,
+   * which is what lets an old row show the rate that actually applied to it.
+   */
+  description: string;
+  trip_id: number | null;
+  /**
+   * `ride`, `delivery` or `self_drive` — so a row can read "Ride earnings"
+   * rather than the generic "Fare earned". Null on a settlement, and on a
+   * walk-in a dispatcher fulfilled by hand; the app falls back to
+   * `kind_label`, which is always true.
+   */
+  service_type: string | null;
+  created_at: string | null;
+};
+
+/**
  * What the driver made on one completed trip.
  *
  * **`SettledFare` above is what the passenger paid; this is what is left of it
@@ -123,6 +185,23 @@ export type TripPayment = {
  * not own and would go on stating the old one after the rate changed.
  */
 export type TripEarnings = {
+  /**
+   * Every movement this trip made in the driver's wallet, oldest first — the
+   * fare share, a confirmed tip (ADR-0034), a peak uplift (ADR-0036), a bonus,
+   * and the cash counterpart on a cash job.
+   *
+   * **The same rows the wallet statement serves**, deliberately, so the trip
+   * record renders them with `StatementRow` — the component that already
+   * exists. A tip is worded here exactly as the same tip is worded in the
+   * wallet, because two ways of writing one fact about somebody's pay is two
+   * vocabularies to keep in step.
+   *
+   * **These are not the fare's components.** There is no base fare, distance
+   * or waiting *amount* to be had after the fact: `TripPricingEngine` is pure
+   * and writes nothing, so a walk-in stores a single total. A screen wanting
+   * that breakdown is asking for a Billing feature, not a field.
+   */
+  lines: DriverLedgerEntry[];
   /** The driver's share, in minor units. UGX is zero-decimal — whole shillings. */
   earned_minor: number;
   /** The platform's cut. Derived as `total_minor - earned_minor`, not from a rate. */
@@ -178,6 +257,39 @@ export type Trip = {
   /** The same two places, with coordinates where there are any. */
   pickup: TripPlace;
   dropoff: TripPlace;
+  /**
+   * `ride`, `delivery` or `self_drive` — what kind of job this was.
+   *
+   * Deliberately a loose `string`, like the ledger's field of the same name:
+   * the server reads it from an enum this build cannot see, and a value added
+   * next quarter must render as words rather than crash a record screen.
+   * `serviceLabel` in `wallet/presentation.ts` is the one place it is named.
+   *
+   * **Null on every corporate trip**, which has a contract rather than an order
+   * request, and null on the trips *list*, which does not load the relation.
+   * Never default it to `ride`: that labels a parcel run a taxi fare.
+   */
+  service_type: string | null;
+  /**
+   * The reference the *customer* holds — `order_requests.reference`.
+   *
+   * The trip's `id` is the platform's identifier; this is the one printed on
+   * the customer's confirmation and the one they read down the phone. The
+   * record screen shows this where it exists and the trip number where it does
+   * not, and says which of the two it is showing.
+   *
+   * Null on a corporate trip, and on the list.
+   */
+  reference: string | null;
+  /**
+   * What was carried, on a delivery — null on a ride.
+   *
+   * Null rather than an object of nulls, because the absence is the fact. The
+   * same two allow-listed keys the offer card gets, from the same single reader
+   * of `order_requests.details` — the column that also holds the two phone
+   * numbers ADR-0024 §7 withholds.
+   */
+  package: OfferPackage | null;
   status: TripStatus;
   /**
    * What is legal from this state — **not** what this user may do. The
@@ -456,7 +568,27 @@ export type TripEvent = {
   to_status: TripStatus;
   user_id: number | null;
   notes: string | null;
+  /**
+   * **UTC**, and the only member to do arithmetic with — elapsed time, waiting
+   * periods, the ordering of two transitions in one second.
+   */
   created_at: string | null;
+  /**
+   * The same instant in the *fleet's* zone, rendered by the server.
+   *
+   * **Never derive a day or a clock reading from `created_at` on the handset.**
+   * `config/app.php` is UTC, so a phone formatting it locally shows a Kampala
+   * driver 05:30 where the server means 08:30 — and a phone that has picked up
+   * a neighbouring country's zone shows a third answer. The trip record puts
+   * these times beside a pickup address, where an hour out reads as a record of
+   * a different journey.
+   *
+   * Same two keys, same reasoning, as `DriverTrip.local_day`/`local_time`.
+   * `timeLabel` in `trips/history.ts` turns `HH:MM` into `08:30 AM` with pure
+   * arithmetic — no `Intl`, whose data varies by Hermes build.
+   */
+  local_day: string | null;
+  local_time: string | null;
 };
 
 export type User = {

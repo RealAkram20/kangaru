@@ -5,6 +5,7 @@ import type {
   Coordinates,
   CursorMeta,
   DispatchOffer,
+  DriverLedgerEntry,
   DriverPresence,
   Trip,
   TripEvent,
@@ -329,6 +330,15 @@ export async function unregisterDevice(api: ApiClient, token: string): Promise<v
 export type LegalDocuments = {
   terms: string;
   privacy: string;
+  /**
+   * Office-authored safety guidance (ADR-0040).
+   *
+   * **Not a consent document** — nobody agrees to it, and `LegalSheet` must
+   * not offer it beside the two that are. It travels with them because it is
+   * the same kind of thing: office-authored prose, editable without a deploy,
+   * and fetched only when somebody opens the screen that shows it.
+   */
+  safety: string;
 };
 
 /**
@@ -408,6 +418,68 @@ export async function fetchAuthMethods(api: ApiClient): Promise<AuthMethods> {
   const response = await api.request<{ settings: { auth: AuthMethods } }>('/public/settings');
 
   return response.data.settings.auth;
+}
+
+/**
+ * How to reach the office, from `settings.branding`.
+ *
+ * **Both are nullable and neither is invented.** `contact_phone` defaults to
+ * an empty string in the catalogue, so a deployment that has not set one has
+ * no number — and a Support screen that printed a plausible placeholder would
+ * send a driver with a real problem to a dead line. The screen renders what is
+ * there and says plainly when something is not.
+ */
+export type OfficeContact = {
+  name: string;
+  email: string | null;
+  phone: string | null;
+  /**
+   * The emergency services number, from `settings.safety` (ADR-0040).
+   *
+   * **Never hardcoded and never defaulted.** 999 is Uganda's; this product is
+   * built to run elsewhere, and a plausible default is a driver dialling a
+   * number that does not answer in their country. Null means the office has
+   * published none, and the Safety screen says so rather than guessing.
+   */
+  emergency: string | null;
+};
+
+/**
+ * The same `/public/settings` document `fetchAuthMethods` reads, for the half
+ * the Support and Safety screens need.
+ *
+ * A second fetcher over one endpoint rather than a fatter `AuthMethods`: that
+ * type is the welcome screen's shape and is read on every cold start, and the
+ * two answer different questions. They share a cache key at the query layer,
+ * so the second read costs nothing.
+ */
+export async function fetchOfficeContact(api: ApiClient): Promise<OfficeContact> {
+  const response = await api.request<{
+    settings: {
+      branding?: {
+        app_name?: string;
+        contact_email?: string | null;
+        contact_phone?: string | null;
+      };
+      safety?: { emergency_number?: string | null };
+    };
+  }>('/public/settings');
+
+  const branding = response.data.settings.branding;
+
+  // Empty strings are normalised to null here rather than at four call sites.
+  // The catalogue's default for `contact_phone` is `''`, and `'' || null` is
+  // the difference between a screen saying "call the office" over a blank and
+  // saying the office has published no number.
+  const clean = (value: string | null | undefined): string | null =>
+    typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
+
+  return {
+    name: clean(branding?.app_name) ?? 'the office',
+    email: clean(branding?.contact_email),
+    phone: clean(branding?.contact_phone),
+    emergency: clean(response.data.settings.safety?.emergency_number),
+  };
 }
 
 /**
@@ -591,62 +663,13 @@ export async function fetchDriverEarnings(
  * One movement in a driver's account (ADR-0029 §2) — a row of the wallet
  * statement.
  *
- * Hand-transcribed from `docs/api/openapi.yaml`, like everything else here.
- *
- * **There is no tip, bonus, withdrawal or top-up kind, and there never was.**
- * The four kinds below are the whole vocabulary. A screen showing any of the
- * other four would be inventing a transaction type.
+ * **Declared in `./types` and re-exported here**, which is a move rather than
+ * a change: `TripEarnings.lines` needed it, `types.ts` is where the contract's
+ * types live, and a type file importing from the *calls* file points the
+ * dependency arrow backwards. Every existing importer reads it from here and
+ * keeps working.
  */
-export type DriverLedgerEntry = {
-  id: number;
-  kind:
-    | 'fare_earned'
-    | 'cash_collected'
-    | 'settlement'
-    | 'adjustment'
-    /**
-     * The tip pair and the weekly bonus (ADR-0034).
-     *
-     * `tip_earned` is the driver's share **after commission** — the owner
-     * ruled that the platform takes its usual cut of a tip, which is what
-     * lets a tip reuse the pair a cash fare writes. `tip_cash_collected` is
-     * the gross in their hand, and the net of the two is the commission now
-     * owed.
-     *
-     * `bonus` is **unpaired**: it is not cash in anybody's hand, so the
-     * balance moves by the whole amount.
-     */
-    | 'tip_earned'
-    | 'tip_cash_collected'
-    | 'bonus';
-  /** The kind in words, from the server's own enum, so nothing re-spells them. */
-  kind_label: string;
-  /**
-   * **Signed, and the sign is the meaning**: positive means the platform owes
-   * the driver, negative means the driver owes the platform. Minor units —
-   * UGX is zero-decimal, so whole shillings, and never divide.
-   *
-   * Direction must not be inferred from `kind`: `settlement` legitimately
-   * runs both ways, which is why ADR-0029 §2 replaced a one-way `payout`.
-   */
-  amount_minor: number;
-  currency: string;
-  /**
-   * Server-written prose, and load-bearing rather than decorative: ADR-0029
-   * §3 records the commission rate in force *at completion* in this string,
-   * which is what lets an old row show the rate that actually applied to it.
-   */
-  description: string;
-  trip_id: number | null;
-  /**
-   * `ride`, `delivery` or `self_drive` — so a row can read "Ride earnings"
-   * rather than the generic "Fare earned". Null on a settlement, and on a
-   * walk-in a dispatcher fulfilled by hand; the app falls back to
-   * `kind_label`, which is always true.
-   */
-  service_type: string | null;
-  created_at: string | null;
-};
+export type { DriverLedgerEntry } from './types';
 
 /** A page of the statement, with the cursor for the next one. */
 export type DriverLedgerPage = {
@@ -865,8 +888,315 @@ type DriverTripHistoryMeta = {
   yesterday: string;
 };
 
+/**
+ * Progress towards the weekly trip bonus, in the week **now running**
+ * (ADR-0034 §4, ADR-0036 §1).
+ *
+ * **Nothing here has been earned.** The bonus is awarded by a scheduled
+ * command over a *closed* week, so a driver at 18 of 30 is being shown where
+ * they are, not what they are owed. `endsAt` is when the week closes and the
+ * question gets answered — the screen's wording has to carry that.
+ */
+export type WeeklyChallenge = {
+  /** Completed trips this week, counted by the same rule that pays out. */
+  trips: number;
+  tripTarget: number;
+  amountMinor: number;
+  currency: string;
+  /** ISO. The Monday, in the fleet's zone. */
+  weekStart: string;
+  /** ISO. When the week closes, not when the money arrives. */
+  endsAt: string;
+  /**
+   * Whether the target is cleared. Served rather than derived from
+   * `trips >= tripTarget` here, because two implementations of one comparison
+   * is one that gains a `>` and one that does not.
+   */
+  achieved: boolean;
+};
+
+/**
+ * Tonight's peak window and what it pays (ADR-0036).
+ *
+ * The instants are **resolved by the server**. The app is never handed
+ * `17:00` plus a zone name to re-derive from, because a rule that lives in a
+ * handset goes on asserting the old number after the office changes it.
+ */
+export type PeakHours = {
+  /** ISO. */
+  startsAt: string;
+  /** ISO. On the *following day* for a window that wraps past midnight. */
+  endsAt: string;
+  /** Whether the window was open at the moment of the request. */
+  active: boolean;
+  /**
+   * A number, not a sentence. The server sends the figure and this app owns
+   * the wording, so "Earn 20% more" can be translated (PRODUCT.md).
+   */
+  upliftPercent: number;
+};
+
+/** This driver's referral code and how their introductions are doing (ADR-0037). */
+export type ReferralOffer = {
+  /** Eight characters, with no O, 0, I, 1 or L — it is read aloud and retyped. */
+  code: string;
+  /** Trips the person they introduce must complete before the reward is paid. */
+  tripTarget: number;
+  rewardAmountMinor: number;
+  introduced: number;
+  qualified: number;
+  /**
+   * Summed from what each qualified referral actually promised, never the
+   * count times the current reward — the two differ after the office changes
+   * the figure, and this is the half that is already owed.
+   */
+  earnedMinor: number;
+};
+
+/**
+ * What the platform is currently offering this driver.
+ *
+ * **Every scheme is nullable, and null means "not running" — never zero.**
+ * `docs/screen-rules.md` §1 refuses a zero standing in for a figure that does
+ * not exist, so a fleet with no bonus scheme gets no Weekly Challenge card
+ * rather than one reading "0 of 40 trips". A driver on a fleet running one
+ * scheme sees one card, and that is correct rather than broken.
+ */
+export type DriverPromotions = {
+  /** ISO 4217. Every minor-unit amount below is in it. */
+  currency: string;
+  /** The fleet's zone. Every instant above is meant to be rendered against it. */
+  timezone: string;
+  weeklyChallenge: WeeklyChallenge | null;
+  peakHours: PeakHours | null;
+  referral: ReferralOffer | null;
+};
+
+/** The wire shape, snake_case, exactly as `DriverPromotions` in openapi.yaml. */
+type PromotionsPayload = {
+  currency: string;
+  timezone: string;
+  weekly_challenge: {
+    trips: number;
+    trip_target: number;
+    amount_minor: number;
+    currency: string;
+    week_start: string;
+    ends_at: string;
+    achieved: boolean;
+  } | null;
+  peak_hours: {
+    starts_at: string;
+    ends_at: string;
+    active: boolean;
+    uplift_percent: number;
+  } | null;
+  referral: {
+    code: string;
+    trip_target: number;
+    reward_amount_minor: number;
+    introduced: number;
+    qualified: number;
+    earned_minor: number;
+  } | null;
+};
+
+export async function fetchDriverPromotions(api: ApiClient): Promise<DriverPromotions> {
+  const response = await api.request<PromotionsPayload>('/me/promotions');
+  const payload = response.data;
+
+  // Mapped rather than passed through, so the null-means-absent contract is
+  // enforced in one place instead of at every render site. A scheme that is
+  // off arrives as null and stays null.
+  return {
+    currency: payload.currency,
+    timezone: payload.timezone,
+    weeklyChallenge: payload.weekly_challenge
+      ? {
+          trips: payload.weekly_challenge.trips,
+          tripTarget: payload.weekly_challenge.trip_target,
+          amountMinor: payload.weekly_challenge.amount_minor,
+          currency: payload.weekly_challenge.currency,
+          weekStart: payload.weekly_challenge.week_start,
+          endsAt: payload.weekly_challenge.ends_at,
+          achieved: payload.weekly_challenge.achieved,
+        }
+      : null,
+    peakHours: payload.peak_hours
+      ? {
+          startsAt: payload.peak_hours.starts_at,
+          endsAt: payload.peak_hours.ends_at,
+          active: payload.peak_hours.active,
+          upliftPercent: payload.peak_hours.uplift_percent,
+        }
+      : null,
+    referral: payload.referral
+      ? {
+          code: payload.referral.code,
+          tripTarget: payload.referral.trip_target,
+          rewardAmountMinor: payload.referral.reward_amount_minor,
+          introduced: payload.referral.introduced,
+          qualified: payload.referral.qualified,
+          earnedMinor: payload.referral.earned_minor,
+        }
+      : null,
+  };
+}
+
+/**
+ * One thing the office has told this driver (ADR-0039).
+ *
+ * **The inbox was already built** — `Modules/Notifications` has served it
+ * since ADR-0007, `trip.offered` has been one of its types all along, and the
+ * driver token has been allowed to reach it. Nothing about it is new here; the
+ * app simply never had a screen for it.
+ */
+export type DriverNotification = {
+  id: number;
+  /** The stable name, so a screen can route by kind rather than by subject. */
+  type: string;
+  type_label: string;
+  subject: string;
+  body: string;
+  /**
+   * A relative, **console-local** path. The driver app deliberately does not
+   * follow it: these URLs were written for the staff SPA, so "/bookings/12"
+   * means nothing here and following it would land nowhere. The `context`
+   * below is what the app routes on.
+   */
+  url: string | null;
+  context: Record<string, unknown> | null;
+  is_read: boolean;
+  read_at: string | null;
+  created_at: string;
+};
+
+export type DriverNotificationPage = {
+  notifications: DriverNotification[];
+  /**
+   * Served in `meta` beside the list rather than from a second endpoint — a
+   * bell shows a count and a panel shows the list, and two round trips for one
+   * panel is a round trip too many.
+   *
+   * Null when `meta` did not arrive, which the drawer draws as no dot at all:
+   * an unloaded count and a count of zero must not look the same.
+   */
+  unread: number | null;
+};
+
+export async function fetchNotifications(api: ApiClient): Promise<DriverNotificationPage> {
+  const response = await api.request<DriverNotification[], { unread: number }>('/notifications');
+
+  return {
+    notifications: response.data,
+    unread: response.meta?.unread ?? null,
+  };
+}
+
+/**
+ * Marks one as read.
+ *
+ * PATCH on a plain integer, not a bound model: the server scopes the lookup to
+ * the recipient, so another user's id answers 404 rather than a 403 that would
+ * confirm the row exists.
+ */
+export async function markNotificationRead(api: ApiClient, id: number): Promise<void> {
+  await api.request(`/notifications/${id}`, { method: 'PATCH' });
+}
+
+/**
+ * Marks every unread one read — `PATCH` on the collection.
+ *
+ * PATCH rather than POST, and no verb in the path: it modifies members that
+ * already exist rather than creating anything. The server answers with how
+ * many it touched; the app ignores that number and refetches instead, because
+ * a count the driver has just made zero is not worth printing.
+ *
+ * Takes no id, like the index above: the route is bound to the authenticated
+ * user and there is deliberately no way to name somebody else's inbox.
+ */
+export async function markAllNotificationsRead(api: ApiClient): Promise<void> {
+  await api.request('/notifications', { method: 'PATCH' });
+}
+
 export async function fetchDriverStats(api: ApiClient): Promise<DriverStats> {
   const response = await api.request<DriverStats>('/me/stats');
+
+  return response.data;
+}
+
+/**
+ * `GET /me/performance` — the Performance screen's six dials and its weekly
+ * card (ADR-0038).
+ *
+ * Hand-transcribed from `openapi.yaml` like every type in this file — see
+ * `DriverStats` above for the drift that cost a live bug, and check the two
+ * against each other rather than trusting `tsc`, which cannot see the server.
+ *
+ * ## The nulls are the contract
+ *
+ * Four fields here are nullable and **none of them may be defaulted to zero
+ * in this app**. Each null means "there is no such number", and a zero would
+ * be a claim:
+ *
+ * - a rate of `0` reads as a failing grade to a driver who has done nothing
+ *   wrong on their first shift;
+ * - `rostered_seconds_this_week: 0` would say the driver is rostered for no
+ *   hours, where null says they have no roster at all (ADR-0017 §3);
+ * - `bonus: null` means the scheme is switched off, and a card reading
+ *   "0 of 40 trips" for a fleet that runs no bonus scheme is an invented
+ *   figure dressed as a measurement.
+ *
+ * The screen draws no arc wherever a denominator is null. That is the whole
+ * reason the server sends denominators rather than percentages.
+ */
+export type DriverPerformance = {
+  /** 0–100, one decimal, over `window_days`. Null until there is something to divide by. */
+  acceptance_rate: number | null;
+  completion_rate: number | null;
+  /**
+   * **Not the complement of `completion_rate`.** `no_show` is the third
+   * ending, so the two sum to 100 only for a driver who has never had one.
+   * Never derive one from the other.
+   */
+  cancellation_rate: number | null;
+  /** Mean of the last 50 ratings. **Null until five exist** (ADR-0030 §3). */
+  rating: number | null;
+  rating_count: number;
+  window_days: number;
+  /** Completed trips, ever. The same count `/me/profile` serves. */
+  trips_total: number;
+  /** Monday of the week in progress, `YYYY-MM-DD`, in `timezone`. */
+  week_start: string;
+  /** The **fleet's** zone. Served so a handset near a border does not draw its own week. */
+  timezone: string;
+  trips_this_week: number;
+  /**
+   * Duty-session seconds since `week_start` (ADR-0038).
+   *
+   * Conservative by design: it counts time the platform could actually reach
+   * the driver, so a spell in a dead zone is lost. Seconds rather than a
+   * formatted string, because rendering "7h 20m" is this app's job and
+   * `durationLabel` already does it.
+   */
+  online_seconds_this_week: number;
+  /** The **whole** week's roster. Null for a driver who has none. */
+  rostered_seconds_this_week: number | null;
+  /** Null when `billing.bonus_enabled` is off — the app then renders no card. */
+  bonus: {
+    trips: number;
+    trip_target: number;
+    amount_minor: number;
+    currency: string;
+    week_start: string;
+    ends_at: string;
+    /** Server-computed. Never re-derived here from `trips >= trip_target`. */
+    achieved: boolean;
+  } | null;
+};
+
+export async function fetchDriverPerformance(api: ApiClient): Promise<DriverPerformance> {
+  const response = await api.request<DriverPerformance>('/me/performance');
 
   return response.data;
 }
@@ -884,6 +1214,18 @@ export async function fetchDriverStats(api: ApiClient): Promise<DriverStats> {
  */
 export type DriverProfile = {
   name: string;
+  /**
+   * Where to fetch this driver's photograph, or null (ADR-0041).
+   *
+   * A **route on the API**, not a storage URL: the file is on the private disk
+   * and is streamed, because a signed link to a photograph of somebody is
+   * addressable by anyone who ever saw it — and this one is loaded every time
+   * the drawer opens, so the link would travel.
+   *
+   * Null is the ordinary case, not an error. A driver who has never sent one
+   * gets their initials, which is what everybody had before this existed.
+   */
+  photo_url: string | null;
   /**
    * The driver's **profile** phone, not the account's. A driver signs in with
    * an email (ADR-0016) and is reached on this number.

@@ -37,7 +37,7 @@ that none of them is lost because a driver was in a dead zone in Nakasongola.
 
 ## Dependencies
 
-The **thirty-eight** route names in
+The **forty** route names in
 `App\Support\Auth\ClientScope::routesFor('driver')` and nothing else. A driver token gets `403 TOKEN_SCOPE_EXCEEDED` on anything
 outside them (ADR-0022), and the list is fail-closed, so endpoints added later
 start shut.
@@ -57,14 +57,18 @@ Home ─────── Today (trip list)
         └── Trip in progress     ← trip_started, waiting, trip_resumed
         └── Trip map             ← full-screen, from Navigate
         └── Trips history        ← finished work, by day; All/Rides/Deliveries
-        └── Trip detail          ← the record, and every terminal state
+        └── Trip detail          ← the record: rail from trip_events, ledger rows,
+                                    odometer pair. Ride or delivery, one page.
         └── Odometer             ← modal; owns passenger_onboard
         └── Ride complete        ← pushed by the closing odometer, not a status
 Earnings ─── day / week / month
 Wallet ───── balance, settlement requests, recent movements
         └── Transactions         ← the wallet's View all; Today/Week/Custom
 Profile ──── who the driver is: rating, vehicle, member since, documents
+        └── Notifications        ← ADR-0039; what the office said, and a dot
         └── Documents            ← ADR-0033; upload, and what the office said
+        └── Performance          ← ADR-0038; six dials, and the bonus week
+        └── Promotions           ← ADR-0036/0037; weekly target, peak, referrals
         └── Time off
         └── Change password
         └── Updates & sync       ← the outbox, and the parked queue
@@ -310,6 +314,59 @@ revokes every token including the caller's — so a queued credential change wou
 sign a driver out mid-shift for a reason they no longer remember. It needs a
 connection and says so, and on success it signs out locally rather than making
 one more request it knows will 401.
+
+**Help & Safety carries an SOS button now, and it dials.**
+
+The first cut of that screen refused one, on reasoning still recorded in its
+docblock: an SOS with no monitored channel behind it *"would write a log line,
+show a reassuring confirmation, and leave somebody in trouble believing help was
+coming."* That is a refusal of a **platform alert**, and it stands. What the
+screen has is a dial: it opens the handset's dialler on the emergency number the
+office publishes, says *"Tap to call emergency services"* on its face, and
+prints the number it is about to call. Nothing is posted and nothing is
+confirmed.
+
+Three properties are what make the prominence honest, and each is pinned by a
+test that fails when it is broken:
+
+- **No number published, no red button.** `emergency_number` is a public setting
+  and is empty by default; an unconfigured deployment gets a notice telling the
+  driver to save their own local number *before* they need it. A dead SOS is
+  exactly the control that was refused.
+- **Nothing is hardcoded.** 999 is Uganda's, and this product is built to run
+  elsewhere.
+- **A screen reader hears the act, not the letters** — "Call emergency services
+  on 999", never "Emergency, S O S".
+
+The **position sentence** stays, though the mockup draws no such card. On duty
+the app streams position (ADR-0024 §2) and a dispatcher can already find the
+driver; off duty it streams nothing. A driver in trouble off duty who does not
+know that will wait for help nobody has been asked for. It is the only place in
+the app that says what the platform can currently see.
+
+**Help Topics route to a person, not to a form.** The mockup's five rows read as
+a ticket queue, and there is no issue-reporting endpoint on this platform — no
+table, no route, no office-side inbox — and no messaging either. So a topic
+opens **Support** with the office's real number and the two or three specifics
+that particular call needs (`support/topics.ts`), and prefills a mail subject.
+It prefills no mail **body**: whatever this app wrote would arrive at the office
+looking like the driver's own words. The honest version of the mockup's intent —
+a driver raising a request the office answers — is a backend feature with an ADR
+attached, and is named as a gap rather than faked.
+
+**The office's emphasis is rendered, not printed.** The safety guidance is an
+editable setting and the shipped one bolds its most important sentence with
+`**`, which reached the driver as literal asterisks. `support/prose.ts`
+interprets that one marker and **nothing else** — no headings, lists or links —
+because the value has no editor to teach a syntax to, and a Markdown dependency
+to bold one sentence is not a trade this app should make. Text with no markers
+comes back unchanged, so Terms and Privacy are untouched.
+
+Three additions to the shared vocabulary came out of it: `IconChip` (the mockup's
+glyph-in-a-well, five times on that screen alone), `MenuRow`'s `longValue` — for
+a row whose value is an identifier rather than a status, which is why
+"Email the office" no longer clips to **"Email th…"** beside a truncated
+address — and `emphasisSegments`.
 
 ### State, and where each kind lives
 

@@ -384,6 +384,7 @@ export function ScreenHeader({
   title,
   subtitle = null,
   onBack,
+  action,
 }: {
   title: string;
   /**
@@ -409,6 +410,17 @@ export function ScreenHeader({
    * missing its control.
    */
   onBack?: (() => void) | undefined;
+  /**
+   * One control at the trailing edge — the trip record's *Help* pill.
+   *
+   * A slot rather than a `helpLabel`/`onHelp` pair, because the header should
+   * not learn what any particular screen's action *is*. It stays optional and
+   * every existing caller renders exactly as before.
+   *
+   * **One.** A row with two trailing controls is a toolbar, and a toolbar on a
+   * screen a driver reads one-handed in a cradle is a row of mis-taps.
+   */
+  action?: ReactNode;
 }) {
   const insets = useSafeAreaInsets();
 
@@ -436,6 +448,8 @@ export function ScreenHeader({
           </Text>
         )}
       </View>
+
+      {action}
     </View>
   );
 }
@@ -462,11 +476,29 @@ export function MenuRow({
   onPress,
   announcement,
   showsChevron = true,
+  longValue = false,
 }: {
   icon: ReactNode;
   label: string;
   /** The right-hand word — a state, a count, or null for a plain row. */
   value?: string | null;
+  /**
+   * That the value is a long identifier rather than a short state, so the
+   * **value** yields to the label instead of the other way round.
+   *
+   * The default is right for what this row was built for: "1 needs attention"
+   * clipped to "1 needs atten…" keeps the half that matters, so the label goes
+   * first. An email address inverts it. On a 393dp screen "Email the office"
+   * beside `operations@kangaruride.com` clipped the *label* to **"Email
+   * th…"** — a control whose own name is unreadable — while the address lost
+   * its domain as well. Both halves were damaged to protect a value that could
+   * afford to lose its tail.
+   *
+   * Opt in only for values that are identifiers: an address, a plate, a
+   * reference. A status word must keep the default, or it will be the
+   * label that survives and the state that vanishes.
+   */
+  longValue?: boolean;
   tone?: 'good' | 'warning' | 'danger' | 'muted';
   onPress: () => void;
   /**
@@ -503,12 +535,22 @@ export function MenuRow({
       >
         <View style={styles.menuIcon}>{icon}</View>
 
-        <Text style={styles.menuLabel} numberOfLines={1}>
+        <Text
+          style={[styles.menuLabel, longValue ? styles.menuLabelKept : null]}
+          numberOfLines={1}
+        >
           {label}
         </Text>
 
         {value !== null && (
-          <Text style={[styles.menuValue, { color: valueColor }]} numberOfLines={1}>
+          <Text
+            style={[
+              styles.menuValue,
+              longValue ? styles.menuValueYields : null,
+              { color: valueColor },
+            ]}
+            numberOfLines={1}
+          >
             {value}
           </Text>
         )}
@@ -622,6 +664,42 @@ export function Notice({
   );
 }
 
+/**
+ * A glyph in a soft circular well.
+ *
+ * The mockup's Help Topics rows draw every icon this way, and it recurs five
+ * times on that one screen — AGENTS.md's "if it appears twice it is shared"
+ * with four to spare. It is a wrapper rather than a `framed` flag on `MenuRow`
+ * because the same treatment is wanted on things that are not rows: the
+ * Contact Support card ends in one.
+ *
+ * **The well is `surfaceSunken` by default, and that is not decoration.** A
+ * bare 22pt glyph against white at arm's length in sunlight is a smudge; a
+ * filled disc gives the eye an edge to catch, which is the same reason
+ * DESIGN.md prefers contrast over subtlety in this app. Pass a tint when the
+ * chip belongs to a toned card, so it does not read as a hole punched in it.
+ */
+export function IconChip({
+  children,
+  size = 44,
+  background = colors.surfaceSunken,
+}: {
+  children: ReactNode;
+  size?: number;
+  background?: string;
+}) {
+  return (
+    <View
+      style={[
+        styles.iconChip,
+        { width: size, height: size, borderRadius: size / 2, backgroundColor: background },
+      ]}
+    >
+      {children}
+    </View>
+  );
+}
+
 export function Empty({ message }: { message: string }) {
   return (
     <View style={styles.empty}>
@@ -651,8 +729,15 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   menuIcon: {
-    width: 24,
+    // `minWidth`, not `width`, so a row may pass a framed glyph (`IconChip`)
+    // without it being clipped to 24. Every glyph that was here before is 20-24
+    // wide and renders at exactly the same position it always did.
+    minWidth: 24,
     alignItems: 'center',
+  },
+  iconChip: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   menuLabel: {
     ...typography.bodyStrong,
@@ -670,6 +755,14 @@ const styles = StyleSheet.create({
     // localised label and a localised value together exceed a 360dp screen,
     // and something has to give. This gives, reluctantly.
     flexShrink: 1,
+  },
+  /** `longValue`: the label stops yielding, so its own name stays readable. */
+  menuLabelKept: {
+    flexShrink: 0,
+  },
+  /** `longValue`: the identifier gives up its tail instead. */
+  menuValueYields: {
+    flexShrink: 4,
   },
   headerBack: {
     width: 44,

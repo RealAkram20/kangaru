@@ -55,6 +55,9 @@ jest.mock('../duty/queries', () => ({
 }));
 
 const SETTLED: TripEarnings = {
+  // The completion screen states the three figures; the row-by-row breakdown
+  // belongs to `TripDetailScreen`, the record.
+  lines: [],
   earned_minor: 10_000,
   commission_minor: 2_500,
   total_minor: 12_500,
@@ -74,6 +77,9 @@ function trip(earnings: TripEarnings | null = SETTLED): Trip {
     destination: 'Kololo Airstrip',
     pickup: { label: 'Acacia Mall, 14-18 Cooper Rd', latitude: null, longitude: null },
     dropoff: { label: 'Kololo Airstrip', latitude: null, longitude: null },
+    service_type: 'ride',
+    reference: null,
+    package: null,
     status: 'trip_completed',
     allowed_transitions: [],
     pickup_wait_target_seconds: 300,

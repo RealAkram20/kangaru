@@ -1,10 +1,7 @@
-import * as Location from 'expo-location';
-import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { isApiError } from '../api/errors';
 import { colors, MIN_TOUCH_HEIGHT, radius, spacing, typography } from '../ui/theme';
-import { useDuty, useSetDuty } from './queries';
+import { useDutyToggle } from './useDutyToggle';
 
 /**
  * On duty or off, and the one control that decides whether this driver exists
@@ -24,45 +21,17 @@ import { useDuty, useSetDuty } from './queries';
  * precisely why it needs saying out loud.
  */
 export function DutyBar() {
-  const { data: duty, isLoading } = useDuty();
-  const setDuty = useSetDuty();
-  const [refusal, setRefusal] = useState<string | null>(null);
-
-  const onDuty = duty?.on_duty ?? false;
-  const dispatchable = duty?.dispatchable ?? false;
-
-  // A plain function, not a `useCallback`. It closes over duty state that
-  // changes on every poll, so the memo could never be preserved anyway — and
-  // the React Compiler says so rather than letting it look memoised.
-  const toggle = async () => {
-    setRefusal(null);
-
-    if (!onDuty) {
-      // Asked here, at the moment the driver signs on, and never from the
-      // background timer. A permission dialog that appears out of a timer
-      // minutes later is one nobody can connect to anything they did.
-      //
-      // A refusal does not block the shift: the server keeps a driver
-      // dispatchable without coordinates and ranks them without distance
-      // (ADR-0024 §2). Refusing to sign them on would be this app inventing
-      // a rule the platform does not have.
-      await Location.requestForegroundPermissionsAsync().catch(() => null);
-    }
-
-    try {
-      await setDuty.mutateAsync({ onDuty: !onDuty, vehicleId: duty?.vehicle_id ?? null });
-    } catch (error) {
-      // The server's own sentence, shown verbatim. It already knows whether
-      // this is approved leave, a roster, or a suspension — and ADR-0017 put
-      // that wording in one place so a driver is not told two different
-      // things by two different screens.
-      setRefusal(
-        isApiError(error)
-          ? error.message
-          : 'Could not reach the office. Check your connection and try again.',
-      );
-    }
-  };
+  /*
+   * The act itself now lives in `useDutyToggle`, extracted when the drawer
+   * grew its own Go Offline button (AGENTS.md: if it appears twice it becomes
+   * shared). **Nothing about the behaviour changed** — the permission prompt,
+   * the vehicle travelling with the request, and the server's own refusal
+   * wording all moved together, which was the point: the half a second copy
+   * would have dropped is the permission, and its absence is invisible until a
+   * driver signs on and never gets a job.
+   */
+  const { isLoading, onDuty, dispatchable, busy, refusal, toggle } = useDutyToggle();
+  const setDuty = { isPending: busy };
 
   return (
     <View style={styles.wrap}>

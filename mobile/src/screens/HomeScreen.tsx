@@ -1,3 +1,4 @@
+import { DrawerActions } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Image } from 'expo-image';
 import { useCallback, useMemo, type ReactNode } from 'react';
@@ -123,9 +124,16 @@ export function HomeScreen({ navigation }: Props) {
       <View style={[styles.topBar, { paddingTop: insets.top + spacing.sm }]}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Menu"
+          accessibilityLabel="Open menu"
           hitSlop={8}
-          onPress={() => navigation.getParent()?.navigate('Profile')}
+          /*
+            Opens the drawer, which is what this button always looked like it
+            did. It used to jump to the Profile *tab* — a hamburger that
+            switched tabs, which is the one thing a hamburger does not mean.
+            The drawer is two levels up: this screen sits in the Trips stack,
+            inside the tab navigator, inside the drawer.
+          */
+          onPress={() => navigation.getParent()?.getParent()?.dispatch(DrawerActions.openDrawer())}
           style={styles.topBarButton}
         >
           <MenuIcon color={colors.text} size={24} strokeWidth={2} />

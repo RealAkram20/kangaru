@@ -30,6 +30,9 @@ function trip(earnings: TripEarnings | null): Trip {
     destination: 'Kololo Airstrip',
     pickup: { label: 'Acacia Mall, 14-18 Cooper Rd', latitude: null, longitude: null },
     dropoff: { label: 'Kololo Airstrip', latitude: null, longitude: null },
+    service_type: null,
+    reference: null,
+    package: null,
     status: 'trip_completed',
     allowed_transitions: [],
     pickup_wait_target_seconds: 300,
@@ -55,6 +58,9 @@ function trip(earnings: TripEarnings | null): Trip {
 }
 
 const settled: TripEarnings = {
+  // Empty here on purpose: `completion.ts` reads the three figures, and the
+  // per-trip rows are the trip *record*'s concern rather than this screen's.
+  lines: [],
   earned_minor: 10_000,
   commission_minor: 2_500,
   total_minor: 12_500,

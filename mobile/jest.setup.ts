@@ -77,6 +77,19 @@ jest.mock('expo-crypto', () => ({
   randomUUID: jest.fn(() => '00000000-0000-4000-8000-000000000000'),
 }));
 
+/*
+ * The system clipboard, for the trip record's copyable reference.
+ *
+ * A native module, so there is nothing behind it under Jest. Mocked as a
+ * resolving spy rather than as a no-op, because the assertion worth making is
+ * *what string was copied* — a copy button that puts the trip's database id on
+ * the clipboard instead of the customer's reference is wrong in a way no render
+ * shows.
+ */
+jest.mock('expo-clipboard', () => ({
+  setStringAsync: jest.fn(async () => true),
+}));
+
 jest.mock('@react-native-community/netinfo', () => ({
   addEventListener: jest.fn(() => () => undefined),
   fetch: jest.fn(async () => ({ isConnected: true, isInternetReachable: true })),
@@ -184,4 +197,47 @@ jest.mock('react-native-svg', () => {
     ClipPath: stub('ClipPath'),
     Mask: stub('Mask'),
   };
+});
+
+/*
+ * The drawer's three native dependencies (ADR-0039's navigation restructure).
+ *
+ * `react-native-gesture-handler` ships its own Jest setup and needs calling —
+ * without it every screen that mounts inside the drawer throws at import.
+ * Reanimated is mocked rather than run: its worklets need a UI thread that
+ * does not exist here, and the drawer's animation is not what any test in this
+ * suite is asserting.
+ */
+require('react-native-gesture-handler/jestSetup');
+
+jest.mock('react-native-reanimated', () => {
+  const Reanimated = require('react-native-reanimated/mock');
+
+  // The mock omits this and the drawer calls it on mount.
+  Reanimated.default.call = () => undefined;
+
+  return Reanimated;
+});
+
+// `expo-constants` backs `ui/version.ts`, which the drawer and two screens
+// render. Mocked to a fixed version so a test asserting the footer does not
+// change every time `app.json` does.
+jest.mock('expo-constants', () => ({
+  __esModule: true,
+  default: { expoConfig: { version: '1.0.0' } },
+}));
+
+/*
+ * `expo-image` throws at import under Jest — its observer integration reaches
+ * for a browser API that is not there. Nothing had rendered it in a test
+ * before the drawer, which draws the brand wordmark and the driver's
+ * photograph, so this is the first suite to need it.
+ *
+ * Mocked as a plain `Image` rather than as null, so a test can still assert
+ * that a photograph was rendered and with what source.
+ */
+jest.mock('expo-image', () => {
+  const { Image } = require('react-native');
+
+  return { Image, __esModule: true };
 });

@@ -1,4 +1,5 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createDrawerNavigator } from '@react-navigation/drawer';
 import { DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
@@ -9,14 +10,21 @@ import { OfferPresenter } from '../duty/OfferPresenter';
 import { PresenceController } from '../duty/PresenceController';
 import { PushRegistrar } from '../push/PushRegistrar';
 import { GpsController } from '../location/GpsController';
+import { DrawerContent } from './DrawerContent';
 import { DocumentsScreen } from '../screens/DocumentsScreen';
 import { EarningsScreen } from '../screens/EarningsScreen';
 import { ForgotPasswordScreen } from '../screens/ForgotPasswordScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import { PasswordScreen } from '../screens/PasswordScreen';
+import { PerformanceScreen } from '../screens/PerformanceScreen';
 import { OdometerScreen } from '../screens/OdometerScreen';
 import { PickupScreen } from '../screens/PickupScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
+import { NotificationsScreen } from '../screens/NotificationsScreen';
+import { PromotionsScreen } from '../screens/PromotionsScreen';
+import { SafetyScreen } from '../screens/SafetyScreen';
+import { SettingsScreen } from '../screens/SettingsScreen';
+import { SupportScreen } from '../screens/SupportScreen';
 import { RideCompleteScreen } from '../screens/RideCompleteScreen';
 import { SignInScreen } from '../screens/SignInScreen';
 import { SignUpScreen } from '../screens/SignUpScreen';
@@ -35,12 +43,14 @@ import { colors } from '../ui/theme';
 import { TripsHistoryScreen } from '../screens/TripsHistoryScreen';
 import type {
   EarningsStackParams,
+  RootDrawerParams,
   ProfileStackParams,
   RootTabParams,
   TripsStackParams,
   WalletStackParams,
 } from './types';
 
+const Drawer = createDrawerNavigator<RootDrawerParams>();
 const Tabs = createBottomTabNavigator<RootTabParams>();
 const TripsStack = createNativeStackNavigator<TripsStackParams>();
 const EarningsStack = createNativeStackNavigator<EarningsStackParams>();
@@ -172,7 +182,16 @@ function TripsNavigator() {
         component={TripsHistoryScreen}
         options={{ headerShown: false }}
       />
-      <TripsStack.Screen name="TripDetail" component={TripDetailScreen} options={{ title: 'Trip' }} />
+      {/*
+        Its own header now, like every other renovated screen: the record grew a
+        Help control, and the navigator's bar has nowhere to put one. Leaving
+        `title: 'Trip'` here would stack two headers.
+      */}
+      <TripsStack.Screen
+        name="TripDetail"
+        component={TripDetailScreen}
+        options={{ headerShown: false }}
+      />
       {/* Own header, as the three live-leg screens do. `gestureEnabled` is
           off and there is no back arrow to the previous screen: behind this
           is the live-leg screen for a trip that has just ended, and swiping
@@ -270,6 +289,44 @@ function ProfileNavigator() {
         component={SyncQueueScreen}
         options={{ headerShown: false }}
       />
+      {/* ADR-0038. Draws its own `ScreenHeader`, as the two above do. */}
+      <ProfileStack.Screen
+        name="Performance"
+        component={PerformanceScreen}
+        options={{ headerShown: false }}
+      />
+      {/* ADR-0036 and ADR-0037. Own header, like every screen on this stack. */}
+      <ProfileStack.Screen
+        name="Promotions"
+        component={PromotionsScreen}
+        options={{ headerShown: false }}
+      />
+      {/*
+        The four the drawer added. On this stack rather than as drawer screens
+        of their own, so they keep the tab bar like every other pushed screen —
+        registering them on the drawer would have made exactly these four the
+        odd ones out. All draw their own `ScreenHeader`.
+      */}
+      <ProfileStack.Screen
+        name="Notifications"
+        component={NotificationsScreen}
+        options={{ headerShown: false }}
+      />
+      <ProfileStack.Screen
+        name="Settings"
+        component={SettingsScreen}
+        options={{ headerShown: false }}
+      />
+      <ProfileStack.Screen
+        name="Safety"
+        component={SafetyScreen}
+        options={{ headerShown: false }}
+      />
+      <ProfileStack.Screen
+        name="Support"
+        component={SupportScreen}
+        options={{ headerShown: false }}
+      />
     </ProfileStack.Navigator>
   );
 }
@@ -297,6 +354,54 @@ export function RootNavigator() {
         <GpsController />
         <PresenceController />
         <PushRegistrar />
+        <MainNavigator />
+
+        {/* Last, and outside the navigator on purpose. A job has a
+            fifteen-second clock and has to appear over whatever the driver
+            is doing — including a modal — so it is painted above the tabs
+            rather than pushed into one of them. See `OfferPresenter`. */}
+        <OfferPresenter />
+        </>
+      )}
+    </NavigationContainer>
+  );
+}
+
+/**
+ * The drawer, wrapping the tab navigator.
+ *
+ * **One drawer screen, not five.** Every destination the drawer lists lives
+ * inside one of the four tab stacks, so the drawer holds `Main` and nothing
+ * else and its content component navigates into the nesting. The alternative —
+ * registering Notifications, Settings, Safety and Support as drawer screens —
+ * would have taken the tab bar away from exactly those four and made them the
+ * odd screens out in an app where every other pushed screen keeps it.
+ *
+ * `drawerType: 'front'` is the mockup's: the panel slides over the home screen
+ * and dims it, rather than pushing it sideways. `swipeEdgeWidth` is generous
+ * because this is opened one-handed with a thumb, in a cradle.
+ */
+function MainNavigator() {
+  return (
+    <Drawer.Navigator
+      drawerContent={(props) => <DrawerContent {...props} />}
+      screenOptions={{
+        headerShown: false,
+        drawerType: 'front',
+        drawerStyle: { backgroundColor: colors.surface, width: '86%' },
+        // Navy at low alpha, the app's own scrim token — the screen behind
+        // reads as dimmed rather than switched off.
+        overlayColor: colors.scrim,
+        swipeEdgeWidth: 40,
+      }}
+    >
+      <Drawer.Screen name="Main" component={TabsNavigator} />
+    </Drawer.Navigator>
+  );
+}
+
+function TabsNavigator() {
+  return (
         <Tabs.Navigator
           screenOptions={{
             headerShown: false,
@@ -361,14 +466,5 @@ export function RootNavigator() {
             }}
           />
         </Tabs.Navigator>
-
-        {/* Last, and outside the navigator on purpose. A job has a
-            fifteen-second clock and has to appear over whatever the driver
-            is doing — including a modal — so it is painted above the tabs
-            rather than pushed into one of them. See `OfferPresenter`. */}
-        <OfferPresenter />
-        </>
-      )}
-    </NavigationContainer>
   );
 }

@@ -16,6 +16,10 @@ function event(to: TripEvent['to_status'], createdAt: string | null): TripEvent 
     user_id: null,
     notes: null,
     created_at: createdAt,
+    // Null here deliberately: every figure in `progress.ts` is arithmetic on
+    // `created_at`, and a test that supplied these would suggest otherwise.
+    local_day: null,
+    local_time: null,
   };
 }
 

@@ -53,6 +53,8 @@ jest.mock('../auth/AuthProvider', () => ({
 function profile(overrides: Partial<DriverProfile> = {}): DriverProfile {
   return {
     name: 'John Kamau',
+    // ADR-0041 made this required on `DriverProfile`.
+    photo_url: null,
     phone: '+256700123456',
     email: null,
     member_since: '2024-01-15',
@@ -137,38 +139,50 @@ it('withholds the rating below five, rather than printing one', async () => {
   expect(screen.getByText(/2 ratings so far/)).toBeTruthy();
 });
 
-it('never offers bank details, which nothing on this platform can do', async () => {
+/*
+ * The four assertions that used to live here have **moved to
+ * `SettingsScreen.test.tsx`**, not been deleted. The rows they cover — Bank
+ * details' honest neighbour, the parked queue and its count, and Time off —
+ * are all still in the app; the drawer took the navigation and Settings took
+ * the account actions, because the owner's instruction was "we don't need to
+ * repeat the menus".
+ *
+ * Their original wording, kept so the reasoning is not lost with the location:
+ *
+ * - "never offers bank details, which nothing on this platform can do"
+ * - "keeps the parked queue reachable, and says when nothing is stuck"
+ * - "counts what is stuck, so a refused update cannot be missed"
+ * - "gives time off a way in, which the four-tab bar had left unreachable"
+ *
+ * What replaces them here is the assertion that this screen no longer carries
+ * a menu at all — which is the property that would silently regress if
+ * somebody re-added a row "for convenience" and started the drift again.
+ */
+it('carries no navigation menu, because the drawer is the one menu', async () => {
+  const screen = await renderProfile(<ProfileScreen navigation={navigation} route={{} as never} />);
+
+  expect(screen.queryByText('Time off')).toBeNull();
+  expect(screen.queryByText('Settling up')).toBeNull();
+  expect(screen.queryByText('Updates & sync')).toBeNull();
+  expect(screen.queryByText('Change password')).toBeNull();
+  expect(screen.queryByText('Performance')).toBeNull();
+  expect(screen.queryByText('Promotions')).toBeNull();
+  expect(screen.queryByText('Log out')).toBeNull();
+});
+
+it('keeps the one row that is about this screen s own subject', async () => {
+  // Documents stay, because this screen is who the driver is and what they
+  // drive — their papers are part of that answer rather than a destination
+  // they browse to.
+  const screen = await renderProfile(<ProfileScreen navigation={navigation} route={{} as never} />);
+
+  expect(screen.getByText('Vehicle & Documents')).toBeTruthy();
+});
+
+it('still never offers bank details, which nothing on this platform can do', async () => {
   const screen = await renderProfile(<ProfileScreen navigation={navigation} route={{} as never} />);
 
   expect(screen.queryByText(/Bank/i)).toBeNull();
-  // The honest neighbour: settling up is a request the office answers
-  // (ADR-0032), and it lives on the Wallet tab.
-  expect(screen.getByText('Settling up')).toBeTruthy();
-});
-
-it('keeps the parked queue reachable, and says when nothing is stuck', async () => {
-  const screen = await renderProfile(<ProfileScreen navigation={navigation} route={{} as never} />);
-
-  expect(screen.getByText('Updates & sync')).toBeTruthy();
-  expect(screen.getByText('Nothing stuck')).toBeTruthy();
-});
-
-it('counts what is stuck, so a refused update cannot be missed', async () => {
-  // ADR-0023 §6. A driver whose closing odometer was refused has to be able to
-  // read the number back to the office, which means the row has to shout.
-  mockUseSync.mockReturnValue({ parked: [{ id: 'a' }, { id: 'b' }], pending: 2 });
-
-  const screen = await renderProfile(<ProfileScreen navigation={navigation} route={{} as never} />);
-
-  expect(screen.getByText('2 need you')).toBeTruthy();
-});
-
-it('gives time off a way in, which the four-tab bar had left unreachable', async () => {
-  // `TimeOff` was registered on this stack with nothing navigating to it: it
-  // lost its tab and never gained a row.
-  const screen = await renderProfile(<ProfileScreen navigation={navigation} route={{} as never} />);
-
-  expect(screen.getByText('Time off')).toBeTruthy();
 });
 
 it('reports the documents state rather than assuming the friendly one', async () => {

@@ -58,6 +58,8 @@ function arrivalEvent(createdAt: string | null = ARRIVED_AT): TripEvent {
     user_id: 3,
     notes: null,
     created_at: createdAt,
+    local_day: null,
+    local_time: null,
   };
 }
 
@@ -73,6 +75,9 @@ function trip(overrides: Partial<Trip> = {}): Trip {
     destination: 'Kololo Airstrip',
     pickup: { label: 'Acacia Mall, 14-18 Cooper Rd', latitude: 0.3676, longitude: 32.5825 },
     dropoff: { label: 'Kololo Airstrip', latitude: 0.3376, longitude: 32.5925 },
+    service_type: 'ride',
+    reference: null,
+    package: null,
     status: 'driver_arrived',
     // Exactly what the server allows from here. The screen must offer one of
     // the three, and the test below names the two it must not.

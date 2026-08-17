@@ -28,6 +28,8 @@ import {
 function profile(overrides: Partial<DriverProfile> = {}): DriverProfile {
   return {
     name: 'John Kamau',
+    // ADR-0041 made this required on `DriverProfile`.
+    photo_url: null,
     phone: '+256700123456',
     email: null,
     member_since: '2024-01-15',
