@@ -231,7 +231,7 @@ it('refuses a code past its fifteen minutes', function () {
     ])->assertStatus(422);
 });
 
-it('holds the same twelve-character floor as every other password door', function () {
+it('holds the same eight-character floor as every other driver-facing door', function () {
     enableReset();
     pinResetCode('123456');
     User::factory()->create(['email' => 'musa@kangaruride.test']);
@@ -242,8 +242,8 @@ it('holds the same twelve-character floor as every other password door', functio
     $this->postJson('/api/v1/auth/password/reset', [
         'email' => 'musa@kangaruride.test',
         'code' => '123456',
-        'password' => 'elevenchars',
-        'password_confirmation' => 'elevenchars',
+        'password' => '2short!',
+        'password_confirmation' => '2short!',
     ])->assertStatus(422)->assertJsonValidationErrors('password');
 });
 

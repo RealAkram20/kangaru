@@ -2,6 +2,8 @@
 
 use App\Enums\UserRole;
 use App\Models\User;
+use App\Support\Auth\ClientScope;
+use Illuminate\Support\Facades\Route;
 use Modules\Drivers\Models\Driver;
 use OTPHP\TOTP;
 
@@ -105,6 +107,45 @@ it('closes a route nobody has named on the list, without anybody deciding to', f
     tokenScopeGet($token, '/api/v1/roles')
         ->assertForbidden()
         ->assertJsonPath('code', 'TOKEN_SCOPE_EXCEEDED');
+});
+
+/**
+ * The guard for the mistake this list keeps making.
+ *
+ * **Seven endpoints have shipped 403 to the only client that draws them.**
+ * Earnings, the ledger, promotions and trips were the first four; the payout
+ * account, the closure request and the driver's own profile edit were found
+ * the same way months later — with `curl` against a running server, because
+ * nothing else looks. Every backend test signs in without a `client` and gets
+ * an unscoped console token, so an endpoint's own suite is green while its
+ * screen is dead, and the app's tests mock the client and are green too.
+ *
+ * `/me` is the driver's own surface *by construction*: no id in any path, the
+ * token is the subject. So a `me.*` route that is not on the driver's list is
+ * either an omission or a decision nobody wrote down — and this makes the
+ * second one cost a line of code, which is the right price.
+ *
+ * The office's own routes over a driver's row (`drivers.*`) are deliberately
+ * out of scope here: a driver may correct two fields on their own record, not
+ * seven on anybody's, and `drivers.documents.*` is absent so that nobody can
+ * verify their own licence.
+ */
+it('leaves no me route unreachable by the app that owns it', function () {
+    $names = collect(Route::getRoutes()->getRoutes())
+        ->map(fn ($route): ?string => $route->getName())
+        ->filter(fn (?string $name): bool => $name !== null && str_starts_with($name, 'me.'))
+        ->values();
+
+    // A guard that found nothing because it looked at nothing is the failure
+    // mode of every reflective test. This one has 35 routes to look at.
+    expect($names)->not->toBeEmpty();
+
+    $unreachable = $names
+        ->reject(fn (string $name): bool => ClientScope::permits([ClientScope::DRIVER], $name))
+        ->values()
+        ->all();
+
+    expect($unreachable)->toBe([]);
 });
 
 // ── The console is untouched ─────────────────────────────────────────────

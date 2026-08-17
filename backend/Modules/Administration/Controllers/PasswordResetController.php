@@ -60,9 +60,10 @@ class PasswordResetController extends Controller
         $validated = $request->validate([
             'email' => ['required', 'email', 'max:190'],
             'code' => ['required', 'string', 'size:6'],
-            // The same floor as ChangePasswordRequest — a reset that could
-            // set an 8-character password would be the weakest door in.
-            'password' => ['required', 'string', 'confirmed', Password::min(12)],
+            // The same floor as ChangePasswordRequest, and it has to be: a
+            // reset that set a shorter password than a change could would be
+            // the weakest door in.
+            'password' => ['required', 'string', 'confirmed', Password::min(8)],
         ]);
 
         $done = $this->resets->reset(

@@ -17,21 +17,33 @@ use Illuminate\Support\Facades\Hash;
 use Modules\Administration\Services\SettingsService;
 use Modules\Bookings\Models\Booking;
 use Modules\Dispatch\Services\DispatchService;
+use Modules\Drivers\Enums\DriverApplicationStatus;
 use Modules\Drivers\Enums\DriverDocumentType;
 use Modules\Drivers\Enums\LedgerEntryKind;
+use Modules\Drivers\Enums\PayoutAccountKind;
 use Modules\Drivers\Enums\SettlementRequestKind;
 use Modules\Drivers\Enums\SettlementRequestStatus;
 use Modules\Drivers\Models\Driver;
+use Modules\Drivers\Models\DriverApplication;
+use Modules\Drivers\Models\DriverClosureRequest;
 use Modules\Drivers\Models\DriverDocument;
 use Modules\Drivers\Models\DriverLedgerEntry;
+use Modules\Drivers\Models\DriverPayoutAccount;
 use Modules\Drivers\Models\DriverSettlementRequest;
 use Modules\Drivers\Services\DriverAccountService;
+use Modules\Drivers\Services\DriverClosureService;
 use Modules\Drivers\Services\DriverDocumentService;
 use Modules\Drivers\Services\DriverEarningsService;
 use Modules\Drivers\Services\DriverLedgerService;
 use Modules\Drivers\Services\DriverSettlementRequestService;
 use Modules\Drivers\Services\ReferralService;
+use Modules\Fleet\Enums\AvailabilityKind;
+use Modules\Fleet\Enums\AvailabilityResource;
+use Modules\Fleet\Enums\AvailabilityStatus;
+use Modules\Fleet\Enums\ZoneKind;
+use Modules\Fleet\Models\AvailabilityBlock;
 use Modules\Fleet\Models\DriverShiftWindow;
+use Modules\Fleet\Models\Zone;
 use Modules\Fleet\Services\DutySessionService;
 use Modules\Fleet\Support\DriverPresence;
 use Modules\Fleet\Support\DriverPresenceStore;
@@ -173,6 +185,20 @@ class DriverAppSeeder extends Seeder
         $this->officeAndInbox($driver, app(SettingsService::class));
 
         $onDuty = $this->freeDriverOnDuty();
+
+        // ADR-0042 and ADR-0043, the two youngest surfaces and the two this
+        // seeder had no answer for: Bank Details and the profile's danger zone
+        // both rendered their empty state on a fully seeded database.
+        $this->payoutAccount($driver);
+        $this->closureRequests($driver, $onDuty);
+
+        // Three console sections that a fully seeded platform still left
+        // empty — found by counting rows per table after `migrate:fresh
+        // --seed`, not by opening screens, because an empty section looks the
+        // same as a section nobody has scrolled to.
+        $this->driverApplications();
+        $this->timeOff($driver);
+        $this->zones($tenant);
 
         $this->report($driver, $onDuty);
     }
@@ -1147,7 +1173,28 @@ class DriverAppSeeder extends Seeder
             'destination' => $destination,
         ]);
 
-        return app(DispatchService::class)->assign($booking, $vehicle->id, $driver->id, $dispatcher);
+        /*
+         * **The override reason is not optional here, and finding that out
+         * cost a run.** `DemoHistorySeeder` contracts vehicles to the tenant
+         * for these dates (ADR-0009), and this seeder assigns the demo
+         * driver's *own* car — which is not one of them. `assign()` refuses
+         * that pairing without a reason, so on a freshly seeded platform this
+         * seeder died on its first trip with
+         * `AllocationOverrideRequiredException` and left a database with a
+         * driver account and no work.
+         *
+         * Passing a reason rather than contracting the car: the override is
+         * what actually happened, and it is recorded on the trip where a
+         * dispatcher can read it. Seeding around the rule would hide the one
+         * ADR-0009 field the console has to be able to display.
+         */
+        return app(DispatchService::class)->assign(
+            $booking,
+            $vehicle->id,
+            $driver->id,
+            $dispatcher,
+            'Demo data: the driver is on their own assigned vehicle.',
+        );
     }
 
     /**
@@ -1216,6 +1263,197 @@ class DriverAppSeeder extends Seeder
      * centre lands metres away and the distance scoring is visibly doing
      * something.
      */
+    /**
+     * Where the office should send this driver's money (ADR-0042).
+     *
+     * **Only the demo driver gets one.** The free driver is deliberately left
+     * without, because the Bank Details screen has two states worth showing and
+     * a seeder that populates every account can only ever demonstrate one of
+     * them — the same reason `officeAndInbox` guards its notifications per
+     * subject rather than wholesale.
+     *
+     * `updateOrCreate` on the driver, matching the endpoint's own upsert: the
+     * record is one-per-driver, and re-running this seeder must not leave a
+     * driver with two destinations for their pay.
+     */
+    private function payoutAccount(Driver $driver): void
+    {
+        DriverPayoutAccount::query()->updateOrCreate(
+            ['driver_id' => $driver->getKey()],
+            [
+                'kind' => PayoutAccountKind::BANK,
+                'institution' => 'Centenary Bank',
+                'account_holder' => $driver->name,
+                // `last_four` is derived by the model's boot hook and the
+                // number is encrypted at rest, so this is written as the
+                // endpoint would write it rather than as columns.
+                'account_number' => '3100047761',
+            ],
+        );
+    }
+
+    /**
+     * Closing an account (ADR-0043), seeded as the two states a demo needs.
+     *
+     * **The pending one goes on the free driver, not on the demo driver**, and
+     * that placement is the whole point. A pending request blocks a second
+     * (`CLOSURE_REQUEST_ALREADY_OPEN`), so putting it on the account somebody
+     * signs into to present the app would leave the ask-flow undemonstrable —
+     * the driver would open the danger zone and find a withdraw button where
+     * the walk-through expects a form. On the free driver it does the job it is
+     * there for: it gives the **office queue** a request to confirm or decline
+     * live.
+     *
+     * **The demo driver gets a declined one**, which is the richest state for
+     * the screen: the office's reason renders above the form, and the form is
+     * still there — a decline is not a closure, and asking again is the whole
+     * reason the endpoint returns the latest request rather than only an open
+     * one.
+     *
+     * Written through `DriverClosureService` rather than as rows, like every
+     * other write in this file: the statuses, the reviewer stamp and the
+     * one-open-per-driver rule are the service's, and a seeder that reproduces
+     * them by hand is a second implementation that will drift.
+     */
+    private function closureRequests(Driver $driver, Driver $onDuty): void
+    {
+        $closures = app(DriverClosureService::class);
+
+        // Idempotent: re-running must not stack a queue of identical asks in
+        // front of the office, and `request()` would throw on the second.
+        if (DriverClosureRequest::query()->where('driver_id', $onDuty->getKey())->doesntExist()) {
+            $closures->request($onDuty, 'Moving back to Gulu at the end of the month.');
+        }
+
+        if (DriverClosureRequest::query()->where('driver_id', $driver->getKey())->doesntExist()) {
+            $asked = $closures->request($driver, 'I am taking a job with a bank.');
+
+            $closures->decline(
+                $asked,
+                $this->dispatcher(),
+                'Settle the 45,000 UGX on your wallet first, then ask again and we will close it.',
+            );
+        }
+    }
+
+    /**
+     * Two strangers waiting to be let in (ADR-0027).
+     *
+     * The console's review queue was empty on a fully seeded platform, which
+     * is the one state that makes a queue impossible to demonstrate: approve
+     * and decline are the whole feature, and neither has anything to act on.
+     *
+     * Written as rows rather than posted through the public endpoint, because
+     * the endpoint is rate-limited and answers identically for known and
+     * unknown emails by design (ADR-0027 §5) — a seeder cannot read back what
+     * it made. The password is hashed the way the request would hash it, so an
+     * approved applicant can actually sign in afterwards, which is the half of
+     * this that would otherwise be a lie.
+     */
+    private function driverApplications(): void
+    {
+        foreach ([
+            ['Shanitah Nabbosa', '+256 772 445 118', 'shanitah.applies@kangaruride.test'],
+            ['Ronald Wasswa', '+256 701 908 233', 'ronald.applies@kangaruride.test'],
+        ] as [$name, $phone, $email]) {
+            DriverApplication::query()->firstOrCreate(
+                ['email' => $email],
+                [
+                    'name' => $name,
+                    'phone' => $phone,
+                    'password' => Hash::make(self::ACCOUNT_PASSWORD),
+                    'status' => DriverApplicationStatus::PENDING,
+                    'terms_accepted_at' => CarbonImmutable::now()->subDays(2),
+                ],
+            );
+        }
+    }
+
+    /**
+     * Leave, in both the states the screen has (ADR-0017).
+     *
+     * One answered and one still waiting, and it has to be both: an approved
+     * block is what the driver's Time off screen shows as a decision, and a
+     * requested one is what the office's queue shows as a decision to make.
+     * Seeding only the first leaves the console with nothing to answer;
+     * seeding only the second leaves the driver's screen looking as though the
+     * office never replies.
+     *
+     * Dates are in the **future** deliberately. A leave request that has
+     * already ended is history, and history is not what either screen is for.
+     */
+    private function timeOff(Driver $driver): void
+    {
+        $approved = CarbonImmutable::now()->addDays(9)->startOfDay();
+        $requested = CarbonImmutable::now()->addDays(24)->startOfDay();
+
+        AvailabilityBlock::query()->firstOrCreate(
+            [
+                'resource_type' => AvailabilityResource::DRIVER,
+                'resource_id' => $driver->getKey(),
+                'starts_at' => $approved,
+            ],
+            [
+                'kind' => AvailabilityKind::LEAVE,
+                'status' => AvailabilityStatus::APPROVED,
+                'ends_at' => $approved->addDays(2)->endOfDay(),
+                'reason' => 'My sister is getting married in Masaka.',
+                'created_by_user_id' => $driver->user_id,
+                'answered_by_user_id' => $this->dispatcher()->getKey(),
+                'answered_at' => CarbonImmutable::now()->subDay(),
+            ],
+        );
+
+        AvailabilityBlock::query()->firstOrCreate(
+            [
+                'resource_type' => AvailabilityResource::DRIVER,
+                'resource_id' => $driver->getKey(),
+                'starts_at' => $requested,
+            ],
+            [
+                'kind' => AvailabilityKind::SICK,
+                'status' => AvailabilityStatus::REQUESTED,
+                'ends_at' => $requested->endOfDay(),
+                'reason' => 'Hospital appointment in the morning.',
+                'created_by_user_id' => $driver->user_id,
+            ],
+        );
+    }
+
+    /**
+     * A service area, a pricing zone and a depot (ADR-0009).
+     *
+     * Rough rectangles over Kampala rather than real boundaries, and the two
+     * that would change a fare or a dispatch say **"(verify)"** in their own
+     * names. Demo geography that looks authoritative is worse than demo
+     * geography that admits what it is: somebody will otherwise present a
+     * pricing boundary drawn by a seeder as though the office had agreed it.
+     */
+    private function zones(Tenant $tenant): void
+    {
+        foreach ([
+            ['Greater Kampala', ZoneKind::SERVICE_AREA, 90, [[-0.1, 32.3], [-0.1, 32.9], [0.6, 32.9], [0.6, 32.3]]],
+            ['Kampala Central (verify)', ZoneKind::PRICING, 50, [[0.28, 32.53], [0.28, 32.64], [0.39, 32.64], [0.39, 32.53]]],
+            ['Nakawa depot (verify)', ZoneKind::DEPOT, 20, [[0.32, 32.6], [0.32, 32.62], [0.34, 32.62], [0.34, 32.6]]],
+        ] as [$name, $kind, $priority, $corners]) {
+            // Plain `query()`: `Zone` carries a `tenant_id` column but no
+            // `TenantScope`, so there is no scope here to step around — and
+            // `allTenants()` does not exist on it.
+            Zone::query()->firstOrCreate(
+                ['tenant_id' => $tenant->id, 'name' => $name],
+                [
+                    'kind' => $kind,
+                    'priority' => $priority,
+                    'active' => true,
+                    'boundary' => array_map(
+                        static fn (array $corner): array => ['lat' => $corner[0], 'lng' => $corner[1]],
+                        $corners,
+                    ),
+                ],
+            );
+        }
+    }
+
     private function freeDriverOnDuty(): Driver
     {
         $driver = $this->accountFor(self::DISPATCH_EMAIL, 'Demo Driver (free)');
