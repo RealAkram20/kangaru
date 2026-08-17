@@ -146,36 +146,46 @@ statement.
 | Ex-employee and closed driver accounts | **Anonymised 90 days after deactivation** | `users.deactivated_at`, `driver_closure_requests.closed_at` |
 | Generated report exports | Per `PruneReportExports` | File creation |
 
-### 6.1 Enforcement — and this is the finding
+### 6.1 Enforcement — two of four, after W1-b
 
-**Only one of these four is enforced by anything.**
+**Corrected 2026-08-18 by W1-b. This section first said there was "no GPS prune
+at 12 months", and that was wrong in a way worth preserving rather than
+overwriting:** the prune had been **written and never scheduled**.
+`MaintainTripLocationPartitions` — `dropExpired()`, `DROP PARTITION`, written
+against ADR-0003 — was registered in `bootstrap/app.php` and absent from
+`routes/console.php`, so a census that reads the schedule (as this one did)
+correctly reports the retention as not happening and incorrectly concludes the
+job does not exist. **The distinction changes the fix from "build a retention
+job" to "add one `Schedule::command` line", which W1-b did.**
 
-`routes/console.php` schedules exactly five commands: `PruneReportExports`,
-`sanctum:prune-expired`, `AdvanceDispatchOffers`, `AwardWeeklyBonuses`,
-`CloseStaleDutySessions`. There is **no GPS prune at 12 months**, **no
-anonymisation job at 90 days**, and no sweep of any kind over `order_requests`
-or `customers`.
+**Where each row now stands:**
 
-The codebase already knows:
+| Row | Enforced by | Status |
+|---|---|---|
+| Report exports | `PruneReportExports`, daily 02:30 | **enforced** |
+| Raw GPS, 12 months | `trip-locations:maintain`, monthly on the 1st at 03:45 | **enforced from W1-b** |
+| Ex-employee / closed accounts, 90 days | nothing | **not enforced** |
+| Trip and order PII, 7 years | nothing — but this is a *keep* period, not a delete | n/a until the 7 years elapse |
 
-- `app/Enums/UserStatus.php:22` — *"anonymisation job is not built"*.
-- `DriverClosureService.php:83` — `closed_at` is *"the clock the retention sweep
-  runs"* off. **The sweep does not exist**, so ADR-0043's closure loop currently
-  stops at "marked closed".
-- `PruneReportExports.php:14` states the principle exactly: *"a retention policy
-  nothing enforces is a document"*.
+**The same command was also the only thing keeping ingestion partitioned**, and
+neither half failed loudly. `trip_locations` is RANGE-partitioned by month with a
+`p_future` MAXVALUE catch-all, and this database carries months only to
+**November 2026** (verified against `INFORMATION_SCHEMA.PARTITIONS`). Unscheduled,
+every ping from December onwards would have landed in the catch-all: no error, no
+alert, and the monthly carving ADR-0003 calls this platform's growth mitigation
+quietly doing nothing — while the 12-month retention **this document promises the
+public** never ran.
 
-**So this section is, today, a document.** It is written because the Act requires
-a stated policy and because §5 of the master plan gates on it — but the honest
-position is that the platform **keeps everything forever** and nothing yet
-deletes a GPS point or anonymises a leaver.
+**Still not enforced, and this is the one with legal exposure:** the 90-day
+anonymisation. `app/Enums/UserStatus.php:22` says *"anonymisation job is not
+built"*, and `DriverClosureService.php:83` calls `closed_at` *"the clock the
+retention sweep runs"* off — **the sweep does not exist**, so ADR-0043's closure
+loop stops at "marked closed". A stated 90 days that does not happen is worse
+than no stated period. **Not built by W1-e or W1-b**; it needs a command, and it
+is named here so it is not rediscovered as a surprise.
 
-**Recommendation:** one scheduled command per row, smallest first. The GPS one is
-nearly free because the partitions already exist — retiring a month is a
-`DROP PARTITION`. The anonymisation job is the one with legal exposure attached,
-because a stated 90 days that does not happen is worse than no stated period.
-**Not built by this package**, which owns a notice and an inventory; it is named
-here so it is not rediscovered as a surprise.
+`PruneReportExports.php:14` still states the principle better than this section
+can: *"a retention policy nothing enforces is a document"*.
 
 ---
 

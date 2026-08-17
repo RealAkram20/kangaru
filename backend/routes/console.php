@@ -7,6 +7,7 @@ use Modules\Dispatch\Console\AdvanceDispatchOffers;
 use Modules\Drivers\Console\AwardWeeklyBonuses;
 use Modules\Fleet\Console\CloseStaleDutySessions;
 use Modules\Reports\Console\PruneReportExports;
+use Modules\Trips\Console\MaintainTripLocationPartitions;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
@@ -117,5 +118,33 @@ Schedule::command(CloseStaleDutySessions::class)
     ->everyMinute()
     // A slow sweep must not stack behind itself: two runs would both read the
     // same open sessions and race to close them.
+    ->withoutOverlapping()
+    ->onOneServer();
+
+// `trip_locations` partition maintenance (ADR-0003), and it does two jobs.
+//
+// **It was written and never scheduled.** The command has existed since the
+// partitioned table shipped, is registered in `bootstrap/app.php`, and its own
+// docblock says "Intended to run monthly from the scheduler" — but it was
+// absent from this file, which is the only place that would have run it. W1-e's
+// census reported "no GPS prune at 12 months" for exactly that reason; the
+// prune was there, nothing called it.
+//
+// **Neither half fails loudly, which is why it survived unnoticed.** Ingestion
+// keeps working because `p_future` is a MAXVALUE catch-all, so rows land
+// somewhere and no error is raised — they simply all land in one partition, and
+// the monthly carving that ADR-0003 calls this platform's growth mitigation
+// stops mitigating. And the 12-month retention **the public privacy notice now
+// states** (`docs/data-inventory.md` §6) silently never happens, because
+// retiring a month is `DROP PARTITION` and nothing was dropping one.
+//
+// Monthly, on the 1st, well clear of both the month boundary it reorganises
+// around and the 02:30 report prune. Safe to re-run by hand after a failure:
+// adding a partition that exists and dropping one that does not are both
+// no-ops, and `--dry-run` reports without altering.
+Schedule::command(MaintainTripLocationPartitions::class)
+    ->monthlyOn(1, '03:45')
+    // A reorganise is the one operation here that rewrites data. Two at once
+    // on the same table is not a race this needs to find out about.
     ->withoutOverlapping()
     ->onOneServer();

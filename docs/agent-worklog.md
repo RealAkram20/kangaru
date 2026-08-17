@@ -6724,3 +6724,396 @@ invariant is unchanged.
 anywhere in the database, and zero boarding events against a trip with no opening
 reading. The demo driver can now press **Start Trip** and walk the fixed flow
 from the top.
+
+---
+
+### 2026-08-18 02:35 — Track B · The odometer screen wears the app's chrome
+
+**Status:** done. 828 mobile tests / 58 suites, `tsc --noEmit`, eslint clean.
+**Three mutations, two bit immediately and one exposed a test of mine that was
+lying** — see below. **Not seen on a handset**, same reason as the two entries
+above. Amends the 00:25 entry; same files, same package, no new claim needed on
+`OdometerScreen`, plus **one line in `RootNavigator.tsx`** (shared, named here).
+
+**Source:** the owner, with a screenshot: *"why do we get this screen. and it
+looks nothing like our design"*.
+
+**The second half was a real defect with a single cause.** `Odometer` was **the
+only route in `RootNavigator` that left `headerShown` on** — every other screen
+in the app sets it false and draws `ScreenHeader`. So the screen carried React
+Navigation's stock title bar reading **"Odometer"** above content headed
+**"Opening odometer"**: the app's own header nowhere, the same word twice in two
+type styles, and a back arrow matching nothing else a driver had seen. It also
+had **no `SyncBanner`**, alone among the live-leg screens — on the one screen
+whose footnote promises the reading is *"sent when you have signal"* without
+showing whether there is any.
+
+Fixed by giving it what every sibling already has: `headerShown: false`,
+`SyncBanner`, `ScreenHeader`, and the now-duplicate in-content title deleted.
+
+**A third defect, found while looking, and probably the biggest of the three.**
+The field's placeholder was `104320` — rendered in `typography.odometer`, the
+same 34pt display face a real reading uses, separated from one only by being
+grey. On the owner's screenshot it reads as **a number already entered**, and the
+button beneath it is *disabled until something is typed*. A filled-looking field
+above a dead control is an app that looks broken, and it is very likely a large
+part of what *"hard to start the trip"* felt like. The placeholder is gone; the
+field is empty when it is empty, and the guidance moved onto it as a `hint`,
+beside the control it governs rather than floating under the header as a second
+sentence of prose.
+
+**Three mutations:**
+
+| Mutation | Test that caught it |
+|---|---|
+| `SyncBanner` removed again | wears the app chrome, not React Navigation stock header |
+| The `104320` placeholder restored | shows an empty field rather than a placeholder that reads as a reading — **only after the test was fixed; see below** |
+| (`headerShown` is a navigator option and is covered by the chrome test's title and back-label assertions rather than by a separate mutation — stated rather than implied) |
+
+**One of my own tests was lying, and the mutation is what caught it.** The
+placeholder assertion was first written `queryByText('104320')`, which passes
+whether or not the placeholder exists — **a placeholder is an attribute on the
+input, not a text node.** Restoring the placeholder left the suite green. Rewritten
+as `queryByPlaceholderText`, it fails as it should. This is the fourth entry on
+this branch to record a green run that proved nothing; the pattern each time is
+an assertion aimed at the wrong thing rather than a missing assertion.
+
+**Not changed: why the screen exists at all.** That is the owner's first
+question, and the answer is that `TransitionTripRequest` makes `odometer_start`
+`requiredIf` the target is `trip_started`, so no trip can start without it —
+AGENTS.md § Odometer Capture, the anchor client's physically-verifiable mileage.
+`docs/measured-distance-plan.md` §"deliberately not proposed" keeps odometer
+capture explicitly even though the trace is now primary. **What that plan
+changes is the argument for the screen's *placement*, not its existence** — the
+reading is no longer needed to price the trip, only as evidence, so it could move
+off the critical path and be required before *completion* instead of before
+*start*. That is the option the owner declined at 00:40, when the pricing ruling
+had not yet been written. Raised again with the new context; **not acted on.**
+
+**Amendment, 02:50 — the reading could not be entered, and it was my regression
+on top of a trap in a shared component.**
+
+The owner, on the screen the entry above had just restyled: *"i failed to enter
+the odometer on this page."* Correct, and the cause is two faults stacked.
+
+**The trap.** `Field` in `ui/components.tsx` rendered `style={[...]}` **before**
+the `{...inputProps}` spread, so any caller passing `style` **replaced the base
+look entirely** — `borderWidth`, `borderColor`, `backgroundColor`,
+`paddingHorizontal` and the body type, all gone. Not merged. Deleted. Two callers
+pass one and **both were disfigured, neither intentionally**:
+
+- `OdometerScreen`'s reading — a borderless run of 34pt text on a card, which is
+  visible in the owner's own screenshot from the entry above once you know to
+  look for the missing box.
+- `ReportIssueScreen`'s textarea, which sets `borderRadius` in its override —
+  only a meaningful thing to say if you expect to still have a border. That
+  screen is the 23:21 package's; **the fix repairs it too, and it is an
+  improvement rather than a change of intent, but it is theirs to look at.**
+
+**My regression.** The field had survived as a bare number only because the
+placeholder `104320` was drawn in it. The entry above removed that placeholder —
+correctly, it read as an entered value — and with it went the last thing making
+the input visible. An empty, borderless, unlabelled area is not something a
+driver can see, let alone tap. **The owner could not enter the reading because
+there was nothing on the screen to enter it into, and I put it in that state.**
+
+**Fixed in `Field`, not in the call site.** The caller's `style` now merges over
+the base rather than replacing it: `style` moved after the spread with
+`inputProps.style` last, so callers still win per property — "make the type
+bigger" keeps working — but deleting the box is no longer something a `style`
+prop can do by accident. `ui/components.tsx` is shared vocabulary and this is the
+kind of fault that belongs in it rather than being worked around twice.
+
+**Verified by resolving the style, not by reading the diff.** A throwaway jest
+probe rendered `Field` with the odometer's own override and dumped
+`StyleSheet.flatten` of the input: `borderWidth 1`, `backgroundColor #FFFFFF`,
+`paddingHorizontal 16` all present, with the caller's `fontSize 34` and
+`minHeight 68` on top. The probe was deleted and replaced by a real test in
+`ui/components.test.tsx`, asserting those five properties **individually** — a
+snapshot here would go green on any of them silently becoming undefined.
+
+**One mutation, and it bites:** dropping `inputProps.style` from the merged array
+fails *keeps the field looking like a field when a caller restyles it*. Restored;
+829 tests / 58 suites, `tsc` and eslint clean after.
+
+**Files shared, added to the 02:35 entry's list:** `mobile/src/ui/components.tsx`
+(the `Field` merge, additive to every existing caller) and
+`mobile/src/ui/components.test.tsx` (one appended test).
+
+**Still not seen on a handset.** Every claim here rests on the resolved style and
+on 829 passing tests. This is the third entry in a row owing the same
+walk-through, and this defect is exactly the kind that only a device shows.
+
+---
+
+### 2026-08-18 02:40 — W1-b · Production configuration and secrets
+
+**Status:** in progress. **Claimed at 02:40 local.** If another entry claims W1-b
+with an earlier timestamp, this one yields — say so and I withdraw. **No entry in
+this log has ever mentioned W1-b.** Same agent as the A0-second landing and W1-e;
+both are closed and CI is green on `394fc0f`.
+
+**Verified before claiming, so the claim names real findings rather than a brief:**
+
+1. **There is no production env template at all.** `backend/.env.example` is the
+   stock Laravel local file — `APP_ENV=local`, `APP_DEBUG=true`,
+   `LOG_LEVEL=debug`, `DB_USERNAME=root` with an empty password,
+   `MAIL_MAILER=log`, `CACHE_STORE=database`, `QUEUE_CONNECTION=database` — with
+   exactly one project-specific line added to it
+   (`SANCTUM_TOKEN_EXPIRATION_MINUTES`). Deploying from it is `APP_DEBUG=true` in
+   front of members of the public, and a stack trace is a data leak.
+2. **`config/cors.php` is not published**, exactly as the brief warned, so
+   Laravel's default applies and that default is **`allowed_origins => ['*']`**.
+3. **`MaintainTripLocationPartitions` is registered but never scheduled.** It is
+   in `bootstrap/app.php`'s `withCommands()` and **absent from
+   `routes/console.php`**, whose five scheduled commands I listed in W1-e. Its
+   own docblock says *"Intended to run monthly from the scheduler."*
+
+**Finding 3 corrects my own W1-e report, and the correction matters.**
+`docs/data-inventory.md` §6.1 says there is "no GPS prune at 12 months". **The
+prune exists** — `dropExpired()`, `DROP PARTITION`, written against ADR-0003 —
+it is simply never run. That changes the recommendation from *build a retention
+job* to *schedule the one that is already written*, which is a different size of
+task entirely. The §6.1 correction is part of this package.
+
+**And the same command is what keeps ingestion healthy.** It carves new months
+out of the `p_future` MAXVALUE catch-all. Unscheduled, nothing fails loudly —
+rows keep landing in `p_future` — so the partitioning that ADR-0003 calls the
+platform's growth risk mitigation quietly stops mitigating anything, and the
+12-month retention the privacy notice now states in public never happens.
+
+**Files owned — do not edit:**
+
+- `backend/.env.production.example` — new. The production template.
+- `backend/config/cors.php` — new, published and pinned explicitly.
+
+**Files shared — the exact edits, none of them a rewrite:**
+
+- `backend/config/logging.php` — **a structured JSON channel added.** No existing
+  channel altered.
+- `backend/routes/console.php` — **one `Schedule::command` entry** for
+  `MaintainTripLocationPartitions`. Nothing else touched.
+- `docs/data-inventory.md` — §6.1 corrected. Mine, from W1-e.
+- `docs/agent-worklog.md` — this entry and its closing amendment.
+
+**Deliberately NOT touched, and this is the boundary with W1-a:** no Dockerfile,
+no compose file, no deploy script, and **no `backend/.env`**. This package
+produces the template and the config; standing the containers up and putting real
+values into Coolify is W1-a's, and unclaimed.
+
+**Decisions I am taking without asking, each stated so they can be overruled:**
+
+1. **A separate `.env.production.example` rather than rewriting `.env.example`.**
+   One file cannot be both the local template that works on XAMPP and the
+   production one; the existing file is what new developers copy, and breaking
+   that to serve a deploy nobody has done yet trades a working thing for a
+   documented one.
+2. **Every secret in the template is an obvious placeholder, never a plausible
+   value.** gitleaks runs on every push and this branch has already been taught
+   that lesson once.
+3. **`APP_KEY` is marked generate-once and never rotate**, in the template
+   itself rather than in a runbook, because that is where somebody reads it at
+   the moment they are about to get it wrong.
+
+
+**Amendment, 03:15 — the reading still could not be entered, and this time I
+went to the device instead of reasoning about it.**
+
+The owner, after the 02:50 fix: *"in the emulator i can not enter the Odometer."*
+The 02:50 amendment had restored the field's box and I had assumed that was the
+whole of it. It was not, and the assumption is the mistake — three amendments in
+a row on one screen, none of them looked at.
+
+**What the device showed.** Navigating to the screen fresh: the field renders
+correctly, empty, **with no caret and no keyboard**, above a button disabled
+until something is typed. Nothing is broken and nothing says so. The driver has
+to discover that the box needs tapping — on the screen standing between them and
+starting a trip. Tapping it *does* work: `dumpsys input_method` reported
+`mInputShown=true` and injected text landed, so the field was never refusing
+input. **`autoFocus` simply never raised the keypad.**
+
+It fires at mount, which on Android is *during* the modal's entry animation; the
+focus is taken and the keyboard does not come up. Deferring past the animation
+fixes it, and it needs a real `focus()` call — so `Field` now **forwards its
+ref**, which it never did.
+
+**`requestIdleCallback`, and a correction inside this same fix.** The first
+version used `InteractionManager.runAfterInteractions`. It worked — the caret
+appeared — and it put a **deprecation warning on the driver's screen**, which the
+owner sent through with the stack trace. React Native's own message names
+`requestIdleCallback` as the replacement; the screen uses that, and the warning
+is gone. `jest.setup.ts` polyfills both idle globals, **as a macrotask rather
+than synchronously**: a focus landing during render would be a different
+behaviour from the one that ships, and the test would then assert something the
+device never does.
+
+**Verified on the device, before and after, same screen and same route:**
+
+| | Before | After |
+|---|---|---|
+| Caret in the field on arrival | none | present |
+| `mInputShown` | false | true |
+| Deprecation warning | — | none (the `InteractionManager` build had one) |
+
+**What I cannot show and am not claiming:** `screencap` does not capture the IME
+window on this emulator, so no screenshot of mine *paints* a keyboard. What is
+evidenced is that the field is focused on arrival where before it was not.
+
+**The whole fixed start flow also ran end to end on the device**, which is the
+first real proof of the 00:25 work: `trip_events` 495 `driver_arrived ->
+passenger_onboard` and 496 `passenger_onboard -> trip_started` **two seconds
+apart**, `odometer_start` 104320, and the app landed on Trip in progress.
+
+**One mutation:** dropping `ref={ref}` from `Field`'s `TextInput` fails *forwards
+a ref to the input, so a screen can focus it itself*. Guarded on the component
+rather than the screen because losing the forward breaks the keypad **silently**
+— nothing throws, the field simply never focuses. Restored; **830 tests / 58
+suites**, `tsc` and eslint clean.
+
+**Not unit-tested, and stated rather than faked:** that the field *is focused* on
+mount. React Native's test environment does not track focus on a host component,
+and the assertions available would have tested the polyfill rather than the
+behaviour. It is covered by the ref guard above and by the device run, and that
+combination is what the claim rests on.
+
+**Disclosure — I drove the owner's emulator and moved their demo trip.** Trip 67
+is now `trip_started` with `odometer_start` 104320 and a live elapsed clock,
+because reproducing the defect meant walking the real flow. The owner had asked
+for this screen to be fixed and the emulator was theirs, but **the trip state
+changed as a side effect of my testing and they did not ask for that.** Backed
+out of the closing odometer without submitting, so nothing is completed and no
+fare or ledger entry exists. Resetting it to `driver_arrived` is one statement if
+they would rather have it back.
+
+**Closing amendment — 03:20. Status: done.** A complete production env template
+exists, every value either set or marked `<<OWNER>>`, and **four silent
+misconfigurations are closed rather than documented.** No secret in the repo.
+
+**Files touched — as claimed, plus one test:**
+
+- Owned: `backend/.env.production.example`, `backend/config/cors.php` — both new.
+- **Added, not claimed:** `backend/tests/Feature/Ci/ScheduledCommandsTest.php`.
+  Finding 3 was invisible for weeks; a fix with nothing holding it in place would
+  go the same way.
+- Shared, as claimed: `routes/console.php` (one `Schedule::command`),
+  `docs/data-inventory.md` (§6.1 corrected), this entry.
+- **`config/logging.php` was NOT edited, and that is a correction to my own
+  claim.** I claimed I would add a structured JSON channel. **One already
+  exists** — `App\Logging\CustomizeLogger`, a Monolog tap on the `stack` channel
+  that forces `JsonFormatter` on every handler. AGENTS.md Observability was
+  already satisfied. Adding a second channel would have been duplication built on
+  not reading first.
+
+**But reading it produced the better finding.** The tap is on `stack` **only**,
+so the obvious production setting silently disables structured logging. Verified
+both ways rather than reasoned about:
+
+| Setting | Output |
+|---|---|
+| `LOG_CHANNEL=stack`, `LOG_STACK=stderr` | `{"message":"probe","level_name":"INFO",…,"extra":{"tenant_id":7}}` |
+| `LOG_CHANNEL=stderr` | `[2026-08-17 23:08:43] local.INFO: probe {"tenant_id":7}` |
+
+`LOG_CHANNEL=stderr` is what every Laravel-in-Docker guide says to set, and it
+bypasses the tap. The template pins the pair together with the reason beside it.
+
+**The four silent misconfigurations, and "silent" is the point — every one of
+them deploys green:**
+
+1. **`config/cors.php` did not exist**, so Laravel's default applied:
+   `allowed_origins => ['*']`. **Proved by running, both directions.** With `*`,
+   `Origin: https://evil.example.com` gets `Access-Control-Allow-Origin: *` and
+   the browser permits it. Pinned, the same request gets
+   `http://localhost:5173`, which fails the browser's origin match. Not
+   session-riding — every authenticated route is a bearer token (ADR-0022), so
+   there is no cookie to ride — but any page anywhere could script and read this
+   platform's **unauthenticated** surface, the public order endpoints included.
+   **The driver app is unaffected**: React Native sends no `Origin` and enforces
+   no same-origin policy, so this cannot break the handsets.
+2. **`X-Request-Id` was unreadable by the web app.** `AssignRequestId` sets it on
+   every response for tracing, and CORS `exposed_headers` defaulted to empty — so
+   browser JavaScript could never read the id the middleware went to the trouble
+   of echoing. Now exposed.
+3. **`MaintainTripLocationPartitions` was registered but never scheduled** — see
+   the claim above and §6.1 of the inventory, which I corrected.
+4. **`TRACKING_LIVE_POSITIONS_DRIVER` and `DISPATCH_PRESENCE_DRIVER` both default
+   to `database`, not `redis`.** So the dedicated Redis container
+   `master-plan.md` §3 makes non-negotiable can be provisioned, healthy, and
+   **entirely unused**, with live positions and driver presence going to MySQL —
+   which is the one thing ADR-0003 says must not happen. Nothing errors; the live
+   map still draws, off the wrong store. Both are pinned to `redis` in the
+   template with that written next to them.
+
+**Verified by running:**
+
+- **Partition state read from `INFORMATION_SCHEMA.PARTITIONS`**, not inferred:
+  `p202608, p202609, p202610, p202611, p_future`. **This database carries months
+  only to November 2026** — from December every ping would have fallen into the
+  MAXVALUE catch-all, silently.
+- **`php artisan schedule:list`** now shows `45 3 1 * * php artisan
+  trip-locations:maintain`, six scheduled commands.
+- **The command's add half exercised**: with `TRACKING_PARTITIONS_AHEAD=6`,
+  `--dry-run` reports it would add `p202612`, `p202701`, `p202702`.
+- **CORS preflight and GET**, from an allowed and a hostile origin, against the
+  running server — the table above.
+- **The JSON logging pair**, both ways, through `Log::info` with a `Context`
+  value attached.
+- **`config:cache` then read back**, because a production deploy caches config
+  and a file that only works uncached is a file that only works in development.
+  `bootstrap/cache/config.php` was cleared afterwards — **the dev environment is
+  left as it was found.**
+- **1218 Pest tests, 4263 assertions, 0 failed** (was 1216; the two are mine) ·
+  PHPStan level 8 no errors · Pint clean.
+
+**One mutation, and it is the one that matters.** I re-broke the schedule by
+swapping `MaintainTripLocationPartitions` for `PruneReportExports` on the same
+cron — **so the schedule still had six entries and the same shape**, which a
+count-based or snapshot test would have waved through. `ScheduledCommandsTest`
+failed and named the consequence: *"trip-locations:maintain — raw GPS is never
+pruned and new months are never carved (ADR-0003)"*. Restored; the suite is green
+on the restored file. The test also carries a second case asserting the schedule
+it reads is non-empty, because every `str_contains` in the first would pass
+vacuously against an empty event list.
+
+**NOT verified, and stated rather than implied:**
+
+- **Nothing here has been deployed.** Every value marked `<<OWNER>>` is untested
+  by definition — no container has ever booted with this template, no MySQL or
+  Redis service name is real, and `APP_KEY` has never been generated. **W1-a is
+  where this file stops being a document**, and it is still unclaimed.
+- **The `drop` half of the partition command was not exercised.** With
+  `TRACKING_RETENTION_MONTHS=1` it still reports 0 dropped, correctly — the
+  oldest partition is the current month on a database that is only days old.
+  Nothing here is old enough to retire, so the code path that retires it has run
+  in a dry run and never for real.
+- **gitleaks was not run locally** (not installed). The template holds no
+  high-entropy value — every secret is the literal `<<OWNER>>` — but CI is the
+  gate that proves it.
+- **Sanctum expiry and ADR-0022 abilities were not confirmed "live"**, which the
+  brief asks for. They are confirmed by the suite and by config; live means
+  against a deployment, which does not exist. **W1-c's census and W2-a.**
+- **Rate limits were read, not load-tested.** Per-route `throttle:` middleware
+  and a `public-orders` named limiter exist; whether the numbers are right for
+  OTP/SMS pumping is a judgement nobody can make without traffic.
+
+**Reported, not touched (rule 6):**
+
+1. **`backend/.env.example` still says `APP_ENV=local`, `APP_DEBUG=true`,
+   `DB_USERNAME=root` with an empty password.** Left exactly as found — it is the
+   local template, it works, and breaking what new developers copy to serve a
+   deploy nobody has done yet is a bad trade. The production file is separate and
+   says so at the top.
+2. **`FILESYSTEM_DISK=local` writes driver documents inside the container.**
+   Pinned in the template with the warning, but **making that path a persistent
+   volume is W1-a's**, and until it is, a redeploy loses ADR-0033 compliance
+   evidence the office already reviewed.
+3. **The 90-day anonymisation job is still not built** — the one retention row
+   with legal exposure. §6.1 of the inventory now states exactly which rows are
+   enforced and which are not.
+
+**Deliberately not built:** no Dockerfile, compose file or deploy script; no
+`backend/.env`; no change to `bootstrap/app.php` (nothing needed one); no second
+logging channel; and **no `db:seed` guard in code** — the template states that
+the deploy runs `migrate --force` and nothing else, because the guard belongs in
+the deploy script W1-a writes, and a guard in the application would be the wrong
+place to stop a command nobody should be running.
+
