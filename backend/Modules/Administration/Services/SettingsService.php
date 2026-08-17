@@ -60,9 +60,51 @@ class SettingsService
                 'default' => "By creating a KangaruRide driver account you agree to:\n\n1. Provide accurate personal, licence and vehicle information, and to keep it current.\n2. Hold a valid driving licence and any permit your vehicle class requires, and to produce them on request.\n3. Carry out accepted trips and deliveries with reasonable care, and to record opening and closing odometer readings honestly.\n4. Use the app only for work KangaruRide has assigned to you.\n5. Accept that your account may be suspended for unsafe conduct, dishonest readings, or lapsed documents.\n\nKangaruRide agrees to pay for completed work at the rates published to you, and to give reasonable notice of any change to them.\n\nThis is a short-form notice. A full agreement will be provided before your account is activated.",
                 'rules' => ['nullable', 'string', 'max:40000'],
             ],
+            'safety' => [
+                'default' => "If you feel unsafe, your safety comes before the trip. You may end a journey and leave at any time; nothing on this platform penalises you for it, and the office would rather answer a question about a cancelled trip than an ambulance.
+
+In an emergency, call the emergency number first. Then call the office, so a dispatcher knows where you are and can send help or send somebody to the vehicle.
+
+While you are on duty this app reports your position to the office, so a dispatcher can already see where you are without you doing anything. **That stops when you go off duty.** If you are off duty and in trouble, say where you are on the phone — nobody can see it.
+
+Before every trip, check the passenger's name and destination against what the app shows you. If they do not match, ring the office before you set off.
+
+Never carry more passengers than your vehicle is licensed for, and never let somebody else drive on your account. Both put your licence and your cover at risk.
+
+This is a short-form notice. Ask the office for the full safety policy.",
+                'rules' => ['nullable', 'string', 'max:40000'],
+            ],
             'privacy' => [
                 'default' => "KangaruRide collects your name, phone number, email address, licence and vehicle details so that we can offer you work, dispatch you to it, and pay you for it.\n\nWhile you are on duty the app records your location, so that dispatch can offer you nearby work and so that a completed trip's distance can be checked against your odometer readings. Location is not recorded while you are off duty.\n\nWe share what we must with the client whose trip you are carrying out — typically your name, phone number and vehicle registration — and with nobody else, except where the law requires it.\n\nYou may ask us what we hold about you, ask us to correct it, and ask us to delete it when it is no longer needed for a trip record or a tax obligation. Write to the contact address published in the app.\n\nThis is a short-form notice, issued under Uganda's Data Protection and Privacy Act, 2019. A full policy will be provided before your account is activated.",
                 'rules' => ['nullable', 'string', 'max:40000'],
+            ],
+        ],
+        /*
+         * Getting help when something goes wrong (ADR-0040).
+         *
+         * **`emergency_number` is public and short**, so the Safety screen can
+         * offer it on a cold start with no token — a driver in trouble is the
+         * worst possible moment to discover the app needed a round trip first.
+         * It is a *setting* rather than a constant because 999 is Uganda's and
+         * this platform is built to run elsewhere; PRODUCT.md's international
+         * readiness means no emergency number is ever hardcoded.
+         *
+         * Empty by default, deliberately. An operator who has not published
+         * one gets a screen that says so, and the alternative — shipping a
+         * plausible default — is a driver dialling a number that does not
+         * answer in their country.
+         *
+         * The **guidance** is in the `legal` group below rather than here,
+         * for exactly the reason that group's docblock gives: it is a document,
+         * it is fetched only when somebody opens the screen, and riding it
+         * along with every cold start would be a cost paid by people who never
+         * opened it.
+         */
+        'safety' => [
+            'emergency_number' => [
+                'default' => '',
+                'rules' => ['nullable', 'string', 'max:32'],
+                'public' => true,
             ],
         ],
         // ADR-0028: which ways into the Driver App are on, and the
@@ -143,6 +185,75 @@ class SettingsService
             ],
             'bonus_weekly_amount_minor' => [
                 'default' => 20000,
+                'rules' => ['required', 'integer', 'min:0'],
+            ],
+            /*
+             * Peak hours (ADR-0036 §2).
+             *
+             * A daily window in which the driver's share of a completed fare
+             * is topped up by a percentage. The uplift is the platform's own
+             * money — the passenger pays the ordinary tariff, so nothing here
+             * changes what anybody is charged.
+             *
+             * **The window is modelled on `rate_card_versions.night_starts_at`
+             * / `night_ends_at`** rather than given a shape of its own: same
+             * `HH:MM` strings, same wrap past midnight, same resolution
+             * against the fleet's timezone. A second way of writing "a window
+             * of the day" is a second way of getting the wrap wrong.
+             *
+             * Off by default, for `bonus_enabled`'s reason exactly: switching
+             * on at deploy is an unbudgeted bill against every trip on the
+             * platform, and this one bills continuously rather than weekly.
+             *
+             * 17:00–20:00 at 20% are the mockup's figures and are starting
+             * values, not policy.
+             */
+            'peak_enabled' => [
+                'default' => false,
+                'rules' => ['required', 'boolean'],
+            ],
+            'peak_starts_at' => [
+                'default' => '17:00',
+                'rules' => ['required', 'date_format:H:i'],
+            ],
+            'peak_ends_at' => [
+                'default' => '20:00',
+                'rules' => ['required', 'date_format:H:i'],
+            ],
+            /*
+             * A percentage *of the driver's share*, not of the fare. Capped at
+             * 100 because a driver earning more than double their share of a
+             * fare is far likelier to be a typed extra zero than a policy, and
+             * this setting spends real money on every trip until somebody
+             * notices.
+             */
+            'peak_uplift_percent' => [
+                'default' => 20,
+                'rules' => ['required', 'integer', 'min:1', 'max:100'],
+            ],
+            /*
+             * Referrals (ADR-0037 §3).
+             *
+             * A driver who introduces somebody is paid once, after the person
+             * they introduced has completed `referral_trip_target` trips. The
+             * target is what makes the scheme affordable: it pays for a driver
+             * who actually works, not for a sign-up.
+             *
+             * Off by default, and this one has a second reason beyond cost —
+             * ADR-0037 §5 makes the office's approval of every application the
+             * fraud control, so an operator switching this on is also taking
+             * on the job of reading the applications it will attract.
+             */
+            'referral_enabled' => [
+                'default' => false,
+                'rules' => ['required', 'boolean'],
+            ],
+            'referral_trip_target' => [
+                'default' => 10,
+                'rules' => ['required', 'integer', 'min:1', 'max:1000'],
+            ],
+            'referral_reward_amount_minor' => [
+                'default' => 10000,
                 'rules' => ['required', 'integer', 'min:0'],
             ],
         ],
@@ -380,6 +491,12 @@ class SettingsService
         return [
             'terms' => (string) ($all['legal']['terms'] ?? ''),
             'privacy' => (string) ($all['legal']['privacy'] ?? ''),
+            // ADR-0040. Here rather than in the `safety` group for that
+            // group's stated reason: this is a document, it is read when
+            // somebody opens the Safety screen, and riding it along with
+            // every cold start would be a cost paid by people who never
+            // opened it.
+            'safety' => (string) ($all['legal']['safety'] ?? ''),
         ];
     }
 
