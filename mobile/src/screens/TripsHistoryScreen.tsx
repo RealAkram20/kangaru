@@ -27,6 +27,7 @@ import {
 import { useTripHistory } from '../trips/historyQueries';
 import { statusLabel, tripDestination } from '../trips/transitions';
 import { Empty, Notice, Screen, ScreenHeader } from '../ui/components';
+import { SkeletonRows } from '../ui/Skeleton';
 import { CarIcon, PackageIcon, RouteIcon } from '../ui/icons';
 import { colors, radius, spacing, typography } from '../ui/theme';
 
@@ -39,8 +40,8 @@ type Props = NativeStackScreenProps<TripsStackParams, 'TripsHistory'>;
  * record of work that is over, not a leg of one in progress, so the ownership
  * table in `docs/agent-worklog.md` is unchanged. A row still opens through the
  * shared `tripDestination()`, which is what stops a list from undoing the
- * status routing the home screen does (that bug happened once already, on
- * `TodayScreen`).
+ * status routing the home screen does (that bug happened once already, on the
+ * since-deleted `TodayScreen`).
  *
  * ## Where this departs from the mockup, and why
  *
@@ -123,18 +124,16 @@ export function TripsHistoryScreen({ navigation }: Props) {
           // whole point of the query — so the screen has to say when what it
           // is showing could not be refreshed.
           query.isError && query.data !== undefined ? (
-            <Notice message="Showing the history saved on this phone. Could not reach the office." />
+            <Notice message="Showing what is saved on this phone." />
           ) : null
         }
         ListEmptyComponent={
           loading ? (
-            <View style={styles.centre}>
-              <ActivityIndicator color={colors.primary} />
-            </View>
+            <SkeletonRows count={5} style={styles.skeleton} />
           ) : query.isError ? (
             <Notice
               tone="danger"
-              message="Could not load your trips, and nothing is saved on this phone yet. Pull down to try again."
+              message="Could not load your trips, and none are saved here."
             />
           ) : (
             <Empty message={emptyMessage(filter)} />
@@ -332,11 +331,11 @@ function RowIcon({ trip }: { trip: DriverHistoryTrip }) {
  */
 function emptyMessage(filter: HistoryFilterKey): string {
   if (filter === 'ride') {
-    return 'No rides yet. Finished rides appear here once the office has them.';
+    return 'No rides yet.';
   }
 
   if (filter === 'delivery') {
-    return 'No deliveries yet. Finished deliveries appear here once the office has them.';
+    return 'No deliveries yet.';
   }
 
   return 'No finished trips yet. Work you complete appears here.';
@@ -498,5 +497,8 @@ const styles = StyleSheet.create({
   centre: {
     padding: spacing.lg,
     alignItems: 'center',
+  },
+  skeleton: {
+    padding: spacing.md,
   },
 });

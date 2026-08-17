@@ -100,7 +100,7 @@ export function TimeOffScreen() {
           {submitted && (
             <Notice
               tone="info"
-              message="Sent to the office. You are still on the roster until they approve it."
+              message="Sent. You stay on the roster until the office approves it."
             />
           )}
 
@@ -129,7 +129,7 @@ export function TimeOffScreen() {
 
           <Field
             label="Until"
-            hint="Leave blank if you do not know yet — the office will set the end date."
+            hint="Leave blank if you do not know yet."
             value={endsAt}
             onChangeText={setEndsAt}
             placeholder="2026-08-18"
@@ -153,7 +153,7 @@ export function TimeOffScreen() {
         <Text style={styles.sectionTitle}>Your requests</Text>
 
         {isError && dataUpdatedAt === 0 && (
-          <Notice message="Could not reach the office. Anything you send is saved and will go out later." />
+          <Notice message="Saved on this phone, sent when you have signal." />
         )}
 
         {(requests ?? []).length === 0 ? (

@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react-native';
+import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import type { ReactElement } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -33,8 +33,11 @@ const METRICS = {
 
 const ARRIVED_AT = '2026-08-14T09:15:00.000Z';
 
+// `mock` prefix required: Jest hoists the factory below above this declaration.
+const mockQueueTransition = jest.fn(async () => undefined);
+
 jest.mock('../offline/SyncProvider', () => ({
-  useSync: () => ({ queueTransition: jest.fn(async () => undefined), sync: jest.fn() }),
+  useSync: () => ({ queueTransition: mockQueueTransition, sync: jest.fn() }),
 }));
 
 jest.mock('../ui/SyncBanner', () => ({ SyncBanner: () => null }));
@@ -43,6 +46,7 @@ jest.mock('../ui/SyncBanner', () => ({ SyncBanner: () => null }));
 // declarations, and only names matching /^mock/ may be referenced inside one.
 const mockUseTrip = jest.fn();
 const mockUseTripEvents = jest.fn();
+const mockNavigate = jest.fn();
 
 jest.mock('../trips/queries', () => ({
   useTrip: (id: number) => mockUseTrip(id),
@@ -115,7 +119,7 @@ async function renderWaiting(
   const node: ReactElement = (
     <WaitingForPassengerScreen
       route={{ key: 'w', name: 'WaitingForPassenger', params: { tripId: value.id } }}
-      navigation={{ navigate: jest.fn(), goBack: jest.fn() } as never}
+      navigation={{ navigate: mockNavigate, goBack: jest.fn() } as never}
     />
   );
 
@@ -123,6 +127,8 @@ async function renderWaiting(
 }
 
 beforeEach(() => {
+  mockNavigate.mockClear();
+  mockQueueTransition.mockClear();
   jest.useFakeTimers();
   // 105 seconds after the arrival — the mockup's own 01:45, so the figure on
   // screen can be compared against the picture this was built from.
@@ -162,7 +168,30 @@ it('renders an em dash, not a zero, when the arrival is not on the timeline yet'
 
   expect(getByText('—', VISUAL)).toBeTruthy();
   expect(queryByText('00:00', VISUAL)).toBeNull();
-  expect(getByText('Waiting time will show once your arrival reaches the office.')).toBeTruthy();
+  expect(getByText('Waiting time shows once your arrival reaches the office.')).toBeTruthy();
+});
+
+it('opens the opening reading without committing anything', async () => {
+  // This press used to queue `passenger_onboard` before the reading existed.
+  // A driver who then backed out of the form left the trip committed to a
+  // state whose only screen is that same form — no way back to here, and the
+  // server requires the reading before `trip_started` will move. Both
+  // transitions are now queued by the odometer's single submit.
+  const { getByText } = await renderWaiting();
+
+  void fireEvent.press(getByText('Start Trip'));
+
+  await waitFor(() => expect(mockNavigate).toHaveBeenCalled());
+
+  expect(mockQueueTransition).not.toHaveBeenCalled();
+  expect(mockNavigate).toHaveBeenCalledTimes(1);
+  // `from` is the trip's real status, not the one that used to be queued ahead
+  // of it: the odometer reads it to decide whether boarding still needs posting.
+  expect(mockNavigate).toHaveBeenCalledWith('Odometer', {
+    tripId: 42,
+    to: 'trip_started',
+    from: 'driver_arrived',
+  });
 });
 
 it('offers Start Trip and nothing that would be refused', async () => {
@@ -194,7 +223,9 @@ it('does not claim the passenger was notified, because nothing notifies them', a
   const { queryByText, getByText } = await renderWaiting();
 
   expect(queryByText(/notified/i)).toBeNull();
-  expect(getByText("The passenger's ride screen shows you've arrived, if they have it open.")).toBeTruthy();
+  // The "if" is the guard: nothing notifies the passenger, and their screen
+  // shows this only while it is open.
+  expect(getByText("Shown on the passenger's screen, if it is open.")).toBeTruthy();
 });
 
 it('offers no chat, because this platform has no messaging', async () => {

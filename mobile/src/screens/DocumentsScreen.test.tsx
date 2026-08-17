@@ -229,6 +229,63 @@ it('asks when a licence expires before sending it', async () => {
   expect(mockUpload).not.toHaveBeenCalled();
 });
 
+/*
+ * The two branches of the expiry picker, which nothing exercised until the
+ * deprecated `onChange` was split into `onValueChange` / `onDismiss`
+ * (datetimepicker 9). The screen appearing was tested; what it did with the
+ * answer was not — and that answer is what decides whether a licence is
+ * uploaded against a date the driver never chose.
+ */
+it('uploads with the date the driver picked', async () => {
+  (ImagePicker.launchCameraAsync as jest.Mock).mockResolvedValue({
+    canceled: false,
+    assets: [{ uri: 'file:///licence.jpg' }],
+  });
+
+  const screen = await renderDocuments(
+    <DocumentsScreen navigation={navigation} route={{} as never} />,
+  );
+
+  await fireEvent.press(screen.getByLabelText('Replace it: driving licence'));
+  await waitFor(() => expect(screen.getByTestId('expiry-picker')).toBeTruthy());
+
+  await fireEvent(
+    screen.getByTestId('expiry-picker'),
+    'valueChange',
+    { type: 'set' },
+    new Date(2027, 2, 14),
+  );
+
+  await waitFor(() =>
+    expect(mockUpload).toHaveBeenCalledWith({
+      type: 'driving_licence',
+      uri: 'file:///licence.jpg',
+      expiresAt: '2027-03-14',
+    }),
+  );
+});
+
+it('uploads nothing when the driver cancels the expiry picker', async () => {
+  (ImagePicker.launchCameraAsync as jest.Mock).mockResolvedValue({
+    canceled: false,
+    assets: [{ uri: 'file:///licence.jpg' }],
+  });
+
+  const screen = await renderDocuments(
+    <DocumentsScreen navigation={navigation} route={{} as never} />,
+  );
+
+  await fireEvent.press(screen.getByLabelText('Replace it: driving licence'));
+  await waitFor(() => expect(screen.getByTestId('expiry-picker')).toBeTruthy());
+
+  await fireEvent(screen.getByTestId('expiry-picker'), 'dismiss');
+
+  // Nothing sent, and the picker gone. A document uploaded against a date the
+  // driver backed out of is the failure this branch exists to prevent.
+  await waitFor(() => expect(screen.queryByTestId('expiry-picker')).toBeNull());
+  expect(mockUpload).not.toHaveBeenCalled();
+});
+
 it('sends without asking for a date when the type does not carry one', async () => {
   (ImagePicker.launchCameraAsync as jest.Mock).mockResolvedValue({
     canceled: false,
@@ -285,7 +342,7 @@ it('warns about replacing only where there is a verification to lose', async () 
   // photo is precisely what the office asked for, and under the *pending* one,
   // where there is no review to restart.
   expect(
-    screen.getAllByText('A new photo goes back to the office to be checked again.'),
+    screen.getAllByText('A new photo is checked again.'),
   ).toHaveLength(2);
 });
 
@@ -328,9 +385,9 @@ it('never shows a blank page when the list could not be loaded', async () => {
     <DocumentsScreen navigation={navigation} route={{} as never} />,
   );
 
-  expect(screen.getByText(/could not be loaded/)).toBeTruthy();
+  expect(screen.getByText(/Could not load your documents/)).toBeTruthy();
   expect(screen.getByLabelText('Try again')).toBeTruthy();
-  // And the reassurance about hand-checking is gone with the list it referred
-  // to — a footnote about rows that are not on screen is noise.
+  // The hand-checking footnote was cut from this screen in the copy pass:
+  // each card's own status chip says the same thing by existing.
   expect(screen.queryByText(/checks each one by hand/)).toBeNull();
 });

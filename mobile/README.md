@@ -51,7 +51,7 @@ start shut.
 **Four tabs: Home, Earnings, Wallet, Profile.**
 
 ```
-Home ─────── Today (trip list)
+Home ─────── duty, the live trip, today's figures, the day's finished work
         └── Pickup               ← accepted, driver_en_route
         └── Waiting for passenger ← driver_arrived
         └── Trip in progress     ← trip_started, waiting, trip_resumed
@@ -66,6 +66,8 @@ Wallet ───── balance, settlement requests, recent movements
         └── Transactions         ← the wallet's View all; Today/Week/Custom
 Profile ──── who the driver is: rating, vehicle, member since, documents
         └── Notifications        ← ADR-0039; what the office said, and a dot
+        └── Report an issue      ← ADR-0044; one of five topics, written to the office
+        └── Your reports         ← ADR-0044; what you sent, and what they answered
         └── Documents            ← ADR-0033; upload, and what the office said
         └── Performance          ← ADR-0038; six dials, and the bonus week
         └── Promotions           ← ADR-0036/0037; weekly target, peak, referrals
@@ -73,6 +75,24 @@ Profile ──── who the driver is: rating, vehicle, member since, documents
         └── Change password
         └── Updates & sync       ← the outbox, and the parked queue
 ```
+
+**The five Help Topics rows write to the office now (ADR-0044).** They used to
+open the same contact card five times, differing only by a subtitle — and the
+sentence that distinguished them was passed as an accessibility `announcement`,
+so the eye saw five identical chevron rows. The owner read them as *"repeated
+and fake"*. Each now opens a form whose report a person at the office answers,
+and the answer comes back as a notification and a row in **Your reports**. The
+phone did not go away: Contact Support still dials, and the emergency card is
+untouched. Call for what is happening now, write for what needs a record.
+
+**`Today` is gone, and the bell now opens `Notifications`.** The trip list was a
+second copy of the home screen — same duty bar, same offers, same trips — and
+its only entry point was the bell in the home screen's top bar, which is the one
+control in the app that means *what has the office told me*. The owner removed
+the screen and pointed the bell at the inbox it always looked like it opened.
+The badge follows the destination: it counts unread mail from the same query the
+drawer's row reads, not job offers. Offers lost no channel by that — they are
+painted over every screen by `OfferPresenter` and arrive as a push.
 
 **`Time off` had no way in until the profile screen landed.** It lost its tab
 when the bar went to four and never gained a row — registered on the stack,

@@ -341,7 +341,7 @@ it('says the office has not confirmed the money yet, rather than showing zero', 
   // has credited anything.
   const screen = await renderRecord(trip({ earnings: null }));
 
-  expect(screen.getByText(/not confirmed the money for this trip yet/)).toBeTruthy();
+  expect(screen.getByText(/has not confirmed the money yet/)).toBeTruthy();
   expect(screen.queryByText('UGX 0')).toBeNull();
 });
 

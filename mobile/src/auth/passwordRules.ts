@@ -2,7 +2,7 @@
  * The password rules, mirrored from `ChangePasswordRequest`.
  *
  * A deliberate duplication, and a narrow one: `['required', 'string',
- * 'confirmed', Password::min(12), 'different:current_password']`. The server
+ * 'confirmed', Password::min(8), 'different:current_password']`. The server
  * remains the authority — a 422 is handled like any other refusal — but these
  * three checks are cheap to make locally and expensive to learn remotely,
  * because the round trip that teaches them also happens to be the one that
@@ -14,8 +14,18 @@
  * and the driver would have no way to tell which of the two was wrong.
  */
 
-/** `Password::min(12)`. */
-export const MINIMUM_PASSWORD_LENGTH = 12;
+/**
+ * `Password::min(8)`.
+ *
+ * Eight, not twelve, and it is the *server* that moved: the three doors this
+ * app can reach — `ChangePasswordRequest`, `PasswordResetController` and
+ * `StoreDriverApplicationRequest` — all hold eight now. The office's own
+ * account-minting rules still hold twelve, which this app never touches.
+ *
+ * The floor is a floor. Length is what the strength meter is for, and it
+ * keeps asking for more long after this number is satisfied.
+ */
+export const MINIMUM_PASSWORD_LENGTH = 8;
 
 export type PasswordProblem =
   | 'current_missing'

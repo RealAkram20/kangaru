@@ -5,6 +5,7 @@ import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from '
 
 import type { WalletStackParams } from '../navigation/types';
 import { Screen, ScreenHeader } from '../ui/components';
+import { SkeletonRows } from '../ui/Skeleton';
 import { colors, radius, spacing, typography } from '../ui/theme';
 import { StatementRow } from '../wallet/StatementRow';
 import {
@@ -108,22 +109,26 @@ export function TransactionsScreen({ navigation }: Props) {
           // and get an empty list is a question the control can simply not
           // ask.
           maximumDate={new Date()}
-          onChange={(event, selected) => {
-            // Android fires `dismissed` on cancel and hands back the value
-            // unchanged; treating that as a pick would silently set a date
-            // the driver rejected.
+          /*
+            `onValueChange` + `onDismiss`. `onChange` is deprecated in
+            datetimepicker 9 and warns on every open; the split also removes the
+            Android trap this call site used to hand-check — a cancel arrived as
+            a change event carrying the unchanged value, and treating it as a
+            pick silently set a date the driver had rejected. See
+            `DocumentsScreen`, which had the same handler and the same trap.
+          */
+          onValueChange={(_event, selected) => {
+            const which = picking;
+
             setPicking(null);
 
-            if (event.type === 'dismissed' || selected === undefined) {
-              return;
-            }
-
-            if (picking === 'from') {
+            if (which === 'from') {
               setFrom(selected);
             } else {
               setTo(selected);
             }
           }}
+          onDismiss={() => setPicking(null)}
         />
       )}
 
@@ -136,7 +141,7 @@ export function TransactionsScreen({ navigation }: Props) {
         ItemSeparatorComponent={() => <View style={styles.separator} />}
         ListEmptyComponent={
           ledger.isLoading ? (
-            <ActivityIndicator color={colors.primary} style={styles.loading} />
+            <SkeletonRows count={5} style={styles.loading} />
           ) : (
             <Text style={styles.empty}>{emptyRangeMessage(preset)}</Text>
           )

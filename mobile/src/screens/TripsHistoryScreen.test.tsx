@@ -222,7 +222,7 @@ describe('when the office cannot be reached', () => {
     const screen = await renderHistory([page([trip()])], { isError: true });
 
     expect(screen.getByText('Ride')).toBeTruthy();
-    expect(screen.getByText(/Showing the history saved on this phone/)).toBeTruthy();
+    expect(screen.getByText(/Showing what is saved on this phone/)).toBeTruthy();
   });
 
   it('says so plainly when there is nothing saved either', async () => {

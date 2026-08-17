@@ -31,6 +31,7 @@ import {
   CarIcon,
   CreditCardIcon,
   CircleQuestionMarkIcon,
+  FileTextIcon,
   MessageCircleMoreIcon,
   MessageCircleWarningIcon,
   ShieldAlertIcon,
@@ -98,12 +99,27 @@ type Props = NativeStackScreenProps<ProfileStackParams, 'Safety'>;
  * `docs/screen-rules.md`: the rules outrank the mockup, and this is the only
  * screen in the app that tells a driver what the platform can see.
  *
- * ## Help Topics route to a person, not to a form
+ * ## Help Topics route to a form now, and that reversed with ADR-0044
  *
- * `support/topics.ts` holds the reasoning in full. In short: there is no
- * issue-reporting endpoint on this platform and no messaging, so a topic opens
- * the support screen with the office's real number and the facts that
- * conversation needs — never a text box that posts nowhere.
+ * This block used to read *"route to a person, not to a form"*, and it was
+ * right when it was written: there was no issue-reporting endpoint on this
+ * platform, so a topic opened the support screen with the office's real number
+ * rather than a text box that posted nowhere. `support/topics.ts` still holds
+ * that reasoning in full, and ADR-0044 is the answer to it — the loop was
+ * built rather than apologised for.
+ *
+ * What each row does now: opens `ReportIssue` with the topic named, and the
+ * topic decides what the form asks for. **The labels did not change** (ADR-0044
+ * §1) — they are the owner's own and the defect was never the words. What
+ * changed is that the distinguishing sentence is a visible `subtitle` instead
+ * of an `announcement` only, which is the whole of the *"repeated and fake"*
+ * reading: five identically shaped chevron rows, distinguishable by a screen
+ * reader and not by the eye.
+ *
+ * **`Your reports` is the return path, and it is not decoration.** `MyReports`
+ * is otherwise reachable only from the report form's own success replace, so
+ * without this row a driver who has already sent a report has nowhere to read
+ * the answer — the half of the loop `master-plan.md` §2 exists to catch.
  */
 export function SafetyScreen({ navigation }: Props) {
   const { api } = useAuth();
@@ -160,8 +176,8 @@ export function SafetyScreen({ navigation }: Props) {
             tone="warning"
             message={
               officeLoaded
-                ? 'The office has not published an emergency number in this app. Save your local emergency number to your phone now, before you need it.'
-                : 'This app has not been able to load the emergency number. Dial your local emergency number directly, and save it to your phone now.'
+                ? 'No emergency number published. Save your local one now.'
+                : 'Emergency number not loaded. Dial your local one directly.'
             }
           />
         ) : (
@@ -192,14 +208,20 @@ export function SafetyScreen({ navigation }: Props) {
             </Text>
           </View>
 
-          <Text style={styles.positionBody}>
-            {onDuty
-              ? 'While you are online this app reports your position to the office, so a dispatcher can find you without you telling them.'
-              : 'This app only reports your position while you are online. You are offline, so if you call for help you will need to say where you are.'}
-          </Text>
+          {/*
+            **Only off duty, and only the instruction.** On duty the title
+            already says the office can see them and the sentence under it added
+            nothing a frightened person would read. Off duty the title states
+            the fact and this states the consequence — say where you are — which
+            is the part that changes what they do on the call. See the module
+            docblock: this pair is why the screen reads live duty state.
+          */}
+          {!onDuty && (
+            <Text style={styles.positionBody}>Say where you are when you call.</Text>
+          )}
         </Card>
 
-        <Text style={styles.sectionTitle}>Help Topics</Text>
+        <Text style={styles.sectionTitle}>Report something to the office</Text>
 
         <Card style={styles.topics}>
           {helpTopics.map((topic, index) => (
@@ -208,11 +230,36 @@ export function SafetyScreen({ navigation }: Props) {
               <MenuRow
                 icon={<IconChip>{topicGlyph(topic.key)}</IconChip>}
                 label={topic.label}
+                subtitle={topic.summary}
                 announcement={`${topic.label}. ${topic.summary}`}
-                onPress={() => navigation.navigate('Support', { topic: topic.key })}
+                onPress={() => navigation.navigate('ReportIssue', { topic: topic.key })}
               />
             </View>
           ))}
+
+          {/*
+            **In this card rather than one of its own, and last.** The five rows
+            above write a report; this one reads the answers back, which is the
+            same subject and the reason the section is titled for the office
+            rather than for the form. A second Card would spend a whole card's
+            chrome on one destination, on a screen that already carries five
+            sections before the fold.
+
+            No `subtitle`: `MenuRow`'s own docblock asks for one only where the
+            label cannot say which row this is, and "Your reports" answers that
+            by itself. A subtitle on every row is a second column of prose on a
+            screen read at a glance from a cradle.
+          */}
+          <View style={styles.separator} />
+          <MenuRow
+            icon={
+              <IconChip>
+                <FileTextIcon size={22} color={colors.textBody} strokeWidth={1.9} />
+              </IconChip>
+            }
+            label="Your reports"
+            onPress={() => navigation.navigate('MyReports')}
+          />
         </Card>
 
         <ContactSupportCard onPress={() => navigation.navigate('Support')} />
@@ -247,10 +294,15 @@ export function SafetyScreen({ navigation }: Props) {
           </>
         )}
 
-        <Text style={styles.note}>
-          This screen opens your phone&apos;s dialler. KangaruRide does not monitor an emergency
-          channel in the app — if you are in danger, call.
-        </Text>
+        {/*
+          **Shortened, not removed, and this is the one line on the driver app
+          I would argue against cutting entirely.** The rest of this pass
+          deletes prose; this sentence is the promise the SOS button does *not*
+          make. Without it a red button on a safety screen reads as an alert to
+          somebody watching, which is the control the module docblock refused.
+          Nine words instead of twenty-three.
+        */}
+        <Text style={styles.note}>The app does not monitor emergencies — call for help.</Text>
       </ScrollView>
     </Screen>
   );
@@ -276,7 +328,7 @@ function topicGlyph(key: HelpTopicKey) {
       return <CarIcon {...props} />;
     case 'payment':
       return <CreditCardIcon {...props} />;
-    case 'lost-item':
+    case 'lost_item':
       return <CircleQuestionMarkIcon {...props} />;
   }
 }

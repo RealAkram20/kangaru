@@ -67,7 +67,7 @@ function ParkedCard({ item, onDismiss }: { item: OutboxItem; onDismiss: () => vo
   const confirm = () => {
     Alert.alert(
       'Discard this?',
-      'It will not be sent. Read the details to the office first if they matter.',
+      'It will not be sent. Tell the office first if it matters.',
       [
         { text: 'Keep it', style: 'cancel' },
         { text: 'Discard', style: 'destructive', onPress: onDismiss },

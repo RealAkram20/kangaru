@@ -12,7 +12,15 @@
  * from key to icon, and `Record<NotificationGlyph, …>` makes `tsc` refuse a
  * glyph nobody drew.
  */
-export type NotificationGlyph = 'job' | 'approved' | 'rejected' | 'export' | 'order' | 'other';
+export type NotificationGlyph =
+  | 'job'
+  | 'approved'
+  | 'rejected'
+  | 'export'
+  | 'order'
+  /** The office's answer to something the driver wrote (ADR-0044). */
+  | 'answer'
+  | 'other';
 
 /**
  * What the message *is*, in colour.
@@ -42,11 +50,12 @@ export type NotificationTone = 'brand' | 'good' | 'danger' | 'info' | 'neutral';
  * subject, the body and the timestamp are all still true, and only the glyph
  * is unknown.
  *
- * ## Only one of these reaches a driver today
+ * ## Two of these reach a driver
  *
- * `trip.offered` is the only type this platform addresses to a driver — the
- * booking pair goes to whoever asked for transport, the export to the person
- * who ran the report, the walk-in to the dispatch desk. The rest are mapped
+ * `trip.offered` and, since ADR-0044, `driver.support.answered` — the answer to
+ * a report the driver themselves wrote. The booking pair goes to whoever asked
+ * for transport, the export to the person who ran the report, the walk-in to
+ * the dispatch desk. The rest are mapped
  * because an inbox is a shared surface and a driver who is also staff on a
  * small deployment will see them. Nothing here invents a kind that does not
  * exist; see `docs/adr/0039-driver-notifications.md` for what the mockup asked
@@ -64,6 +73,17 @@ export function notificationLook(type: string): { glyph: NotificationGlyph; tone
       return { glyph: 'export', tone: 'neutral' };
     case 'order_request.received':
       return { glyph: 'order', tone: 'info' };
+    /*
+      ADR-0044, and **the second type this platform addresses to a driver** —
+      the note below about `trip.offered` being the only one is no longer true
+      and is corrected there.
+
+      `info` rather than `good`: an answer is not a verdict. The office may
+      have agreed, refused or asked for more, and a green row would announce
+      an outcome before the driver has read a word of it.
+    */
+    case 'driver.support.answered':
+      return { glyph: 'answer', tone: 'info' };
     default:
       return { glyph: 'other', tone: 'neutral' };
   }

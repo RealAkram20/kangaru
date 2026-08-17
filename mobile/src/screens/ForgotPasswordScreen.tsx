@@ -66,7 +66,7 @@ export function ForgotPasswordScreen({ onDone }: { onDone: () => void }) {
       setProblem(
         isApiError(error)
           ? error.message
-          : 'No connection. Asking for a code needs one — nothing was sent.',
+          : 'No connection. Nothing was sent.',
       );
     } finally {
       setBusy(false);
@@ -107,7 +107,7 @@ export function ForgotPasswordScreen({ onDone }: { onDone: () => void }) {
       setProblem(
         isApiError(error)
           ? error.message
-          : 'No connection — the reset was not applied. Try again when you have signal.',
+          : 'No connection — the reset was not applied.',
       );
     } finally {
       setBusy(false);
@@ -154,9 +154,9 @@ export function ForgotPasswordScreen({ onDone }: { onDone: () => void }) {
             <>
               <View accessibilityLiveRegion="polite" style={styles.doneCard}>
                 <Text style={styles.doneTitle}>Password changed</Text>
-                <Text style={styles.doneBody}>
-                  Every signed-in session has been closed. Sign in with your new password.
-                </Text>
+                {/* Kept: a driver whose other sessions were closed needs to
+                    know why the app signed them out. */}
+                <Text style={styles.doneBody}>All sessions were signed out.</Text>
               </View>
 
               <Button label="Back to sign in" onPress={onDone} />
@@ -167,10 +167,7 @@ export function ForgotPasswordScreen({ onDone }: { onDone: () => void }) {
 
               {step === 'email' ? (
                 <>
-                  <Text style={styles.lead}>
-                    Enter the email you sign in with. If it belongs to an account, a six-digit
-                    code will be sent to it.
-                  </Text>
+                  <Text style={styles.lead}>Enter the email you sign in with.</Text>
 
                   <IconField
                     icon={({ color }) => <MailIcon color={color} />}

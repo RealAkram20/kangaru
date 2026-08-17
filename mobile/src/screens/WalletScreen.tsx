@@ -1,12 +1,13 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { DriverSettlementRequest, SettlementRequestKind } from '../api/endpoints';
 import type { WalletStackParams } from '../navigation/types';
 import { useDriverStats } from '../trips/queries';
 import { walletHeading, walletNote, walletValue } from '../trips/statsPresentation';
 import { Screen, ScreenHeader } from '../ui/components';
+import { SkeletonRows } from '../ui/Skeleton';
 import {
   ChevronRightIcon,
   CirclePlusIcon,
@@ -193,12 +194,9 @@ export function WalletScreen({ navigation }: Props) {
 
         {entries.length === 0 ? (
           ledger.isLoading ? (
-            <ActivityIndicator color={colors.primary} style={styles.loading} />
+            <SkeletonRows count={3} style={styles.loading} />
           ) : (
-            <Text style={styles.empty}>
-              Nothing here yet. Your finished trips and any cash you settle with the office appear
-              here.
-            </Text>
+            <Text style={styles.empty}>Nothing here yet.</Text>
           )
         ) : (
           entries.map((entry, index) => (

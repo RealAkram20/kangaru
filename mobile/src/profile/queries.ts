@@ -2,9 +2,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
   type DriverDocumentType,
+  deleteDriverPhoto,
   fetchDriverDocuments,
   fetchDriverProfile,
+  updateDriverProfile,
   uploadDriverDocument,
+  uploadDriverPhoto,
 } from '../api/endpoints';
 import { useAuth } from '../auth/AuthProvider';
 
@@ -80,6 +83,75 @@ export function useUploadDocument() {
       uploadDriverDocument(api, input),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['driver-documents'] });
+      void queryClient.invalidateQueries({ queryKey: ['driver-profile'] });
+    },
+  });
+}
+
+/**
+ * A driver correcting their own name or phone number.
+ *
+ * **Writes the server's answer straight into the cache** rather than only
+ * invalidating. The endpoint returns the whole profile, so there is a fresher
+ * copy in hand than a refetch would produce, and using it means the row stops
+ * being an input the instant the save lands — on a slow connection an
+ * invalidate-only would leave the old value on screen for as long as the
+ * refetch took, which reads as a save that did not work.
+ *
+ * The invalidate still follows, because the drawer holds its own copy of the
+ * name.
+ */
+export function useUpdateDriverProfile() {
+  const { api } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (changes: { name?: string; phone?: string }) => updateDriverProfile(api, changes),
+    onSuccess: (profile) => {
+      queryClient.setQueryData(['driver-profile'], profile);
+      void queryClient.invalidateQueries({ queryKey: ['driver-profile'] });
+    },
+  });
+}
+
+/**
+ * Setting or replacing the driver's own photograph (ADR-0041).
+ *
+ * Outside the outbox, for the reasons `useUploadDocument` gives above — and
+ * the second one applies here too: a driver who has just watched their face
+ * appear should not be looking at a picture that only exists on the handset.
+ *
+ * **Invalidates the profile *and* the drawer's copy of it.** The photograph is
+ * rendered in two places by two queries, and the drawer is the one the driver
+ * is most likely to check afterwards, because it is where the mockup put a
+ * photo in the first place.
+ */
+export function useUploadDriverPhoto() {
+  const { api } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (uri: string) => uploadDriverPhoto(api, uri),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['driver-profile'] });
+    },
+  });
+}
+
+/**
+ * Taking it down again.
+ *
+ * Separate from the upload rather than an upload with a null argument: they
+ * are different acts with different confirmations, and a single mutation would
+ * make "remove my photo" reachable by a bug in the picker.
+ */
+export function useDeleteDriverPhoto() {
+  const { api } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => deleteDriverPhoto(api),
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['driver-profile'] });
     },
   });

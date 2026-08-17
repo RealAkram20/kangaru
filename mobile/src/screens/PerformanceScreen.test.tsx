@@ -1,5 +1,6 @@
 import { render } from '@testing-library/react-native';
 import type { ReactElement } from 'react';
+import { StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import type { DriverPerformance } from '../api/endpoints';
@@ -124,10 +125,24 @@ it('re-bases the two dials that had no ceiling, and says what against', async ()
 
   // Not "Total Trips" and not "Online Hours 7h 20m against nothing". Both
   // dials now measure against something real, and the caption says what.
-  expect(getByText('Trips this week')).toBeTruthy();
+  expect(getByText('Weekly trips')).toBeTruthy();
   expect(getByText('of 30')).toBeTruthy();
-  expect(getByText('Hours this week')).toBeTruthy();
+  expect(getByText('Weekly hours')).toBeTruthy();
   expect(getByText('of 45h')).toBeTruthy();
+});
+
+it('keeps every dial label inside the width a 360dp handset gives it', async () => {
+  const { getAllByText } = await renderScreen();
+
+  // `ui/facts.tsx` measured this for the fleet's narrowest phone: a
+  // fourteen-character label at 14pt does not hold one line in a third of a
+  // 360dp screen, which is why its stat cells drop to 12pt. These are 14pt and
+  // must stay short enough not to need that. Twelve characters is
+  // "Cancellation", which has shipped on this grid since it was drawn.
+  for (const label of ['Rating', 'Acceptance', 'Completion', 'Cancellation', 'Weekly trips', 'Weekly hours']) {
+    expect(getAllByText(label)).toHaveLength(1);
+    expect(label.length).toBeLessThanOrEqual(12);
+  }
 });
 
 it('shows the weekly card as the mockup draws it', async () => {
@@ -151,10 +166,10 @@ it('drops the weekly card entirely when the bonus scheme is off', async () => {
   // The count itself is still true and is still shown — only its ceiling and
   // the card are gone.
   expect(getByText('28')).toBeTruthy();
-  expect(getByText('Trips this week')).toBeTruthy();
+  expect(getByText('Weekly trips')).toBeTruthy();
 });
 
-it('drops the roster caption and footnote for a driver with no roster', async () => {
+it('drops the roster caption and its explanation for a driver with no roster', async () => {
   const { queryByText, getByText } = await renderScreen(
     performance({ rostered_seconds_this_week: null }),
   );
@@ -162,8 +177,20 @@ it('drops the roster caption and footnote for a driver with no roster', async ()
   // ADR-0017 §3: no shift windows means available at any hour, which is not a
   // number to draw an arc or write a caption against.
   expect(queryByText(/of 45h/)).toBeNull();
-  expect(queryByText(/rostered for this week/i)).toBeNull();
+  expect(queryByText(/roster/i)).toBeNull();
   expect(getByText('7h 20m')).toBeTruthy();
+});
+
+it('explains the grid in one line rather than in two paragraphs', async () => {
+  const { getByText, queryByText } = await renderScreen();
+
+  expect(getByText('Rates cover the last 30 days. Hours are measured against your roster.')).toBeTruthy();
+
+  // The two blocks this replaced. The first asserted a 30-day window on the
+  // rating, which the server does not apply to it; the second was twenty-three
+  // words of prose under a screen of labelled rings.
+  expect(queryByText(/Rating, acceptance, completion and cancellation/)).toBeNull();
+  expect(queryByText(/could not be reached/)).toBeNull();
 });
 
 it('shows em dashes rather than zeroes for a driver who has done nothing', async () => {
@@ -254,6 +281,84 @@ it('draws an arc only where there is a real denominator', async () => {
       await renderScreen(performance({ bonus: null, rostered_seconds_this_week: null })),
     ),
   ).toBe(10);
+});
+
+/**
+ * The width of a dial's ring, in points.
+ *
+ * **Addressed by `testID`, and the first cut of this was a test that could not
+ * fail.** It walked the tree for the first element of type `Svg` — which is the
+ * header's back chevron, 26pt — so it measured an icon, fitted inside every
+ * column, and passed at any ring size at all. The mutation that was supposed to
+ * break it (the ring back to 96pt against a 93.6pt column) sailed through.
+ */
+function ringWidth(tree: Awaited<ReturnType<typeof render>>): number {
+  const width = tree.getAllByTestId('dial-ring')[0]?.props.width;
+
+  if (typeof width !== 'number') {
+    throw new Error('No ring was drawn.');
+  }
+
+  return width;
+}
+
+/**
+ * That the grid is 2×3 and that three rings fit a row on the narrowest phone.
+ *
+ * **This is the one class of defect every other test on this screen is blind
+ * to.** Jest's renderer does not lay out, so `getByText('Cancellation')` passes
+ * against a label that is, on a handset, four characters wide and sitting on
+ * top of its neighbour — which is exactly what shipped: `Dial` carried
+ * `flex: 1`, which expands to `flexBasis: 0%`, so every dial claimed no width,
+ * all six "fitted" one line, `flexWrap` never wrapped, and the screen rendered
+ * as six overlapping rings with every label clipped. Thirty-eight tests were
+ * green through all of it. Only the emulator found it.
+ *
+ * So these assert the geometry as arithmetic rather than as appearance, which
+ * is the part Jest can actually hold.
+ */
+it('lays the dials out three to a row, and wraps', async () => {
+  const tree = await renderScreen();
+
+  const dial = StyleSheet.flatten(
+    tree.getByLabelText('Rating 4.8 out of 5, from 40 ratings.').props.style,
+  ) as Record<string, unknown>;
+
+  // Neither growing nor shrinking: a dial that can shrink is a dial that
+  // squeezes to let a fourth one onto the row instead of pushing it down.
+  expect(dial.flexGrow).toBe(0);
+  expect(dial.flexShrink).toBe(0);
+
+  const basis = Number(String(dial.flexBasis).replace('%', ''));
+
+  // Three fit; a fourth cannot. Stated as the property rather than as "30%",
+  // so tuning the column is allowed and collapsing it is not.
+  expect(basis * 3).toBeLessThanOrEqual(100);
+  expect(basis * 4).toBeGreaterThan(100);
+
+  expect(StyleSheet.flatten(tree.getByTestId('performance-grid').props.style).flexWrap).toBe('wrap');
+});
+
+it('keeps the ring inside its column on the fleet’s narrowest handset', async () => {
+  const tree = await renderScreen();
+
+  const dial = StyleSheet.flatten(
+    tree.getByLabelText('Rating 4.8 out of 5, from 40 ratings.').props.style,
+  ) as Record<string, unknown>;
+
+  const basis = Number(String(dial.flexBasis).replace('%', '')) / 100;
+  const gutters = StyleSheet.flatten(
+    tree.getByTestId('performance-scroll').props.contentContainerStyle,
+  ).paddingHorizontal as number;
+
+  // 360dp is the narrowest phone in the fleet (`ui/facts.tsx` measures the
+  // same handset). The ring is fixed in points and the column is a percentage,
+  // so the three numbers have to be checked against each other: widen the
+  // gutters, or grow the ring, without moving the other and the ring overflows
+  // its column and the row silently stops being three wide.
+  const column = (360 - gutters * 2) * basis;
+
+  expect(ringWidth(tree)).toBeLessThanOrEqual(column);
 });
 
 it('says so when the figures could not be loaded, and can actually be pulled', async () => {

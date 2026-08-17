@@ -33,11 +33,7 @@ export type LoginResult =
    */
   | { kind: 'mfa_required' };
 
-export async function login(
-  api: ApiClient,
-  email: string,
-  password: string,
-): Promise<LoginResult> {
+export async function login(api: ApiClient, email: string, password: string): Promise<LoginResult> {
   const response = await api.request<{ user: User; token: string } | { challenge_id: string }>(
     '/auth/login',
     {
@@ -97,7 +93,10 @@ export async function changePassword(
   return response.message;
 }
 
-export async function fetchTrips(api: ApiClient, cursor?: string): Promise<{
+export async function fetchTrips(
+  api: ApiClient,
+  cursor?: string,
+): Promise<{
   trips: Trip[];
   nextCursor: string | null;
 }> {
@@ -126,12 +125,9 @@ export async function fetchTripRoute(
   tripId: number,
   from: Coordinates | null,
 ): Promise<TripRoute | null> {
-  const query =
-    from === null ? '' : `?from_latitude=${from.lat}&from_longitude=${from.lng}`;
+  const query = from === null ? '' : `?from_latitude=${from.lat}&from_longitude=${from.lng}`;
 
-  const response = await api.request<{ route: TripRoute | null }>(
-    `/trips/${tripId}/route${query}`,
-  );
+  const response = await api.request<{ route: TripRoute | null }>(`/trips/${tripId}/route${query}`);
 
   return response.data.route;
 }
@@ -750,9 +746,7 @@ export type DriverSettlementRequest = {
   created_at: string | null;
 };
 
-export async function fetchSettlementRequests(
-  api: ApiClient,
-): Promise<DriverSettlementRequest[]> {
+export async function fetchSettlementRequests(api: ApiClient): Promise<DriverSettlementRequest[]> {
   const response = await api.request<DriverSettlementRequest[]>('/me/settlement-requests');
 
   return response.data;
@@ -1257,10 +1251,7 @@ export type DriverProfile = {
 
 /** The four papers this platform asks a driver for (ADR-0033 §1). */
 export type DriverDocumentType =
-  | 'driving_licence'
-  | 'identity_document'
-  | 'vehicle_insurance'
-  | 'vehicle_registration';
+  'driving_licence' | 'identity_document' | 'vehicle_insurance' | 'vehicle_registration';
 
 /** The three **stored** states. `expired` is not one — see `compliance_state`. */
 export type DriverDocumentStatus = 'pending' | 'verified' | 'rejected';
@@ -1339,9 +1330,10 @@ export async function fetchDriverDocuments(api: ApiClient): Promise<{
   slots: DriverDocumentSlot[];
   compliance: DriverDocumentCompliance | null;
 }> {
-  const response = await api.request<DriverDocumentSlot[], { compliance: DriverDocumentCompliance }>(
-    '/me/documents',
-  );
+  const response = await api.request<
+    DriverDocumentSlot[],
+    { compliance: DriverDocumentCompliance }
+  >('/me/documents');
 
   // `meta` is optional on the envelope, so this may not assume it arrived.
   return { slots: response.data, compliance: response.meta?.compliance ?? null };
@@ -1416,4 +1408,311 @@ export function documentMimeType(uri: string): string {
   if (extension === 'pdf') return 'application/pdf';
 
   return 'image/jpeg';
+}
+
+/**
+ * Where a driver's money is sent (ADR-0042), as its owner may see it.
+ *
+ * **The whole account number is never in this payload.** The server masks it to
+ * the last four characters, and the office reads the full one from its own
+ * endpoint — a driver confirming "yes, that is my account" needs the tail, not
+ * a full account number echoed onto a handset that may be shared or read over a
+ * shoulder at a stage.
+ *
+ * The three labels are **served, not spelled here**: the two kinds ask for
+ * different words — nobody calls Stanbic a provider and nobody calls MTN a bank
+ * — and a second copy of that mapping in this bundle is a second place for it
+ * to be wrong.
+ */
+export type PayoutAccountKind = 'bank' | 'mobile_money';
+
+export type DriverPayoutAccount = {
+  kind: PayoutAccountKind;
+  kind_label: string;
+  /** "Bank" or "Provider". */
+  institution_label: string;
+  /** "Account number" or "Mobile money number". */
+  number_label: string;
+  institution: string;
+  account_holder_masked: string;
+  /** A mask and the last four characters. */
+  account_number_masked: string;
+  last_four: string;
+  updated_at: string | null;
+};
+
+/**
+ * Null for a driver who has given no details — a normal first visit, not an
+ * error, and the screen renders it as an empty form.
+ */
+export async function fetchPayoutAccount(api: ApiClient): Promise<DriverPayoutAccount | null> {
+  const response = await api.request<{ payout_account: DriverPayoutAccount | null }>(
+    '/me/payout-account',
+  );
+
+  return response.data.payout_account;
+}
+
+/**
+ * Sets or replaces it.
+ *
+ * **Every field, every time.** The server refuses a partial save, and the
+ * reason is worth keeping in the client too: changing the bank while leaving
+ * last month's account number is a working destination pointing at the wrong
+ * place, which is the worst state this record can hold.
+ *
+ * Outside the offline outbox, like the password change and the two uploads.
+ * ADR-0023 queues trip transitions; a bank account applied silently three hours
+ * later is not something to find out about from a payment.
+ */
+export async function savePayoutAccount(
+  api: ApiClient,
+  input: {
+    kind: PayoutAccountKind;
+    institution: string;
+    account_holder: string;
+    account_number: string;
+  },
+): Promise<DriverPayoutAccount> {
+  const response = await api.request<{ payout_account: DriverPayoutAccount }>(
+    '/me/payout-account',
+    {
+      method: 'PUT',
+      body: input,
+    },
+  );
+
+  return response.data.payout_account;
+}
+
+/** Removes it. Answers the same shape whether or not one was held. */
+export async function deletePayoutAccount(api: ApiClient): Promise<null> {
+  await api.request<{ payout_account: null }>('/me/payout-account', { method: 'DELETE' });
+
+  return null;
+}
+
+/**
+ * Closing the account, driver's side (ADR-0043).
+ *
+ * **Nothing here closes anything.** Asking writes a row; the office's
+ * confirmation is what deactivates the driver, and by then they cannot sign in
+ * to be told — so the answer arrives by email. The screen must never imply
+ * otherwise, and neither must these names: `requestClosure`, not `closeAccount`.
+ *
+ * **And "delete" does not mean erased.** ADR-0043's opening constraint is that
+ * a hard delete is not available to this platform at any price: trips, ledger
+ * entries and invoices survive, because reproducible invoices are what the
+ * anchor client is buying. Closure plus anonymisation on the retention
+ * schedule is the honest shape, and the screen says so in as many words.
+ */
+export type ClosureRequestStatus = 'pending' | 'confirmed' | 'declined' | 'withdrawn';
+
+export type DriverClosureRequest = {
+  id: number;
+  status: ClosureRequestStatus;
+  /** The server's word for the status — "Waiting for the office", "Not closed". */
+  status_label: string;
+  /** The driver's own, optional: requiring a reason to leave is a dark pattern. */
+  reason: string | null;
+  /** Required of the office when it declines, so a refusal is actionable. */
+  decline_reason: string | null;
+  requested_at: string | null;
+  reviewed_at: string | null;
+  closed_at: string | null;
+};
+
+/**
+ * The **latest** request, or null for a driver who has never asked.
+ *
+ * Latest rather than only-open, and that is the server's design: a driver whose
+ * request was declined needs to read why more than they need the row to vanish.
+ */
+export async function fetchClosureRequest(api: ApiClient): Promise<DriverClosureRequest | null> {
+  const response = await api.request<{ closure_request: DriverClosureRequest | null }>(
+    '/me/closure-request',
+  );
+
+  return response.data.closure_request;
+}
+
+/**
+ * Asks. 409 `CLOSURE_REQUEST_ALREADY_OPEN` when one is already waiting.
+ *
+ * Outside the offline outbox, like the password change and the payout account.
+ * ADR-0023 queues trip transitions; a request to close an account, sent silently
+ * three hours later from a queue, is not something to find out about from an
+ * email.
+ */
+export async function requestClosure(
+  api: ApiClient,
+  reason: string | null,
+): Promise<DriverClosureRequest> {
+  const response = await api.request<{ closure_request: DriverClosureRequest }>(
+    '/me/closure-request',
+    {
+      method: 'POST',
+      // Omitted rather than sent as an empty string: the rule is `nullable`,
+      // and "" would be stored as a reason the driver did not give.
+      body: reason === null || reason.trim() === '' ? {} : { reason: reason.trim() },
+    },
+  );
+
+  return response.data.closure_request;
+}
+
+/**
+ * Taking it back. 404 when nothing is waiting, 409
+ * `CLOSURE_REQUEST_ALREADY_DECIDED` when the office answered first.
+ *
+ * `DELETE` on the singular resource, matching the route: unlike the office's
+ * confirm and decline — decisions with their own audit meaning — this is
+ * somebody taking back their own ask.
+ */
+export async function withdrawClosureRequest(api: ApiClient): Promise<DriverClosureRequest> {
+  const response = await api.request<{ closure_request: DriverClosureRequest }>(
+    '/me/closure-request',
+    { method: 'DELETE' },
+  );
+
+  return response.data.closure_request;
+}
+
+/**
+ * A driver correcting their own name or phone number.
+ *
+ * **Two fields, and the omissions are the server's design.** The office's own
+ * form accepts seven; `license_number`, `license_expiry`, `status`,
+ * `vehicle_id` and `email` are refused with a 422 that names the field, not
+ * dropped silently — so a client that sends one finds out rather than reading
+ * an unchanged body as a race.
+ *
+ * Sent as a partial: either field may travel alone, so correcting a phone
+ * number cannot blank a name.
+ *
+ * **Outside the offline outbox**, like the password change and the two uploads.
+ * ADR-0023 queues trip transitions, whose whole point is surviving a tunnel. A
+ * name correction that silently applied three hours later — after the driver
+ * had given up and retyped it — would be a worse answer than a refusal.
+ */
+export async function updateDriverProfile(
+  api: ApiClient,
+  changes: { name?: string; phone?: string },
+): Promise<DriverProfile> {
+  const response = await api.request<DriverProfile>('/me/profile', {
+    method: 'PATCH',
+    body: changes,
+  });
+
+  return response.data;
+}
+
+/**
+ * The driver's own photograph, replacing whatever is there (ADR-0041).
+ *
+ * Outside the offline outbox for the same reason `uploadDriverDocument` is,
+ * and the screen says so. Four megabytes rather than the document ceiling's
+ * eight — `StoreDriverPhotoRequest` halves it deliberately, because a portrait
+ * is rendered at 64 points and never read, and the driver is paying for the
+ * data.
+ *
+ * **The two file helpers are shared with the document upload rather than
+ * copied.** `documentMimeType`'s PDF branch is unreachable from here — the
+ * picker is image-only and the server's `mimes` rule refuses one anyway — but
+ * a second spelling of "what is this file called" is a second place for an
+ * iPhone's `.heic` to be labelled wrongly.
+ */
+export async function uploadDriverPhoto(
+  api: ApiClient,
+  uri: string,
+): Promise<{ photo_url: string | null }> {
+  const form = new FormData();
+
+  form.append('file', {
+    uri,
+    name: documentFileName(uri),
+    type: documentMimeType(uri),
+  } as unknown as Blob);
+
+  const response = await api.request<{ photo_url: string | null }>('/me/photo', {
+    method: 'POST',
+    form,
+    timeoutMs: 60_000,
+  });
+
+  return response.data;
+}
+
+/**
+ * Takes the driver's photograph down.
+ *
+ * The server answers `photo_url: null` whether or not one was held, so this
+ * needs no "was there one" check and cannot fail for the driver who taps it
+ * twice.
+ */
+export async function deleteDriverPhoto(api: ApiClient): Promise<{ photo_url: string | null }> {
+  const response = await api.request<{ photo_url: string | null }>('/me/photo', {
+    method: 'DELETE',
+  });
+
+  return response.data;
+}
+
+/**
+ * One report a driver sent the office, and the answer if it has one (ADR-0044).
+ *
+ * **`answer: null` means "still waiting", never "refused quietly".** The server
+ * has no way to close a report without writing one — ADR-0044 §2 removed the
+ * third status on purpose — so the null is a fact about the office's queue and
+ * not about a missing field.
+ */
+export type SupportRequest = {
+  id: number;
+  topic: string;
+  topic_label: string;
+  status: 'open' | 'answered';
+  status_label: string;
+  /** The journey it is about, or null. */
+  trip_id: number | null;
+  /** The driver's own words, verbatim. */
+  body: string;
+  answer: string | null;
+  answered_at: string | null;
+  created_at: string;
+};
+
+/** The driver's own reports, newest first. Capped server-side at fifty. */
+export async function fetchSupportRequests(api: ApiClient): Promise<SupportRequest[]> {
+  const response = await api.request<SupportRequest[]>('/me/support-requests');
+
+  return response.data;
+}
+
+/**
+ * Sends a report to the office.
+ *
+ * **Deliberately not through the offline outbox** (ADR-0044 §5). ADR-0023's
+ * queue carries small trip transitions that must survive a dead zone; a driver
+ * writing an account of something that happened to them needs to know it
+ * arrived, and a report sitting in a queue for three hours while they believe
+ * the office has it is worse than being told to try again on signal.
+ *
+ * `trip_id` is omitted rather than sent as null when there is none — the
+ * contract accepts either, and an absent optional reads better in a request log
+ * than an explicit null.
+ */
+export async function createSupportRequest(
+  api: ApiClient,
+  input: { topic: string; body: string; tripId?: number | null },
+): Promise<SupportRequest> {
+  const response = await api.request<SupportRequest>('/me/support-requests', {
+    method: 'POST',
+    body: {
+      topic: input.topic,
+      body: input.body,
+      ...(input.tripId === undefined || input.tripId === null ? {} : { trip_id: input.tripId }),
+    },
+  });
+
+  return response.data;
 }

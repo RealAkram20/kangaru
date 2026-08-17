@@ -84,14 +84,18 @@ export function SupportScreen({ navigation, route }: Props) {
         {isError && (
           <Notice
             tone="warning"
-            message="Could not load the office's contact details. Pull down once you have a signal."
+            message="Could not load the office's contact details."
           />
         )}
 
-        <Text style={styles.lead}>
-          {topic?.summary ??
-            'Talk to the office. They can see your trips, your documents and your wallet, and they are the people who can change any of them.'}
-        </Text>
+        {/*
+          **The lead is the topic's, or there is no lead.** The default sentence
+          — "Talk to the office. They can see your trips, your documents and
+          your wallet…" — explained what the two rows below it already show. A
+          topic's summary earns its place because it names a conversation the
+          driver arrived here for; nothing else does.
+        */}
+        {topic !== null && <Text style={styles.lead}>{topic.summary}</Text>}
 
         <Card>
           {phone === null && email === null ? (
@@ -103,8 +107,7 @@ export function SupportScreen({ navigation, route }: Props) {
               can.
             */
             <Text style={styles.empty}>
-              The office has not published a phone number or an email address yet. Ask your
-              dispatcher how to reach them.
+              No number or address published yet. Ask your dispatcher.
             </Text>
           ) : (
             <>
@@ -177,10 +180,6 @@ export function SupportScreen({ navigation, route }: Props) {
           <Detail label="App version" value={appVersion()} />
         </Card>
 
-        <Text style={styles.note}>
-          Nothing you send here is stored by the app. This screen opens your phone&apos;s dialler or
-          mail app — the conversation is between you and the office.
-        </Text>
       </ScrollView>
     </Screen>
   );

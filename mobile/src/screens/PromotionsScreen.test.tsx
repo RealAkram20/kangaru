@@ -221,7 +221,7 @@ it('says so plainly when nothing is running at all', async () => {
     referral: null,
   });
 
-  expect(screen.getByText(/no promotions running/)).toBeTruthy();
+  expect(screen.getByText(/No promotions running/)).toBeTruthy();
 });
 
 // -- Load and failure ------------------------------------------------------

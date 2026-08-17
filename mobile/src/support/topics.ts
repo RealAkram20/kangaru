@@ -1,53 +1,71 @@
 /**
  * The five things a driver comes to Help & Safety to report.
  *
- * ## Why this is data and not five endpoints
+ * ## What these were, and what they are now
  *
- * The mockup draws these as a list of navigable rows, and the obvious reading
- * is a ticket queue: tap *Passenger issue*, type what happened, submit. **That
- * is not built, and it is not a gap left out of laziness.** There is no
- * issue-reporting endpoint anywhere on this platform — no table, no route, no
- * inbox on the office side — and there is no messaging either, deliberately
- * (`trips/contact.ts` documents that seam and its reason).
+ * **The original reasoning is kept here because it was right, and because
+ * ADR-0044 is the answer to it rather than a reversal of it.** It read:
  *
- * A text box that posts nowhere is the same failure the SOS button was refused
- * for: it takes somebody's real problem, gives them the feeling of having
- * reported it, and drops it. A driver who has "reported" a passenger who
- * threatened them and hears nothing back has been handled, not helped.
+ * > The mockup draws these as a list of navigable rows, and the obvious
+ * > reading is a ticket queue: tap *Passenger issue*, type what happened,
+ * > submit. **That is not built, and it is not a gap left out of laziness.**
+ * > There is no issue-reporting endpoint anywhere on this platform — no table,
+ * > no route, no inbox on the office side. A text box that posts nowhere is
+ * > the same failure the SOS button was refused for: it takes somebody's real
+ * > problem, gives them the feeling of having reported it, and drops it. […]
+ * > It leaves the honest version of the mockup's intent buildable later, as a
+ * > backend feature with an ADR, rather than faked now.
  *
- * So a topic is not a form. It is **the office's phone number, plus the facts
- * they are going to ask for**, which is the part a driver cannot look up while
- * they are on the call. `SupportScreen` already had the number and the
- * driver's own details; a topic adds the two or three specifics that particular
- * conversation needs, and prefills the subject line when there is an email
- * address to use.
+ * That is exactly what happened. The owner read the card, said the five rows
+ * *"seem to be repeated and fake"* — they were: five identical-looking rows
+ * that all opened one contact card — and chose to build the loop.
  *
- * That makes the rows real navigation to a real destination, with nothing
- * invented — and it leaves the honest version of the mockup's intent buildable
- * later, as a backend feature with an ADR, rather than faked now.
+ * **A topic is now the category of a real record.** It decides what the form
+ * asks for, what the office queue can be filtered by, and how the report is
+ * titled everywhere it is read. The `prepare` prompts below, which used to be
+ * things to have ready before dialling, are now the guidance on the form —
+ * their first use where somebody can act on them without a phone in their hand.
+ *
+ * **The phone did not go away.** Contact Support still dials and the emergency
+ * card is untouched (ADR-0044 §6): call for what is happening now, write for
+ * what needs a record.
  *
  * ## Why the labels are the mockup's, exactly
  *
  * `report` is the catch-all and stays first, as drawn. The other four are the
  * calls the office actually gets, and a driver scanning for "my car" should not
  * have to decide whether that counts as an issue.
+ *
+ * ## The keys are the server's enum, character for character
+ *
+ * `lost_item`, not `lost-item`, which is what this file used before there was a
+ * server to disagree with. One vocabulary: the value a row carries is the value
+ * posted to `me/support-requests`, the value stored, and the value the office
+ * filters on. A translation layer between two spellings of the same five words
+ * is a bug waiting for whoever adds the sixth.
  */
 
-export type HelpTopicKey = 'report' | 'passenger' | 'vehicle' | 'payment' | 'lost-item';
+export type HelpTopicKey = 'report' | 'passenger' | 'vehicle' | 'payment' | 'lost_item';
 
 export type HelpTopic = {
   key: HelpTopicKey;
   /** The row label on Help & Safety, and the heading on Support. */
   label: string;
   /**
-   * One line under the heading on Support, saying what this conversation is
-   * for. Kept short: it is read while the dialler is one tap away.
+   * One line saying what this topic is for.
+   *
+   * **Now drawn on the Help & Safety row itself**, which is the direct fix for
+   * the owner's *"repeated"*: it was passed as an accessibility `announcement`
+   * only, so a screen reader could tell the five rows apart and a sighted
+   * driver could not.
    */
   summary: string;
   /**
-   * What the office will ask for, in the order they ask. Rendered as a list
-   * *before* the driver dials, which is the whole point — reciting a trip
-   * number from memory in traffic is how a support call takes ten minutes.
+   * What the office needs in a report of this kind, in the order they ask.
+   *
+   * Rendered as guidance on the form, where a driver can act on it while
+   * writing. It used to be a list to have ready before dialling, which was the
+   * best a screen with no backend could do with it.
    *
    * Never a value the app would have to compute. These are prompts, not data.
    */
@@ -92,7 +110,7 @@ export const helpTopics: readonly HelpTopic[] = [
     ],
   },
   {
-    key: 'lost-item',
+    key: 'lost_item',
     label: 'Lost item',
     summary: 'Something a passenger left in the vehicle, or something of yours gone missing.',
     prepare: ['The trip number', 'What the item is', 'Whether you still have it'],

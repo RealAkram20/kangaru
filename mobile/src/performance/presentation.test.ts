@@ -4,6 +4,7 @@ import {
   dialCaption,
   dialsFor,
   fractionOf,
+  gridNote,
   headingNote,
   hoursLabel,
   percentLabel,
@@ -212,6 +213,28 @@ describe('the words on the screen', () => {
     expect(headingNote(performance({ trips_total: 0 }))).toContain('once you have completed a trip');
   });
 
+  it('keeps every line short enough to be read at a glance', () => {
+    // The screen was carrying thirty-five words of prose under six labelled
+    // rings. This is not style policing: a driver reads this in a cradle, and
+    // a paragraph there is a paragraph nobody reads.
+    //
+    // **Twelve, not fifteen.** Fifteen was the first number written here and it
+    // was worthless: the fourteen-word sentence this pass shortened
+    // ("You have hit this week's target. The bonus is credited after the week
+    // closes.") passed it, so the guard could not fail for the regression it
+    // exists to catch. Twelve is the longest line that survived, which makes
+    // this a ratchet rather than a formality.
+    const words = (line: string): number => line.trim().split(/\s+/).length;
+
+    expect(words(gridNote(performance()))).toBeLessThanOrEqual(12);
+    expect(words(headingNote(performance()))).toBeLessThanOrEqual(12);
+    expect(words(headingNote(performance({ trips_total: 0 })))).toBeLessThanOrEqual(12);
+    expect(words(bonusNote(performance())!)).toBeLessThanOrEqual(12);
+    expect(
+      words(bonusNote(performance({ bonus: { ...performance().bonus!, achieved: true } }))!),
+    ).toBeLessThanOrEqual(12);
+  });
+
   it('counts the trips still needed for the bonus', () => {
     expect(bonusNote(performance())).toBe('Complete 2 more trips to reach your weekly bonus.');
     expect(bonusNote(performance({ bonus: { ...performance().bonus!, trips: 29 } }))).toBe(
@@ -230,6 +253,34 @@ describe('the words on the screen', () => {
     // avoid.
     expect(note).toContain('after the week closes');
     expect(note).not.toContain('earned');
+  });
+
+  it('does not claim a window the server does not apply to the rating', () => {
+    // `DriverStatsService::rating()` averages the most recent *ratings* — a
+    // sample, with no date filter in the query. The line this replaced read
+    // "Rating, acceptance, completion and cancellation are measured over the
+    // last 30 days", which asserted a window on a figure that has none. Put
+    // the rating back into this sentence and the screen is lying about how its
+    // own headline number is computed.
+    expect(gridNote(performance())).not.toMatch(/rating/i);
+    expect(gridNote(performance())).toContain('Rates cover the last 30 days.');
+  });
+
+  it('explains the roster only where there is one', () => {
+    // "of 45h" under a ring says nothing about where 45h came from.
+    expect(gridNote(performance())).toContain('Hours are measured against your roster.');
+
+    // ADR-0017 §3: no shift windows means available at any hour. There is no
+    // roster to explain, and the sentence would be about nothing.
+    expect(gridNote(performance({ rostered_seconds_this_week: null }))).toBe(
+      'Rates cover the last 30 days.',
+    );
+  });
+
+  it('holds the line while the figures are loading', () => {
+    // A space rather than an empty string, so the card below does not jump
+    // upward the moment the payload lands.
+    expect(gridNote(undefined)).toBe(' ');
   });
 
   it('has no bonus note at all when the scheme is off', () => {

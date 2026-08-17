@@ -112,17 +112,16 @@ export function DrawerContent(props: DrawerContentComponentProps) {
 
   return (
     <View style={[styles.drawer, { paddingTop: insets.top + spacing.sm }]}>
+      {/*
+        The close button alone — **no wordmark**. The owner's *"remove the
+        Kangaru logo on the side panel, it makes the panel so busy"*, and the
+        reasoning holds: the drawer is opened from the home screen, whose top
+        bar already carries the wordmark, so the panel sliding over it was
+        repeating the brand at somebody who had just tapped it. Fourteen rows
+        need every pixel of quiet they can get, and this is the only block in
+        the panel that named no destination.
+      */}
       <View style={styles.head}>
-        <Image
-          source={require('../../assets/brand/wordmark.png')}
-          style={styles.wordmark}
-          contentFit="contain"
-          accessible
-          accessibilityRole="image"
-          accessibilityLabel="KangaruRide"
-          transition={0}
-        />
-
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Close menu"
@@ -435,13 +434,17 @@ const styles = StyleSheet.create({
   head: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    // `flex-end`, not `space-between`: the wordmark that used to hold the left
+    // of this row is gone, and `space-between` on a single child is simply
+    // `flex-start` — which would park the close button in the top-left corner,
+    // where nothing on this platform closes anything.
+    justifyContent: 'flex-end',
     paddingHorizontal: spacing.md,
-    paddingBottom: spacing.md,
-  },
-  wordmark: {
-    width: 168,
-    height: 34,
+    // `xs`, not the `md` this carried under the wordmark. That gap separated
+    // two blocks of content; with only a 44pt close button left in the row it
+    // separated the driver's own name from nothing at all, and a panel the
+    // owner called busy does not need dead space at the top of it as well.
+    paddingBottom: spacing.xs,
   },
   close: {
     width: 44,

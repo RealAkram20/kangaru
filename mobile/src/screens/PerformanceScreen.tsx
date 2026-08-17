@@ -3,13 +3,7 @@ import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native
 
 import type { ProfileStackParams } from '../navigation/types';
 import { Dial } from '../performance/Dial';
-import {
-  bonusNote,
-  dialCaption,
-  dialsFor,
-  headingNote,
-  hoursLabel,
-} from '../performance/presentation';
+import { bonusNote, dialCaption, dialsFor, gridNote, headingNote } from '../performance/presentation';
 import { useDriverPerformance } from '../performance/queries';
 import { Card, Notice, Screen, ScreenHeader } from '../ui/components';
 import { SyncBanner } from '../ui/SyncBanner';
@@ -43,6 +37,16 @@ type Props = NativeStackScreenProps<ProfileStackParams, 'Performance'>;
  *   about work this app has not assessed, and it would be said identically to
  *   a driver at 40% acceptance. The line under the heading is a figure they
  *   earned, which is both truer and better praise.
+ *
+ * ## The wording pass, and what it removed
+ *
+ * The screen said all of that on itself, too. Under the grid sat a sentence
+ * naming all four rate dials and their window, and under the card a second
+ * paragraph on the roster and on what "online" excludes — thirty-five words of
+ * prose under six labelled rings. `gridNote` says the same in one line, and
+ * the roster clause only appears where there is a roster. Everything cut is
+ * still spoken in full by the dials' `announcement` sentences, which is where
+ * a driver who needs the detail is already served.
  *
  * ## Where a denominator is genuinely absent, the dial draws no arc
  *
@@ -107,7 +111,7 @@ export function PerformanceScreen({ navigation }: Props) {
         </View>
 
         {isError && performance === undefined && (
-          <Notice tone="warning" message="Your figures could not be loaded. Pull down or try again shortly." />
+          <Notice tone="warning" message="Your figures could not be loaded. Pull down to retry." />
         )}
 
         {/*
@@ -115,17 +119,13 @@ export function PerformanceScreen({ navigation }: Props) {
           per row is the only arrangement, and `flexBasis: '30%'` with
           `flexWrap` says that in four lines.
         */}
-        <View style={styles.grid}>
+        <View testID="performance-grid" style={styles.grid}>
           {dials.map((dial) => (
             <Dial key={dial.key} dial={dial} caption={dialCaption(dial, performance)} />
           ))}
         </View>
 
-        <Text style={styles.windowNote}>
-          {performance === undefined
-            ? ' '
-            : `Rating, acceptance, completion and cancellation are measured over the last ${performance.window_days} days.`}
-        </Text>
+        <Text style={styles.gridNote}>{gridNote(performance)}</Text>
 
         {/*
           The weekly card, and it is **absent rather than empty** when the
@@ -135,7 +135,7 @@ export function PerformanceScreen({ navigation }: Props) {
           precisely so this app never has to decide.
         */}
         {bonus !== null && (
-          <Card>
+          <Card style={styles.card}>
             <Text style={styles.cardTitle}>This week</Text>
 
             <View
@@ -177,20 +177,6 @@ export function PerformanceScreen({ navigation }: Props) {
             {note !== null && <Text style={styles.cardNote}>{note}</Text>}
           </Card>
         )}
-
-        {/*
-          Said once, plainly, and only where a roster exists to say it about.
-          The dial's own caption carries the figure; this carries the meaning,
-          because "of 45h" beside a ring does not tell a driver that the
-          number is what they are rostered for rather than a target somebody
-          set them.
-        */}
-        {performance !== undefined && performance.rostered_seconds_this_week !== null && (
-          <Text style={styles.footnote}>
-            Online hours are measured against the {hoursLabel(performance.rostered_seconds_this_week)} you
-            are rostered for this week. Time your phone could not be reached is not counted.
-          </Text>
-        )}
       </ScrollView>
     </Screen>
   );
@@ -198,7 +184,10 @@ export function PerformanceScreen({ navigation }: Props) {
 
 const styles = StyleSheet.create({
   body: {
-    padding: spacing.md,
+    // The mockup's gutter is 5.5% of the screen width where `spacing.md` is
+    // 4.1% — measured on the emulator against it, not guessed. On the 411dp
+    // reference handset that is 22.6dp, which is `spacing.lg`.
+    paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm,
     paddingBottom: spacing.xl,
     gap: spacing.lg,
@@ -215,24 +204,31 @@ const styles = StyleSheet.create({
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    // Three 30% columns with the slack shared between them, which is how the
+    // mockup spaces its rings: the outer two sit against the gutters and the
+    // middle one is centred. `columnGap` alone left the row flush-left with a
+    // ragged margin on the right.
+    justifyContent: 'space-between',
     // Generous, because the row gap is what separates the two rows of dials
     // and a label sitting close under the ring above it reads as belonging to
-    // the wrong one.
-    rowGap: spacing.lg,
-    columnGap: spacing.sm,
+    // the wrong one. The mockup gives the two rows more air than the section
+    // gap does, so this is a step above it rather than equal to it.
+    rowGap: spacing.xl,
   },
-  windowNote: {
+  gridNote: {
     ...typography.caption,
     color: colors.textMuted,
-    // Pulled up under the grid: it explains the four rate dials, not the card
-    // below it, and the section gap would otherwise attach it to the wrong
-    // thing.
+    // Pulled up under the grid: it explains the dials above it, not the card
+    // below, and the section gap would otherwise attach it to the wrong thing.
     marginTop: -spacing.sm,
+  },
+  card: {
+    marginTop: spacing.sm,
   },
   cardTitle: {
     ...typography.heading,
     color: colors.text,
-    marginBottom: spacing.md,
+    marginBottom: spacing.lg,
   },
   cardRow: {
     flexDirection: 'row',
@@ -254,7 +250,10 @@ const styles = StyleSheet.create({
     height: 10,
     borderRadius: radius.pill,
     backgroundColor: colors.border,
-    marginTop: spacing.sm,
+    // A full step, not half: the mockup sets the bar 5.4% of the screen width
+    // below its row where `spacing.sm` gave 3.3%, and the tighter gap made the
+    // bar read as an underline of the numerals rather than a second reading.
+    marginTop: spacing.md,
     overflow: 'hidden',
   },
   fill: {
@@ -266,9 +265,5 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textMuted,
     marginTop: spacing.md,
-  },
-  footnote: {
-    ...typography.caption,
-    color: colors.textMuted,
   },
 });

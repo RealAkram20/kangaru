@@ -96,7 +96,8 @@ it('renders the plain contact screen when no topic is named', async () => {
   const screen = await renderSupport();
 
   expect(await screen.findByText('Call the office')).toBeTruthy();
-  expect(screen.getByText(/Talk to the office/i)).toBeTruthy();
+  // No topic now means no lead sentence at all: the two rows below say it.
+  expect(screen.queryByText(/Talk to the office/i)).toBeNull();
   // No topic means no prompts and no subtitle — the drawer's route is unchanged.
   expect(screen.getByText('Have these ready')).toBeTruthy();
   expect(screen.queryByText('Passenger issue')).toBeNull();
@@ -129,7 +130,7 @@ it('falls back to the plain screen when the topic key is not one we have', async
   // worse than answering the general one.
   const screen = await renderSupport('passenger-issue');
 
-  expect(await screen.findByText(/Talk to the office/i)).toBeTruthy();
+  expect(await screen.findByText('Call the office')).toBeTruthy();
   expect(screen.queryByText('The trip number')).toBeNull();
 });
 
@@ -147,7 +148,7 @@ it('says the office has published nothing rather than showing a plausible number
 
   const screen = await renderSupport('payment');
 
-  expect(await screen.findByText(/has not published a phone number/i)).toBeTruthy();
+  expect(await screen.findByText(/No number or address published yet/i)).toBeTruthy();
   expect(screen.queryByText('Call the office')).toBeNull();
   // The topic's prompts still help: the driver can ring the number they already
   // have with the right facts in hand.

@@ -1,8 +1,8 @@
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import type { ReactElement } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import type { Trip, TripEvent } from '../api/types';
+import type { Trip, TripEvent, TripStatus } from '../api/types';
 import { TripInProgressScreen } from './TripInProgressScreen';
 
 /**
@@ -35,9 +35,16 @@ jest.mock('../ui/SyncBanner', () => ({ SyncBanner: () => null }));
 
 // `mock` prefix required: Jest hoists the factory below above this line.
 const mockQueueTransition = jest.fn(async () => undefined);
+let mockQueued = new Map<number, TripStatus>();
 
 jest.mock('../offline/SyncProvider', () => ({
-  useSync: () => ({ queueTransition: mockQueueTransition, sync: jest.fn() }),
+  useSync: () => ({
+    queueTransition: mockQueueTransition,
+    sync: jest.fn(),
+    // The outbox's pending transitions, keyed by trip — what the driver has
+    // asked for and the office has not confirmed.
+    queued: mockQueued,
+  }),
 }));
 
 // `mock` prefix required: Jest hoists the factories above these declarations.
@@ -146,6 +153,9 @@ async function renderProgress(
 beforeEach(() => {
   navigate.mockClear();
   mockQueueTransition.mockClear();
+  // Nothing in flight is the ordinary case; the tests about an unconfirmed
+  // pause set it themselves.
+  mockQueued = new Map();
   jest.useFakeTimers();
   // 14 minutes 2 seconds into the journey.
   jest.setSystemTime(new Date(Date.parse(STARTED_AT) + 842_000));
@@ -356,9 +366,7 @@ it('says how long the trip has been held, and that the time is priced', async ()
   const { getByText } = await renderProgress(pausedTrip(), heldEvents());
 
   expect(
-    getByText(
-      'On hold for 05:00. Waiting time is recorded on the trip and priced by the tariff.',
-    ),
+    getByText('On hold for 05:00. Waiting time is recorded and priced.'),
   ).toBeTruthy();
 });
 
@@ -427,4 +435,56 @@ it('keeps the inline map non-interactive, so it does not eat the page scroll', a
   walk(view.toJSON());
 
   expect(html).toContain('interactive: false');
+});
+
+it('shows the trip as held the moment the pause is queued, not when it lands', async () => {
+  // The owner's "hard to start the trip", on the pause control. Nothing writes
+  // the new status to the cache and only a *completed* drain invalidates it, so
+  // this screen used to go on offering "Pause trip" after it had been pressed —
+  // a flicker on a good connection, and the whole dead zone otherwise. Pressed
+  // twice, the second item posts from a status the server has left and parks.
+  mockQueued = new Map([[42, 'waiting' as TripStatus]]);
+
+  const { getByText, queryByText } = await renderProgress();
+
+  expect(getByText('Resume trip')).toBeTruthy();
+  expect(queryByText('Pause trip')).toBeNull();
+  // End trip goes too: `TripStatus::WAITING` allows only `TRIP_RESUMED`, so
+  // offering it on a trip about to be held is offering a 422.
+  expect(queryByText('End trip')).toBeNull();
+});
+
+it('does not date an unconfirmed hold from the last time the driver stopped', async () => {
+  // The duration is summed from `trip_events`, and a pause still in the outbox
+  // has no row there. Printing the events' total on an unconfirmed hold would
+  // time *this* pause from a previous one. The durationless sentence is the
+  // true one until the row exists.
+  mockQueued = new Map([[42, 'waiting' as TripStatus]]);
+
+  const { getByText, queryByText } = await renderProgress();
+
+  expect(getByText('On hold. Waiting time is recorded and priced.')).toBeTruthy();
+  expect(queryByText(/On hold for /)).toBeNull();
+});
+
+it('queues the hold from the status it will actually depart from', async () => {
+  // A pause and a resume in one dead zone: the resume departs from the pause
+  // still sitting in the outbox, not from the status the office last confirmed.
+  // `expectedFrom` is only read when an item fails, to tell "my write is
+  // missing" from "the trip moved on without me" — a stale value misreports
+  // exactly the case the reconciliation exists to distinguish.
+  mockQueued = new Map([[42, 'waiting' as TripStatus]]);
+
+  const { getByText } = await renderProgress();
+
+  void fireEvent.press(getByText('Resume trip'));
+
+  await waitFor(() => expect(mockQueueTransition).toHaveBeenCalled());
+
+  expect(mockQueueTransition).toHaveBeenCalledTimes(1);
+  expect(mockQueueTransition).toHaveBeenCalledWith({
+    tripId: 42,
+    from: 'waiting',
+    to: 'trip_resumed',
+  });
 });

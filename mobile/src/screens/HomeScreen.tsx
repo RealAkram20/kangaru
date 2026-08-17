@@ -16,8 +16,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { DriverPresence, Trip } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
-import { useDuty, useOffers, useSetDuty } from '../duty/queries';
+import { useDuty, useSetDuty } from '../duty/queries';
 import type { TripsStackParams } from '../navigation/types';
+import { useNotifications } from '../notifications/queries';
 import { useSync } from '../offline/SyncProvider';
 import { isLiveLeg, statusLabel, tripDestination } from '../trips/transitions';
 import { useDriverStats, useTrips } from '../trips/queries';
@@ -80,11 +81,21 @@ export function HomeScreen({ navigation }: Props) {
 
   const onDuty = duty?.on_duty ?? false;
 
-  // Polled only while on duty — a driver who has signed off is not waiting for
-  // anything, and a five-second poll running all evening is the battery cost
-  // that gets an app force-stopped.
-  const { offers } = useOffers(onDuty);
-  const offerCount = offers.length;
+  /*
+    What the office has said, for the bell in the top bar.
+
+    **Not the offer poll this used to read.** The bell opens the inbox now, so
+    it has to count what is *in* the inbox — a badge saying "3" over a control
+    that opens a list with nothing unread in it is a lie told by the one
+    element on the screen whose whole job is to be counted on.
+
+    Job offers lost nothing by this: they were never reachable through the
+    bell, they are painted over every screen by `OfferPresenter`, and they
+    arrive on the lock screen as a push. This query is not polled at all (see
+    `useNotifications`) — the inbox changes a few times a day.
+  */
+  const { data: inbox } = useNotifications();
+  const unread = inbox?.unread ?? 0;
 
   const refresh = useCallback(async () => {
     await Promise.all([refetch(), refetchStats(), sync()]);
@@ -152,20 +163,35 @@ export function HomeScreen({ navigation }: Props) {
         <View style={styles.topBarRight}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={
-              offerCount > 0 ? `Notifications, ${offerCount} waiting` : 'Notifications'
-            }
+            // The drawer's row is worded exactly this way. One control that
+            // reads two different ways to a screen reader is two controls as
+            // far as the person using it is concerned.
+            accessibilityLabel={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
             hitSlop={8}
-            onPress={() => navigation.navigate('Today')}
+            /*
+              The inbox — which is what a bell has always meant, and what this
+              one did not do. It went to `Today`, a second copy of this screen's
+              own list, and that screen is gone: the owner's *"the notification
+              icon should be linked to the notification page, and make sure
+              this page is removed"*.
+
+              `getParent()`, because `Notifications` lives on the **Profile**
+              stack (ADR-0039) rather than on this one — the same hop the
+              Earnings and Wallet tiles below make, plus the screen inside the
+              tab. The drawer's Notifications row lands in the identical place.
+            */
+            onPress={() =>
+              navigation.getParent()?.navigate('Profile', { screen: 'Notifications' })
+            }
             style={styles.topBarButton}
           >
             <BellIcon color={colors.text} size={22} strokeWidth={2} />
 
-            {/* Counts job offers, not unread mail: an offer has a fifteen-second
-                clock on it and is the only thing here worth interrupting for. */}
-            {offerCount > 0 && (
+            {/* Unread messages from the office — the same count the drawer's
+                row carries, from the same query, so the two cannot disagree. */}
+            {unread > 0 && (
               <View style={styles.badge}>
-                <Text style={styles.badgeText}>{offerCount}</Text>
+                <Text style={styles.badgeText}>{unread}</Text>
               </View>
             )}
           </Pressable>

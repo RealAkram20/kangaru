@@ -1,5 +1,5 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { ActivityIndicator, Animated, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { Animated, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 
 import type { PeakHours, ReferralOffer, WeeklyChallenge } from '../api/endpoints';
 import type { ProfileStackParams } from '../navigation/types';
@@ -21,6 +21,7 @@ import {
 } from '../promotions/presentation';
 import { useDriverPromotions } from '../promotions/queries';
 import { Empty, Notice, Screen, ScreenHeader, usePressScale } from '../ui/components';
+import { SkeletonCards } from '../ui/Skeleton';
 import { AwardIcon, ShareIcon, TrendingUpIcon, UserPlusIcon } from '../ui/icons';
 import { colors, radius, spacing, typography } from '../ui/theme';
 
@@ -87,17 +88,17 @@ export function PromotionsScreen({ navigation }: Props) {
       <ScreenHeader title="Promotions" subtitle={null} onBack={() => navigation.goBack()} />
 
       <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
-        {isLoading && <ActivityIndicator color={colors.primary} style={styles.loading} />}
+        {isLoading && <SkeletonCards count={2} style={styles.loading} />}
 
         {isError && (
           <Notice
             tone="warning"
-            message="Could not load what is on offer. Pull down once you have a signal."
+            message="Could not load what is on offer."
           />
         )}
 
         {nothingOnOffer && (
-          <Empty message="There are no promotions running at the moment. Anything the office starts will show up here." />
+          <Empty message="No promotions running." />
         )}
 
         {data?.weeklyChallenge && (

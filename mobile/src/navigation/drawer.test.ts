@@ -90,10 +90,13 @@ describe('the two lists', () => {
       'notifications',
     ]);
 
+    // No 'settings'. The screen is deleted and its four rows are grouped on
+    // Profile — the owner's *"so we don't need the settings page"*. Asserted
+    // as the whole list rather than a `not.toContain`, so re-adding the row
+    // fails here rather than only on the device.
     expect(account?.rows.map((row) => row.key)).toEqual([
       'profile',
       'documents',
-      'settings',
       'safety',
       'support',
     ]);
@@ -110,10 +113,10 @@ describe('the two lists', () => {
     }
   });
 
-  it('sends the four new screens to the Profile stack, so they keep the tab bar', () => {
+  it('sends the drawer s own screens to the Profile stack, so they keep the tab bar', () => {
     const list = rows();
 
-    for (const key of ['notifications', 'settings', 'safety', 'support']) {
+    for (const key of ['notifications', 'safety', 'support']) {
       const row = list.find((candidate) => candidate.key === key);
 
       expect(row?.destination.tab).toBe('Profile');
@@ -124,7 +127,7 @@ describe('the two lists', () => {
   /*
    * **Inverted after a device run, not deleted.** The original asserted the
    * four tab rows named no screen, "so each resumes where it was" — and the
-   * owner found the failure that reasoning hides: stand on Settings (inside
+   * owner found the failure that reasoning hides: stand on Documents (inside
    * the Profile stack), tap the drawer's Profile row, and "resume" means
    * nothing happens. A menu row that does nothing is a dead control. Every
    * row now names its stack root.
@@ -167,11 +170,22 @@ describe('the selected row', () => {
   });
 
   it('lights the nested screen rather than its tab', () => {
-    // Four rows below the rule live inside the Profile tab. Lighting "Profile"
-    // while a driver reads Settings would tell them they are somewhere they
-    // are not, on the one control whose whole job is saying where they are.
-    expect(selectedRowKey(drawerSections(null, null), 'Profile', 'Settings')).toBe('settings');
+    // Three rows below the rule live inside the Profile tab. Lighting
+    // "Profile" while a driver reads Documents would tell them they are
+    // somewhere they are not, on the one control whose whole job is saying
+    // where they are.
+    expect(selectedRowKey(drawerSections(null, null), 'Profile', 'Documents')).toBe('documents');
     expect(selectedRowKey(drawerSections(null, null), 'Profile', 'ProfileHome')).toBe('profile');
+  });
+
+  /**
+   * The Settings screen is gone and its rows are on Profile. A driver standing
+   * on one of those pushed screens is on no drawer row at all — Profile must
+   * not light up for them, which is the same claim the case above makes from
+   * the other side.
+   */
+  it('lights nothing for a screen the drawer no longer lists', () => {
+    expect(selectedRowKey(drawerSections(null, null), 'Profile', 'ChangePassword')).toBeNull();
   });
 
   it('lights nothing rather than defaulting to Home', () => {

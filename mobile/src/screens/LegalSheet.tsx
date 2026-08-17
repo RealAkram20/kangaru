@@ -95,7 +95,7 @@ export function LegalSheet({
           {isError && (
             <Notice
               tone="warning"
-              message="These notices could not be loaded. They need a connection the first time — your fleet office can also send them to you."
+              message="These notices need a connection the first time."
             />
           )}
 
@@ -117,7 +117,7 @@ export function LegalSheet({
 function documentText(text: string): string {
   return text.trim().length > 0
     ? text
-    : 'This notice has not been published yet. Please ask your fleet office for a copy before you sign up.';
+    : 'Not published yet. Ask your fleet office for a copy.';
 }
 
 const styles = StyleSheet.create({

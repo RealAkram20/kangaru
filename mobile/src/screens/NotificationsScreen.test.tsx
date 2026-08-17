@@ -251,7 +251,7 @@ it('says so when marking everything read did not reach the office', async () => 
 
   const screen = await renderInbox();
 
-  expect(screen.getByText(/did not reach the office/)).toBeTruthy();
+  expect(screen.getByText(/Not sent/)).toBeTruthy();
 });
 
 // -- The states around the list --------------------------------------------

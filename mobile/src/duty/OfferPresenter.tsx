@@ -40,10 +40,11 @@ export function OfferPresenter() {
   const { data: duty } = useDuty();
   const onDuty = duty?.on_duty ?? false;
 
-  // The same poll `HomeScreen` and `TodayScreen` read. React Query hands all
-  // three the one in-flight request, so mounting this costs no extra traffic
-  // — and it keeps running when the driver is on a screen that does not
-  // itself ask for offers, which is the entire point.
+  // **The app's only reader of the offer poll**, now that `TodayScreen` is
+  // deleted and the home screen's bell counts unread mail instead. That is not
+  // a loss of coverage but the point of this component: it is mounted outside
+  // the navigator and keeps polling on every screen, where a screen-level
+  // reader only ever asked while the driver happened to be standing on it.
   const { offers } = useOffers(onDuty);
 
   const accept = useAcceptOffer();

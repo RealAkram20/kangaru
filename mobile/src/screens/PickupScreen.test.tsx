@@ -1,9 +1,9 @@
-import { render } from '@testing-library/react-native';
+import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import * as Location from 'expo-location';
 import type { ReactElement } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import type { Trip } from '../api/types';
+import type { Trip, TripStatus } from '../api/types';
 import { PickupScreen } from './PickupScreen';
 
 /**
@@ -29,8 +29,19 @@ const METRICS = {
   insets: { top: 59, left: 0, right: 0, bottom: 34 },
 };
 
+// `mock` prefix required: Jest hoists the factory below above these
+// declarations, and only names matching /^mock/ may be referenced inside one.
+const mockQueueTransition = jest.fn(async () => undefined);
+let mockQueued = new Map<number, TripStatus>();
+
 jest.mock('../offline/SyncProvider', () => ({
-  useSync: () => ({ queueTransition: jest.fn(async () => undefined), sync: jest.fn() }),
+  useSync: () => ({
+    queueTransition: mockQueueTransition,
+    sync: jest.fn(),
+    // The outbox's pending transitions, keyed by trip. Empty unless a test is
+    // about a move the driver has made and the office has not confirmed.
+    queued: mockQueued,
+  }),
 }));
 
 jest.mock('../ui/SyncBanner', () => ({ SyncBanner: () => null }));
@@ -90,6 +101,13 @@ function trip(overrides: Partial<Trip> = {}): Trip {
     ...overrides,
   };
 }
+
+beforeEach(() => {
+  mockQueueTransition.mockClear();
+  // Nothing in flight is the ordinary case; the two tests about a queued
+  // transition set it themselves.
+  mockQueued = new Map();
+});
 
 async function renderPickup(value: Trip = trip()): Promise<ReturnType<typeof render>> {
   mockUseTrip.mockReturnValue({ data: value, isLoading: false });
@@ -237,4 +255,51 @@ it('shows nothing about the passenger when the server withheld them', async () =
 
   expect(queryByText('Sarah N.')).toBeNull();
   expect(queryByLabelText(/^Call /)).toBeNull();
+});
+
+it('does not offer a leg transition that is already queued', async () => {
+  // The owner's report, generalised: `allowed_transitions` is computed for the
+  // status the server last confirmed, so between the press and the drain this
+  // screen went on offering the move the driver had already made. In the
+  // stairwell this screen is written for, that is the rest of the leg. A second
+  // press queues a second item, which posts from a status the server has left,
+  // and parks — a queue item needing a human, earned by pressing the only
+  // button on screen.
+  mockQueued = new Map([[42, 'driver_arrived' as TripStatus]]);
+
+  const { queryByText, getByText } = await renderPickup();
+
+  expect(queryByText("I've arrived")).toBeNull();
+  expect(getByText(/^Arrived at pickup\./)).toBeTruthy();
+  // Same sentence as the odometer's footnote: a driver meets it on both
+  // screens and it means one thing.
+  expect(getByText(/Saved on this phone, sent when you have signal\./)).toBeTruthy();
+});
+
+it('offers the leg transitions again once nothing is queued', async () => {
+  // The other half, and the reason this reads the outbox rather than inventing
+  // an optimistic status: a refused item leaves `queued` and the buttons come
+  // back, rather than the driver being stranded with no control at all.
+  mockQueued = new Map();
+
+  const { getByText } = await renderPickup();
+
+  expect(getByText("I've arrived")).toBeTruthy();
+});
+
+it('queues a leg transition once per press', async () => {
+  mockQueued = new Map();
+
+  const { getByText } = await renderPickup();
+
+  void fireEvent.press(getByText("I've arrived"));
+
+  await waitFor(() => expect(mockQueueTransition).toHaveBeenCalled());
+
+  // A count. This log records three surviving mutations that were existence
+  // assertions passing against the wrong number of calls.
+  expect(mockQueueTransition).toHaveBeenCalledTimes(1);
+  expect(mockQueueTransition).toHaveBeenCalledWith(
+    expect.objectContaining({ tripId: 42, to: 'driver_arrived' }),
+  );
 });

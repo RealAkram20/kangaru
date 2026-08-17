@@ -78,9 +78,27 @@ export function OdometerScreen({ route, navigation }: Props) {
     setBusy(true);
 
     try {
+      // **Boarding is queued here, not by the button that opened this screen.**
+      // `driver_arrived -> trip_started` is not a legal edge (`TripStatus::
+      // allowedTransitions`), so `passenger_onboard` has to be posted in
+      // between — but posting it on the *previous* press committed it before
+      // the reading existed. A driver who then backed out of this modal left
+      // the trip stranded at `passenger_onboard`, which `activeTripRoute` routes
+      // straight back here: a state with no exit but this form. Queueing both
+      // from one submit means nothing is committed until the driver commits.
+      //
+      // The two land in the same per-trip stream and drain strictly in order
+      // (ADR-0023 §5), so the server sees the same sequence it saw before.
+      if (from === 'driver_arrived') {
+        await queueTransition({ tripId, from, to: 'passenger_onboard' });
+      }
+
       await queueTransition({
         tripId,
-        from,
+        // The opening reading always departs from `passenger_onboard` — either
+        // the item queued a line above, or a trip already sitting there because
+        // a previous attempt got that far. The graph allows nothing else.
+        from: isOpening ? 'passenger_onboard' : from,
         to,
         photoUri,
         ...(isOpening
@@ -100,22 +118,26 @@ export function OdometerScreen({ route, navigation }: Props) {
 
     setBusy(false);
 
-    // The closing reading ends the job, so it does not go back — behind this
-    // modal is the live-leg screen for a trip that has just finished, and
-    // returning there offers an End trip button that 422s out of the outbox.
-    // `replace`, not `navigate`: the odometer form must not sit in the stack
-    // behind the completion screen, or the back gesture reopens a reading
-    // that has already been queued.
+    // **Neither reading goes back, and the opening one is the bug this fixes.**
+    // It used to `goBack()`, which returned the driver to the waiting screen —
+    // a screen that renders "Start Trip" and has no idea the trip has moved.
+    // `queueTransition` writes nothing to the cache and `sync()` invalidates
+    // only on a completed drain, so in a dead zone (a basement car park, which
+    // is what that screen is written for) the driver landed on a view
+    // byte-identical to the one they had just left. Pressing the only button on
+    // it queued a second `passenger_onboard`, which the server refuses and the
+    // outbox parks. Reported by the owner as "hard to start the trip".
     //
-    // The opening reading still goes back, because there the trip carries on
-    // and the screen behind it is the right place to land.
-    if (to === 'trip_completed') {
-      navigation.replace('RideComplete', { tripId });
-
-      return;
-    }
-
-    navigation.goBack();
+    // `replace`, not `navigate`, on both: the form must not sit in the stack
+    // behind the screen that follows it, or the back gesture reopens a reading
+    // that has already been queued.
+    navigation.replace(
+      // Trip Started is `TripInProgressScreen`'s status — see the ownership
+      // table in `docs/agent-worklog.md`. Landing there is the driver seeing
+      // the transition they just made, which is the whole of the fix.
+      to === 'trip_completed' ? 'RideComplete' : 'TripInProgress',
+      { tripId },
+    );
   };
 
   return (
@@ -128,14 +150,12 @@ export function OdometerScreen({ route, navigation }: Props) {
           <Text style={styles.title}>
             {isOpening ? 'Opening odometer' : 'Closing odometer'}
           </Text>
-          <Text style={styles.subtitle}>
-            Read the number off the dashboard, in whole kilometres.
-          </Text>
+          <Text style={styles.subtitle}>From the dashboard, in whole kilometres.</Text>
 
           {saveFailed && (
             <Notice
               tone="danger"
-              message="This phone could not save the reading. Do not leave this screen — try again, and write the number down if it keeps failing."
+              message="Could not save. Try again, and write the number down."
             />
           )}
 
@@ -161,10 +181,7 @@ export function OdometerScreen({ route, navigation }: Props) {
 
           <Card>
             <Text style={styles.photoTitle}>Dashboard photo</Text>
-            <Text style={styles.photoHint}>
-              Optional. If the camera will not focus, record the reading anyway — the number is what
-              matters.
-            </Text>
+            <Text style={styles.photoHint}>Optional — the number is what matters.</Text>
 
             {cameraProblem !== null && <Notice message={cameraProblem} />}
 
@@ -185,16 +202,26 @@ export function OdometerScreen({ route, navigation }: Props) {
           </Card>
 
           <Button
-            label={isOpening ? 'Start trip' : 'Complete trip'}
+            // **Not "Start trip", which is the button that opened this screen.**
+            // Two buttons a press apart carrying the same three words read as
+            // one press that did not work — and the second one arrives
+            // disabled, which is how the owner met it. This names both halves
+            // of what the press actually does. The closing side already differs
+            // from its opener ("End trip" -> "Complete trip") and is left alone.
+            label={isOpening ? 'Record and start trip' : 'Complete trip'}
             busy={busy}
             disabled={reading === '' || error !== undefined}
             onPress={() => void submit()}
           />
 
-          <Text style={styles.footnote}>
-            This is saved on the phone first and sent when there is a connection. You can close the
-            app.
-          </Text>
+          {/*
+            **Kept, at a third of the length.** ADR-0023 queues this reading
+            rather than sending it, and a driver who does not know that will sit
+            in a dead zone waiting for a confirmation that is not coming, or
+            retype a reading already queued. The behaviour is the message; the
+            reassurance around it is not.
+          */}
+          <Text style={styles.footnote}>Saved on this phone, sent when you have signal.</Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </Screen>

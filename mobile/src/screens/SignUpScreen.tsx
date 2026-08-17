@@ -14,6 +14,7 @@ import {
 
 import { submitDriverApplication } from '../api/endpoints';
 import { isApiError } from '../api/errors';
+import { PasswordMeter } from '../auth/PasswordMeter';
 import { useAuth } from '../auth/AuthProvider';
 import {
   registrationProblem,
@@ -176,9 +177,7 @@ export function SignUpScreen({
             : error.message,
         );
       } else {
-        setRefusal(
-          'No connection. Applying needs one — nothing was sent, and nothing you typed is lost.',
-        );
+        setRefusal('No connection. Nothing was sent, and nothing you typed is lost.');
       }
     } finally {
       setBusy(false);
@@ -233,141 +232,149 @@ export function SignUpScreen({
                 <Text style={styles.receivedTitle}>Application received</Text>
                 <Text style={styles.receivedBody}>
                   The office will review it and call you on {phone.trim()}. Bring your driving
-                  licence when they do — approval needs it. You will sign in here with the email
-                  and password you just chose.
+                  licence when they do — approval needs it. You will sign in here with the email and
+                  password you just chose.
                 </Text>
               </View>
 
               <Button label="Back to sign in" tone="neutral" onPress={onSignIn} />
             </View>
           ) : (
-          <View style={styles.gutter}>
-            {refusal !== null && <Notice message={refusal} tone="info" />}
+            <View style={styles.gutter}>
+              {refusal !== null && <Notice message={refusal} tone="info" />}
 
-            <IconField
-              ref={nameInput}
-              icon={({ color }) => <UserIcon color={color} />}
-              placeholder="Full name"
-              accessibilityLabel="Full name"
-              value={name}
-              onChangeText={setName}
-              autoCapitalize="words"
-              autoComplete="name"
-              textContentType="name"
-              returnKeyType="next"
-              onSubmitEditing={() => phoneInput.current?.focus()}
-              error={errorFor('name')}
-            />
+              <IconField
+                ref={nameInput}
+                icon={({ color }) => <UserIcon color={color} />}
+                placeholder="Full name"
+                accessibilityLabel="Full name"
+                value={name}
+                onChangeText={setName}
+                autoCapitalize="words"
+                autoComplete="name"
+                textContentType="name"
+                returnKeyType="next"
+                onSubmitEditing={() => phoneInput.current?.focus()}
+                error={errorFor('name')}
+              />
 
-            <IconField
-              ref={phoneInput}
-              icon={({ color }) => <PhoneIcon color={color} />}
-              placeholder="Phone number"
-              accessibilityLabel="Phone number"
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-              autoComplete="tel"
-              textContentType="telephoneNumber"
-              returnKeyType="next"
-              onSubmitEditing={() => emailInput.current?.focus()}
-              error={errorFor('phone')}
-            />
+              <IconField
+                ref={phoneInput}
+                icon={({ color }) => <PhoneIcon color={color} />}
+                placeholder="Phone number"
+                accessibilityLabel="Phone number"
+                value={phone}
+                onChangeText={setPhone}
+                keyboardType="phone-pad"
+                autoComplete="tel"
+                textContentType="telephoneNumber"
+                returnKeyType="next"
+                onSubmitEditing={() => emailInput.current?.focus()}
+                error={errorFor('phone')}
+              />
 
-            <IconField
-              ref={emailInput}
-              icon={({ color }) => <MailIcon color={color} />}
-              placeholder="Email address"
-              accessibilityLabel="Email address"
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="email-address"
-              autoComplete="email"
-              textContentType="emailAddress"
-              returnKeyType="next"
-              onSubmitEditing={() => passwordInput.current?.focus()}
-              error={errorFor('email')}
-            />
+              <IconField
+                ref={emailInput}
+                icon={({ color }) => <MailIcon color={color} />}
+                placeholder="Email address"
+                accessibilityLabel="Email address"
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+                autoComplete="email"
+                textContentType="emailAddress"
+                returnKeyType="next"
+                onSubmitEditing={() => passwordInput.current?.focus()}
+                error={errorFor('email')}
+              />
 
-            <IconField
-              ref={passwordInput}
-              icon={({ color }) => <LockIcon color={color} />}
-              placeholder="Password"
-              accessibilityLabel="Password"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry={!showPassword}
-              autoCapitalize="none"
-              autoComplete="new-password"
-              textContentType="newPassword"
-              returnKeyType="next"
-              onSubmitEditing={() => confirmationInput.current?.focus()}
-              error={errorFor('password')}
-              trailing={
-                <RevealToggle
-                  shown={showPassword}
-                  onToggle={() => setShowPassword((on) => !on)}
-                />
-              }
-            />
+              <IconField
+                ref={passwordInput}
+                icon={({ color }) => <LockIcon color={color} />}
+                placeholder="Password"
+                accessibilityLabel="Password"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                autoComplete="new-password"
+                textContentType="newPassword"
+                returnKeyType="next"
+                onSubmitEditing={() => confirmationInput.current?.focus()}
+                error={errorFor('password')}
+                trailing={
+                  <RevealToggle
+                    shown={showPassword}
+                    onToggle={() => setShowPassword((on) => !on)}
+                  />
+                }
+              />
 
-            <IconField
-              ref={confirmationInput}
-              icon={({ color }) => <LockIcon color={color} />}
-              placeholder="Confirm password"
-              accessibilityLabel="Confirm password"
-              value={confirmation}
-              onChangeText={setConfirmation}
-              secureTextEntry={!showConfirmation}
-              autoCapitalize="none"
-              autoComplete="new-password"
-              textContentType="newPassword"
-              returnKeyType="done"
-              onSubmitEditing={submit}
-              error={errorFor('confirmation')}
-              trailing={
-                <RevealToggle
-                  shown={showConfirmation}
-                  onToggle={() => setShowConfirmation((on) => !on)}
-                />
-              }
-            />
+              {/*
+              This is the first password a driver ever chooses on this
+              platform, and the only one nobody handed them — so it is the one
+              place a meter changes what gets typed rather than just grading it.
+              Renders nothing until they start.
+            */}
+              <PasswordMeter password={password} />
 
-            <View style={styles.consent}>
-              <Checkbox
-                checked={acceptedTerms}
-                onToggle={() => setAcceptedTerms((on) => !on)}
-                error={problem?.field === 'terms'}
-              >
-                <Text style={styles.consentText}>
-                  I agree to the{' '}
-                  <TextLink label="Terms and Conditions" onPress={() => setLegalDoc('terms')} />{' '}
-                  and <TextLink label="Privacy Policy" onPress={() => setLegalDoc('privacy')} />
-                </Text>
-              </Checkbox>
+              <IconField
+                ref={confirmationInput}
+                icon={({ color }) => <LockIcon color={color} />}
+                placeholder="Confirm password"
+                accessibilityLabel="Confirm password"
+                value={confirmation}
+                onChangeText={setConfirmation}
+                secureTextEntry={!showConfirmation}
+                autoCapitalize="none"
+                autoComplete="new-password"
+                textContentType="newPassword"
+                returnKeyType="done"
+                onSubmitEditing={submit}
+                error={errorFor('confirmation')}
+                trailing={
+                  <RevealToggle
+                    shown={showConfirmation}
+                    onToggle={() => setShowConfirmation((on) => !on)}
+                  />
+                }
+              />
 
-              {problem?.field === 'terms' && (
-                <Text accessibilityRole="alert" style={styles.consentError}>
-                  {registrationProblemMessage(problem.problem)}
-                </Text>
-              )}
-            </View>
+              <View style={styles.consent}>
+                <Checkbox
+                  checked={acceptedTerms}
+                  onToggle={() => setAcceptedTerms((on) => !on)}
+                  error={problem?.field === 'terms'}
+                >
+                  <Text style={styles.consentText}>
+                    I agree to the{' '}
+                    <TextLink label="Terms and Conditions" onPress={() => setLegalDoc('terms')} />{' '}
+                    and <TextLink label="Privacy Policy" onPress={() => setLegalDoc('privacy')} />
+                  </Text>
+                </Checkbox>
 
-            {/*
+                {problem?.field === 'terms' && (
+                  <Text accessibilityRole="alert" style={styles.consentError}>
+                    {registrationProblemMessage(problem.problem)}
+                  </Text>
+                )}
+              </View>
+
+              {/*
               Enabled whatever the form contains, and validated on press.
               A greyed-out button that will not say what is missing leaves the
               driver to guess between five fields and a tick box; this one
               answers, and puts the cursor on the answer.
             */}
-            <Button label="Sign Up" onPress={() => void submit()} busy={busy} />
+              <Button label="Sign Up" onPress={() => void submit()} busy={busy} />
 
-            <View style={styles.footer}>
-              <Text style={styles.footerText}>Already have an account? </Text>
-              <TextLink label="Log in" onPress={onSignIn} />
+              <View style={styles.footer}>
+                <Text style={styles.footerText}>Already have an account? </Text>
+                <TextLink label="Log in" onPress={onSignIn} />
+              </View>
             </View>
-          </View>
           )}
         </ScrollView>
       </KeyboardAvoidingView>

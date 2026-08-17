@@ -116,7 +116,7 @@ it('draws no red button at all when the office has published no emergency number
   const screen = await renderSafety();
 
   // Wait on the branch that *should* render, then prove the other did not.
-  expect(await screen.findByText(/has not published an emergency number/i)).toBeTruthy();
+  expect(await screen.findByText(/No emergency number published/i)).toBeTruthy();
 
   // The whole reason an SOS is defensible here. A button that summons nobody is
   // the control the first version of this screen refused outright.
@@ -124,7 +124,7 @@ it('draws no red button at all when the office has published no emergency number
   expect(screen.queryByText('Emergency')).toBeNull();
   // A successful read that came back empty is a fact about the office, and this
   // is the one state allowed to say so.
-  expect(screen.queryByText(/has not been able to load/i)).toBeNull();
+  expect(screen.queryByText(/not loaded/i)).toBeNull();
 });
 
 it('never claims the office published nothing when it simply could not load', async () => {
@@ -137,8 +137,8 @@ it('never claims the office published nothing when it simply could not load', as
 
   const screen = await renderSafety();
 
-  expect(await screen.findByText(/has not been able to load the emergency number/i)).toBeTruthy();
-  expect(screen.queryByText(/office has not published/i)).toBeNull();
+  expect(await screen.findByText(/Emergency number not loaded/i)).toBeTruthy();
+  expect(screen.queryByText(/No emergency number published/i)).toBeNull();
   // And still no red button, which is the property that must hold in every
   // no-number state.
   expect(screen.queryByText('SOS')).toBeNull();
@@ -190,7 +190,7 @@ it('tells an off-duty driver that nobody can see where they are', async () => {
   await screen.findByText('SOS');
 
   expect(screen.getByText('Nobody can see where you are')).toBeTruthy();
-  expect(screen.getByText(/you will need to say where you are/i)).toBeTruthy();
+  expect(screen.getByText(/Say where you are when you call/i)).toBeTruthy();
   expect(screen.queryByText('The office can see where you are')).toBeNull();
 });
 
@@ -208,7 +208,7 @@ it('lists the five help topics the mockup draws', async () => {
   const screen = await renderSafety();
   await screen.findByText('SOS');
 
-  expect(screen.getByText('Help Topics')).toBeTruthy();
+  expect(screen.getByText('Report something to the office')).toBeTruthy();
 
   for (const label of [
     'Report an issue',
@@ -221,26 +221,52 @@ it('lists the five help topics the mockup draws', async () => {
   }
 });
 
-it('opens support with the topic named, so the row is not five routes to one screen', async () => {
+it('opens the report form with the topic named, not a second contact card', async () => {
   const screen = await renderSafety();
   await screen.findByText('SOS');
 
   await fireEvent.press(screen.getByText('Payment issue'));
 
-  expect(navigate).toHaveBeenCalledWith('Support', { topic: 'payment' });
+  /*
+    **This assertion inverted with ADR-0044, and the old one is worth
+    remembering.** It read `toHaveBeenCalledWith('Support', …)`, and the
+    comment beside it said the topic param was what stopped the rows being
+    "five routes to one screen". It was the best a screen with no backend could
+    do, and the owner still read the result as *"repeated and fake"* — five
+    rows that opened one phone number.
+
+    Now each opens a form whose report a person at the office answers.
+  */
+  expect(navigate).toHaveBeenCalledWith('ReportIssue', { topic: 'payment' });
 });
 
-it('offers no text box, because there is nowhere on this platform to post one', async () => {
+it('says on the row what each topic is for, not only to a screen reader', async () => {
   const screen = await renderSafety();
   await screen.findByText('SOS');
 
-  // The mockup's rows read as a ticket queue. There is no issue-reporting
-  // endpoint; a box that posts nowhere is the SOS refusal in another shape.
-  //
-  // Asserted against the rendered tree rather than by querying for a
-  // placeholder: a `TextInput` with no placeholder is exactly the one that
-  // would slip past a copy-based check.
-  expect(JSON.stringify(screen.toJSON())).not.toContain('TextInput');
+  /*
+    The defect behind *"repeated"*. Each summary was passed as `announcement`
+    alone, so a screen reader could tell the five rows apart and the eye could
+    not — five identical chevron rows, one destination.
+
+    `getByText`, not `getByLabelText`: an accessibility label would pass this
+    assertion in exactly the state that was wrong.
+  */
+  expect(screen.getByText('A fare, a bonus, or a wallet balance that looks wrong.')).toBeTruthy();
+  expect(
+    screen.getByText('Something a passenger left in the vehicle, or something of yours gone missing.'),
+  ).toBeTruthy();
+});
+
+it('offers the way back to what was already reported', async () => {
+  const screen = await renderSafety();
+  await screen.findByText('SOS');
+
+  // The half of the loop that gets skipped: a report queue nobody can read the
+  // answer in is the silence ADR-0044 exists to end.
+  await fireEvent.press(screen.getByText('Your reports'));
+
+  expect(navigate).toHaveBeenCalledWith('MyReports');
 });
 
 // -- Contact support -------------------------------------------------------
@@ -293,5 +319,5 @@ it('says plainly that no emergency channel is monitored in the app', async () =>
   const screen = await renderSafety();
   await screen.findByText('SOS');
 
-  expect(screen.getByText(/does not monitor an emergency channel/i)).toBeTruthy();
+  expect(screen.getByText(/does not monitor emergencies/i)).toBeTruthy();
 });

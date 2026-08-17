@@ -210,23 +210,33 @@ export function dialsFor(performance: DriverPerformance | undefined): Dial[] {
       // so its ring had nothing to be a fraction of. This one does: the
       // operator's weekly bonus target. The lifetime figure is not lost — it
       // is the line under the heading, where it needs no denominator.
-      label: 'Trips this week',
+      //
+      // **"Weekly trips", not "Trips this week", and the reason is measured
+      // rather than stylistic.** These labels sit in a third of the screen,
+      // and `ui/facts.tsx` records that a *fourteen*-character label at 14pt
+      // does not hold one line there on a 360dp handset — the narrowest in the
+      // fleet — which is why its stat cells drop to 12pt. Fifteen characters
+      // truncated to "Trips this wee…". Twelve is the width of "Cancellation",
+      // which has shipped on this grid since it was drawn.
+      label: 'Weekly trips',
       fraction: fractionOf(p?.trips_this_week, target),
       announcement: tripsAnnouncement(p),
     },
     {
       key: 'online-hours',
       value: hoursLabel(online),
-      // **"Hours this week", not the mockup's "Online Hours".** Reading the
+      // **"Weekly hours", not the mockup's "Online Hours".** Reading the
       // rendered grid showed the real cost of the re-basing: four dials are
       // 30-day quality rates and two are this-week volume, and they sit in one
-      // grid at identical visual weight. "Trips this week" said its period and
-      // this one did not, so the bottom row was half-labelled and the footnote
-      // had to do the rest of the work.
+      // grid at identical visual weight. A label that did not name its period
+      // left the bottom row half-described and made prose underneath do the
+      // work.
       //
-      // Naming the period in both makes the pair read as a pair, and the grid
-      // self-describing, without restructuring the 2×3 the mockup draws.
-      label: 'Hours this week',
+      // Naming the period in both makes the pair read as a pair and the grid
+      // self-describing, without restructuring the 2×3 the mockup draws — and
+      // within the width a third of a 360dp screen actually has. See the trips
+      // dial above for the measurement.
+      label: 'Weekly hours',
       fraction: fractionOf(online, rostered),
       announcement: onlineAnnouncement(p),
     },
@@ -292,7 +302,7 @@ function onlineAnnouncement(p: DriverPerformance | undefined): string {
  * The caption under a dial's figure — the denominator, spelled out.
  *
  * Only where there is one. This is what stops the two re-based dials from
- * being cryptic: "28" over the word *Trips this week* says nothing about why
+ * being cryptic: "28" over the words *Weekly trips* says nothing about why
  * the ring is three-quarters drawn, and "of 40" says all of it.
  */
 export function dialCaption(dial: Dial, performance: DriverPerformance | undefined): string | null {
@@ -313,6 +323,37 @@ export function dialCaption(dial: Dial, performance: DriverPerformance | undefin
   }
 
   return null;
+}
+
+/**
+ * The one line of explanation under the grid — and it used to be two blocks.
+ *
+ * What was there read *"Rating, acceptance, completion and cancellation are
+ * measured over the last 30 days."* followed by a second paragraph on the
+ * roster. Thirty-five words under six dials that carry their own labels, on a
+ * screen a driver scans in a cradle.
+ *
+ * **The old sentence was also wrong.** `DriverStatsService::rating()` takes the
+ * mean of the most recent *ratings* — a sample, with no date filter anywhere in
+ * the query — so naming the rating in a 30-day claim asserted a window the
+ * server does not apply. Saying "rates" is both shorter and true: the three
+ * percentages are the windowed figures.
+ *
+ * The roster clause survives because "of 45h" under a ring says nothing about
+ * where 45h came from, and only appears where a roster exists to say it about.
+ */
+export function gridNote(performance: DriverPerformance | undefined): string {
+  if (performance === undefined) {
+    // A space, not an empty string: the line holds its height so the card
+    // below does not jump upward when the figures land.
+    return ' ';
+  }
+
+  const rates = `Rates cover the last ${performance.window_days} days.`;
+
+  return performance.rostered_seconds_this_week === null
+    ? rates
+    : `${rates} Hours are measured against your roster.`;
 }
 
 /**
@@ -350,7 +391,7 @@ export function bonusNote(performance: DriverPerformance | undefined): string | 
     // the award command runs (ADR-0034 §4), and a driver told they have the
     // money before it exists has been lied to about money. `achieved` is the
     // server's word for "the count is there", not for "it is in your wallet".
-    return 'You have hit this week\'s target. The bonus is credited after the week closes.';
+    return 'Target hit. The bonus is credited after the week closes.';
   }
 
   const remaining = bonus.trip_target - bonus.trips;

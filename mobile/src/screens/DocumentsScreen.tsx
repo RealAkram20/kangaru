@@ -17,6 +17,7 @@ import {
   warnsAboutReplacing,
 } from '../profile/presentation';
 import { Notice, Screen, ScreenHeader } from '../ui/components';
+import { SkeletonCards } from '../ui/Skeleton';
 import { AlertTriangleIcon, CheckCircleIcon, ClockIcon, FileTextIcon, UploadIcon } from '../ui/icons';
 import { colors, MIN_TOUCH_HEIGHT, radius, spacing, typography } from '../ui/theme';
 
@@ -89,9 +90,9 @@ export function DocumentsScreen({ navigation }: Props) {
     try {
       await upload.mutateAsync({ type, uri, expiresAt });
     } catch {
-      setProblem(
-        'That did not reach the office. Documents need a connection — unlike the rest of your work, they are not queued.',
-      );
+      // "Not queued" is the load-bearing half: every other mutation in this app
+      // survives a dead zone (ADR-0023) and this one does not.
+      setProblem('Not sent — documents need a connection. They are not queued.');
     } finally {
       setBusyType(null);
     }
@@ -103,7 +104,7 @@ export function DocumentsScreen({ navigation }: Props) {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
 
     if (!permission.granted) {
-      setProblem('The camera is not available. Allow it in your phone settings and try again.');
+      setProblem('Camera not available. Allow it in your phone settings.');
 
       return;
     }
@@ -140,7 +141,7 @@ export function DocumentsScreen({ navigation }: Props) {
         {problem !== null && <Notice message={problem} tone="danger" />}
 
         {isLoading && slots.length === 0 ? (
-          <ActivityIndicator color={colors.primary} style={styles.loading} />
+          <SkeletonCards count={4} />
         ) : slots.length === 0 ? (
           /*
             **Never an empty screen.** Without this, a refused fetch left the
@@ -151,7 +152,7 @@ export function DocumentsScreen({ navigation }: Props) {
           <View style={styles.blank}>
             <Text style={styles.blankText}>
               {isError
-                ? 'Your documents could not be loaded. This needs a connection.'
+                ? 'Could not load your documents. This needs a connection.'
                 : 'Nothing to show yet.'}
             </Text>
             <Pressable
@@ -174,12 +175,11 @@ export function DocumentsScreen({ navigation }: Props) {
           ))
         )}
 
-        {slots.length > 0 && (
-          <Text style={styles.footnote}>
-            The office checks each one by hand — nothing here is approved automatically. Your work
-            is not blocked while one waits.
-          </Text>
-        )}
+        {/*
+          The footnote that stood here — "The office checks each one by hand…
+          Your work is not blocked while one waits" — said in twenty-one words
+          what each card's own status chip says by existing.
+        */}
       </ScrollView>
 
       {staged !== null && (
@@ -194,22 +194,31 @@ export function DocumentsScreen({ navigation }: Props) {
           // the server refuses it, and a control that can simply not ask the
           // question is better than a validation error.
           minimumDate={new Date()}
-          onChange={(event, selected) => {
+          /*
+            `onValueChange` + `onDismiss`, not `onChange`. The old single
+            handler is deprecated in datetimepicker 9 and warns on every open —
+            reported from a real handset — and the split is genuinely better
+            here rather than merely quieter: cancelling on Android fired
+            `onChange` with `dismissed` *and the value unchanged*, so every
+            call site had to know that trap and hand-check `event.type`. That
+            check was the bug this screen most needed to get right, because
+            getting it wrong uploads a document against a date the driver
+            rejected. Now the library decides which of the two happened.
+          */
+          onValueChange={(_event, selected) => {
             const pending = staged;
 
-            // Android fires `dismissed` on cancel and hands back the value
-            // unchanged; treating that as a pick would upload against a date
-            // the driver rejected. The photo is dropped with it — retaking one
-            // is cheap, and holding it would leave the card in a state the
-            // driver did not ask for.
+            // Dropped with the date. Retaking a photo is cheap; holding it
+            // would leave the card in a state the driver did not ask for.
             setStaged(null);
 
-            if (event.type === 'dismissed' || selected === undefined || pending === null) {
+            if (pending === null) {
               return;
             }
 
             void send(pending.type, pending.uri, isoDate(selected));
           }}
+          onDismiss={() => setStaged(null)}
         />
       )}
     </Screen>
@@ -296,7 +305,7 @@ function DocumentCard({
         // sentence discouraged exactly the action the office had asked for —
         // found by reading the rendered screen, not by a test.
         <Text style={styles.replaceWarning}>
-          A new photo goes back to the office to be checked again.
+          A new photo is checked again.
         </Text>
       )}
     </View>

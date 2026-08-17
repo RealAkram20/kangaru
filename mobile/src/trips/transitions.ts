@@ -257,12 +257,14 @@ export function activeTripRoute(status: TripStatus): ActiveTripRoute {
  * because one of the destinations needs more than a trip id and a caller that
  * has to remember which one is a caller that will forget.
  *
- * **Both `HomeScreen` and `TodayScreen` route through this, and the second one
- * is why it exists.** Today's list sent *every* trip to `TripDetail`
- * regardless of status, so tapping a live job landed a driver on the record
- * view — an odometer table of em dashes, a "Start trip" button on a trip whose
- * passenger was already aboard, and no map, route or fare anywhere. Reported
- * from a handset as "wrong and misleading", which it was.
+ * **The deleted `TodayScreen` is why it exists**, and every list that routes to
+ * a trip goes through it for that reason — `HomeScreen`, `TripsHistoryScreen`
+ * and the drawer's live-trip row. Today's list sent *every* trip to
+ * `TripDetail` regardless of status, so tapping a live job landed a driver on
+ * the record view — an odometer table of em dashes, a "Start trip" button on a
+ * trip whose passenger was already aboard, and no map, route or fare anywhere.
+ * Reported from a handset as "wrong and misleading", which it was. The screen
+ * is gone; the rule it taught is not, and a new list must not relearn it.
  *
  * `TripDetail` is not removed and should not be: it is the record, and it is
  * the right screen for a finished, cancelled or unanswered trip, where the

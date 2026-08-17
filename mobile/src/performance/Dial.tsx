@@ -4,7 +4,18 @@ import Svg, { Circle } from 'react-native-svg';
 import { colors, spacing, typography } from '../ui/theme';
 import type { Dial as DialModel } from './presentation';
 
-const SIZE = 96;
+/*
+  Measured off the mockup rather than chosen: its rings are 20.5% of the screen
+  width and ours were 22.8%, which on the emulator read as three rings crowding
+  a gutter the mockup leaves open. 88 is 21.4% of the 411dp reference handset.
+
+  The figure inside is deliberately *not* scaled down with it. The mockup's
+  numeral spans 69% of its ring where ours spanned 63%, so holding `display` at
+  26pt while the ring shrinks lands on the mockup's proportion from both sides
+  at once — and it keeps the one thing a driver reads through glare at the size
+  DESIGN.md §6 asks for.
+*/
+const SIZE = 88;
 const STROKE = 7;
 const RADIUS = (SIZE - STROKE) / 2;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -25,7 +36,7 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
  *   is a clock.
  * - **`WaitingRing`** is 196pt, fills, saturates and holds, and carries a
  *   caption. It is one number that changes once a second.
- * - **This** is 96pt, static, drawn six times on one screen from six
+ * - **This** is 88pt, static, drawn six times on one screen from six
  *   unrelated figures, and — the part neither of the others has — **it must
  *   be able to draw no arc at all.**
  *
@@ -51,8 +62,22 @@ export function Dial({ dial, caption }: { dial: DialModel; caption: string | nul
   // there is no denominator, and only the track is drawn.
   const hasArc = fraction !== null && fraction > 0;
 
+  /*
+    **The arc carries the inversion; the track no longer does.**
+
+    This dial used to draw its *track* in `warningTint` as well, and rendering
+    the grid beside the mockup is what argued it down: a 3% cancellation is a
+    good figure, and a cream ring around it announced a fault where the reading
+    says the opposite — the loudest shape in the cell was the part that is not
+    a measurement at all. The mockup runs the same light track under all six and
+    puts the warm colour only on the arc, which is the half that means
+    something.
+
+    Meaning is still never colour's alone (`docs/screen-rules.md` §6): the label
+    reads "Cancellation" and the announcement says so in words.
+  */
   const arcColour = inverted ? colors.warning : colors.primary;
-  const trackColour = inverted ? colors.warningTint : colors.primaryTint;
+  const trackColour = colors.primaryTint;
 
   return (
     <View
@@ -65,7 +90,14 @@ export function Dial({ dial, caption }: { dial: DialModel; caption: string | nul
       accessibilityLabel={dial.announcement}
     >
       <View style={styles.ring}>
-        <Svg width={SIZE} height={SIZE}>
+        {/*
+          `testID` so the layout guard can measure *this* ring. Without it the
+          test walked the tree for the first `Svg` it could find and measured
+          the header's back chevron — 26pt, comfortably inside any column, so
+          the assertion passed at every ring size and proved nothing. Found by
+          mutation, which is the only way that class of test is ever found.
+        */}
+        <Svg testID="dial-ring" width={SIZE} height={SIZE}>
           <Circle
             cx={SIZE / 2}
             cy={SIZE / 2}
@@ -127,7 +159,7 @@ export function Dial({ dial, caption }: { dial: DialModel; caption: string | nul
 
       {/*
         The denominator, in words, on the two dials that have a non-obvious
-        one. Without it "28" over "Trips this week" says nothing about why the
+        one. Without it "28" over "Weekly trips" says nothing about why the
         ring is three-quarters drawn.
       */}
       {caption !== null && (
@@ -142,9 +174,30 @@ export function Dial({ dial, caption }: { dial: DialModel; caption: string | nul
 const styles = StyleSheet.create({
   wrap: {
     alignItems: 'center',
-    // A third of the row, less the gaps. Set here rather than on the grid so
-    // a dial is self-sizing wherever it is placed.
-    flex: 1,
+    /*
+      **A third of the row — and `flex: 1` is what this must never be again.**
+
+      `flex: 1` in React Native expands to `flexGrow: 1, flexShrink: 1,
+      flexBasis: 0%`. A zero basis means every dial claims no width of its own,
+      so six of them "fit" on one line and `flexWrap` on the parent never has a
+      reason to wrap. The grid rendered as **one row of six overlapping rings**
+      with every label clipped to "Accep…", and the screen's own comment said
+      `flexBasis: '30%'` while the code said otherwise — so reading either file
+      confirmed a layout neither produced.
+
+      Nothing could catch this but rendering it. Both suites were green: Jest's
+      renderer does not lay out, so a test can read "Cancellation" from a node
+      that is, on a handset, four characters wide and sitting on top of its
+      neighbour.
+
+      `flexBasis` with **no grow and no shrink** is the fix rather than `width`:
+      it is the property `flexWrap` measures against, and a dial that cannot
+      shrink is a dial that pushes the fourth one onto the next row instead of
+      squeezing all six.
+    */
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: '30%',
   },
   ring: {
     width: SIZE,
@@ -160,7 +213,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
   },
   figure: {
-    ...typography.heading,
+    // The mockup's figure is the loudest thing inside the ring and this was
+    // set a size below it — `heading` (20pt semibold) left a 96pt ring around
+    // a number that read as a label. `display` is the token for exactly this:
+    // a figure meant to be read at a glance from arm's length, which is the
+    // whole reason the screen draws rings rather than a table.
+    //
+    // Nothing is at risk of overflowing at the larger size: `adjustsFontSizeToFit`
+    // below already shrinks the one long value ("7h 20m") to fit the ring, and
+    // it did so at 20pt too.
+    ...typography.display,
     color: colors.text,
     textAlign: 'center',
     // Tabular figures, or a percentage narrowing from 92 to 9 re-centres
@@ -173,19 +235,29 @@ const styles = StyleSheet.create({
   },
   label: {
     ...typography.caption,
-    // The dial's name is the stronger of the two lines, and the hierarchy is
-    // made with weight of colour rather than by fading the caption below
-    // legibility. `placeholder` (#979DA9) was the obvious choice for a
-    // secondary line and measures **2.72:1 on white** — DESIGN.md §1 demotes
-    // it on light surfaces by name, and this app has already shipped that
-    // exact failure once on the home screen's rating note.
-    color: colors.textBody,
+    /*
+      Grey, like the mockup, and **not `placeholder`**. That one (#979DA9) is
+      the obvious choice for a secondary line and measures **2.72:1 on white** —
+      DESIGN.md §1 demotes it on light surfaces by name, and this app has
+      already shipped that exact failure once on the home screen's rating note.
+
+      `textBody` was here first and was a shade too loud beside the mockup: the
+      label is the ring's name, not a reading, and rendering it at near-black
+      gave it the weight of the figure above it. `textMuted` is 6.4:1 — grey to
+      look at and still well clear of AA through glare, which is more contrast
+      than the mockup's own label actually has.
+
+      The label and its caption now share a colour, and the hierarchy between
+      them is carried by order and by wording ("Weekly trips" / "of 30") rather
+      than by a second grey. Two greys eight points apart was a distinction
+      nobody could see anyway.
+    */
+    color: colors.textMuted,
     marginTop: spacing.sm,
     textAlign: 'center',
   },
   caption: {
     ...typography.caption,
-    // 5.9:1. Quieter than the label, still comfortably AA in direct sun.
     color: colors.textMuted,
     textAlign: 'center',
   },

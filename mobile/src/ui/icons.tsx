@@ -920,6 +920,83 @@ export function LogOutIcon(props: IconProps) {
 }
 
 /**
+ * Lucide `trash-2`. Deleting the account.
+ *
+ * Transcribed verbatim from `lucide-react/dist/esm/icons/trash-2.mjs`.
+ *
+ * `trash-2` rather than `trash`: the lidded bin with two lines reads as a bin
+ * at 22 points where the plain one reads as a cup. It is the glyph the web
+ * console already uses for a destructive row, and one vocabulary across both
+ * apps is DESIGN.md §7's whole point.
+ */
+export function Trash2Icon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="M10 11v6" {...strokeProps(color, strokeWidth)} />
+      <Path d="M14 11v6" {...strokeProps(color, strokeWidth)} />
+      <Path
+        d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path d="M3 6h18" {...strokeProps(color, strokeWidth)} />
+      <Path
+        d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+        {...strokeProps(color, strokeWidth)}
+      />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `triangle-alert`. The danger zone's heading.
+ *
+ * Transcribed verbatim from `lucide-react/dist/esm/icons/triangle-alert.mjs`.
+ *
+ * It carries the warning **beside a written one**, never instead of it:
+ * `docs/screen-rules.md` §6 forbids meaning carried by colour alone, and a red
+ * triangle with no sentence is exactly that failure in glyph form.
+ */
+export function TriangleAlertIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path d="M12 9v4" {...strokeProps(color, strokeWidth)} />
+      <Path d="M12 17h.01" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `pencil`. Editing a fact the driver owns.
+ *
+ * Transcribed verbatim from `lucide-react/dist/esm/icons/pencil.mjs`.
+ *
+ * Marks the rows a driver may change, so the office-managed ones are legible
+ * as deliberate rather than missing — the difference this screen is being
+ * rebuilt to make.
+ */
+export function PencilIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path d="m15 5 4 4" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
  * Lucide `calendar`. Time off.
  *
  * Transcribed verbatim from `lucide-react/dist/esm/icons/calendar.mjs`.

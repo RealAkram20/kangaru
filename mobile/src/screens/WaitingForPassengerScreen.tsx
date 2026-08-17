@@ -4,7 +4,6 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { Trip } from '../api/types';
 import type { TripsStackParams } from '../navigation/types';
-import { useSync } from '../offline/SyncProvider';
 import { dialPassenger } from '../trips/contact';
 import { PickupMap } from '../trips/PickupMap';
 import { located, toCoordinates } from '../trips/places';
@@ -20,6 +19,7 @@ import {
 } from '../trips/waiting';
 import { WaitingRing } from '../trips/WaitingRing';
 import { Button, Notice, Screen, ScreenHeader } from '../ui/components';
+import { SkeletonCards } from '../ui/Skeleton';
 import { DetailRow, GLYPH } from '../ui/facts';
 import { MapPinIcon, NavigationIcon, PhoneIcon, UserIcon } from '../ui/icons';
 import { SyncBanner } from '../ui/SyncBanner';
@@ -90,9 +90,6 @@ export function WaitingForPassengerScreen({ route, navigation }: Props) {
   const { tripId } = route.params;
   const { data: trip, isLoading } = useTrip(tripId);
   const { data: events } = useTripEvents(tripId);
-  const { queueTransition } = useSync();
-
-  const [busy, setBusy] = useState(false);
 
   const arrivedAt = arrivedAtFrom(events);
   const now = useTicker();
@@ -101,7 +98,7 @@ export function WaitingForPassengerScreen({ route, navigation }: Props) {
     return (
       <Screen>
         <SyncBanner />
-        <Text style={styles.loading}>Loading…</Text>
+        <SkeletonCards count={1} style={styles.loading} />
       </Screen>
     );
   }
@@ -110,7 +107,7 @@ export function WaitingForPassengerScreen({ route, navigation }: Props) {
     return (
       <Screen>
         <SyncBanner />
-        <Notice message="This trip is not on this phone and the office cannot be reached." />
+        <Notice message="This trip is not on this phone, and the office is unreachable." />
       </Screen>
     );
   }
@@ -127,33 +124,32 @@ export function WaitingForPassengerScreen({ route, navigation }: Props) {
   const fraction = waited === null ? 0 : fillFraction(waited, trip.pickup_wait_target_seconds);
 
   /**
-   * The one move the driver has from here.
+   * The one move the driver has from here: open the opening reading.
    *
-   * `passenger_onboard`, which is the only target `TripPolicy` grants them
-   * from `driver_arrived`. It is labelled "Start Trip" because that is what a
-   * driver calls it and what the mockup drew, and pressing it walks straight
-   * on to the odometer — where `trip_started` actually happens, with the
-   * opening reading that Trip Started requires. Two transitions, one press,
-   * because "passenger on board" and "start trip" are one act in the car and
-   * splitting them across two screens would leave a driver in traffic looking
-   * for a second button.
+   * **This press commits nothing, and that is a change.** It used to queue
+   * `passenger_onboard` first, on the reasoning that boarding and starting are
+   * one act in the car. The act is one; the *commit* was two, and the split
+   * cost more than it bought:
+   *
+   * - A driver who opened the form and backed out — wrong passenger, a
+   *   dashboard they could not read yet — left the trip committed at
+   *   `passenger_onboard`, a state whose only screen is that same form
+   *   (`activeTripRoute`). There was no way back to here.
+   * - The reading is required by the server for `trip_started`
+   *   (`TransitionTripRequest`), so the first transition could be queued and
+   *   the second abandoned, leaving a boarded trip that never started.
+   *
+   * `OdometerScreen` now queues both from its single submit, in the same
+   * per-trip stream and the same order (ADR-0023 §5), so the server sees no
+   * difference and the driver commits once. `from` is this trip's real status
+   * rather than the one that used to be queued ahead of it — the odometer
+   * reads it to decide whether boarding still needs posting.
    */
-  const start = async () => {
-    setBusy(true);
-    // Queued, not posted. A pickup happens in a basement car park or a street
-    // with no signal; `SyncProvider` holds the transition until there is a
-    // network (ADR-0023) and `SyncBanner` says so.
-    await queueTransition({ tripId: trip.id, from: trip.status, to: 'passenger_onboard' });
-    setBusy(false);
-
+  const start = () => {
     navigation.navigate('Odometer', {
       tripId: trip.id,
       to: 'trip_started',
-      // The state the odometer's transition departs from, which is the one
-      // just queued rather than the one the trip is still showing — the
-      // outbox has not round-tripped yet and `trip.status` is stale by a
-      // beat.
-      from: 'passenger_onboard',
+      from: trip.status,
     });
   };
 
@@ -178,8 +174,12 @@ export function WaitingForPassengerScreen({ route, navigation }: Props) {
 
           <Text style={styles.blurb}>
             {waited === null
-              ? 'Waiting time will show once your arrival reaches the office.'
-              : "The passenger's ride screen shows you've arrived, if they have it open."}
+              ? 'Waiting time shows once your arrival reaches the office.'
+              // **The "if" is not padding.** Nothing notifies the passenger
+              // (see the module docblock); their ride screen shows this only
+              // while it is open. Dropping the qualifier turns the one honest
+              // line on this screen into a promise the platform cannot keep.
+              : "Shown on the passenger's screen, if it is open."}
           </Text>
         </View>
 
@@ -236,7 +236,7 @@ export function WaitingForPassengerScreen({ route, navigation }: Props) {
         />
 
         <View style={styles.actions}>
-          <Button label="Start Trip" tone="primary" busy={busy} onPress={() => void start()} />
+          <Button label="Start Trip" tone="primary" onPress={start} />
         </View>
       </ScrollView>
     </Screen>
@@ -299,9 +299,9 @@ function useTicker(): number {
 
 const styles = StyleSheet.create({
   loading: {
-    ...typography.body,
-    color: colors.textMuted,
-    padding: spacing.lg,
+    // Was a Text style for the word "Loading…"; the placeholder that
+    // replaced it wants the gutter and nothing else.
+    padding: spacing.md,
   },
   header: {
     flexDirection: 'row',

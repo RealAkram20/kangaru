@@ -26,6 +26,13 @@ export type ErrorCode =
   | 'DRIVER_UNAVAILABLE'
   | 'AVAILABILITY_ALREADY_ANSWERED'
   | 'NOT_A_DRIVER'
+  // ADR-0043. Both are 409s the close-account screen branches on: one open
+  // request per driver, and a decided request cannot be withdrawn. The screen
+  // reads its own state from `GET me/closure-request`, so these fire only when
+  // the office answered between the read and the tap — which is exactly the
+  // race a code, rather than a message, exists for.
+  | 'CLOSURE_REQUEST_ALREADY_OPEN'
+  | 'CLOSURE_REQUEST_ALREADY_DECIDED'
   | 'TOKEN_SCOPE_EXCEEDED';
 
 /** Field-level messages from a 422, keyed by input name. */

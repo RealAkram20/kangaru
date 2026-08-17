@@ -267,7 +267,7 @@ export function OfferScreen({
                 // the platform — nobody has published a tariff for this
                 // vehicle — and a driver deciding without it should know that
                 // is what happened, not wonder whether the job pays nothing.
-                'No published price for this vehicle yet. The office sets the fare.'
+                'No published price for this vehicle yet.'
               : fareBasis(estimate)}
           </Text>
 

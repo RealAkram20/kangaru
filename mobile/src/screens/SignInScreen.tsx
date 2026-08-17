@@ -74,7 +74,7 @@ export function SignInScreen({
 
     if (outcome.kind === 'mfa_required') {
       setProblem(
-        'This account uses a second factor, which the Driver App cannot complete. Please contact the office.',
+        'This account needs a second factor. Contact the office.',
       );
 
       return;
@@ -179,11 +179,10 @@ export function SignInScreen({
             <Text style={styles.forgot}>Forgot password?</Text>
           </Pressable>
 
+          {/* Kept, shortened: without it the driver hunts for a reset link this
+              deployment does not have. */}
           {resetHint && !resetAvailable && (
-            <Text style={styles.resetHint}>
-              There is no reset link — your fleet office issues a new password and you change it
-              after signing in.
-            </Text>
+            <Text style={styles.resetHint}>Your fleet office issues a new password.</Text>
           )}
 
           <GradientPill

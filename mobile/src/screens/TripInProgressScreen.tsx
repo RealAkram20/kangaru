@@ -21,6 +21,7 @@ import { useTrip, useTripEvents, useTripRoute } from '../trips/queries';
 import { statusLabel } from '../trips/transitions';
 import { elapsedSeconds, NO_VALUE } from '../trips/waiting';
 import { Button, Notice, Screen, ScreenHeader } from '../ui/components';
+import { SkeletonCards } from '../ui/Skeleton';
 import { DetailRow, GLYPH, Stat, StatRow } from '../ui/facts';
 import {
   BanknoteIcon,
@@ -100,7 +101,7 @@ export function TripInProgressScreen({ route, navigation }: Props) {
   const { tripId } = route.params;
   const { data: trip, isLoading } = useTrip(tripId);
   const { data: events } = useTripEvents(tripId);
-  const { queueTransition } = useSync();
+  const { queueTransition, queued } = useSync();
 
   const [busy, setBusy] = useState(false);
 
@@ -117,7 +118,7 @@ export function TripInProgressScreen({ route, navigation }: Props) {
     return (
       <Screen>
         <SyncBanner />
-        <Text style={styles.loading}>Loading…</Text>
+        <SkeletonCards count={1} style={styles.loading} />
       </Screen>
     );
   }
@@ -126,7 +127,7 @@ export function TripInProgressScreen({ route, navigation }: Props) {
     return (
       <Screen>
         <SyncBanner />
-        <Notice message="This trip is not on this phone and the office cannot be reached." />
+        <Notice message="This trip is not on this phone, and the office is unreachable." />
       </Screen>
     );
   }
@@ -136,7 +137,30 @@ export function TripInProgressScreen({ route, navigation }: Props) {
 
   const driving = startedAt === null ? null : elapsedSeconds(startedAt, now);
 
-  const paused = trip.status === 'waiting';
+  /**
+   * The status this trip is heading for, which is not always the one the
+   * office has confirmed.
+   *
+   * `queueTransition` touches no cache and only a completed drain invalidates
+   * one, so reading `trip.status` alone meant the pause control did not move
+   * when it was pressed — for a moment on a good connection, and **for as long
+   * as the dead zone lasts** otherwise. A driver presses again, the second item
+   * posts from a status the server has already left, and it parks.
+   *
+   * `queued` is the outbox's own contents, not a guess: it holds what the
+   * driver asked for, it empties when the item goes out, and a refused item
+   * leaves it, so this falls back to `trip.status` with the parked banner
+   * already explaining why.
+   */
+  const asked = queued.get(trip.id) ?? null;
+  const effective = asked ?? trip.status;
+
+  const paused = effective === 'waiting';
+
+  // Whether the office has actually recorded the pause, as opposed to the
+  // driver having asked for it. Only the confirmed case may print a duration —
+  // see the notice below.
+  const pauseConfirmed = trip.status === 'waiting';
 
   /**
    * Total time this trip has spent on hold, including the pause running now.
@@ -170,7 +194,13 @@ export function TripInProgressScreen({ route, navigation }: Props) {
    */
   const hold = async (to: 'waiting' | 'trip_resumed') => {
     setBusy(true);
-    await queueTransition({ tripId: trip.id, from: trip.status, to });
+    // `from` is the status this transition will actually depart from, which on
+    // a pause-then-resume in one dead zone is the one still sitting in the
+    // outbox rather than the one the office last confirmed. It is only read
+    // when an item fails, to tell "my write is missing" from "the trip moved on
+    // without me" — so a stale value here would misreport the one case the
+    // reconciliation exists to distinguish.
+    await queueTransition({ tripId: trip.id, from: effective, to });
     setBusy(false);
   };
 
@@ -185,15 +215,22 @@ export function TripInProgressScreen({ route, navigation }: Props) {
    * inline field: a number typed by mistake here becomes a billing dispute
    * later.
    *
-   * `from` is the trip's *current* status rather than a constant, because
+   * `from` is the trip's *effective* status rather than a constant, because
    * this screen renders three of them and a trip paused at `waiting` completes
    * from `trip_resumed`, not from `trip_started`.
+   *
+   * **Effective, not confirmed**, for the narrow case that is nonetheless real:
+   * a driver resumes and ends the trip in the same dead zone. The resume is
+   * still in the outbox, `trip.status` still reads `waiting`, and the closing
+   * transition will in fact depart from `trip_resumed`. Same reasoning as
+   * `hold` above — `expectedFrom` is what tells a failed item "my write is
+   * missing" from "the trip moved on without me".
    */
   const end = () => {
     navigation.navigate('Odometer', {
       tripId: trip.id,
       to: 'trip_completed',
-      from: trip.status,
+      from: effective,
     });
   };
 
@@ -262,9 +299,18 @@ export function TripInProgressScreen({ route, navigation }: Props) {
           <Notice
             tone="info"
             message={
-              waited === null
-                ? 'This trip is on hold. Waiting time is recorded on the trip and priced by the tariff.'
-                : `On hold for ${formatTripDuration(waited)}. Waiting time is recorded on the trip and priced by the tariff.`
+              // "Recorded and priced" stays: it is money, and it is the reason
+              // a driver leaves the trip on hold rather than ending it.
+              //
+              // **The duration needs the office, not just the intent.** It is
+              // summed from `trip_events`, and a pause still sitting in the
+              // outbox has no row there — so on an unconfirmed hold the events
+              // describe *previous* pauses, and printing that total would date
+              // this one from the last time the driver stopped. The
+              // durationless sentence is the true one until the row exists.
+              !pauseConfirmed || waited === null
+                ? 'On hold. Waiting time is recorded and priced.'
+                : `On hold for ${formatTripDuration(waited)}. Waiting time is recorded and priced.`
             }
           />
         )}
@@ -464,9 +510,9 @@ function useTicker(): number {
 
 const styles = StyleSheet.create({
   loading: {
-    ...typography.body,
-    color: colors.textMuted,
-    padding: spacing.lg,
+    // Was a Text style for the word "Loading…"; the placeholder that
+    // replaced it wants the gutter and nothing else.
+    padding: spacing.md,
   },
   header: {
     flexDirection: 'row',

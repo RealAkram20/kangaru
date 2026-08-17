@@ -131,7 +131,6 @@ it('draws the whole map of the app, including the rows Profile gave up', async (
     'Notifications',
     'Profile',
     'Vehicle & Documents',
-    'Settings',
     'Help & Safety',
     'Support',
   ]) {
@@ -159,12 +158,12 @@ it('names the live trip by what it is doing, and only while it is live', async (
 it('navigates into the tab nesting and closes behind itself', async () => {
   const screen = await renderDrawer();
 
-  await fireEvent.press(screen.getByLabelText('Settings'));
+  await fireEvent.press(screen.getByLabelText('Vehicle & Documents'));
 
   expect(closeDrawer).toHaveBeenCalled();
   expect(navigate).toHaveBeenCalledWith('Main', {
     screen: 'Profile',
-    params: { screen: 'Settings', params: undefined },
+    params: { screen: 'Documents', params: undefined },
   });
 });
 
@@ -275,8 +274,10 @@ it('reads the version from the manifest rather than a typed string', async () =>
 });
 
 it('lights the row the driver is actually on, not merely its tab', async () => {
-  const screen = await renderDrawer(drawerProps('Profile', 'Settings'));
+  const screen = await renderDrawer(drawerProps('Profile', 'Documents'));
 
-  expect(screen.getByLabelText('Settings').props.accessibilityState.selected).toBe(true);
+  expect(
+    screen.getByLabelText('Vehicle & Documents').props.accessibilityState.selected,
+  ).toBe(true);
   expect(screen.getByLabelText('Profile').props.accessibilityState.selected).toBe(false);
 });

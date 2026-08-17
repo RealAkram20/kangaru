@@ -12,11 +12,13 @@ import { OdometerScreen } from './OdometerScreen';
  * because that branch is the seam between the live-leg screens and the
  * completion screen and it had nothing holding it in place.
  *
- * **The closing reading must not `goBack()`.** Behind this modal is the
- * live-leg screen for a trip that has just ended; landing there offers an End
- * trip button whose only outcome is a 422 out of the outbox, minutes later,
- * after the driver has put the phone down. The opening reading still goes
- * back, because there the trip carries on and the screen behind it is right.
+ * **Neither reading may `goBack()`.** Behind this modal is the live-leg screen
+ * for the state the trip has just left: after the closing reading that screen
+ * offers an End trip button whose only outcome is a 422 out of the outbox,
+ * minutes later, after the driver has put the phone down. After the *opening*
+ * reading it is the waiting screen, still offering "Start Trip" — the defect
+ * the owner reported as "hard to start the trip", and the reason the opening
+ * case now `replace`s to `TripInProgress` rather than going back.
  */
 
 const METRICS = {
@@ -165,18 +167,76 @@ it('does not invent a limit for a trip cached before the field existed', async (
   await waitFor(() => expect(mockQueueTransition).toHaveBeenCalled());
 });
 
-it('goes back on the opening reading, because the trip carries on', async () => {
-  const { getByPlaceholderText, getByText } = await renderOdometer('trip_started', 'passenger_onboard');
+it('sends the driver to the trip in progress once the opening reading is queued', async () => {
+  // The owner's report: "hard to start the trip". This used to `goBack()`, to
+  // the waiting screen — which renders "Start Trip", knows nothing about the
+  // queued transition, and offline is byte-identical to the view the driver
+  // had just left. Landing on the screen that owns `trip_started` is the fix.
+  const { getByPlaceholderText, getByText } = await renderOdometer(
+    'trip_started',
+    'driver_arrived',
+  );
 
   // Awaited, not `void`ed. `fireEvent` is asynchronous in this setup, and an
   // unawaited `changeText` leaves the button still disabled — so the press
   // below silently does nothing and the test fails on an empty mock rather
   // than on the behaviour it is about.
-  await fireEvent.changeText(getByPlaceholderText('104320'),'104320');
-  void fireEvent.press(getByText('Start trip'));
+  await fireEvent.changeText(getByPlaceholderText('104320'), '104320');
+  void fireEvent.press(getByText('Record and start trip'));
 
-  await waitFor(() => expect(goBack).toHaveBeenCalled());
+  await waitFor(() => expect(replace).toHaveBeenCalled());
 
-  expect(goBack).toHaveBeenCalled();
-  expect(replace).not.toHaveBeenCalled();
+  expect(replace).toHaveBeenCalledWith('TripInProgress', { tripId: 42 });
+  expect(goBack).not.toHaveBeenCalled();
+});
+
+it('queues boarding and the start together, so neither can be committed alone', async () => {
+  // `driver_arrived -> trip_started` is not a legal edge, so `passenger_onboard`
+  // has to go first. It used to be posted by the *previous* screen's press,
+  // which committed boarding before the reading existed: a driver who backed
+  // out left the trip at `passenger_onboard`, whose only screen is this form.
+  const { getByPlaceholderText, getByText } = await renderOdometer(
+    'trip_started',
+    'driver_arrived',
+  );
+
+  await fireEvent.changeText(getByPlaceholderText('104320'), '104320');
+  void fireEvent.press(getByText('Record and start trip'));
+
+  await waitFor(() => expect(replace).toHaveBeenCalled());
+
+  // A count, not an existence check. Three surviving mutations on this branch
+  // were existence assertions that passed against one call when the behaviour
+  // needed two.
+  expect(mockQueueTransition).toHaveBeenCalledTimes(2);
+  expect(mockQueueTransition).toHaveBeenNthCalledWith(1, {
+    tripId: 42,
+    from: 'driver_arrived',
+    to: 'passenger_onboard',
+  });
+  expect(mockQueueTransition).toHaveBeenNthCalledWith(
+    2,
+    expect.objectContaining({ tripId: 42, from: 'passenger_onboard', to: 'trip_started', odometerStart: 104_320 }),
+  );
+});
+
+it('does not re-post boarding for a trip already on board', async () => {
+  // The resume path: an app killed mid-capture, or a start whose second item
+  // parked. `activeTripRoute` sends `passenger_onboard` back here, and posting
+  // boarding a second time is refused by the server and parked by the outbox —
+  // which is the failure this whole change exists to stop producing.
+  const { getByPlaceholderText, getByText } = await renderOdometer(
+    'trip_started',
+    'passenger_onboard',
+  );
+
+  await fireEvent.changeText(getByPlaceholderText('104320'), '104320');
+  void fireEvent.press(getByText('Record and start trip'));
+
+  await waitFor(() => expect(replace).toHaveBeenCalled());
+
+  expect(mockQueueTransition).toHaveBeenCalledTimes(1);
+  expect(mockQueueTransition).toHaveBeenCalledWith(
+    expect.objectContaining({ from: 'passenger_onboard', to: 'trip_started' }),
+  );
 });

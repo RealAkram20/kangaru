@@ -115,7 +115,7 @@ export function drawerSections(
    * **Every row names its screen, the tab rows included.** The first version
    * sent a tab row to the tab alone, on the theory that a tab should resume
    * wherever the driver left it. On a device that read as broken, and the
-   * owner said so: stand on Settings — which lives inside the Profile stack —
+   * owner said so: stand on Documents — which lives inside the Profile stack —
    * open the drawer, tap **Profile**, and the navigator "resumes" the Profile
    * stack exactly where it is. Nothing moves. A menu row that does nothing
    * when tapped is indistinguishable from a dead control, and a drawer is a
@@ -150,7 +150,9 @@ export function drawerSections(
   const account: DrawerRow[] = [
     { key: 'profile', label: 'Profile', destination: { tab: 'Profile', screen: 'ProfileHome' } },
     { key: 'documents', label: 'Vehicle & Documents', destination: { tab: 'Profile', screen: 'Documents' } },
-    { key: 'settings', label: 'Settings', destination: { tab: 'Profile', screen: 'Settings' } },
+    // No Settings row: the screen is gone and its four rows are grouped on
+    // Profile (the owner's *"so we don't need the settings page"*). A drawer
+    // row for a deleted route is the dead control this list exists to avoid.
     { key: 'safety', label: 'Help & Safety', destination: { tab: 'Profile', screen: 'Safety' } },
     { key: 'support', label: 'Support', destination: { tab: 'Profile', screen: 'Support' } },
   ];
@@ -164,9 +166,9 @@ export function drawerSections(
 /**
  * Which row to draw as selected, from the navigator's own state.
  *
- * Matched on **tab and screen together**, not on the tab alone. Four of the
+ * Matched on **tab and screen together**, not on the tab alone. Three of the
  * rows below the rule live inside the Profile tab, and highlighting "Profile"
- * while a driver is reading Settings would tell them they are somewhere they
+ * while a driver is reading Documents would tell them they are somewhere they
  * are not — on the one control whose whole job is saying where they are.
  *
  * Returns null rather than falling back to Home, because "no row matches" is a
@@ -182,7 +184,7 @@ export function selectedRowKey(
 
   // An exact match first: a nested screen is more specific than its tab, and
   // checking tab-only first would match "Profile" before ever reaching
-  // "Settings".
+  // "Documents".
   const exact = rows.find(
     (row) => row.destination.tab === tab && row.destination.screen === screen,
   );

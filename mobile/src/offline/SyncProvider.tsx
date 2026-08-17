@@ -15,6 +15,7 @@ import { openDatabase } from './db';
 import { HttpOutboxTransport } from './httpTransport';
 import { OutboxProcessor } from './outbox';
 import type { OutboxItem, OutboxStore } from './outboxTypes';
+import { queuedStatuses } from './queued';
 import { SqliteOutboxStore } from './sqliteOutboxStore';
 
 export type SyncState = {
@@ -24,6 +25,30 @@ export type SyncState = {
   pending: number;
   /** Items that need a person. Surfaced, never hidden. */
   parked: OutboxItem[];
+  /**
+   * Per trip, the status it has been *asked* to move to and has not yet been
+   * confirmed at.
+   *
+   * **Read off the outbox, never invented.** A screen that queues a transition
+   * and stays put — `PickupScreen`'s "On my way", `TripInProgressScreen`'s
+   * pause — used to look like a screen where nothing happened: the query cache
+   * is untouched by `queueTransition` and only a *completed* drain invalidates
+   * it. A driver presses again, the second item posts from a status the server
+   * has already left, and it parks. That is a queue item needing a human,
+   * earned by pressing the only button on screen.
+   *
+   * Faking the new status in the query cache would fix the symptom and lie: a
+   * refused item leaves the invented status behind with nothing to correct it,
+   * because parking does not invalidate. This map cannot lie in that direction
+   * — it holds only what the driver actually asked for, it empties when the
+   * item drains, and a parked item leaves it (into `parked`, which the sync
+   * banner already surfaces) so the screen falls back to the server's truth.
+   *
+   * Last intent wins: `store.all()` is ordered by `sequence`, so a trip with
+   * two pending transitions maps to the later one, which is the state it will
+   * actually arrive at.
+   */
+  queued: ReadonlyMap<number, TripStatus>;
   bufferedPings: number;
   lastSyncedAt: number | null;
 };
@@ -70,6 +95,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     online: true,
     pending: 0,
     parked: [],
+    queued: new Map(),
     bufferedPings: 0,
     lastSyncedAt: null,
   });
@@ -91,6 +117,10 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       ...previous,
       pending: items.filter((item) => item.state === 'pending').length,
       parked: items.filter((item) => item.state === 'parked'),
+      // `store.all()` is ordered by `sequence`, which is what lets the last
+      // intent win. See `queuedStatuses` for why this reads the outbox rather
+      // than writing an optimistic status into the query cache.
+      queued: queuedStatuses(items),
       bufferedPings,
     }));
   }, []);

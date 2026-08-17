@@ -22,12 +22,14 @@ import {
   useNotifications,
 } from '../notifications/queries';
 import { Empty, Notice, Screen, ScreenHeader, usePressScale } from '../ui/components';
+import { SkeletonRows } from '../ui/Skeleton';
 import {
   BellIcon,
   CarIcon,
   CheckCircleIcon,
   CircleXIcon,
   FileTextIcon,
+  MessageCircleMoreIcon,
   PackageIcon,
 } from '../ui/icons';
 import { colors, MIN_TOUCH_HEIGHT, radius, spacing, typography } from '../ui/theme';
@@ -47,6 +49,10 @@ const GLYPHS: Record<NotificationGlyph, (props: { color: string }) => ReactNode>
   rejected: (props) => <CircleXIcon size={26} strokeWidth={1.9} {...props} />,
   export: (props) => <FileTextIcon size={26} strokeWidth={1.9} {...props} />,
   order: (props) => <PackageIcon size={26} strokeWidth={1.9} {...props} />,
+  // ADR-0044. The speech bubble, because this is the one row here somebody at
+  // the office wrote in reply to the driver — every other glyph on this list
+  // marks an event the system announced.
+  answer: (props) => <MessageCircleMoreIcon size={26} strokeWidth={1.9} {...props} />,
   other: (props) => <BellIcon size={26} strokeWidth={1.9} {...props} />,
 };
 
@@ -135,17 +141,17 @@ export function NotificationsScreen({ navigation }: Props) {
           />
         }
       >
-        {isLoading && <ActivityIndicator color={colors.primary} style={styles.loading} />}
+        {isLoading && <SkeletonRows count={4} style={styles.loading} />}
 
         {isError && (
           <Notice
             tone="warning"
-            message="Could not load your notifications. Pull down once you have a signal."
+            message="Could not load your notifications."
           />
         )}
 
         {!isLoading && !isError && notifications.length === 0 && (
-          <Empty message="Nothing from the office yet. Job offers arrive on the home screen, not here." />
+          <Empty message="Nothing from the office yet." />
         )}
 
         {notifications.map((notification) => (
@@ -193,7 +199,7 @@ export function NotificationsScreen({ navigation }: Props) {
 
           {markAll.isError && (
             <Text style={styles.markAllError}>
-              That did not reach the office. Try again once you have a signal.
+              Not sent. Try again when you have signal.
             </Text>
           )}
         </View>

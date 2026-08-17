@@ -21,17 +21,19 @@ import { OdometerScreen } from '../screens/OdometerScreen';
 import { PickupScreen } from '../screens/PickupScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { NotificationsScreen } from '../screens/NotificationsScreen';
+import { MyReportsScreen } from '../screens/MyReportsScreen';
+import { ReportIssueScreen } from '../screens/ReportIssueScreen';
 import { PromotionsScreen } from '../screens/PromotionsScreen';
 import { SafetyScreen } from '../screens/SafetyScreen';
-import { SettingsScreen } from '../screens/SettingsScreen';
 import { SupportScreen } from '../screens/SupportScreen';
 import { RideCompleteScreen } from '../screens/RideCompleteScreen';
 import { SignInScreen } from '../screens/SignInScreen';
 import { SignUpScreen } from '../screens/SignUpScreen';
+import { BankDetailsScreen } from '../screens/BankDetailsScreen';
+import { CloseAccountScreen } from '../screens/CloseAccountScreen';
 import { SyncQueueScreen } from '../screens/SyncQueueScreen';
 import { TimeOffScreen } from '../screens/TimeOffScreen';
 import { WelcomeScreen } from '../screens/WelcomeScreen';
-import { TodayScreen } from '../screens/TodayScreen';
 import { TripDetailScreen } from '../screens/TripDetailScreen';
 import { TripInProgressScreen } from '../screens/TripInProgressScreen';
 import { TransactionsScreen } from '../screens/TransactionsScreen';
@@ -155,7 +157,17 @@ function TripsNavigator() {
       {/* Home has its own top bar — brand, notifications, avatar — so the
           navigator's header would be a second one stacked above it. */}
       <TripsStack.Screen name="TripsHome" component={HomeScreen} options={{ headerShown: false }} />
-      <TripsStack.Screen name="Today" component={TodayScreen} options={{ title: "Today's work" }} />
+      {/*
+        No `Today` screen. It was a second copy of the home screen — the same
+        duty bar, the same offers, the same trip list — reachable only by
+        tapping the bell, which is a control that means "what has the office
+        told me". The owner's *"make sure this page is removed"*; the bell now
+        opens `Notifications`, and Home already answers what today has come to.
+
+        Deleted rather than left registered and unreachable, exactly as
+        `Settings` was below: an orphaned route is one `navigate('Today')` away
+        from coming back to life with nothing pointing at it.
+      */}
       <TripsStack.Screen name="Pickup" component={PickupScreen} options={{ headerShown: false }} />
       {/* Own header, same as Pickup — the navigator's would stack a second
           title bar above the screen's own. */}
@@ -273,10 +285,29 @@ function ProfileNavigator() {
         component={TimeOffScreen}
         options={{ title: 'Time off' }}
       />
+      {/*
+        Own header, like every screen around it. The navigator's default bar
+        drew a back arrow this app draws nowhere else — a different glyph, a
+        different weight, a different gutter — and on a stack where ten screens
+        out of twelve use `ScreenHeader`, the odd one reads as a screen from
+        another app rather than as a variation.
+      */}
       <ProfileStack.Screen
         name="ChangePassword"
         component={PasswordScreen}
-        options={{ title: 'Change password' }}
+        options={{ headerShown: false }}
+      />
+      {/*
+        ADR-0043. Registered now that the whole loop behind it is real — the
+        request, the office queue that answers it, and the email that carries
+        the answer back. The Profile row stayed off the screen until this was
+        true, on `docs/screen-rules.md`'s refusal of dead surfaces: a Delete
+        that only appears to work is worse than no Delete.
+      */}
+      <ProfileStack.Screen
+        name="CloseAccount"
+        component={CloseAccountScreen}
+        options={{ headerShown: false }}
       />
       {/* ADR-0033. Both draw their own `ScreenHeader`, as `ProfileHome` does. */}
       <ProfileStack.Screen
@@ -287,6 +318,12 @@ function ProfileNavigator() {
       <ProfileStack.Screen
         name="SyncQueue"
         component={SyncQueueScreen}
+        options={{ headerShown: false }}
+      />
+      {/* ADR-0042. Draws its own `ScreenHeader`, like every screen on this stack. */}
+      <ProfileStack.Screen
+        name="BankDetails"
+        component={BankDetailsScreen}
         options={{ headerShown: false }}
       />
       {/* ADR-0038. Draws its own `ScreenHeader`, as the two above do. */}
@@ -312,11 +349,33 @@ function ProfileNavigator() {
         component={NotificationsScreen}
         options={{ headerShown: false }}
       />
+      {/*
+        ADR-0044, the two halves of issue reporting a driver can reach. Own
+        headers, like every screen on this stack.
+
+        Beside `Notifications` rather than on the Trips stack, because a report
+        is about the driver's dealings with the office rather than about the
+        work in front of them — and because the answer arrives as one of those
+        notifications.
+      */}
       <ProfileStack.Screen
-        name="Settings"
-        component={SettingsScreen}
+        name="ReportIssue"
+        component={ReportIssueScreen}
         options={{ headerShown: false }}
       />
+      <ProfileStack.Screen
+        name="MyReports"
+        component={MyReportsScreen}
+        options={{ headerShown: false }}
+      />
+      {/*
+        No `Settings` screen. Its four rows are on `ProfileHome` now — the
+        owner's *"all things in the settings should be moved to profile page,
+        otherwise we are doing repetition"*, and then *"so we don't need the
+        settings page"*. The route is deleted rather than left registered and
+        unreachable: an orphaned screen is one `navigate('Settings')` away from
+        coming back to life with no row pointing at it.
+      */}
       <ProfileStack.Screen
         name="Safety"
         component={SafetyScreen}
@@ -348,19 +407,19 @@ export function RootNavigator() {
         <AuthScreens />
       ) : (
         <>
-        {/* Both render nothing, and both are mounted here rather than on a
+          {/* Both render nothing, and both are mounted here rather than on a
             screen for the same reason: a driver who switches tabs must not
             silently stop being tracked or stop being findable. */}
-        <GpsController />
-        <PresenceController />
-        <PushRegistrar />
-        <MainNavigator />
+          <GpsController />
+          <PresenceController />
+          <PushRegistrar />
+          <MainNavigator />
 
-        {/* Last, and outside the navigator on purpose. A job has a
+          {/* Last, and outside the navigator on purpose. A job has a
             fifteen-second clock and has to appear over whatever the driver
             is doing — including a modal — so it is painted above the tabs
             rather than pushed into one of them. See `OfferPresenter`. */}
-        <OfferPresenter />
+          <OfferPresenter />
         </>
       )}
     </NavigationContainer>
@@ -373,9 +432,9 @@ export function RootNavigator() {
  * **One drawer screen, not five.** Every destination the drawer lists lives
  * inside one of the four tab stacks, so the drawer holds `Main` and nothing
  * else and its content component navigates into the nesting. The alternative —
- * registering Notifications, Settings, Safety and Support as drawer screens —
- * would have taken the tab bar away from exactly those four and made them the
- * odd screens out in an app where every other pushed screen keeps it.
+ * registering Notifications, Safety and Support as drawer screens — would have
+ * taken the tab bar away from exactly those three and made them the odd screens
+ * out in an app where every other pushed screen keeps it.
  *
  * `drawerType: 'front'` is the mockup's: the panel slides over the home screen
  * and dims it, rather than pushing it sideways. `swipeEdgeWidth` is generous
@@ -402,20 +461,20 @@ function MainNavigator() {
 
 function TabsNavigator() {
   return (
-        <Tabs.Navigator
-          screenOptions={{
-            headerShown: false,
-            // No explicit height or bottom padding: the navigator adds the
-            // safe-area inset itself, and overriding the height made the
-            // labels sit underneath Android's gesture bar.
-            tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
-            tabBarActiveTintColor: colors.primary,
-            tabBarInactiveTintColor: colors.textMuted,
-            tabBarLabelStyle: { fontSize: 13, fontWeight: '600' },
-            tabBarItemStyle: { paddingVertical: 4 },
-          }}
-        >
-          {/*
+    <Tabs.Navigator
+      screenOptions={{
+        headerShown: false,
+        // No explicit height or bottom padding: the navigator adds the
+        // safe-area inset itself, and overriding the height made the
+        // labels sit underneath Android's gesture bar.
+        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.textMuted,
+        tabBarLabelStyle: { fontSize: 13, fontWeight: '600' },
+        tabBarItemStyle: { paddingVertical: 4 },
+      }}
+    >
+      {/*
             Icons, where this bar deliberately had none.
 
             The old comment argued that "three tabs with one-word names do not
@@ -433,38 +492,38 @@ function TabsNavigator() {
             stays static in both apps, and these are the icons a driver sees
             more often than any others in the product.
           */}
-          <Tabs.Screen
-            name="Home"
-            component={TripsNavigator}
-            options={{
-              title: 'Home',
-              tabBarIcon: ({ color }) => <HouseIcon color={color} size={24} strokeWidth={2} />,
-            }}
-          />
-          <Tabs.Screen
-            name="Earnings"
-            component={EarningsNavigator}
-            options={{
-              title: 'Earnings',
-              tabBarIcon: ({ color }) => <ReceiptIcon color={color} size={24} strokeWidth={2} />,
-            }}
-          />
-          <Tabs.Screen
-            name="Wallet"
-            component={WalletNavigator}
-            options={{
-              title: 'Wallet',
-              tabBarIcon: ({ color }) => <WalletIcon color={color} size={24} strokeWidth={2} />,
-            }}
-          />
-          <Tabs.Screen
-            name="Profile"
-            component={ProfileNavigator}
-            options={{
-              title: 'Profile',
-              tabBarIcon: ({ color }) => <UserIcon color={color} size={24} strokeWidth={2} />,
-            }}
-          />
-        </Tabs.Navigator>
+      <Tabs.Screen
+        name="Home"
+        component={TripsNavigator}
+        options={{
+          title: 'Home',
+          tabBarIcon: ({ color }) => <HouseIcon color={color} size={24} strokeWidth={2} />,
+        }}
+      />
+      <Tabs.Screen
+        name="Earnings"
+        component={EarningsNavigator}
+        options={{
+          title: 'Earnings',
+          tabBarIcon: ({ color }) => <ReceiptIcon color={color} size={24} strokeWidth={2} />,
+        }}
+      />
+      <Tabs.Screen
+        name="Wallet"
+        component={WalletNavigator}
+        options={{
+          title: 'Wallet',
+          tabBarIcon: ({ color }) => <WalletIcon color={color} size={24} strokeWidth={2} />,
+        }}
+      />
+      <Tabs.Screen
+        name="Profile"
+        component={ProfileNavigator}
+        options={{
+          title: 'Profile',
+          tabBarIcon: ({ color }) => <UserIcon color={color} size={24} strokeWidth={2} />,
+        }}
+      />
+    </Tabs.Navigator>
   );
 }

@@ -144,25 +144,36 @@ it('names the selected date in the button, for a screen reader too', async () =>
   // the answer.
   const picker = getByTestId('range-picker');
 
-  await fireEvent(picker, 'change', { type: 'set' }, new Date(2026, 7, 9));
+  // `valueChange`, not `change`: datetimepicker 9 deprecates the single
+  // `onChange` handler and the screen now takes the split pair.
+  await fireEvent(picker, 'valueChange', { type: 'set' }, new Date(2026, 7, 9));
 
   expect(getByLabelText('From, 9 Aug 2026')).toBeTruthy();
   expect(mockUseDriverLedger).toHaveBeenLastCalledWith({ from: '2026-08-09', to: '2026-08-09' });
 });
 
 it('keeps the old date when the driver cancels the picker', async () => {
-  // Android hands the value back unchanged on dismiss; treating that as a
-  // pick would silently set a date the driver rejected.
-  const { getByLabelText, getByTestId } = await renderTransactions();
+  /*
+    A cancel must not set a date. This used to arrive on Android as a *change*
+    event carrying the value unchanged, which the screen hand-checked; under
+    datetimepicker 9 it is `onDismiss`, and the library draws the distinction.
+
+    The picker is also closed rather than left open — asserted below, because
+    the dismiss handler is now the only thing that closes it and a handler that
+    forgot would strand the driver behind a calendar.
+  */
+  const { getByLabelText, getByTestId, queryByTestId } = await renderTransactions();
 
   await fireEvent.press(getByLabelText('Custom'));
   await fireEvent.press(getByLabelText('From, Pick a date'));
 
   const picker = getByTestId('range-picker');
 
-  await fireEvent(picker, 'change', { type: 'dismissed' }, new Date(2026, 7, 9));
+  await fireEvent(picker, 'dismiss');
 
   expect(getByLabelText('From, Pick a date')).toBeTruthy();
+  expect(queryByTestId('range-picker')).toBeNull();
+  expect(mockUseDriverLedger).toHaveBeenLastCalledWith({});
 });
 
 // -- The list -------------------------------------------------------------

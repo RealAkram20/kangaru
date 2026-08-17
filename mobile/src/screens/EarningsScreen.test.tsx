@@ -106,7 +106,9 @@ it('shows time on trips, and never calls it online hours', async () => {
   // The mockup's label. `driver_presence` is overwritten on every duty
   // toggle, so online time was never recorded and cannot be shown.
   expect(queryByText('Online hours')).toBeNull();
-  expect(getByText(/does not include time spent waiting/)).toBeTruthy();
+  // The footnote under this row was cut; the label is the whole point and
+  // it must keep saying "on trips" rather than the mockup's "online".
+  expect(getByText('Time on trips')).toBeTruthy();
 });
 
 it('has no tips row and no bonuses row, because neither exists', async () => {
@@ -210,7 +212,7 @@ it('says so rather than drawing a breakdown that does not add up', async () => {
     earnings({ breakdown: [{ service_type: 'ride', trips: 6, earned_minor: 60_000 }] }),
   );
 
-  expect(getByText(/do not add up/)).toBeTruthy();
+  expect(getByText(/These figures may be wrong/)).toBeTruthy();
 });
 
 it('draws no warning when the figures reconcile', async () => {

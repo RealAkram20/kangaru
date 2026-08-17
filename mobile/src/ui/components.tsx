@@ -143,18 +143,61 @@ export function Field({
   label,
   hint,
   error,
+  revealable = false,
   ...inputProps
-}: TextInputProps & { label: string; hint?: string; error?: string | undefined }) {
+}: TextInputProps & {
+  label: string;
+  hint?: string;
+  error?: string | undefined;
+  /**
+   * Adds a show/hide control to a password field. Only meaningful with
+   * `secureTextEntry`; ignored otherwise.
+   *
+   * **Named to match the web app's `Input`, which took this decision first.**
+   * One vocabulary across both apps means a developer who has met one meets
+   * the other, and DESIGN.md asks for exactly that of shared controls.
+   *
+   * Why it is worth having at all: a driver types this one-handed, in sun, on
+   * a phone in a cradle, and a mistyped password on the sign-in path costs a
+   * minute because the login endpoint is throttled to five attempts. Being
+   * able to see what you typed is the difference between one attempt and
+   * three.
+   */
+  revealable?: boolean;
+}) {
+  const [revealed, setRevealed] = useState(false);
+
+  // Only when the field is actually a password. `revealable` on a plain text
+  // input would render a control that toggles nothing.
+  const canReveal = revealable && inputProps.secureTextEntry === true;
+
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
       {hint !== undefined && <Text style={styles.hint}>{hint}</Text>}
-      <TextInput
-        accessibilityLabel={label}
-        placeholderTextColor={colors.placeholder}
-        style={[styles.input, error !== undefined && styles.inputError]}
-        {...inputProps}
-      />
+
+      <View style={canReveal ? styles.fieldRow : undefined}>
+        <TextInput
+          accessibilityLabel={label}
+          placeholderTextColor={colors.placeholder}
+          style={[
+            styles.input,
+            error !== undefined && styles.inputError,
+            canReveal && styles.inputWithTrailing,
+          ]}
+          {...inputProps}
+          // After the spread, so revealing wins over the caller's own value
+          // rather than depending on prop order at every call site.
+          secureTextEntry={canReveal ? !revealed : inputProps.secureTextEntry}
+        />
+
+        {canReveal && (
+          <View style={styles.fieldTrailing}>
+            <RevealToggle shown={revealed} onToggle={() => setRevealed((on) => !on)} />
+          </View>
+        )}
+      </View>
+
       {error !== undefined && (
         <Text accessibilityRole="alert" style={styles.error}>
           {error}
@@ -471,6 +514,7 @@ export function ScreenHeader({
 export function MenuRow({
   icon,
   label,
+  subtitle = null,
   value = null,
   tone = 'muted',
   onPress,
@@ -480,6 +524,22 @@ export function MenuRow({
 }: {
   icon: ReactNode;
   label: string;
+  /**
+   * A second line under the label, saying what the row is for.
+   *
+   * **Added for ADR-0044**, and the reason is worth keeping: Help & Safety
+   * drew five rows — *Report an issue*, *Passenger issue*, *Vehicle issue*… —
+   * whose distinguishing sentence was passed as `announcement` and therefore
+   * existed **only for a screen reader**. A sighted driver saw five identical
+   * chevron rows, and the owner read them as *"repeated and fake"*. They were
+   * not repeated; they were undifferentiated, which looks the same.
+   *
+   * Use it where the label alone cannot say which of several similar rows
+   * this is. A row whose name already answers that ("Documents", "Log out")
+   * takes none — a subtitle on every row is a second column of prose on a
+   * screen read at a glance from a cradle.
+   */
+  subtitle?: string | null;
   /** The right-hand word — a state, a count, or null for a plain row. */
   value?: string | null;
   /**
@@ -535,12 +595,36 @@ export function MenuRow({
       >
         <View style={styles.menuIcon}>{icon}</View>
 
-        <Text
-          style={[styles.menuLabel, longValue ? styles.menuLabelKept : null]}
-          numberOfLines={1}
-        >
-          {label}
-        </Text>
+        {/*
+          Two shapes, and the subtitle-less one is deliberately identical to
+          what this row always rendered — a bare `Text` carrying the flex
+          rules, not a `View` wrapper that happens to have one child. Twenty
+          rows across the app depend on that layout, and "it looks the same"
+          is not the same as "it is the same".
+        */}
+        {subtitle === null ? (
+          <Text
+            style={[styles.menuLabel, longValue ? styles.menuLabelKept : null]}
+            numberOfLines={1}
+          >
+            {label}
+          </Text>
+        ) : (
+          <View style={styles.menuStack}>
+            <Text style={styles.menuStackLabel} numberOfLines={1}>
+              {label}
+            </Text>
+            {/*
+              Two lines, not one. These say what a topic is *for* — "A
+              passenger who was abusive, refused to pay, or did not travel" —
+              and clipping that to one line takes back most of what the
+              subtitle was added to give.
+            */}
+            <Text style={styles.menuSubtitle} numberOfLines={2}>
+              {subtitle}
+            </Text>
+          </View>
+        )}
 
         {value !== null && (
           <Text
@@ -747,6 +831,22 @@ const styles = StyleSheet.create({
     flexShrink: 2,
     flexGrow: 1,
   },
+  /** The label + subtitle column. Takes the flex the bare label would have. */
+  menuStack: {
+    flexShrink: 2,
+    flexGrow: 1,
+  },
+  menuStackLabel: {
+    ...typography.bodyStrong,
+    color: colors.text,
+  },
+  menuSubtitle: {
+    ...typography.caption,
+    // `textMuted`, never `placeholder`: DESIGN.md §1 demotes #979DA9 on light
+    // surfaces by name — 2.72:1 on white, which fails AA for text.
+    color: colors.textMuted,
+    marginTop: 2,
+  },
   menuValue: {
     ...typography.captionStrong,
     fontSize: 15,
@@ -852,6 +952,28 @@ const styles = StyleSheet.create({
   },
   inputError: {
     borderColor: colors.danger,
+  },
+  // The toggle overlays the field's right edge rather than sitting beside it,
+  // so a revealable field is exactly as wide as a plain one — otherwise the
+  // three rows on the change-password screen would not line up with each
+  // other, and the two that hold a new password would be narrower than the one
+  // that holds the current one.
+  fieldRow: {
+    position: 'relative',
+    justifyContent: 'center',
+  },
+  inputWithTrailing: {
+    // Clears the toggle so a long password does not run underneath it.
+    paddingRight: spacing.xl + spacing.md,
+  },
+  fieldTrailing: {
+    position: 'absolute',
+    right: 0,
+    // Full height so the 44pt target inside `RevealToggle` is centred on the
+    // row however tall the field grows.
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
   },
   iconFieldBlock: {
     marginBottom: spacing.sm + 4,

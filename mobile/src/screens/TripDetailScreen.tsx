@@ -23,6 +23,7 @@ import {
 } from '../trips/record';
 import { driverActions, statusLabel, type TripAction } from '../trips/transitions';
 import { Button, Card, Field, Notice, Screen, ScreenHeader, usePressScale } from '../ui/components';
+import { SkeletonCards } from '../ui/Skeleton';
 import { DetailRow, GLYPH, Stat, StatRow } from '../ui/facts';
 import {
   CameraIcon,
@@ -134,7 +135,7 @@ export function TripDetailScreen({ route, navigation }: Props) {
       <Screen>
         {header}
         <SyncBanner />
-        <Text style={styles.loading}>Loading…</Text>
+        <SkeletonCards count={1} style={styles.loading} />
       </Screen>
     );
   }
@@ -145,7 +146,7 @@ export function TripDetailScreen({ route, navigation }: Props) {
         {header}
         <SyncBanner />
         <View style={styles.body}>
-          <Notice message="This trip is not on this phone and the office cannot be reached." />
+          <Notice message="This trip is not on this phone, and the office is unreachable." />
         </View>
       </Screen>
     );
@@ -307,7 +308,7 @@ export function TripDetailScreen({ route, navigation }: Props) {
             */
             <Text style={styles.note}>
               {trip.status === 'trip_completed'
-                ? 'The office has not confirmed the money for this trip yet. It appears here once it has.'
+                ? 'The office has not confirmed the money yet.'
                 : 'Nothing has been paid on this trip.'}
             </Text>
           ) : (
@@ -716,9 +717,9 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   loading: {
-    ...typography.body,
-    color: colors.textMuted,
-    padding: spacing.lg,
+    // Was a Text style for the word "Loading…"; the placeholder that
+    // replaced it wants the gutter and nothing else.
+    padding: spacing.md,
   },
   help: {
     flexDirection: 'row',

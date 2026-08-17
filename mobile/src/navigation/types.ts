@@ -38,8 +38,15 @@ import type { TripStatus } from '../api/types';
 export type TripsStackParams = {
   /**
    * The landing screen: duty, the trip in progress, and what today has come
-   * to so far. `Today` sits behind it as the full assignment list — home
-   * answers "what now?", the list answers "what else?".
+   * to so far.
+   *
+   * **There is no `Today`.** It sat behind this one as a second assignment
+   * list and answered the same question with the same components, reachable
+   * only from a bell that now opens `Notifications` where it always looked
+   * like it should. The route is deleted rather than kept unreachable, for the
+   * reason the missing `Settings` on `ProfileStackParams` gives: a key left in
+   * this table lets `navigate('Today')` typecheck against a screen that is not
+   * registered, which fails on a handset and nowhere else.
    *
    * **`TripsHome`, not `Home`.** The tab that contains this stack is itself
    * named `Home` (`RootTabParams`), and React Navigation warns about screens
@@ -92,8 +99,8 @@ export type TripsStackParams = {
    *
    * On the trips stack rather than a tab of its own, because it is *about the
    * work* — the mockup's own tab bar has no Trips tab either. It answers
-   * "what have I done", where `Today` answers "what else is on today" and
-   * `TripDetail` answers "what happened on this one".
+   * "what have I done", where `TripsHome` answers "what now" and `TripDetail`
+   * answers "what happened on this one".
    *
    * No `TripStatus` routes here: a history is the record of work that is
    * over. A row still opens through `tripDestination()`, so a trip that
@@ -168,6 +175,16 @@ export type ProfileStackParams = {
   Documents: undefined;
   SyncQueue: undefined;
   /**
+   * Where the office sends this driver's money (ADR-0042).
+   *
+   * On the Profile stack because that is where the mockup's row is, and
+   * because it answers a question about the driver rather than about the work.
+   * It is **not** a Wallet screen despite being about pay: the Wallet asks
+   * "what am I owed", and this asks "where does it go" — the owner was
+   * explicit that it is a real page rather than a link into the Wallet.
+   */
+  BankDetails: undefined;
+  /**
    * How the driver is doing — six dials and the current bonus week
    * (ADR-0038).
    *
@@ -200,8 +217,42 @@ export type ProfileStackParams = {
    * different things, deliberately kept apart.
    */
   Notifications: undefined;
-  /** Device and account preferences — what this app does, not what the platform does. */
-  Settings: undefined;
+  /**
+   * Writing a report to the office (ADR-0044).
+   *
+   * **The param is required and is one of the five Help Topics.** A driver
+   * arrives here by tapping a row that already said what this is about, and a
+   * screen that re-asked would be the app forgetting what it was just told.
+   * Like `Support`, this file deliberately does not import `HelpTopicKey` — a
+   * navigation param table that reaches into a feature module inverts the
+   * dependency, and `findHelpTopic` treats an unrecognised key as no topic, so
+   * a stale deep link degrades rather than crashes.
+   */
+  ReportIssue: { topic: string };
+  /**
+   * The reports this driver has sent, and the office's answers (ADR-0044).
+   *
+   * On the Profile stack beside `Notifications`, and for the same reason: it
+   * is a pushed screen that keeps the tab bar, and it is the surface the
+   * `driver.support.answered` notification is about.
+   */
+  MyReports: undefined;
+  /**
+   * Asking the office to close the account (ADR-0043).
+   *
+   * Named for what it does, not for the row that opens it. The row says
+   * *Delete account* because that is the word a driver arrives with; this is a
+   * closure request the office confirms, and a route called `DeleteAccount`
+   * would be the first place the lie got written down.
+   */
+  CloseAccount: undefined;
+  /*
+   * **There is no `Settings`.** Its rows are grouped on `ProfileHome` under
+   * *Work* and *Account* — the owner's *"so we don't need the settings page"*.
+   * Deleted from the param list on purpose: leaving the key here would let
+   * `navigate('Settings')` typecheck against a route that no longer exists,
+   * which fails at runtime and nowhere else.
+   */
   /** Getting help, and what to do when something goes wrong (ADR-0040). */
   Safety: undefined;
   /**

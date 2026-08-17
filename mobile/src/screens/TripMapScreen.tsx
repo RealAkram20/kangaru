@@ -68,7 +68,7 @@ export function TripMapScreen({ route, navigation }: Props) {
     return (
       <Screen>
         <ScreenHeader title="Map" onBack={() => navigation.goBack()} />
-        <Notice message="This trip is not on this phone and the office cannot be reached." />
+        <Notice message="This trip is not on this phone, and the office is unreachable." />
       </Screen>
     );
   }

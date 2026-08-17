@@ -20,6 +20,7 @@ import {
 import { useDriverEarnings } from '../earnings/queries';
 import type { EarningsStackParams } from '../navigation/types';
 import { Notice, Screen, ScreenHeader } from '../ui/components';
+import { SkeletonRows } from '../ui/Skeleton';
 import { colors, radius, spacing, typography } from '../ui/theme';
 
 type Props = NativeStackScreenProps<EarningsStackParams, 'EarningsHome'>;
@@ -105,7 +106,7 @@ export function EarningsScreen({ navigation }: Props) {
         {!breakdownReconciles(earnings) && (
           <Notice
             tone="warning"
-            message="These figures do not add up and may be wrong. Please check with the office before relying on them."
+            message="These figures may be wrong. Check with the office."
           />
         )}
 
@@ -120,11 +121,11 @@ export function EarningsScreen({ navigation }: Props) {
           <View style={styles.rule} />
 
           {rows.length === 0 ? (
-            <Text style={styles.empty}>
-              {isLoading
-                ? 'Loading…'
-                : 'No completed work in this period. Earnings appear once the office has your finished trips.'}
-            </Text>
+            isLoading ? (
+              <SkeletonRows count={3} style={styles.loadingRows} />
+            ) : (
+              <Text style={styles.empty}>No completed work in this period.</Text>
+            )
           ) : (
             rows.map((row) => (
               <View key={row.key} style={styles.row}>
@@ -146,10 +147,11 @@ export function EarningsScreen({ navigation }: Props) {
             <Text style={styles.rowLabel}>Time on trips</Text>
             <Text style={styles.rowAmount}>{durationLabel(earnings?.on_trip_minutes)}</Text>
           </View>
-          <Text style={styles.footnote}>
-            Time driving, from pickup to drop-off. It does not include time spent waiting for a
-            job.
-          </Text>
+          {/*
+            The footnote here explained the row's own label. "Time on trips" is
+            already two words apart from the mockup's "Online hours" precisely
+            so that it does not need a sentence underneath it.
+          */}
         </View>
 
         {bars.length > 0 && (
@@ -343,6 +345,9 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontSize: 12,
     color: colors.textMuted,
+  },
+  loadingRows: {
+    paddingVertical: spacing.sm,
   },
   empty: {
     ...typography.body,

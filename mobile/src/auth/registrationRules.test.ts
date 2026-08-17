@@ -77,14 +77,14 @@ describe('registrationProblem', () => {
     expect(registrationProblem({ ...VALID, email: 'shanitah+boda@sub.example.co.ug' })).toBeNull();
   });
 
-  it('enforces the same twelve-character minimum the server does', () => {
-    const eleven = 'a'.repeat(MINIMUM_PASSWORD_LENGTH - 1);
-    const twelve = 'a'.repeat(MINIMUM_PASSWORD_LENGTH);
+  it('enforces the same minimum `StoreDriverApplicationRequest` does', () => {
+    const under = 'a'.repeat(MINIMUM_PASSWORD_LENGTH - 1);
+    const exact = 'a'.repeat(MINIMUM_PASSWORD_LENGTH);
 
     expect(
-      registrationProblem({ ...VALID, password: eleven, confirmation: eleven })?.problem,
+      registrationProblem({ ...VALID, password: under, confirmation: under })?.problem,
     ).toBe('password_too_short');
-    expect(registrationProblem({ ...VALID, password: twelve, confirmation: twelve })).toBeNull();
+    expect(registrationProblem({ ...VALID, password: exact, confirmation: exact })).toBeNull();
   });
 
   /**

@@ -13,6 +13,7 @@ import { greatCircleKm, located, toCoordinates } from '../trips/places';
 import { useTrip } from '../trips/queries';
 import { driverActions, statusLabel, type TripAction } from '../trips/transitions';
 import { Button, Notice, Screen, ScreenHeader } from '../ui/components';
+import { SkeletonCards } from '../ui/Skeleton';
 import { DetailRow, GLYPH, RouteRail, Stat, StatRow } from '../ui/facts';
 import {
   NavigationIcon,
@@ -81,7 +82,7 @@ const PASSENGER_LABEL = 'Passenger';
 export function PickupScreen({ route, navigation }: Props) {
   const { tripId } = route.params;
   const { data: trip, isLoading } = useTrip(tripId);
-  const { queueTransition } = useSync();
+  const { queueTransition, queued } = useSync();
   const here = usePosition();
 
   const [busy, setBusy] = useState(false);
@@ -90,7 +91,7 @@ export function PickupScreen({ route, navigation }: Props) {
     return (
       <Screen>
         <SyncBanner />
-        <Text style={styles.loading}>Loading…</Text>
+        <SkeletonCards count={1} style={styles.loading} />
       </Screen>
     );
   }
@@ -99,13 +100,18 @@ export function PickupScreen({ route, navigation }: Props) {
     return (
       <Screen>
         <SyncBanner />
-        <Notice message="This trip is not on this phone and the office cannot be reached." />
+        <Notice message="This trip is not on this phone, and the office is unreachable." />
       </Screen>
     );
   }
 
   const passenger = trip.passenger_contact;
   const actions = driverActions(trip);
+
+  // What this trip has been asked to become and has not yet been confirmed at.
+  // Read off the outbox — see `SyncState.queued`, and the block above the
+  // actions for what it prevents.
+  const asked = queued.get(trip.id) ?? null;
 
   const run = async (action: TripAction) => {
     // Odometer capture and a decline both need more than a tap, and both
@@ -169,7 +175,31 @@ export function PickupScreen({ route, navigation }: Props) {
 
         <Facts trip={trip} here={here} />
 
-        {actions.length === 0 ? (
+        {/*
+          **A transition already queued is not offered again.**
+
+          `actions` comes from `allowed_transitions`, which the server computed
+          for the status it last confirmed — so between the press and the drain
+          it still lists the move the driver has already made. On a good
+          connection that is a flicker; in the stairwell and the basement car
+          park this screen is written for, it is the rest of the leg. A driver
+          who presses "On my way" twice queues it twice, and the second posts
+          from a status the server has left: refused, parked, and now needing a
+          human.
+
+          `queued` is the outbox's own contents rather than an optimistic guess,
+          so this cannot show a move the driver did not make, and a refused item
+          drops out of it — returning the buttons rather than stranding them.
+        */}
+        {asked !== null ? (
+          <Notice
+            tone="info"
+            // The status, plus where the record of it currently is. Same
+            // vocabulary as the odometer's footnote, deliberately: a driver
+            // meets this sentence on both screens and it means one thing.
+            message={`${statusLabel(asked)}. Saved on this phone, sent when you have signal.`}
+          />
+        ) : actions.length === 0 ? (
           <Notice message="There is nothing for you to do on this trip right now." tone="info" />
         ) : (
           <View style={styles.actions}>
@@ -271,9 +301,9 @@ function Facts({ trip, here }: { trip: Trip; here: Coordinates | null }) {
 
 const styles = StyleSheet.create({
   loading: {
-    ...typography.body,
-    color: colors.textMuted,
-    padding: spacing.lg,
+    // Was a Text style for the word "Loading…"; the placeholder that
+    // replaced it wants the gutter and nothing else.
+    padding: spacing.md,
   },
   header: {
     flexDirection: 'row',
