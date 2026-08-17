@@ -6352,3 +6352,14 @@ fix to finding 1, and **no `W1-e`** — the ★blocker the owner deferred to tak
 this landing instead. It remains entirely unbuilt: no `docs/data-inventory.md`,
 no retention policy, and zero privacy references in the public order funnel.
 
+**CI green on `33b08a1`, run 32075607193** — Backend (Pint · Larastan level 8 ·
+migrate · migration reversibility · Pest with coverage · coverage gates 70/90) ·
+Frontend (ESLint · `tsc` · Vitest · build) · gitleaks. **Commitlint skipped**,
+exactly as A0 recorded: the job is `if: github.event_name == 'pull_request'`
+and PR #9 targets `feat/public-landing-and-order-requests`, not `main`. Run
+locally instead — **0 errors** across all six commits, one `footer-leading-blank`
+warning.
+
+**Still true after CI, and it is the hole in this record:** `mobile/` has no CI
+job, so the 831 tests on the largest part of this branch are a local gate only.
+
