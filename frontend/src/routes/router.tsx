@@ -27,6 +27,7 @@ import { TripsPage } from '../pages/TripsPage'
 import { VehiclesPage } from '../pages/VehiclesPage'
 import { LandingPage } from '../pages/public/LandingPage'
 import { OrderPage } from '../pages/public/OrderPage'
+import { PrivacyNoticePage } from '../pages/public/PrivacyNoticePage'
 
 export const router = createBrowserRouter([
   // Public, unauthenticated (ADR-0012 §5). `/` is the landing page for
@@ -42,6 +43,14 @@ export const router = createBrowserRouter([
   {
     path: '/order',
     element: <OrderPage />,
+  },
+  // Unauthenticated by necessity, not by oversight: this is what somebody
+  // reads to decide whether to hand over their data, so it cannot sit behind
+  // the account that handing it over creates. master-plan.md §5 gates go-live
+  // on it being readable before submission.
+  {
+    path: '/privacy',
+    element: <PrivacyNoticePage />,
   },
   {
     path: '/login',

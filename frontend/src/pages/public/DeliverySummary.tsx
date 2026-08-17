@@ -13,6 +13,7 @@ import {
   Wallet,
 } from 'lucide-react'
 import type { PlaceHit } from './places'
+import { PrivacyLine } from './PrivacyNoticePage'
 import { formatKm, formatMinutes, type TripEstimate } from './tripEstimate'
 
 /**
@@ -231,6 +232,12 @@ export function DeliverySummary({
       <p className="mt-3 text-center text-xs text-text-secondary">
         A starting fare. The dispatcher confirms the exact price on the call.
       </p>
+      {/*
+        W1-e. A delivery is the one order that carries a *third party's* name
+        and phone — the sender's and the recipient's — so this is the surface
+        where somebody is about to hand over details that are not their own.
+      */}
+      <PrivacyLine />
     </div>
   )
 }

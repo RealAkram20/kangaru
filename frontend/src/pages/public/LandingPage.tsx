@@ -37,7 +37,11 @@ export function LandingPage() {
   )
 }
 
-function PublicNav() {
+/**
+ * Exported so `PrivacyNoticePage` wears the same chrome rather than forking it
+ * (`docs/screen-rules.md` §3). Nothing about the rendering changed.
+ */
+export function PublicNav() {
   // Signed-in staff still get the landing page; the nav is how they leave
   // it, so it points at the dashboard rather than a login they've done.
   const { user } = useAuth()
@@ -424,7 +428,8 @@ function AppPreview() {
   )
 }
 
-function PublicFooter() {
+/** Exported alongside `PublicNav`, and for the same reason. */
+export function PublicFooter() {
   return (
     <footer className="border-t border-border bg-surface-sunken">
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-10 sm:px-6 md:flex-row md:items-center md:justify-between">

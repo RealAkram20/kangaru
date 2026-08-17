@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   Armchair,
@@ -67,6 +67,7 @@ import { DeliveryParties } from './DeliveryParties'
 import { EMPTY_PARTY, type Party } from './party'
 import { KycVerification } from './KycVerification'
 import { RENTAL_KYC, type KycFiles } from './kycDocuments'
+import { PrivacyLine } from './PrivacyNoticePage'
 import { tripEstimate } from './tripEstimate'
 import { MapPanel } from './MapPanel'
 import { RideScreen } from './RideScreen'
@@ -1136,6 +1137,13 @@ export function OrderPage() {
                   label={customer === null ? 'Continue' : 'Request ride'}
                   onClick={finishChoices}
                 />
+                {/*
+                  W1-e. A ride has no confirm screen, so this is the last
+                  surface before the order goes — for a signed-in customer this
+                  button submits. The notice has to be here or it is not
+                  "before submission" for the commonest order on the platform.
+                */}
+                {customer !== null && <PrivacyLine />}
               </div>
             </StepShell>
           )}
@@ -1180,6 +1188,7 @@ export function OrderPage() {
               submitLabel={service === 'ride' ? 'Create account & request ride' : undefined}
               honeypot={honeypot}
               onHoneypot={setHoneypot}
+              footer={<PrivacyLine />}
             />
           )}
 
@@ -2140,6 +2149,7 @@ function AccountStep({
   honeypot,
   onHoneypot,
   submitLabel,
+  footer = null,
 }: {
   onBack: () => void
   onAuthenticated: (customer: CustomerAccount) => void
@@ -2147,6 +2157,12 @@ function AccountStep({
   onHoneypot: (value: string) => void
   /** Overrides "Create account" when this tap also places the order. */
   submitLabel?: string
+  /**
+   * Rendered under the submit button. W1-e passes the privacy line here: this
+   * step is where a first-time customer hands over name, phone and email, and
+   * for a ride the same tap places the order.
+   */
+  footer?: ReactNode
 }) {
   const [mode, setMode] = useState<'signup' | 'login'>('signup')
   const [firstName, setFirstName] = useState('')
@@ -2335,6 +2351,14 @@ function AccountStep({
               ? (submitLabel ?? 'Create account')
               : 'Sign in'}
         </button>
+
+        {/*
+          Under the button on both modes, not only sign-up. A returning
+          customer's tap here also places a ride, so it is a submission either
+          way — and the notice belongs at the submission, not at the form that
+          happens to collect the most fields.
+        */}
+        {footer}
 
         <p className="mt-4 text-center text-sm text-text-secondary">
           {mode === 'signup' ? 'Already have an account?' : 'New to KangaruRide?'}{' '}

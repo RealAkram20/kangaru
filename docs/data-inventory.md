@@ -1,0 +1,223 @@
+# Data inventory and retention policy
+
+**Owner:** W1-e · **Status:** written 2026-08-18 · **Legal basis:** Uganda **Data
+Protection and Privacy Act, 2019**, as required by `AGENTS.md` Compliance and
+`docs/master-plan.md` §5.
+
+Every row below was read off the schema, a migration, or the code that performs
+the transfer. Where a row says a thing is **not** collected, that is a verified
+absence, not an assumption — the file and line are named so the next person can
+re-check rather than re-derive.
+
+---
+
+## 1 · Why this document exists
+
+`master-plan.md` §1 decision 1 records that the owner was shown that including
+public walk-in customers puts data-protection work on the critical path, and
+chose it deliberately. From that moment members of the public — not employees,
+not contracted corporate clients — hand this platform their name, phone number,
+email, and the two addresses that describe where they live and where they go.
+
+The Act's obligation is to **inform the data subject at the point of
+collection**. §5 of the master plan states the gate in one sentence: *a customer
+can read what happens to their data before they hand it over.*
+
+---
+
+## 2 · The inventory
+
+### 2.1 Collected from members of the public
+
+| Data | Where it lands | Why | Retention |
+|---|---|---|---|
+| Name | `customers.name`, `order_requests.contact_name` | The dispatcher and the driver must know who to meet | 7 years (financial record) |
+| Phone | `customers.phone`, `order_requests.contact_phone` | The driver rings the customer; the dispatcher rings back on a failed pickup | 7 years |
+| Email | `customers.email` (unique), `order_requests.contact_email` (nullable) | Account identity and the order receipt | 7 years |
+| Password | `customers.password` (nullable) | Account access. **Hashed, never recoverable** | Life of account |
+| Google account id | `customers.google_id` (nullable, unique) | Sign-in without a password | Life of account |
+| Pickup address | `order_requests.pickup_location` | The trip cannot happen without it | 7 years |
+| Drop-off address | `order_requests.dropoff_location` | As above | 7 years |
+| Pickup/drop-off coordinates | `order_requests.pickup_latitude/longitude`, `dropoff_latitude/longitude` (`DECIMAL(10,7)`) | Proximity dispatch (ADR-0020 §2) | 7 years |
+| Free-text note | `order_requests.notes` | Whatever the customer chose to add. **Uncontrolled: a customer may type anything here**, including data nobody asked for | 7 years |
+| A third party's name and phone | `order_requests.details` JSON — `recipient_name`, `recipient_phone`, `sender_name`, `sender_phone` | A delivery, or a ride booked for somebody else, needs both ends reachable | 7 years |
+
+**`order_requests.details` is the row to be careful with.** It is a JSON column
+carrying other people's phone numbers — people who never visited this site and
+cannot have been informed by a notice on it. `docs/screen-rules.md` §2 already
+names it: *"a resource emitting that column wholesale leaks two numbers and
+looks harmless in review, because the field is called `details`."*
+
+### 2.2 Collected during the trip
+
+| Data | Where it lands | Why | Retention |
+|---|---|---|---|
+| Driver GPS trace | `trip_locations` — `latitude`, `longitude`, `speed_kph`, `heading_degrees`, `accuracy_metres`, `recorded_at` | Live map, distance measurement, and the odometer reconciliation `PRODUCT.md` sells as audit-grade | **12 months** |
+| Trip record | `trips`, `trip_events` | The append-only timeline an auditor reads | 7 years |
+
+`trip_locations` is **partitioned by month** (`RANGE (TO_DAYS(recorded_at))`,
+raw DDL in `2026_08_01_180000_create_trip_locations_table.php`). That is what
+makes 12-month retention enforceable as a `DROP PARTITION` rather than a
+`DELETE` competing with live traffic for row locks — a deliberate ADR-0003
+choice, and the only piece of retention infrastructure that already exists.
+
+The trace is the driver's location, not the customer's. It is in this inventory
+because for the duration of a trip it is also **a record of where a named
+customer travelled**, joinable through `trips`.
+
+### 2.3 Staff and drivers
+
+| Data | Where it lands | Why | Retention |
+|---|---|---|---|
+| Name, email, phone | `users`, `drivers` | Employment and platform access | Anonymised **90 days** after deactivation |
+| Identity and licence documents | `driver_documents` | ADR-0033 compliance review | Anonymised 90 days after deactivation |
+| MFA secret | `users.mfa_secret` | Encrypted at rest | Life of account |
+
+---
+
+## 3 · What is deliberately NOT collected
+
+Stated because a privacy notice that over-claims is as wrong as one that
+under-claims, and because each of these is a decision somebody could undo by
+accident.
+
+1. **Rental identity documents never leave the customer's device.**
+   `KycVerification` collects them in browser state; `OrderPage.tsx:567` sends
+   only `Object.keys(kycFiles)` — the *names* of the document types — as
+   `details.kyc_documents`. No national ID, passport or licence image belonging
+   to a member of the public is uploaded, stored, or transmitted. **Verified by
+   reading the payload builder, not by trusting the comment beside it.**
+2. **No passenger contact detail reaches a driver before they accept.**
+   ADR-0024 §7, and offer payloads become push notifications that land on a lock
+   screen.
+3. **No analytics, advertising, or tracking script.** Searched the public funnel
+   for `gtag`, `analytics`, and third-party pixels: none present.
+4. **No non-essential cookie.** The funnel sets no cookie of its own. It uses
+   `localStorage` — see §4.
+
+---
+
+## 4 · Stored on the customer's own device
+
+Not transmitted, but personal data all the same, and a notice that ignores it is
+incomplete.
+
+| Key | Contents | Set by |
+|---|---|---|
+| `kr.recent-destinations` | Recently entered addresses | `places.ts:198` |
+| `kr.favourite-captains` | Drivers the customer marked as favourite | `favouriteCaptains.ts:20` |
+
+Clearing the browser's site data removes both. Neither is readable by this
+platform's servers.
+
+---
+
+## 5 · Third parties that receive personal data
+
+**This is the section most likely to be missing from a privacy notice written
+from memory, and the one a regulator asks about first.** Each was verified by
+reading the request that makes the transfer.
+
+| Recipient | What reaches them | When | Evidence |
+|---|---|---|---|
+| **Google** (Maps JavaScript API) | The map viewport, which is centred on the customer's pickup | Whenever the map renders | `googleMaps.ts:50` loads `maps.googleapis.com` |
+| **Google** (Identity Services) | Email and profile name | Only if the customer chooses Google sign-in | `OrderPage.tsx:1454` loads `accounts.google.com/gsi/client` |
+| **Mapbox** | The **address text typed into the search box** | Only when `VITE_MAPBOX_TOKEN` is configured | `places.ts` → `api.mapbox.com/geocoding/v5` |
+| **komoot (Photon)** | The address text typed into the search box | The keyless fallback when Mapbox is not configured — **so this is the live path unless a token is set** | `places.ts` → `photon.komoot.io/api` |
+| **CARTO** | Basemap tile requests | Map fallback path | `MapPanel.tsx:44` → `basemaps.cartocdn.com` |
+
+**The geocoder is the transfer that matters.** A customer typing their home
+address into the pickup box sends that text to a third party **as they type**,
+before they have submitted anything. Under §2 this platform is the data
+controller and these are processors; a cross-border transfer disclosure is
+required, and no data-processing agreement with any of them is on file.
+
+---
+
+## 6 · The retention policy, written
+
+Required by `AGENTS.md` Compliance and reproduced here as the authoritative
+statement.
+
+| Category | Period | Clock starts |
+|---|---|---|
+| Trip and order PII (financial records) | **7 years** | Trip completion / order close |
+| Raw GPS (`trip_locations`) | **12 months** | `recorded_at` |
+| Ex-employee and closed driver accounts | **Anonymised 90 days after deactivation** | `users.deactivated_at`, `driver_closure_requests.closed_at` |
+| Generated report exports | Per `PruneReportExports` | File creation |
+
+### 6.1 Enforcement — and this is the finding
+
+**Only one of these four is enforced by anything.**
+
+`routes/console.php` schedules exactly five commands: `PruneReportExports`,
+`sanctum:prune-expired`, `AdvanceDispatchOffers`, `AwardWeeklyBonuses`,
+`CloseStaleDutySessions`. There is **no GPS prune at 12 months**, **no
+anonymisation job at 90 days**, and no sweep of any kind over `order_requests`
+or `customers`.
+
+The codebase already knows:
+
+- `app/Enums/UserStatus.php:22` — *"anonymisation job is not built"*.
+- `DriverClosureService.php:83` — `closed_at` is *"the clock the retention sweep
+  runs"* off. **The sweep does not exist**, so ADR-0043's closure loop currently
+  stops at "marked closed".
+- `PruneReportExports.php:14` states the principle exactly: *"a retention policy
+  nothing enforces is a document"*.
+
+**So this section is, today, a document.** It is written because the Act requires
+a stated policy and because §5 of the master plan gates on it — but the honest
+position is that the platform **keeps everything forever** and nothing yet
+deletes a GPS point or anonymises a leaver.
+
+**Recommendation:** one scheduled command per row, smallest first. The GPS one is
+nearly free because the partitions already exist — retiring a month is a
+`DROP PARTITION`. The anonymisation job is the one with legal exposure attached,
+because a stated 90 days that does not happen is worse than no stated period.
+**Not built by this package**, which owns a notice and an inventory; it is named
+here so it is not rediscovered as a surprise.
+
+---
+
+## 7 · Personal Data Protection Office registration
+
+The brief asks for the requirement to be checked and reported. Reported, with
+its confidence marked, because getting this wrong in either direction is
+expensive.
+
+**What the framework is.** The Data Protection and Privacy Act, 2019 is
+administered by the **Personal Data Protection Office (PDPO)**, established
+under NITA-U. The Data Protection and Privacy Regulations, 2021 provide for a
+**register of data collectors, data controllers and data processors**, and for
+registration with the PDPO. A commercial platform processing the personal data
+of members of the public — name, phone, email and location — is squarely the
+kind of entity the register is for, and location data raises the sensitivity.
+
+**What this platform would have to be able to say:** who the data controller is,
+what categories it processes, the purposes, the retention periods (§6), the
+third parties it discloses to (§5), and its security measures.
+
+**What I could not verify, and the owner must:** the current fee, the exact
+threshold and any exemption, the filing mechanism, and whether registration must
+precede go-live or follow it within a period. **I did not reach the PDPO's own
+guidance from this environment, so nothing above should be treated as the
+current filing requirement.** This needs a lawyer or a direct enquiry to the
+PDPO; it is not an engineering task and it is not closed by this package.
+
+**It is also not a blocker on the notice.** Registration is an obligation on the
+operator. Informing the customer is an obligation at the moment of collection,
+and that one is code — which is what W1-e builds.
+
+---
+
+## 8 · Owed, and not built here
+
+- **A documented breach-response procedure.** `AGENTS.md` Compliance requires
+  one. It does not exist. Not written by this package because it is an
+  operational runbook and `W1-d` owns `docs/runbook.md` — named here so it lands
+  somewhere rather than nowhere.
+- **The four retention jobs** in §6.1.
+- **Data-processing agreements** with the processors in §5.
+- **A subject-access and erasure route.** ADR-0043 built closure for *drivers*.
+  A member of the public has no way to ask what is held about them, or to have
+  it removed. The Act provides those rights.
