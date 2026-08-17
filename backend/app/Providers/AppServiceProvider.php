@@ -41,6 +41,7 @@ use Modules\Clients\Policies\CompanyPolicy;
 use Modules\Customers\Policies\CustomerPolicy;
 use Modules\Dispatch\Models\DispatchOffer;
 use Modules\Drivers\Listeners\CreditDriverForCompletedTrip;
+use Modules\Drivers\Listeners\QualifyReferralForCompletedTrip;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverApplication;
 use Modules\Drivers\Models\DriverDocument;
@@ -221,6 +222,10 @@ class AppServiceProvider extends ServiceProvider
         // the ledger pair is idempotent so a premature run would credit
         // nothing and never retry (ADR-0029 §2).
         Event::listen(TripCompleted::class, CreditDriverForCompletedTrip::class);
+        // ADR-0037 §4. Order-independent, unlike the two above: this reads
+        // `trips`, not a fare, and it credits a *different* driver — the one
+        // who introduced the person who just finished a job.
+        Event::listen(TripCompleted::class, QualifyReferralForCompletedTrip::class);
 
         Event::listen(BookingApproved::class, [SendBookingDecisionNotification::class, 'approved']);
         Event::listen(BookingRejected::class, [SendBookingDecisionNotification::class, 'rejected']);

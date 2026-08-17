@@ -27,10 +27,30 @@ class DriverProfileService
     public function __construct(private readonly DriverDocumentService $documents) {}
 
     /**
+     * Where the app fetches this driver's photograph, or null.
+     *
+     * `route()` rather than `Storage::url()`: the file is on the private disk
+     * and is streamed through the API, because a signed link to a photograph
+     * of somebody is addressable by anyone who ever saw it — and this one is
+     * loaded dozens of times a day, so the link would travel.
+     */
+    private function photoUrl(Driver $driver): ?string
+    {
+        $path = $driver->photo_path;
+
+        if (! is_string($path) || $path === '') {
+            return null;
+        }
+
+        return route('me.photo.show').'?v='.substr(sha1($path), 0, 8);
+    }
+
+    /**
      * @return array{
      *     name: string,
      *     phone: string|null,
      *     email: string|null,
+     *     photo_url: string|null,
      *     member_since: string|null,
      *     trips_total: int,
      *     vehicle: array{make: string|null, model: string|null, registration_number: string, category: string, category_label: string}|null,
@@ -49,6 +69,16 @@ class DriverProfileService
             // the two belong to different records on purpose.
             'phone' => $driver->phone,
             'email' => $driver->email,
+            /*
+             * A route, never a storage path, and null when there is none
+             * (ADR-0041).
+             *
+             * **Cache-busted on the stored path.** Without the query the app's
+             * image cache goes on showing the previous portrait after an
+             * upload — on the one surface whose whole job is telling a driver
+             * this account is theirs.
+             */
+            'photo_url' => $this->photoUrl($driver),
             // A date, not a datetime: "Member since" is rendered as a month
             // and a year, and an instant would invite a timezone question the
             // answer does not depend on.
@@ -85,7 +115,14 @@ class DriverProfileService
      * their work. Soft-deleted trips are excluded for the same reason every
      * other count in this module excludes them.
      */
-    private function tripsCompleted(Driver $driver): int
+    /**
+     * Public because the Performance screen shows the same lifetime figure,
+     * and a second copy of this query is a second place for "does a
+     * cancellation count as a trip" to be answered differently. It does not —
+     * the number sits beside a rating on both screens and must not read
+     * flatter than the driver's work.
+     */
+    public function tripsCompleted(Driver $driver): int
     {
         return (int) DB::table('trips')
             ->where('driver_id', $driver->getKey())

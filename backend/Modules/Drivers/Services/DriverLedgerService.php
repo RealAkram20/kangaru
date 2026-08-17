@@ -20,7 +20,10 @@ use Modules\Trips\Models\Trip;
  */
 class DriverLedgerService
 {
-    public function __construct(private readonly SettingsService $settings) {}
+    public function __construct(
+        private readonly SettingsService $settings,
+        private readonly PeakHoursService $peak,
+    ) {}
 
     /**
      * Raises the fare/commission pair for a completed trip.
@@ -94,8 +97,108 @@ class DriverLedgerService
                 'description' => "Cash taken on trip #{$trip->getKey()}; {$commission} of it is commission at {$percent}%",
             ]);
 
+            $this->recordPeakUplift($trip, $earned, $currency);
+
             return true;
         });
+    }
+
+    /**
+     * The peak-hour uplift on a trip, if it completed inside the window
+     * (ADR-0036 §3).
+     *
+     * **Written here rather than by a second listener**, and the reason is the
+     * `(trip_id, kind)` unique index. That index is what stops a completion
+     * retried through the offline outbox (ADR-0023) paying a driver twice, and
+     * it only protects rows written inside the transaction the guard above
+     * holds. A separate listener would have its own race with itself.
+     *
+     * **Decided on `completed_at`, never on the clock.** A ledger write that
+     * consulted "now" would pay differently depending on when the network came
+     * back, so a driver on a bad connection would be paid by their signal
+     * rather than by their hours. Trips with no `completed_at` earn nothing:
+     * the platform does not know when they finished, and
+     * `docs/screen-rules.md` §1's rule against inventing a value applies to a
+     * timestamp the money turns on as much as to a figure on a screen.
+     *
+     * **Unpaired, unlike the fare above.** No extra cash reached the driver's
+     * hand — the passenger paid the ordinary tariff, and `CASH_COLLECTED`
+     * already records all of it. This is the platform coming to owe them more,
+     * so the balance moves by the whole of it.
+     */
+    private function recordPeakUplift(Trip $trip, int $earnedMinor, string $currency): void
+    {
+        $completedAt = $trip->completed_at;
+
+        if ($completedAt === null) {
+            return;
+        }
+
+        if (! $this->peak->activeAt($completedAt->toImmutable())) {
+            return;
+        }
+
+        $uplift = $this->peak->upliftMinorFor($earnedMinor);
+
+        // Zero is a legitimate outcome — a 1-shilling share at 20% floors to
+        // nothing — and a row of 0 is a line on a statement that says nothing
+        // happened.
+        if ($uplift < 1) {
+            return;
+        }
+
+        $percent = $this->peak->upliftPercent();
+        $from = $this->peak->startsAt();
+        $until = $this->peak->endsAt();
+
+        DriverLedgerEntry::create([
+            'driver_id' => $trip->driver_id,
+            'trip_id' => $trip->getKey(),
+            'kind' => LedgerEntryKind::PEAK_EARNED,
+            'amount_minor' => $uplift,
+            'currency' => $currency,
+            // The rate *and* the window go into the sentence, for ADR-0029 §3's
+            // reason: both are admin-settable, and an uplift explained only by
+            // "the current peak hours" is one nobody can defend a year later.
+            'description' => "Peak hours uplift on trip #{$trip->getKey()}: {$percent}% of the fare share, {$from}–{$until}",
+        ]);
+    }
+
+    /**
+     * Credits a referral reward to the driver who introduced somebody
+     * (ADR-0037 §4).
+     *
+     * **Unpaired and trip-less.** Unpaired for `recordBonus()`'s reason — the
+     * platform simply comes to owe it. Trip-less because the trips that earned
+     * it belong to the *referred* driver, and hanging it off one of them would
+     * file somebody else's journey under this driver's name on the Trips
+     * History screen, which reads from `trip_id`.
+     *
+     * **No commission**, like a bonus: taking a cut of an advertised reward
+     * would mean the figure the driver was shown and the figure they were paid
+     * differ, which is the one thing an incentive must not do.
+     *
+     * Idempotency is the caller's, and it is a database guarantee rather than
+     * a promise: `driver_referrals` carries a unique index on
+     * `referred_driver_id`, and `ReferralService::qualify()` writes the reward
+     * and stamps the row in one transaction.
+     */
+    public function recordReferral(
+        Driver $driver,
+        int $amountMinor,
+        string $currency,
+        string $description,
+    ): DriverLedgerEntry {
+        return DriverLedgerEntry::create([
+            'driver_id' => $driver->getKey(),
+            'kind' => LedgerEntryKind::REFERRAL,
+            'amount_minor' => abs($amountMinor),
+            'currency' => $currency,
+            // Null for `recordBonus()`'s reason: no human decided this one,
+            // the rule did.
+            'created_by_user_id' => null,
+            'description' => $description,
+        ]);
     }
 
     /**

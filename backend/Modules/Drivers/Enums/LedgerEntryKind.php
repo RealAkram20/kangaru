@@ -72,6 +72,32 @@ enum LedgerEntryKind: string
      */
     case BONUS = 'bonus';
 
+    /**
+     * The uplift on a trip completed inside the peak window (ADR-0036).
+     *
+     * Positive and **unpaired**, for the same reason a bonus is: it is the
+     * platform's own money paid on top of the driver's share, not a larger
+     * amount of cash in their hand. The passenger paid the ordinary fare and
+     * `CASH_COLLECTED` already records all of it.
+     *
+     * A distinct kind rather than a fatter `FARE_EARNED`, and the reason is
+     * ADR-0029 §3: the fare entry states the driver's share *at the commission
+     * rate written into its own description*, and folding an uplift into it
+     * would make that sentence stop adding up. Two rows say what happened; one
+     * row would say something that cannot be checked.
+     */
+    case PEAK_EARNED = 'peak_earned';
+
+    /**
+     * A referral reward, paid to the driver who introduced somebody (ADR-0037).
+     *
+     * Positive and unpaired, like a bonus, and for the same reason. It carries
+     * no `trip_id`: the trips that earned it are the *referred* driver's, and
+     * hanging it off one of them would file another driver's journey under
+     * this one's name on the Trips History screen.
+     */
+    case REFERRAL = 'referral';
+
     public function label(): string
     {
         return match ($this) {
@@ -85,6 +111,8 @@ enum LedgerEntryKind: string
             self::TIP_EARNED => 'Tip',
             self::TIP_CASH_COLLECTED => 'Cash from tip',
             self::BONUS => 'Bonus',
+            self::PEAK_EARNED => 'Peak hours',
+            self::REFERRAL => 'Referral reward',
         };
     }
 
@@ -105,7 +133,17 @@ enum LedgerEntryKind: string
      */
     public static function earnings(): array
     {
-        return [self::FARE_EARNED, self::TIP_EARNED, self::BONUS];
+        return [
+            self::FARE_EARNED,
+            self::TIP_EARNED,
+            self::BONUS,
+            // ADR-0036 and ADR-0037. Both are money the driver made, so both
+            // belong in the earnings total and on the earnings breakdown — a
+            // scheme that pays a driver and is then absent from the screen
+            // answering "what did I make" is a scheme they cannot check.
+            self::PEAK_EARNED,
+            self::REFERRAL,
+        ];
     }
 
     /** @return array<int, string> */

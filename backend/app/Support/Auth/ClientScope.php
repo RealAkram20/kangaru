@@ -112,6 +112,16 @@ final class ClientScope
                 // that already exist; nothing here is another driver's.
                 'me.stats.show',
 
+                // How they are doing over thirty days, and where they are in
+                // the current bonus week (ADR-0038). Named here rather than
+                // left to be discovered, because **this list fails closed and
+                // no backend test can see the omission** — every test signs in
+                // without a `client`, minting an unscoped console token, so an
+                // endpoint passes its own suite while being 403 to the only
+                // app with a screen for it. Four money endpoints shipped that
+                // way; see the block below.
+                'me.performance.show',
+
                 // Who they are on the platform, and their papers (ADR-0033).
                 // All three are keyed off the token — `me.documents.file`
                 // takes a document id, but its policy grants a driver their
@@ -123,6 +133,12 @@ final class ClientScope
                 // and the `drivers.documents.*` routes are absent from this
                 // list for that reason rather than by omission.
                 'me.profile.show',
+                // Their own photograph (ADR-0041). All three are keyed off the
+                // token — there is no id in any path, so none can name another
+                // driver's portrait.
+                'me.photo.show',
+                'me.photo.store',
+                'me.photo.destroy',
                 'me.documents.index',
                 'me.documents.store',
                 'me.documents.file',
@@ -143,6 +159,13 @@ final class ClientScope
                 'me.earnings.show',
                 'me.ledger-entries.index',
                 'me.trips.index',
+                // What is currently on offer — the Promotions screen
+                // (ADR-0036, ADR-0037). A read keyed off the token like the
+                // three above, so it cannot name another driver; it is on this
+                // list rather than absent from it because this list fails
+                // closed, and four endpoints have already shipped 403 to the
+                // only client with a screen for them by being left off.
+                'me.promotions.index',
                 // Asking the office to settle (ADR-0032). A request, not a
                 // payment: it moves no money and cannot change a balance, so
                 // the write is as safe as the read beside it.

@@ -48,6 +48,7 @@ Standard REST resource, all behind `auth:sanctum` + `tenant` middleware:
 | GET | `/api/v1/me/earnings?period=day\|week\|month` | Same — the driver is the token |
 | GET | `/api/v1/me/ledger-entries?cursor=&from=&to=` | Same — the driver is the token |
 | GET | `/api/v1/me/trips?cursor=&service_type=` | Same — the driver is the token |
+| GET | `/api/v1/me/promotions` | Same — the driver is the token. Reading it **mints** their referral code |
 | GET/POST | `/api/v1/me/settlement-requests` | Same — the driver is the token. `tip` also 404s on a trip that is not theirs |
 | GET | `/api/v1/settlement-requests` | `viewAny` — `drivers.manage` |
 | POST | `/api/v1/settlement-requests/{id}/confirm` | `answer` — `drivers.manage` |
@@ -260,10 +261,92 @@ Three properties worth knowing before changing any of it:
   paying payroll twice is the error nobody notices until reconciliation.
   Re-running by hand is therefore safe, and `--week=` exists for it.
 
-`DriverEarningsService` sums `LedgerEntryKind::earnings()` — the three credit
-kinds — rather than `fare_earned` alone, and groups tips and bonuses **by kind
-ahead of service type**, so a tip is never folded into the Rides row of the
-trip it was given on and a bonus is not filed as unclassifiable work.
+`DriverEarningsService` sums `LedgerEntryKind::earnings()` — the credit kinds —
+rather than `fare_earned` alone, and groups tips and bonuses **by kind ahead of
+service type**, so a tip is never folded into the Rides row of the trip it was
+given on and a bonus is not filed as unclassifiable work.
+
+### Peak hours (ADR-0036)
+
+A trip completed inside a daily window earns the driver a percentage **on top
+of their own share** of the fare. Written as a `peak_earned` entry inside
+`recordCompletedTrip()`'s existing transaction, so the `(trip_id, kind)` unique
+index covers it — a separate listener would have had its own race.
+
+**Nothing here changes what a passenger pays.** The tariff is untouched and the
+uplift is the platform's own money, which is what separates it from
+`rate_card_versions.night_multiplier_bp`. That column raises the *fare*; the
+driver's share of a larger fare goes up with it, and confusing the two on a
+driver's screen would describe a price rise to the person who does not pay it.
+
+Four things to know before touching it:
+
+- **`billing.peak_enabled` defaults to false**, and this one bills on **every
+  trip** in the window rather than once a week.
+- **Qualification is decided on `completed_at`, never the clock.** A driver
+  finishing at 19:50 in a basement whose outbox drains at 20:30 (ADR-0023) must
+  be paid for the hour they worked, not for the moment their signal returned.
+- **The window is `HH:MM` in the fleet's zone, half open at the top, and may
+  wrap past midnight.** Transcribed from `TripPricingEngine::multiplierFor()`
+  rather than reinvented. **Equal bounds mean an empty window, not a whole
+  day** — reading a typo as "always" is the most expensive interpretation
+  available.
+- **It is its own kind, not a fatter `fare_earned`.** That entry states the
+  driver's share at the commission rate written into its own description
+  (ADR-0029 §3); folding an uplift in would make that sentence stop adding up.
+
+### Referrals (ADR-0037)
+
+A driver introduces another and is paid once the person they introduced has
+completed `billing.referral_trip_target` trips.
+
+**Attached when the office approves the application**, not at sign-up. ADR-0027
+already has a human reading every application, and that approval is the fraud
+control the scheme needs — every other attribution point pays out on something
+a stranger can manufacture. The code is stored **unresolved** at submission:
+validating it there would answer *"is this one of your drivers' codes?"* to an
+unauthenticated caller one guess at a time, which is ADR-0027 §5's leak with a
+working credential as the prize. A code that resolves to nobody is silently
+ignored at approval — the reviewer is giving somebody a job.
+
+**The trip target is the verification, not a hurdle.** A sign-up costs nothing
+to manufacture; ten completed trips means real work dispatched and real fares
+priced.
+
+The schema carries the integrity rather than the service:
+
+- **`referred_driver_id` is unique** — a person is introduced once, ever,
+  including across the duplicate applications ADR-0027 §5 deliberately allows.
+- **A code resolves to an existing driver**, so **cycles are structurally
+  impossible** rather than checked for: nobody can be introduced by somebody who
+  did not exist when they applied. Self-referral is refused explicitly anyway.
+- **`code`, `trip_target` and `amount_minor` are frozen onto the row**, because
+  all three can change afterwards.
+- **`qualified_at` is stamped under a row lock in the same transaction as the
+  credit.** The unique index stops a second *referral*; only the lock stops a
+  second *payment* against one.
+
+`referral` is unpaired, **trip-less** — the trips are the referred driver's, and
+carrying one would file their journey under this driver's history — and
+uncommissioned. The referred driver is **never named** on the statement: it is
+permanent and scrollable, and ADR-0024 §7's principle covers a colleague as much
+as a passenger.
+
+### `me/promotions` — the Promotions screen
+
+The three schemes above, as they apply to one driver right now. The only `/me`
+read that looks *forward*: the others are records of what happened.
+
+**Every scheme is nullable and a switched-off one is `null`, never a zeroed
+card.** `docs/screen-rules.md` §1 refuses a zero standing in for a figure that
+does not exist, and "0 of 40 trips" on a fleet running no bonus scheme is
+exactly that dressed as a measurement.
+
+**The app is never told the rules** — not `peak_starts_at`, not the target as a
+policy to apply. It gets values resolved on the server for this driver at this
+moment, and re-pulls to learn the office changed something.
+
+Not folded into `me/stats`, which the home screen polls every sixty seconds.
 
 ### `me/ledger-entries` — the wallet statement
 

@@ -95,7 +95,7 @@ class DriverStatsService
         $startOfToday = Carbon::now($this->earnings->timezone())->startOfDay()->utc();
 
         $today = $this->today($driver, $startOfToday);
-        $rating = $this->rating($driver);
+        $quality = $this->qualityFor($driver);
 
         return [
             'trips_today' => $today['trips'],
@@ -107,8 +107,50 @@ class DriverStatsService
             // platform's cash until they settle.
             'wallet_balance_minor' => $this->ledger->balanceMinor($driver),
             'currency' => $today['currency'],
+            'acceptance_rate' => $quality['acceptance_rate'],
+            'completion_rate' => $quality['completion_rate'],
+            'rating' => $quality['rating'],
+            'rating_count' => $quality['rating_count'],
+            'window_days' => self::WINDOW_DAYS,
+        ];
+    }
+
+    /**
+     * How well this driver is working — the four figures the Performance
+     * screen draws as dials, over the same 30-day window.
+     *
+     * **Public and separate from `forDriver()` so the two surfaces cannot
+     * drift.** The home screen shows acceptance and completion; the
+     * Performance screen shows those plus cancellation and the rating. Two
+     * implementations of "acceptance rate" is exactly the kind of divergence
+     * a driver notices and nobody can explain, and this platform has already
+     * paid for that lesson once with two readings of "today".
+     *
+     * `forDriver()` deliberately does **not** pass `cancellation_rate`
+     * through to `/me/stats`. Widening a payload polled every sixty seconds
+     * with a field the home screen does not render would cost every handset
+     * bytes for nothing and would need a contract change to boot; the two
+     * rates come from one query either way, so the sharing is free.
+     *
+     * @return array{
+     *     acceptance_rate: float|null,
+     *     completion_rate: float|null,
+     *     cancellation_rate: float|null,
+     *     rating: float|null,
+     *     rating_count: int,
+     *     window_days: int
+     * }
+     */
+    public function qualityFor(Driver $driver): array
+    {
+        $since = Carbon::now()->subDays(self::WINDOW_DAYS);
+        $rating = $this->rating($driver);
+        $endings = $this->terminalCounts($driver, $since);
+
+        return [
             'acceptance_rate' => $this->acceptanceRate($driver, $since),
-            'completion_rate' => $this->completionRate($driver, $since),
+            'completion_rate' => $this->rate($endings['completed'], $endings['total']),
+            'cancellation_rate' => $this->rate($endings['cancelled'], $endings['total']),
             'rating' => $rating['score'],
             'rating_count' => $rating['count'],
             'window_days' => self::WINDOW_DAYS,
@@ -217,14 +259,29 @@ class DriverStatsService
     }
 
     /**
-     * Trips finished, over trips that reached an end this driver influenced.
+     * How the work assigned to this driver ended, counted once.
      *
-     * `cancelled` and `no_show` are the other two endings. A cancellation is
-     * not always the driver's doing — a passenger can call it off — and this
-     * rate does not pretend to apportion blame; it is the completion rate of
-     * work assigned to them, which is what the fleet office reads it as.
+     * The three terminal states are `trip_completed`, `cancelled` and
+     * `no_show`, and both rates built on them come out of this single query.
+     * They used to be two queries reading the same rows for the same window;
+     * folding them is not only cheaper but removes the possibility of the
+     * completion and cancellation figures being measured over subtly
+     * different sets — which, sitting side by side as two dials, is exactly
+     * where that would have been noticed and impossible to explain.
+     *
+     * **Cancellation is not the complement of completion**, and the screen
+     * must not be built as though it were: `no_show` is the third ending, so
+     * the two rates sum to 100 only on a driver who has never had one. That
+     * third figure is deliberately not shown — a no-show is the passenger's
+     * act, and a dial for it would read as a driver's failing.
+     *
+     * A cancellation is likewise not always the driver's doing; a passenger
+     * can call it off. Neither rate apportions blame, and both are what the
+     * fleet office already reads them as.
+     *
+     * @return array{total: int, completed: int, cancelled: int}
      */
-    private function completionRate(Driver $driver, Carbon $since): ?float
+    private function terminalCounts(Driver $driver, Carbon $since): array
     {
         $terminal = [
             TripStatus::TRIP_COMPLETED->value,
@@ -237,13 +294,20 @@ class DriverStatsService
             ->selectRaw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as completed', [
                 TripStatus::TRIP_COMPLETED->value,
             ])
+            ->selectRaw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as cancelled', [
+                TripStatus::CANCELLED->value,
+            ])
             ->where('driver_id', $driver->getKey())
             ->whereIn('status', $terminal)
             ->whereNull('deleted_at')
             ->where('updated_at', '>=', $since)
             ->first();
 
-        return $this->rate((int) ($counts->completed ?? 0), (int) ($counts->total ?? 0));
+        return [
+            'total' => (int) ($counts->total ?? 0),
+            'completed' => (int) ($counts->completed ?? 0),
+            'cancelled' => (int) ($counts->cancelled ?? 0),
+        ];
     }
 
     /**

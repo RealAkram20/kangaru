@@ -73,10 +73,116 @@ class WeeklyBonusService
      */
     public function lastClosedWeek(?CarbonImmutable $at = null): CarbonImmutable
     {
+        return $this->currentWeek($at)->subWeek();
+    }
+
+    /**
+     * The Monday of the week containing `$at`, in the fleet's timezone.
+     *
+     * The week **in progress** — which `awardFor()` must never be handed, and
+     * which the Performance screen's progress card is entirely about. The two
+     * uses are opposite and both are legitimate: nothing is paid for a partial
+     * week, and a driver is still owed a truthful count of where they are in
+     * one.
+     */
+    public function currentWeek(?CarbonImmutable $at = null): CarbonImmutable
+    {
         $timezone = $this->earnings->timezone();
         $now = $at?->setTimezone($timezone) ?? CarbonImmutable::now($timezone);
 
-        return $now->startOfWeek()->subWeek()->startOfDay();
+        return $now->startOfWeek()->startOfDay();
+    }
+
+    /**
+     * Completed trips for one driver in the week beginning `$weekStart`.
+     *
+     * **The same counting rule the award uses**, reached through the same
+     * private query — deliberately, because this number is shown to a driver
+     * as progress towards a payment. A screen that counted trips even
+     * slightly differently from the command that pays out would eventually
+     * tell somebody they had hit the target and then not pay them, and no
+     * amount of explaining recovers from that.
+     */
+    public function tripsInWeek(int $driverId, CarbonImmutable $weekStart): int
+    {
+        $timezone = $this->earnings->timezone();
+        $from = $weekStart->setTimezone($timezone)->startOfDay();
+
+        return $this->completedTripsPerDriver($from, $from->addWeek(), $driverId)[$driverId] ?? 0;
+    }
+
+    /**
+     * How this driver is doing against the target, in the week now running
+     * (ADR-0036 §1 — the Promotions screen).
+     *
+     * **This is the "bonus preview" ADR-0034 deliberately did not build**, and
+     * the objection it raised is answered rather than overruled. That entry
+     * refused to let the *handset* state the target or the amount, because a
+     * figure shipped inside an app goes on asserting the old number after the
+     * office changes it. Every figure here is read from settings at request
+     * time and computed on the server; the app is told what *is*, never the
+     * rule that produced it, and an office that moves the target moves this
+     * with it on the next pull.
+     *
+     * **It reports the open week, and says so.** The award still only ever
+     * runs over a closed week — nothing about `awardFor()` changes, and a
+     * driver at 18 of 30 has earned nothing yet. `ends_at` is served so the
+     * screen can say when the question gets answered rather than implying it
+     * already has.
+     *
+     * Null when the scheme is off, which is the caller's cue to draw nothing.
+     * A card reading "0 of 40 trips" for a fleet that runs no bonus scheme is
+     * the invented figure `docs/screen-rules.md` §1 forbids, dressed as a
+     * measurement.
+     *
+     * @return array{
+     *     trips: int,
+     *     trip_target: int,
+     *     amount_minor: int,
+     *     currency: string,
+     *     week_start: string,
+     *     ends_at: string,
+     *     achieved: bool
+     * }|null
+     */
+    public function progressFor(Driver $driver, ?CarbonImmutable $at = null): ?array
+    {
+        if (! $this->enabled()) {
+            return null;
+        }
+
+        $target = $this->tripTarget();
+        $amount = $this->amountMinor();
+
+        if ($target < 1 || $amount < 1) {
+            return null;
+        }
+
+        // The week *containing* now, not the last closed one — and both the
+        // boundary and the count go through the helpers above rather than
+        // being derived here. `tripsInWeek()` reaches the same private query
+        // the award uses, which is the point: a screen that counted trips even
+        // slightly differently from the command that pays out would eventually
+        // tell somebody they had hit the target and then not pay them.
+        $from = $this->currentWeek($at);
+        $to = $from->addWeek();
+
+        $trips = $this->tripsInWeek((int) $driver->getKey(), $from);
+
+        return [
+            'trips' => $trips,
+            'trip_target' => $target,
+            'amount_minor' => $amount,
+            'currency' => $this->currency(),
+            'week_start' => $from->toIso8601String(),
+            // When the week closes and the command can run — not when the
+            // money arrives. The screen's wording carries that distinction.
+            'ends_at' => $to->toIso8601String(),
+            // Served rather than left to the app to derive from `trips >=
+            // trip_target`. Two implementations of one comparison is one that
+            // gains a `>` and one that does not.
+            'achieved' => $trips >= $target,
+        ];
     }
 
     /**
@@ -200,9 +306,14 @@ class WeeklyBonusService
      * own timezone rather than converting it, so an unconverted `+03:00`
      * boundary silently shifts the window by three hours.
      *
+     * `$onlyDriverId` narrows it to one driver for `tripsInWeek()`. The filter
+     * is a parameter rather than a second query so the *predicate* — which
+     * status, which timestamp, which half-open bound — is written once. It is
+     * the rule that decides whether somebody gets paid.
+     *
      * @return array<int, int> driver id => completed trips
      */
-    private function completedTripsPerDriver(CarbonImmutable $from, CarbonImmutable $to): array
+    private function completedTripsPerDriver(CarbonImmutable $from, CarbonImmutable $to, ?int $onlyDriverId = null): array
     {
         $rows = DB::table('trips')
             ->select('driver_id')
@@ -212,6 +323,7 @@ class WeeklyBonusService
             ->whereNotNull('completed_at')
             ->where('completed_at', '>=', $from->utc())
             ->where('completed_at', '<', $to->utc())
+            ->when($onlyDriverId !== null, fn ($q) => $q->where('driver_id', $onlyDriverId))
             ->groupBy('driver_id')
             ->get();
 

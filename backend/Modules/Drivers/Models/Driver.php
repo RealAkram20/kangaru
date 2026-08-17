@@ -26,6 +26,8 @@ use Modules\Vehicles\Models\Vehicle;
  * @property string $name
  * @property string $license_number
  * @property string $status
+ * @property string|null $referral_code Minted on first use — see ReferralService::codeFor().
+ * @property string|null $photo_path Private-disk path; streamed, never linked (ADR-0041).
  */
 class Driver extends Model
 {

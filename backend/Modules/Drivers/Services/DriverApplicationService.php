@@ -19,7 +19,10 @@ use Modules\Drivers\Models\DriverApplication;
  */
 class DriverApplicationService
 {
-    public function __construct(private readonly DriverAccountService $accounts) {}
+    public function __construct(
+        private readonly DriverAccountService $accounts,
+        private readonly ReferralService $referrals,
+    ) {}
 
     /**
      * Records an application. Called by an unauthenticated stranger.
@@ -36,6 +39,12 @@ class DriverApplicationService
             // reaches a second line of code.
             'password' => bcrypt($attributes['password']),
             'status' => DriverApplicationStatus::PENDING,
+            // Stored exactly as typed, and **deliberately not checked here**
+            // (ADR-0037 §5). Resolving it at submission would answer "is this
+            // one of your drivers' codes?" to an unauthenticated stranger, one
+            // guess at a time — the same leak ADR-0027 §5 refuses for the email
+            // address. It is resolved at approval, in front of a human.
+            'referral_code' => $attributes['referral_code'] ?? null,
             // The server's clock, never the client's: a consent timestamp a
             // phone could set is not evidence of anything.
             'terms_accepted_at' => now(),
@@ -104,6 +113,16 @@ class DriverApplicationService
                 'password' => $locked->password,
                 'role' => $attributes['role'] ?? 'driver',
             ]);
+
+            // ADR-0037 §5. Inside the same transaction, so a referral and the
+            // driver it concerns are written together or not at all.
+            //
+            // **It cannot fail the approval.** A code that resolves to nobody,
+            // a person somebody has already introduced, or the scheme being
+            // switched off all return null and are ignored: the reviewer is
+            // giving somebody a job, and a mistyped code is not a reason to
+            // refuse them one.
+            $this->referrals->attach($driver, $locked->referral_code);
 
             $locked->forceFill([
                 'status' => DriverApplicationStatus::APPROVED,

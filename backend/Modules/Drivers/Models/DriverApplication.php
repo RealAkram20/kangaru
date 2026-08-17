@@ -31,6 +31,7 @@ use Modules\Drivers\Enums\DriverApplicationStatus;
  * @property Carbon|null $reviewed_at
  * @property string|null $rejection_reason
  * @property int|null $driver_id
+ * @property string|null $referral_code
  */
 class DriverApplication extends Model
 {
@@ -47,6 +48,9 @@ class DriverApplication extends Model
         'reviewed_at',
         'rejection_reason',
         'driver_id',
+        // What the applicant typed, unresolved (ADR-0037 §5). Checked at
+        // approval, never at submission — see `StoreDriverApplicationRequest`.
+        'referral_code',
     ];
 
     /**

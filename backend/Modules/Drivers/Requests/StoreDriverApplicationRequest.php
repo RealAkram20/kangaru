@@ -56,6 +56,17 @@ class StoreDriverApplicationRequest extends FormRequest
             // The *time* is stamped server-side; the client is only ever
             // asked whether, never when.
             'terms_accepted' => ['accepted'],
+            // Optional, and **deliberately not `exists:drivers,referral_code`**
+            // (ADR-0037 §5). That rule would answer "is this one of your
+            // drivers' codes?" to an unauthenticated caller, one guess at a
+            // time — the same lookup service ADR-0027 §5 refuses to run for
+            // the email address, and this one hands an attacker a way to
+            // attribute their own recruits to somebody else's account.
+            //
+            // It is resolved when the office approves the application, where a
+            // human is reading it. A code that resolves to nobody is silently
+            // ignored there rather than refusing somebody a job.
+            'referral_code' => ['sometimes', 'nullable', 'string', 'max:16'],
         ];
     }
 

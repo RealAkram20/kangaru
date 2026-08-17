@@ -8,7 +8,10 @@ use Modules\Drivers\Controllers\DriverDocumentController;
 use Modules\Drivers\Controllers\DriverDocumentReviewController;
 use Modules\Drivers\Controllers\DriverEarningsController;
 use Modules\Drivers\Controllers\DriverLedgerController;
+use Modules\Drivers\Controllers\DriverPerformanceController;
+use Modules\Drivers\Controllers\DriverPhotoController;
 use Modules\Drivers\Controllers\DriverProfileController;
+use Modules\Drivers\Controllers\DriverPromotionController;
 use Modules\Drivers\Controllers\DriverSettlementRequestController;
 use Modules\Drivers\Controllers\DriverStatsController;
 use Modules\Drivers\Controllers\DriverTripHistoryController;
@@ -28,6 +31,14 @@ Route::delete('drivers/{driver}/account', [DriverAccountController::class, 'dest
 // The driver's own numbers, for their home screen. Under `/me` like offers
 // and duty: the driver is the token, so there is no id and no policy left.
 Route::get('me/stats', [DriverStatsController::class, 'show'])->name('me.stats.show');
+
+// How they are doing — the Performance screen's six dials and its weekly
+// bonus card (ADR-0038). Separate from `me/stats` for the same reason
+// `me/profile` is: stats is polled every sixty seconds, and a roster walk, a
+// duty-session sum and a week of trips must not ride along on every poll of a
+// screen that renders none of them.
+Route::get('me/performance', [DriverPerformanceController::class, 'show'])
+    ->name('me.performance.show');
 
 // Who they are on the platform — the Profile screen. Separate from
 // `me/stats` for the reason `me/earnings` is: stats is polled every sixty
@@ -51,6 +62,17 @@ Route::post('me/documents', [DriverDocumentController::class, 'store'])
 // on `/me` that takes an id, and therefore the one with a policy check.
 Route::get('me/documents/{document}/file', [DriverDocumentController::class, 'file'])
     ->name('me.documents.file');
+
+// A driver's own photograph (ADR-0041). Streamed rather than served from a
+// signed storage URL, for the reason ADR-0033 §3 gives about identity images —
+// and it matters more here, not less: a licence scan is fetched once by a
+// reviewer, this is fetched every time somebody opens the drawer.
+//
+// No id in any of the three paths. The driver is the token, so `show` needs no
+// policy where `me/documents/{document}/file` does.
+Route::get('me/photo', [DriverPhotoController::class, 'show'])->name('me.photo.show');
+Route::post('me/photo', [DriverPhotoController::class, 'store'])->name('me.photo.store');
+Route::delete('me/photo', [DriverPhotoController::class, 'destroy'])->name('me.photo.destroy');
 
 // The same driver's earnings over a day, a week or a month — the earnings
 // screen. Separate from `me/stats` rather than a fatter payload on it: stats
@@ -80,6 +102,18 @@ Route::get('me/ledger-entries', [DriverLedgerController::class, 'index'])
 // purpose. See the controller.
 Route::get('me/trips', [DriverTripHistoryController::class, 'index'])
     ->name('me.trips.index');
+
+// What the platform is currently offering them (ADR-0036, ADR-0037) — the
+// Promotions screen. The fourth `/me` read, and the only one that looks
+// *forward*: earnings, the ledger and the history are all records of what has
+// happened, and this is the weekly target still open, tonight's peak window and
+// what a referral would pay.
+//
+// Not folded into `me/stats`, which the home screen polls every sixty seconds.
+// Three settings reads and a weekly trip count should not ride along on a poll
+// nobody opened this screen for — the same separation `me/earnings` has.
+Route::get('me/promotions', [DriverPromotionController::class, 'index'])
+    ->name('me.promotions.index');
 
 // Settling up (ADR-0032). The driver asks; the office answers, and **the
 // answer is what writes the ledger entry** — the loop ADR-0029 §6 promised
