@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Context;
 use Illuminate\Validation\ValidationException;
 use Modules\Dispatch\Console\AdvanceDispatchOffers;
 use Modules\Drivers\Console\AwardWeeklyBonuses;
+use Modules\Fleet\Console\CloseStaleDutySessions;
 use Modules\Reports\Console\PruneReportExports;
 use Modules\Trips\Console\MaintainTripLocationPartitions;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
@@ -40,6 +41,7 @@ return Application::configure(basePath: dirname(__DIR__))
         MaintainTripLocationPartitions::class,
         AdvanceDispatchOffers::class,
         AwardWeeklyBonuses::class,
+        CloseStaleDutySessions::class,
     ])
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->api(prepend: [

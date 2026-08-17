@@ -15,6 +15,7 @@ use Modules\Fleet\Requests\UpdateDutyRequest;
 use Modules\Fleet\Resources\DriverPresenceResource;
 use Modules\Fleet\Services\Availability;
 use Modules\Fleet\Services\AvailabilityService;
+use Modules\Fleet\Services\DutySessionService;
 use Modules\Fleet\Support\DriverPresence;
 use Modules\Fleet\Support\DriverPresenceStore;
 use Modules\Trips\Models\Trip;
@@ -54,6 +55,7 @@ class DriverPresenceController extends Controller
     public function __construct(
         private readonly DriverPresenceStore $presence,
         private readonly AvailabilityService $availability,
+        private readonly DutySessionService $sessions,
     ) {}
 
     /** The caller's own duty state, so the app can restore it on launch. */
@@ -88,11 +90,28 @@ class DriverPresenceController extends Controller
             }
         }
 
-        $this->presence->setDuty(
-            $driver->id,
-            $onDuty,
-            $onDuty ? $this->vehicleFor($driver, $request->integer('vehicle_id') ?: null) : null,
-        );
+        $vehicleId = $onDuty ? $this->vehicleFor($driver, $request->integer('vehicle_id') ?: null) : null;
+
+        $this->presence->setDuty($driver->id, $onDuty, $vehicleId);
+
+        /*
+         * The shift, beside the snapshot (ADR-0038).
+         *
+         * `driver_presence` answers "is this driver available right now, and
+         * where" and is overwritten in place; this writes down *when*, so
+         * their online hours are a measurement rather than an impression.
+         * Both are updated here because both are consequences of one act, and
+         * a driver whose presence said on-duty while no session was open
+         * would accrue no hours for a shift they genuinely worked.
+         *
+         * `open()` is idempotent for the same reason this route is PUT: a
+         * request that times out and is retried must not start two shifts.
+         */
+        if ($onDuty) {
+            $this->sessions->open($driver->id, $vehicleId);
+        } else {
+            $this->sessions->close($driver->id);
+        }
 
         return ApiResponse::success(
             new DriverPresenceResource($this->presence->get($driver->id) ?? $this->offDuty($driver->id)),
@@ -145,6 +164,19 @@ class DriverPresenceController extends Controller
             accuracyMetres: $request->filled('accuracy_metres') ? (float) $request->float('accuracy_metres') : null,
             recordedAt: CarbonImmutable::parse((string) $request->string('recorded_at')),
         ));
+
+        /*
+         * Marks the running shift as still alive (ADR-0038).
+         *
+         * **Server time, not the ping's `recorded_at`.** That field is the
+         * handset's clock and exists precisely so staleness can be judged
+         * against a device that may be wrong — which is right for a dispatch
+         * radius, and wrong here: a phone whose clock is a day slow would
+         * write a `last_seen_at` in the past and have its own live shift
+         * swept out from under it. What this records is that the platform
+         * heard from the driver, and the platform heard just now.
+         */
+        $this->sessions->heartbeat($driver->id);
 
         return ApiResponse::success(
             new DriverPresenceResource($this->presence->get($driver->id) ?? $this->offDuty($driver->id)),

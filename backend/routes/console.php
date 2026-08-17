@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
 use Modules\Dispatch\Console\AdvanceDispatchOffers;
 use Modules\Drivers\Console\AwardWeeklyBonuses;
+use Modules\Fleet\Console\CloseStaleDutySessions;
 use Modules\Reports\Console\PruneReportExports;
 
 Artisan::command('inspire', function () {
@@ -97,5 +98,24 @@ Schedule::command(AdvanceDispatchOffers::class)
 // response to one — see `--week`.
 Schedule::command(AwardWeeklyBonuses::class)
     ->weeklyOn(1, '03:15')
+    ->withoutOverlapping()
+    ->onOneServer();
+
+// Ends duty sessions the platform has stopped hearing from (ADR-0038), at
+// their last heartbeat rather than at this tick's "now".
+//
+// **This is not what stops a quiet driver being offered work.** The same TTL
+// is evaluated on every `dispatchable()` read, so that happens whether or not
+// this has ever run. What this does is write down when the shift stopped, so
+// online hours are measured rather than assumed — which is why a missed run
+// costs timeliness and not accuracy: the next run closes the session at the
+// same last heartbeat it would have used an hour earlier.
+//
+// Every minute, against a 180-second TTL. Finer would be spending queries to
+// sharpen a figure that is rendered to the nearest minute.
+Schedule::command(CloseStaleDutySessions::class)
+    ->everyMinute()
+    // A slow sweep must not stack behind itself: two runs would both read the
+    // same open sessions and race to close them.
     ->withoutOverlapping()
     ->onOneServer();

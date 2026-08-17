@@ -236,6 +236,67 @@ Two consequences land on this module:
 Zone-based dispatch eligibility is still not built; the resolver is the
 input it will use.
 
+## Duty sessions (ADR-0038)
+
+`driver_duty_sessions` records one row per shift — on duty at `started_at`,
+off duty at `ended_at` — so the driver app's Performance screen can say how
+long somebody was online. Before this, it could not: `driver_presence` is one
+row per driver, overwritten in place, and holds no history at all.
+
+**This is not the presence history ADR-0024 §2 refused.** That objection is
+about *telemetry* — a row per heartbeat, carrying coordinates, answering
+"where was this driver at 11:04", and the source of its 500M-row estimate.
+This table takes two rows per driver per day and has nowhere to put a
+position. `driver_presence` keeps its job unchanged.
+
+### The three ways a shift ends
+
+| Ending | Written by | `ended_reason` |
+|---|---|---|
+| The driver signs off | `PUT /me/duty` with `on_duty: false` | `driver` |
+| The platform stops hearing from them | `duty:close-stale`, **at the last heartbeat** | `stale` |
+| They sign on again without signing off | `open()` reuses the running shift | — (none opened) |
+
+The staleness rule is what makes the figure honest rather than flattering. A
+shift that only ever ended when somebody remembered to end it would report a
+phone left in a drawer over a weekend as a fifty-hour week.
+
+It reuses `dispatch.presence_ttl_seconds` rather than taking a setting of its
+own **on purpose**: that is already the line at which dispatch stops offering
+this driver work, and a driver the platform will not send a job to was not
+online. Two settings would eventually disagree, and the disagreement would
+surface as somebody being credited hours in which nobody could reach them.
+
+### The exception the rule needs
+
+**A driver on a live trip is never swept, and the sweep refreshes their
+session instead.** The app's heartbeat is a JavaScript `setInterval` and stops
+when the handset backgrounds the app — exactly what happens when a phone goes
+into a cradle and the driver drives. Without this a two-hour journey would
+report as three minutes online, and the sweep would sign the driver off with a
+passenger aboard.
+
+Refreshing rather than merely skipping matters: when the trip ends the shift
+must be closable from a *recent* mark, or the whole journey is discarded by
+the next sweep.
+
+### Running it
+
+```
+php artisan duty:close-stale          # scheduled every minute
+php artisan duty:close-stale --ttl=60 # a tighter window, for testing
+```
+
+A missed run degrades the figure rather than breaking it — an unclosed session
+is simply still open, and the next run closes it at the same last heartbeat it
+would have used an hour earlier.
+
+`RosterService` answers the other half: how many hours a driver was
+**rostered** for over a span, from `driver_shift_windows`. It returns **null**,
+never zero, for a driver with no windows — ADR-0017 §3 makes that mean
+"available at any hour", which is not a number, and the screen draws no arc
+against it.
+
 ## What's explicitly deferred
 
 Named here so a half-built thing is not mistaken for a finished one.
@@ -272,6 +333,13 @@ Named here so a half-built thing is not mistaken for a finished one.
 7. **Branches, depots and depot boundaries.** PROJECT.md's Fleet Management
    module names all three and `Modules/Dispatch` lists them among the inputs
    it does not consult. None are modelled.
+
+8. **No office view of who is on duty, or for how long.** ADR-0038 gives that
+   feature its table and its arithmetic — `DutySessionService::secondsIn()`
+   answers it for any driver over any window — but the only surface reading it
+   is the driver's own Performance screen. A fleet office asking a driver to
+   work more hours should be quoting a figure rather than an impression, and
+   right now they cannot see one.
 
 8. **Automatic dispatch is not this.** ADR-0009 supplies a ranking *input*;
    it is not the matcher. Distance still blocks that, and distance needs
