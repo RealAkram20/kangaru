@@ -15,7 +15,7 @@ before first client onboarding*. Precisely:
 
 | Claim | Status |
 |---|---|
-| The rollback procedure in §5 | **Rehearsed, end to end, timed** — in CI, on a Docker host, using this repository's own `docker-compose.yml`: schema down **12 s**, whole rollback **40 s**. See §5.4 for what that covers and what it does not. |
+| The rollback procedure in §5 | **Rehearsed, end to end, timed** — in CI, on a Docker host, using this repository's own `docker-compose.yml`: schema down **12–14 s**, whole rollback **40–43 s**. See §5.4 for what that covers and what it does not. |
 | A backup restored | **Performed** — `deploy-stack` does one on every CI run, timed. |
 | The same, **on the owner's Coolify server** | **NOT DONE.** No Coolify project existed when this was written. |
 
@@ -235,6 +235,19 @@ bash deploy/rollback.sh --schema 1 --yes
 bash deploy/rollback.sh --verify <old commit>
 ```
 
+**If you get the order wrong, nothing tells you.** This was rehearsed
+deliberately (runs
+[32126492421](https://github.com/RealAkram20/kangaru/actions/runs/32126492421)
+and
+[32127105596](https://github.com/RealAkram20/kangaru/actions/runs/32127105596)):
+with the image already back, `migrate:rollback` cannot find the migration
+file, **rolls back nothing, prints "Rolling back migrations." and exits 0.**
+The script reported *"schema rollback done in 12s"*, `--verify` passed,
+`APP_BUILD` was the old build and `/up` answered 200. Every signal said the
+rollback had worked, and the new schema was still there. `rollback.sh` now
+counts applied migrations either side and refuses to claim a rollback it did
+not perform — but the ordering above is what stops you needing that guard.
+
 `--schema` refuses without `--yes`, and it stops `queue` and `scheduler`
 before touching the schema — a job written against the new schema, picked up
 mid-rollback, fails against the old one and lands in `failed_jobs` looking
@@ -253,10 +266,13 @@ deploy v1 → add a migration → deploy v2 → schema down while v2 runs → v1
 → assert the table is gone, `APP_BUILD` is v1, both workers are up, `/up`
 answers, and a pre-rollback backup exists.
 
-> **Measured, 18 Aug 2026, run
-> [32125874574](https://github.com/RealAkram20/kangaru/actions/runs/32125874574):
-> schema rollback `ROLLBACK_SECONDS=12`; complete rollback including the
-> image going back `TOTAL_ROLLBACK_SECONDS=40`.**
+> **Measured, 18 Aug 2026, over two green runs
+> ([32125874574](https://github.com/RealAkram20/kangaru/actions/runs/32125874574),
+> [32128219509](https://github.com/RealAkram20/kangaru/actions/runs/32128219509)):
+> schema rollback `ROLLBACK_SECONDS` **12–14 s**; complete rollback including
+> the image going back `TOTAL_ROLLBACK_SECONDS` **40–43 s**.** The second run
+> also reports `migrations applied: 73 -> 72`, which is the proof the schema
+> actually moved rather than the script merely saying so.
 
 **Read the breakdown, not the total** — the run's own timestamps:
 

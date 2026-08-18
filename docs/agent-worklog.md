@@ -7803,3 +7803,157 @@ and the only number I can give you is CI's 1–2 s restore of an empty schema.
 
 **Handover to whoever takes the Coolify project:** `deploy/README.md` §2 is
 the step list, and §2's table names every key beyond W1-b's template.
+
+---
+
+### 2026-08-18 13:12 — W1-d · Runbook and rollback
+
+**Status:** in progress. **Claimed at 13:12 local.** If another entry claims
+W1-d with an earlier timestamp, this one yields — say so and I withdraw. Five
+mentions of `W1-d` exist in this log; **all five are other agents handing work
+to it, none is a claim.** This is the first. Same agent as W1-a, which is
+closed and green.
+
+**Files owned — new, do not edit:**
+
+- `docs/runbook.md` — the runbook. AGENTS.md requires the rollback procedure
+  written down **and rehearsed** before first client onboarding.
+- `deploy/rollback.sh` — new. The rehearsal has to run something; a runbook
+  whose steps have never been executed is the thing this package exists to
+  prevent.
+
+**Files shared — the exact edits:**
+
+- `.github/workflows/ci.yml` — **one new job, `rollback-rehearsal`.** No
+  existing job touched, including `deploy-stack`.
+- `docs/agent-worklog.md` — this entry and its closing amendment.
+
+**The exit criterion is "a rollback performed and timed", and I cannot
+perform it on the live server — so I am not going to pretend otherwise.**
+No Coolify project exists yet (W1-a delivered the files; standing the
+project up is the owner's, `deploy/README.md` §2). What I can do is exactly
+what made W1-a's restore real rather than documentary: **rehearse the
+rollback on a Docker host in CI** — deploy commit N, migrate, deploy N+1
+carrying a schema change, then roll back and time it. That proves the
+*procedure*, on the same compose file, and it is honest about proving
+nothing about the owner's server. The live rehearsal stays open and is
+named as such in the runbook's first section.
+
+**An amendment to W1-a, my own file, because this log found the defect
+while I was away.** The 03:20 entry proved every upload is capped at 2 MB by
+PHP's `upload_max_filesize` and addressed the production half to W1-b. It is
+not W1-b's: they own `backend/config/*` and the env templates; the container's
+PHP ini is `backend/Dockerfile`, which is mine. **And my values are wrong.**
+I set `PHP_POST_MAX_SIZE=12M` equal to `PHP_UPLOAD_MAX_FILE_SIZE=12M`, with a
+comment claiming the largest API ceiling is 8 MB. Verified in code just now:
+`TransitionTripRequest` allows **10240 KB — 10 MB** for the odometer dashboard
+photo, and `post_max_size` **must exceed** `upload_max_filesize` or the entire
+request body is discarded rather than the file. Corrected in this package,
+with the reasoning attached, and the go-live check the 03:20 entry asked for
+goes in the runbook.
+
+**Amendment, 04:25 — the Home header avatar had the same bug, and it was hiding
+behind a cache.** The owner, with a screenshot of the header: *"it is showing
+that plain thing instead of the profile pic"*.
+
+`HomeScreen.tsx:236` passed a bare `{ uri: photoUrl }` — the same missing
+Authorization header, the same 401, the same empty circle. **It looked fixed on
+my emulator and was not.** `expo-image` caches by URL, the drawer had already
+fetched that exact picture *with* the header, and the Home header was reading
+the cache rather than the network. A handset that opened Home first — which is
+every handset, it is the landing screen — had nothing to hit.
+
+The lesson is worth more than the line: **a passing observation through a warm
+cache is not a passing observation.** Proved this time by `pm clear` on Expo Go
+— app data and image cache wiped, signed out, signed back in as the demo driver
+— and the photograph renders in the header on the first paint with nothing
+cached.
+
+`OdometerScreen.tsx:261` was checked and is **correct as it stands**: its uri is
+a local `file://` from the picker, not an API URL, and needs no token. It is the
+only other `source={{ uri: … }}` in the app.
+
+834 tests, eslint and `tsc` green after the change.
+
+**14:05 — W1-d closed. The rollback has been performed and timed — in CI, not
+on the server, and the difference is written into the runbook rather than
+smoothed over.**
+
+**Delivered:** `docs/runbook.md` (deploy, verify, the queue worker dying,
+dispatch stalling, a blank live map, uploads, rollback in three shapes,
+backup/restore, the AGENTS.md alert set, who is called at 2am);
+`deploy/rollback.sh`; one new CI job `rollback-rehearsal`. Plus the W1-a
+correction described in the claim.
+
+**The rehearsal, and what it measured.** Run
+[32128219509](https://github.com/RealAkram20/kangaru/actions/runs/32128219509),
+all six jobs green: deploy v1 → add a migration → deploy v2 → **roll the
+schema back while v2 is still running** → put v1 back → assert the table is
+gone, `APP_BUILD` is v1, both workers are up, `/up` answers, and a
+pre-rollback backup exists. **`migrations applied: 73 -> 72`,
+`ROLLBACK_SECONDS=14`, `TOTAL_ROLLBACK_SECONDS=43`** (12 s / 40 s on the
+first green run, so the runbook quotes a range).
+
+**The breakdown is the useful part:** the migration itself took about a
+second; **stopping the queue worker took ten.** So the schema step does not
+scale with schema size — it scales with what the worker is holding, and a
+rollback that looks hung at "stopping queue" is behaving correctly.
+
+**Proved by mutation, twice, and the second one found a defect in my own
+script.** I reversed the order — code back before schema down, the exact
+mistake the runbook warns about:
+
+1. **Run [32126492421](https://github.com/RealAkram20/kangaru/actions/runs/32126492421)** —
+   caught, but only by the job's table assertion. The interesting part is
+   what the rollback itself did: `migrate:rollback` **could not find the
+   migration file, rolled back nothing, printed "Rolling back migrations."
+   and exited 0.** `rollback.sh` reported *"schema rollback done in 12s"*,
+   `--verify` passed, `APP_BUILD` was v1 and `/up` was 200. **Every signal
+   said success and the schema had not moved.** At 2am that is the difference
+   between a bad night and a lost one.
+2. So `rollback.sh` gained a guard — count applied migrations either side,
+   refuse to claim a rollback that did not happen — and **run
+   [32127105596](https://github.com/RealAkram20/kangaru/actions/runs/32127105596)
+   proved it fires**: *"FAILED — 73 migrations before, 73 after: nothing was
+   rolled back"*, naming the cause and pointing at §5.3.
+3. That run exposed a third thing: the guard printed FAILED **and the CI step
+   still passed**, because GitHub runs `bash -e` without `pipefail` and
+   `| tee` returned 0. Fixed, and **run
+   [32127652957](https://github.com/RealAkram20/kangaru/actions/runs/32127652957)
+   confirms the failure now lands on the rollback step with `Verify` skipped**
+   rather than surfacing two steps later as something else.
+4. **Order restored** — `grep -c "MUTATION UNDER TEST"` in the workflow is
+   **0** — and the confirming run is green.
+
+**Also corrected, in W1-a's `backend/Dockerfile` which is mine:** the 03:20
+finding's production half. `post_max_size` and `upload_max_filesize` were both
+12M with a comment claiming an 8 MB ceiling; `TransitionTripRequest` allows
+**10 MB** and `post_max_size` must exceed `upload_max_filesize` or PHP
+discards the whole body. Now 12M/16M with nginx cleared to match, and §3 of
+the runbook makes "prove one upload at its documented size" a deploy check
+rather than an assumption. **To the 03:20 author:** this was addressed to
+W1-b, but W1-b owns `backend/config/*` and the env templates — the container's
+PHP ini is the Dockerfile, so it was mine. Nothing of yours was touched.
+
+**NOT done, and each is in the runbook rather than only here:**
+
+- **No rollback on the owner's Coolify server.** §5.5 is the half-hour that
+  closes it. The CI figure is mechanics on 55 empty tables with a warm image
+  cache and no proxy; production adds a Coolify rebuild and a proxy switch.
+  **Budget minutes.**
+- **No alerting exists at all.** §7 lists AGENTS.md's six required alerts and
+  states plainly that none are wired, so a dead queue worker or a stalled
+  dispatch is currently found by a human noticing. Not in any Track A package;
+  it should be week-one work.
+- **§8, who is called at 2am, is an empty table.** Nobody has said who goes in
+  it and a name I invented would be worse than the blank. Owner's, and it is
+  on the go/no-go list.
+- **`app-storage` still has no backup** and `APP_KEY` is in no backup — both
+  restated in §6 because a restore without the original key returns
+  permanently unreadable driver documents, with no error.
+
+**Files owned:** `docs/runbook.md`, `deploy/rollback.sh`. **Shared, as
+claimed:** `.github/workflows/ci.yml` (one new job; `deploy-stack` untouched),
+`docs/agent-worklog.md`. **Amended, my own from W1-a:** `backend/Dockerfile`,
+`docker-compose.yml` (the `APP_BUILD` build arg). **Not touched:**
+`backend/config/*`, `backend/.env*` (W1-b's).
