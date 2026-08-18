@@ -145,14 +145,14 @@ it('resolves a completed trip after completion and writes the evidence, without 
         ->and($evidence->policy)->toBe(DistancePolicy::GPS_PRIMARY)
         // Matching is off by default, so the engine was haversine and the
         // whole trace counts as inferred; with no engine there is no
-        // reference route either, so the odometer stands unchecked: C.
+        // reference route either, so the odometer stands unverified: U.
         ->and($evidence->provider)->toBe('haversine')
         ->and((float) $evidence->gps_km)->toBe(50.0)
         ->and((float) $evidence->haversine_km)->toBe(50.0)
         ->and((float) $evidence->inferred_share_percent)->toBe(100.0)
         ->and($evidence->route_km)->toBeNull()
         ->and((float) $evidence->odometer_km)->toBe(50.0)
-        ->and($evidence->grade)->toBe(DistanceGrade::HELD)
+        ->and($evidence->grade)->toBe(DistanceGrade::UNVERIFIED)
         ->and((float) $evidence->billed_km)->toBe(50.0)
         ->and($evidence->pings_total)->toBe(201)
         ->and($evidence->pings_kept)->toBe(201)
@@ -162,11 +162,11 @@ it('resolves a completed trip after completion and writes the evidence, without 
         ->and($evidence->dropped)->toEqualCanonicalizing(['mock' => 0, 'accuracy' => 0, 'duplicate' => 0, 'teleport' => 0, 'jitter' => 0])
         ->and($evidence->thresholds['traceMatchingEnabled'])->toBeFalse()
         ->and($evidence->thresholds['corridorCeilingPercent'])->toBe(125)
-        ->and($evidence->reason)->toContain('stands unchecked');
+        ->and($evidence->reason)->toContain('stands unverified');
 
     // The trip carries the answer…
     expect((float) $trip->billed_distance_km)->toBe(50.0)
-        ->and($trip->distance_grade)->toBe(DistanceGrade::HELD)
+        ->and($trip->distance_grade)->toBe(DistanceGrade::UNVERIFIED)
         ->and($trip->distance_resolved_at)->not->toBeNull()
         // …and everything that was there before means what it meant.
         ->and((float) $trip->distance_km)->toBe(50.0)
@@ -340,7 +340,7 @@ it('replays a trip from the console without writing, and writes with --commit', 
     $this->artisan('trips:replay-distance', ['trip' => $trip->id])
         ->expectsOutputToContain('Trace (billable)')
         ->expectsOutputToContain('Engine')
-        ->expectsOutputToContain('Decision (gps_primary): 50.00 km, grade C')
+        ->expectsOutputToContain('Decision (gps_primary): 50.00 km, grade U')
         ->expectsOutputToContain('Nothing written')
         ->assertSuccessful();
 

@@ -22,7 +22,7 @@ class ReplayTripDistance extends Command
 {
     protected $signature = 'trips:replay-distance
         {trip : The trip id}
-        {--policy=gps_primary : gps_primary, route_capped or odometer}
+        {--policy= : gps_primary, route_capped or odometer; omitted, the rate card of the trip decides}
         {--commit : Record the outcome as a new evidence row and update the trip}';
 
     protected $description = 'Re-run the distance resolver on a trip and show every witness and the decision';
@@ -30,9 +30,9 @@ class ReplayTripDistance extends Command
     public function handle(DistanceResolutionService $resolution): int
     {
         $option = $this->option('policy');
-        $policy = is_string($option) ? DistancePolicy::tryFrom($option) : null;
+        $policy = is_string($option) && $option !== '' ? DistancePolicy::tryFrom($option) : null;
 
-        if ($policy === null) {
+        if (is_string($option) && $option !== '' && $policy === null) {
             $this->error('Unknown policy. Use gps_primary, route_capped or odometer.');
 
             return self::INVALID;

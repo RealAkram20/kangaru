@@ -29,9 +29,15 @@ const METRICS = {
 // `mock` prefix required: Jest hoists the factories above these declarations.
 const mockQueueTransition = jest.fn(async () => undefined);
 const mockUseTrip = jest.fn();
+// What this phone measured of its own buffered pings (ADR-0045 §5).
+const mockBufferedDistanceKm = jest.fn(async () => null as number | null);
 
 jest.mock('../offline/SyncProvider', () => ({
-  useSync: () => ({ queueTransition: mockQueueTransition, sync: jest.fn() }),
+  useSync: () => ({
+    queueTransition: mockQueueTransition,
+    sync: jest.fn(),
+    bufferedDistanceKm: mockBufferedDistanceKm,
+  }),
 }));
 
 jest.mock('../trips/queries', () => ({
@@ -55,6 +61,9 @@ async function renderOdometer(
   // which quietly made the first version of that test assert the opposite of
   // its own name.
   ceiling: number | null = 2_000,
+  // Likewise served, never hardcoded (ADR-0045 §5). `null` is a trip cached
+  // before the field existed.
+  threshold: number | null = 10,
 ): Promise<ReturnType<typeof render>> {
   mockUseTrip.mockReturnValue({
     data: {
@@ -62,6 +71,7 @@ async function renderOdometer(
       odometer_start: 104_320,
       // Served on the trip, never hardcoded here (ADR-0035).
       ...(ceiling === null ? {} : { odometer_max_km_per_trip: ceiling }),
+      ...(threshold === null ? {} : { variance_threshold_percent: threshold }),
     },
   });
 
@@ -79,6 +89,103 @@ beforeEach(() => {
   replace.mockClear();
   goBack.mockClear();
   mockQueueTransition.mockClear();
+  mockBufferedDistanceKm.mockClear();
+  mockBufferedDistanceKm.mockResolvedValue(null);
+});
+
+it('sends what this phone measured with the completion, so a cash fare exists at the kerb', async () => {
+  // ADR-0045 §5. The settled fare waits for the server to measure the trace;
+  // the passenger does not.
+  mockBufferedDistanceKm.mockResolvedValue(11.7);
+
+  const { getByPlaceholderText, getByText } = await renderOdometer('trip_completed', 'trip_started');
+
+  // The measurement is read in an effect; waiting for it is the difference
+  // between asserting the behaviour and racing it.
+  await waitFor(() => expect(mockBufferedDistanceKm).toHaveBeenCalledWith(42));
+  await fireEvent.changeText(getByPlaceholderText('104320'), '104332');
+  void fireEvent.press(getByText('Complete trip'));
+
+  await waitFor(() => expect(replace).toHaveBeenCalled());
+
+  expect(mockQueueTransition).toHaveBeenCalledWith(
+    expect.objectContaining({ odometerEnd: 104_332, provisionalDistanceKm: 11.7 }),
+  );
+});
+
+it('sends no measurement at all rather than a zero when the phone has nothing', async () => {
+  // A trip driven with location refused, or a handset that never got a fix.
+  // Zero would be priced as a free ride.
+  const { getByPlaceholderText, getByText } = await renderOdometer('trip_completed', 'trip_started');
+
+  await waitFor(() => expect(mockBufferedDistanceKm).toHaveBeenCalledWith(42));
+  await fireEvent.changeText(getByPlaceholderText('104320'), '104332');
+  void fireEvent.press(getByText('Complete trip'));
+
+  await waitFor(() => expect(replace).toHaveBeenCalled());
+
+  expect(mockQueueTransition).toHaveBeenCalledWith(
+    expect.not.objectContaining({ provisionalDistanceKm: expect.anything() }),
+  );
+});
+
+it('never measures the buffer for an opening reading — there is nothing to compare yet', async () => {
+  await renderOdometer('trip_started', 'driver_arrived');
+
+  await waitFor(() => expect(mockBufferedDistanceKm).not.toHaveBeenCalled());
+});
+
+it('warns at the keypad when the typed reading disagrees with what the phone saw', async () => {
+  // The 6 km trip typed as 13 km: inside every ceiling, and only the trace
+  // sees it. A warning, never a refusal — the phone measures crow-flight over
+  // whatever pings it holds, so it reads short on a winding road.
+  mockBufferedDistanceKm.mockResolvedValue(6);
+
+  const { getByPlaceholderText, getByText, queryByText } = await renderOdometer(
+    'trip_completed',
+    'trip_started',
+  );
+
+  await waitFor(() => expect(mockBufferedDistanceKm).toHaveBeenCalledWith(42));
+  await fireEvent.changeText(getByPlaceholderText('104320'), '104333');
+
+  expect(getByText(/measured about 6 km/i)).toBeTruthy();
+  expect(queryByText(/makes it 13 km/i)).toBeTruthy();
+
+  // And it still sends: the office measures the trip too.
+  void fireEvent.press(getByText('Complete trip'));
+  await waitFor(() => expect(mockQueueTransition).toHaveBeenCalled());
+});
+
+it('stays quiet when the reading and the measurement agree', async () => {
+  // GPS reads a little short on a curve; 13 typed against 12 measured is 7.7%,
+  // inside the office's 10%.
+  mockBufferedDistanceKm.mockResolvedValue(12);
+
+  const { getByPlaceholderText, queryByText } = await renderOdometer('trip_completed', 'trip_started');
+
+  await waitFor(() => expect(mockBufferedDistanceKm).toHaveBeenCalled());
+  await fireEvent.changeText(getByPlaceholderText('104320'), '104333');
+
+  expect(queryByText(/measured about/i)).toBeNull();
+});
+
+it('takes the warning threshold from the trip, and says nothing when the trip has none', async () => {
+  // Same rule as the ceiling: the office changes it, a compiled-in copy would
+  // go on asserting the old number on handsets nobody can reach.
+  mockBufferedDistanceKm.mockResolvedValue(6);
+
+  const { getByPlaceholderText, queryByText } = await renderOdometer(
+    'trip_completed',
+    'trip_started',
+    2_000,
+    null,
+  );
+
+  await waitFor(() => expect(mockBufferedDistanceKm).toHaveBeenCalled());
+  await fireEvent.changeText(getByPlaceholderText('104320'), '104333');
+
+  expect(queryByText(/measured about/i)).toBeNull();
 });
 
 it('sends the driver to the completion screen once the closing reading is queued', async () => {

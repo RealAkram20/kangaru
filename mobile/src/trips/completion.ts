@@ -127,7 +127,71 @@ export function confirmationNote(trip: Trip | undefined): string | null {
     return null;
   }
 
+  // ADR-0045 §2: a held trip is not "not sent yet" — the office has it and is
+  // looking at it. Telling a driver to wait for a connection they already
+  // have is the kind of wrong reassurance that costs a support call.
+  if (trip?.distance?.held === true) {
+    return 'The office is checking this trip’s distance before your earnings are worked out. Nothing is missing from your phone — you will see them once it is cleared.';
+  }
+
   return 'This trip is saved on this phone and will be sent when there is a connection. Your earnings appear once the office has it.';
+}
+
+/**
+ * What the passenger owes right now, on a cash ride whose fare has not
+ * settled (ADR-0045 §5).
+ *
+ * The driver has to collect *something* at the kerb, and the settled figure
+ * arrives after the server has measured the trip. So the provisional fare is
+ * shown when there is one and no settled fare — and labelled, because a
+ * figure that may change is not a receipt.
+ *
+ * Null when the trip has settled, when a corporate client is billed instead,
+ * or when nothing could be priced: a screen shows nothing rather than a zero.
+ */
+export function collectNow(trip: Trip | undefined): { amount: string; note: string } | null {
+  if (trip === undefined || trip.fare !== null || trip.provisional_fare === null) {
+    return null;
+  }
+
+  return {
+    amount: money(trip.provisional_fare.total_minor, trip.provisional_fare.currency),
+    note:
+      trip.distance?.held === true
+        ? 'Collect this now. The office is checking the distance; the final fare follows.'
+        : 'Collect this now. The final fare follows the distance the office measures.',
+  };
+}
+
+/**
+ * The settled fare and what was actually collected, when they differ
+ * (ADR-0045 §5) — otherwise null, because there is nothing to explain.
+ *
+ * A driver who took 74,000 at the kerb on a trip that settled at 77,000 is
+ * holding less of the platform's money than the fare implies, and their
+ * balance already says so. This is the sentence that stops that being a
+ * mystery.
+ */
+export function settlementDifferenceNote(trip: Trip | undefined): string | null {
+  if (trip === undefined || trip.fare === null || trip.provisional_fare === null) {
+    return null;
+  }
+
+  const collected = trip.provisional_fare.total_minor;
+  const settled = trip.fare.total_minor;
+
+  if (collected === settled) {
+    return null;
+  }
+
+  // The settled fare's currency may be null on a trip priced before the
+  // column existed; the provisional one always has it, and the two are the
+  // same money either way.
+  const currency = trip.fare.currency ?? trip.provisional_fare.currency;
+
+  return collected < settled
+    ? `You collected ${money(collected, currency)}; the office settled this trip at ${money(settled, currency)}. The difference is in your favour on your balance.`
+    : `You collected ${money(collected, currency)}; the office settled this trip at ${money(settled, currency)}. The difference is held against your balance.`;
 }
 
 /**

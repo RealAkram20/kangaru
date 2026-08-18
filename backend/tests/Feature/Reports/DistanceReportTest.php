@@ -91,7 +91,7 @@ it('lists every completed trip\'s latest resolution with the whole-set distribut
     $tenant = Tenant::factory()->create();
 
     $verified = reportTrip($tenant, odometerKm: 50);   // trace 50, road 50, odometer 50 → A
-    $bounded = reportTrip($tenant, odometerKm: 50, withTrace: false); // no trace → no reference → odometer unchecked → C
+    $bounded = reportTrip($tenant, odometerKm: 50, withTrace: false); // no trace → no reference → odometer unverified → U
     $inflated = reportTrip($tenant, odometerKm: 1_900); // trace wins, A; odometer 38× off
 
     $response = $this->actingAs(platformReader())->getJson('/api/v1/reports/distance')->assertOk();
@@ -121,12 +121,12 @@ it('lists every completed trip\'s latest resolution with the whole-set distribut
     expect($rows->firstWhere('trip_id', $inflated->id)['variance_flagged'])->toBeTrue()
         ->and($rows->firstWhere('trip_id', $inflated->id)['grade'])->toBe('A');
 
-    expect($rows->firstWhere('trip_id', $bounded->id)['grade'])->toBe('C')
+    expect($rows->firstWhere('trip_id', $bounded->id)['grade'])->toBe('U')
         ->and($rows->firstWhere('trip_id', $bounded->id)['gps_km'])->toBeNull();
 
     expect($summary['resolved'])->toBe(3)
         ->and($summary['unresolved'])->toBe(0)
-        ->and($summary['grades'])->toBe(['A' => 2, 'B' => 0, 'C' => 1])
+        ->and($summary['grades'])->toBe(['A' => 2, 'B' => 0, 'C' => 0, 'U' => 1])
         ->and($summary['providers'])->toBe(['osrm' => 3, 'haversine' => 0])
         ->and($summary['no_trace'])->toBe(1)
         ->and($summary['no_reference'])->toBe(1)
@@ -173,10 +173,10 @@ it('counts completed trips the resolver has not answered for as unresolved', fun
 
 it('filters by grade, provider and period, and refuses an unknown filter', function () {
     $tenant = Tenant::factory()->create();
-    reportTrip($tenant, odometerKm: 50, withTrace: false); // C, haversine
+    reportTrip($tenant, odometerKm: 50, withTrace: false); // U, haversine
     $reader = platformReader();
 
-    expect($this->actingAs($reader)->getJson('/api/v1/reports/distance?grade=C')->assertOk()->json('data'))->toHaveCount(1)
+    expect($this->actingAs($reader)->getJson('/api/v1/reports/distance?grade=U')->assertOk()->json('data'))->toHaveCount(1)
         ->and($this->actingAs($reader)->getJson('/api/v1/reports/distance?grade=A')->assertOk()->json('data'))->toHaveCount(0)
         ->and($this->actingAs($reader)->getJson('/api/v1/reports/distance?provider=haversine')->assertOk()->json('data'))->toHaveCount(1)
         ->and($this->actingAs($reader)->getJson('/api/v1/reports/distance?provider=osrm')->assertOk()->json('data'))->toHaveCount(0)

@@ -63,6 +63,25 @@ enum ErrorCode: string
      */
     case TRIP_NOT_INVOICEABLE_WALK_IN = 'TRIP_NOT_INVOICEABLE_WALK_IN';
 
+    /**
+     * The trip's distance has not been resolved yet, and its rate card bills
+     * on the measured trace (ADR-0045). "Not yet", like TRIP_NOT_INVOICEABLE:
+     * the resolver runs after a grace period and re-runs on late pings, so
+     * the right response is to wait or to force it from the console.
+     */
+    case TRIP_DISTANCE_UNRESOLVED = 'TRIP_DISTANCE_UNRESOLVED';
+
+    /**
+     * The trip's distance resolved to grade C — held — and
+     * `tracking.held_blocks_billing` is on (ADR-0045 §2). Nothing bills from
+     * it until a person with `trips.transition.finance` clears it with a
+     * reason.
+     */
+    case TRIP_DISTANCE_HELD = 'TRIP_DISTANCE_HELD';
+
+    /** Clearing a trip that is not held: nothing to clear (ADR-0045 §2). */
+    case TRIP_DISTANCE_NOT_HELD = 'TRIP_DISTANCE_NOT_HELD';
+
     case TRIP_ALREADY_INVOICED = 'TRIP_ALREADY_INVOICED';
     case IDEMPOTENCY_KEY_REUSED = 'IDEMPOTENCY_KEY_REUSED';
     case CREDIT_NOTE_EXCEEDS_INVOICE = 'CREDIT_NOTE_EXCEEDS_INVOICE';

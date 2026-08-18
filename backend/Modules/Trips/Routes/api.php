@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use Modules\Trips\Controllers\LivePositionController;
 use Modules\Trips\Controllers\OdometerPhotoController;
 use Modules\Trips\Controllers\TripController;
+use Modules\Trips\Controllers\TripDistanceController;
 use Modules\Trips\Controllers\TripEventController;
 use Modules\Trips\Controllers\TripLocationController;
 use Modules\Trips\Controllers\TripRouteController;
@@ -12,6 +13,11 @@ Route::apiResource('trips', TripController::class)->only(['index', 'show', 'stor
 Route::post('trips/{trip}/transitions', [TripController::class, 'transition'])->name('trips.transitions.store');
 Route::get('trips/{trip}/events', [TripEventController::class, 'index'])->name('trips.events.index');
 Route::get('trips/{trip}/route', [TripRouteController::class, 'show'])->name('trips.route.show');
+
+// ADR-0045: the distance evidence behind a trip's billed figure, and the one
+// act the review queue performs — lifting a hold, with a reason.
+Route::get('trips/{trip}/distance', [TripDistanceController::class, 'index'])->name('trips.distance.index');
+Route::post('trips/{trip}/distance/clearance', [TripDistanceController::class, 'clear'])->name('trips.distance.clear');
 
 // The dashboard photo captured with each odometer reading (PROJECT.md's
 // anchor-client requirement). Streamed behind auth rather than served from

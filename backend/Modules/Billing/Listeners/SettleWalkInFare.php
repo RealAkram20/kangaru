@@ -4,8 +4,11 @@ namespace Modules\Billing\Listeners;
 
 use Illuminate\Support\Facades\Log;
 use Modules\Billing\Pricing\RateCardNotConfiguredException;
+use Modules\Billing\Pricing\TripDistanceHeldException;
+use Modules\Billing\Pricing\TripDistanceUnresolvedException;
 use Modules\Billing\Services\WalkInFareService;
-use Modules\Trips\Events\TripCompleted;
+use Modules\Trips\Events\TripDistanceCleared;
+use Modules\Trips\Events\TripDistanceResolved;
 
 /**
  * Prices a walk-in ride the moment it finishes (ADR-0026 §3).
@@ -27,14 +30,29 @@ class SettleWalkInFare
 {
     public function __construct(private readonly WalkInFareService $fares) {}
 
-    public function handle(TripCompleted $event): void
+    /**
+     * On `TripDistanceResolved` and `TripDistanceCleared` (ADR-0045 §5) —
+     * no longer on `TripCompleted`. The fare is settled from the resolver's
+     * figure, so it cannot be settled before the resolver has one; what the
+     * driver shows at the kerb in the meantime is the provisional fare
+     * `PriceProvisionalWalkInFare` wrote at completion.
+     */
+    public function handle(TripDistanceResolved|TripDistanceCleared $event): void
     {
         if (! $event->trip->isWalkIn()) {
             return;
         }
 
         try {
-            $this->fares->settle($event->trip);
+            $this->fares->settle($event->trip->refresh());
+        } catch (TripDistanceUnresolvedException|TripDistanceHeldException $e) {
+            // Not yet. A held trip settles when a person clears it, and this
+            // listener hears that too. The provisional fare stands in on the
+            // handset until then, marked as what it is.
+            Log::info('billing.walk_in_fare_deferred', [
+                'trip_id' => $event->trip->id,
+                'reason' => $e->getMessage(),
+            ]);
         } catch (RateCardNotConfiguredException $e) {
             // Loud in the log, silent to the driver, and **the trip still
             // completes**.

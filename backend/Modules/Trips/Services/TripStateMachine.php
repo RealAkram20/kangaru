@@ -132,6 +132,12 @@ class TripStateMachine
         // two different types depending on whether the model was reloaded.
         $trip->distance_km = (string) ($trip->odometer_end - $trip->odometer_start);
 
+        // ADR-0045 §5: what the handset measured, kept as a claim beside the
+        // odometer's. Only ever set here, and only from the completion.
+        if (isset($payload['provisional_distance_km'])) {
+            $trip->provisional_distance_km = (string) round((float) $payload['provisional_distance_km'], 2);
+        }
+
         $this->reconcileAgainstGps($trip);
     }
 

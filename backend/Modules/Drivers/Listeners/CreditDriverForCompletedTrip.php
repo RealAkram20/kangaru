@@ -4,7 +4,8 @@ namespace Modules\Drivers\Listeners;
 
 use Illuminate\Support\Facades\Log;
 use Modules\Drivers\Services\DriverLedgerService;
-use Modules\Trips\Events\TripCompleted;
+use Modules\Trips\Events\TripDistanceCleared;
+use Modules\Trips\Events\TripDistanceResolved;
 use Throwable;
 
 /**
@@ -30,7 +31,13 @@ class CreditDriverForCompletedTrip
 {
     public function __construct(private readonly DriverLedgerService $ledger) {}
 
-    public function handle(TripCompleted $event): void
+    /**
+     * On `TripDistanceResolved` and `TripDistanceCleared`, after
+     * `SettleWalkInFare` (ADR-0045 §5) — a walk-in fare is settled from the
+     * resolver's figure now, so the ledger pair follows it there. Idempotent
+     * either way: a re-resolution after settlement credits nothing twice.
+     */
+    public function handle(TripDistanceResolved|TripDistanceCleared $event): void
     {
         try {
             // Refreshed because SettleWalkInFare wrote the fare to the

@@ -117,6 +117,7 @@ class DistanceReportRepository
             ->selectRaw("SUM(e.grade = 'A') AS grade_a")
             ->selectRaw("SUM(e.grade = 'B') AS grade_b")
             ->selectRaw("SUM(e.grade = 'C') AS grade_c")
+            ->selectRaw("SUM(e.grade = 'U') AS grade_u")
             ->selectRaw("SUM(e.provider = 'osrm') AS provider_osrm")
             ->selectRaw("SUM(e.provider = 'haversine') AS provider_haversine")
             ->selectRaw('SUM(e.gps_km IS NULL) AS no_trace')
@@ -157,6 +158,7 @@ class DistanceReportRepository
                 'A' => (int) ($row['grade_a'] ?? 0),
                 'B' => (int) ($row['grade_b'] ?? 0),
                 'C' => (int) ($row['grade_c'] ?? 0),
+                'U' => (int) ($row['grade_u'] ?? 0),
             ],
             'providers' => [
                 'osrm' => (int) ($row['provider_osrm'] ?? 0),

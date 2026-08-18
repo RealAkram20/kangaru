@@ -7268,3 +7268,97 @@ was more disturbance to the other session than the check is worth tonight.
 The panel is rendered by RTL under StrictMode in six tests and the page test
 suite passes with it wired in; **the first person to open Reports → Measured
 distance on a running stack should look at it and say so here.**
+
+### 2026-08-18 — Measured distance, Phase 2: the algorithm is connected to the app
+
+**Status:** built, on `feat/measured-distance` (PR #10). **Backend 1,300+
+tests green**, Pint and PHPStan L8 clean; **mobile 853 tests across 59 suites,
+all green**, `tsc --noEmit` and eslint clean. **Three mobile mutations proved
+and restored.** Not driven on a handset or in a browser — see the end.
+
+**Source:** the owner, mid-turn: *"we need to connect out algorith to the
+app."* Asked which half they meant, they chose **full Phase 2** — billing
+*and* the driver app.
+
+**The load-bearing property: no fare moved.** `rate_card_versions.
+distance_policy` defaults to `odometer` on every existing version and every
+new one that does not name another, and under that policy the resolver's
+figure *is* the odometer delta. Pointing `TripPricingEngine` at
+`billed_distance_km ?? distance_km` therefore changed nothing anybody bills
+today. The flip is issuing a rate card version that says `gps_primary` — a
+dated, reversible commercial act, never a deploy.
+
+**Grade U, and why it had to exist.** The first draft gated on grade C alone
+and **the entire existing invoice suite went red**: with no OSRM server every
+trip resolves with no trace and no reference, which the resolver was calling
+C, which the gate was refusing. That is not a discrepancy — it is *missing
+evidence*, exactly what ADR-0035 refused to flag ("flagging it would flag
+every trip taken before a device was fitted"). So `DistanceGrade::UNVERIFIED`
+('U') is now the fourth grade: nothing vouches for the figure and nothing
+contradicts it. C is held under every policy; U only under a trace-priced one.
+**One exception:** a trace carrying a mock-location ping is held even with no
+road to check against — a faked position is not "no evidence", the device
+spoke against the trip.
+
+**Backend:**
+
+- `rate_card_versions.distance_policy` (default `odometer`) threaded through
+  the model, request, service and resource; `DistancePolicySource` is an
+  interface **Trips owns and Billing implements**, so the resolver asks for
+  the policy without Trips importing Billing.
+- `Pricing\DistanceGate` — one guard, both billing paths, switched by
+  `tracking.held_blocks_billing` (default on). `TRIP_DISTANCE_UNRESOLVED` and
+  `TRIP_DISTANCE_HELD` (409s), `TRIP_DISTANCE_NOT_HELD` on a pointless
+  clearance.
+- `SettleWalkInFare` and `CreditDriverForCompletedTrip` moved from
+  `TripCompleted` to `TripDistanceResolved` + `TripDistanceCleared`;
+  `PriceProvisionalWalkInFare` took the completion slot.
+- `GET /trips/{trip}/distance` (evidence, newest first) and
+  `POST /trips/{trip}/distance/clearance` (finance lifts a hold, reason ≥10
+  chars, audited, idempotent). `TripPolicy::clearDistance`.
+- `trips.provisional_distance_km`, `fare_provisional_minor`,
+  `distance_cleared_at/_by_user_id/_reason`.
+- **The ledger records what was collected, not what settled.**
+  `cash_collected` is the provisional figure when there was one; `fare_earned`
+  is the commission share of the settled fare. A driver who took 74,000 on a
+  trip that settled at 77,000 now has that difference on their balance with a
+  description saying so, rather than a ledger asserting cash that never
+  changed hands.
+
+**Driver app:**
+
+- `is_mock` on every ping — `LocationObject.mocked`, passed through, stored in
+  SQLite (with an `ALTER TABLE` guard for handsets that already have the
+  table), sent to the server.
+- `location/bufferedDistance.ts` — the handset's own measurement: crow-flight
+  over kept pings, mock fixes dropped entirely, jitter under the noise floor
+  dropped. **Null, never zero,** when there is nothing to measure.
+- `OdometerScreen` warns at the keypad when the typed delta disagrees with
+  that measurement by more than the trip's `variance_threshold_percent`
+  (served on the trip, ADR-0035's rule) — **a warning, never a refusal**, and
+  it still sends. It also sends `provisional_distance_km` with the completion.
+- `RideCompleteScreen` shows **"Collect now"** with the provisional fare while
+  the settled one waits, says *"the office is checking the distance"* rather
+  than *"waiting for a connection"* on a held trip, and explains the
+  difference afterwards when the two figures disagree.
+
+**Mutations proved and restored (mobile):** dropping the mock filter from the
+buffer measurement; removing the null/threshold guard from the warning;
+dropping `provisionalDistanceKm` from the completion payload. Each killed by
+exactly the test written for it. (Backend Phase 2 has no separate mutation
+pass beyond Phase 1's — its guards are covered by
+`tests/Feature/Billing/MeasuredDistanceBillingTest.php`, whose eleven cases
+each fail with the guard removed by construction.)
+
+**Not built, deliberately:** the console's **review queue** for held trips —
+the evidence endpoint and the clearance POST exist, and the Measured distance
+report shows the grade counts, but nothing lists held trips for a finance user
+to work through. That is the next screen, and it is the one a real go-live
+needs before `gps_primary` is switched on anywhere.
+
+**Not verified by running.** The backend suite drives the whole loop
+(provisional fare → resolution → settlement → ledger → clearance → invoice),
+and the mobile suite drives the screens under RTL — but nothing here has been
+opened on a handset or in a browser, for the same shared-tree reason as the
+entry above. **Before this ships: complete one walk-in trip on a device and
+watch the Collect now figure appear, then the settled fare replace it.**

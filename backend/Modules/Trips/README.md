@@ -388,16 +388,19 @@ until proven otherwise:
 php artisan tinker --execute="echo DB::table('jobs')->count();"
 ```
 
-### Measured distance (ADR-0045) — built, in shadow
+### Measured distance (ADR-0045)
 
 `Modules/Trips/Distance/` is the pipeline `docs/measured-distance-plan.md`
 describes: the fare's distance from the **measured trace**, checked against a
-**road-routed reference**, with the **odometer as a backup witness**. It is
-built and it runs on every completed trip; **nothing prices from it yet.**
-`TripPricingEngine` still reads `distance_km`, `SettleWalkInFare` still fires
-on `TripCompleted`, and the driver app is untouched. Phase 1 of the plan is
-this — shadow — so the grade distribution is known before money depends on
-it.
+**road-routed reference**, with the **odometer as a backup witness**. It runs
+on every completed trip, and since Phase 2 the fare is priced from its figure
+— `TripPricingEngine` reads `billed_distance_km ?? distance_km`.
+
+**No fare moves until a rate card version asks it to.**
+`rate_card_versions.distance_policy` defaults to `odometer`, under which the
+resolver's figure *is* the odometer delta. Issuing a version that says
+`gps_primary` is the flip, and it is a dated, reversible commercial act
+rather than a deploy.
 
 What runs, per completed trip, in `ResolveTripDistance` after
 `tracking.resolution_grace_seconds` (and again whenever pings land for a trip
@@ -411,7 +414,7 @@ that has already completed — `DistanceResolutionScheduler`, from the
 | measure | `TraceMeasurer` + `MeasurementRouter` | splits into runs at silences, snaps each run to roads in ≤100-point chunks (OSRM `match`), routes across gaps; `gpsKm = matchedKm + inferredKm`, coverage, inferred share |
 | reference | `RouteReference` | the road from the order's pins, or the trace's own ends |
 | decide | `DistanceResolver` | pure: `(billedKm, grade A/B/C, reason)` from `DistanceWitnesses` + `DistancePolicy` + `DistanceThresholds` |
-| record | `DistanceResolutionService` | one `trip_distance_evidence` row (append-only) + `trips.billed_distance_km / distance_grade / distance_resolved_at`; raises `TripDistanceResolved` (no listeners yet) |
+| record | `DistanceResolutionService` | one `trip_distance_evidence` row (append-only) + `trips.billed_distance_km / distance_grade / distance_resolved_at`; raises `TripDistanceResolved`, which is what settles a walk-in fare and credits the driver |
 
 **The engine is OSRM and the switch is `tracking.trace_matching_enabled`
 (default false)** — a separate seam from the map's `RouteProvider`, so the
@@ -429,12 +432,38 @@ dead zone but a trace that started late still loses coverage.
 `php artisan trips:replay-distance {trip} [--policy=] [--commit]` prints every
 witness and the decision for a trip from stored data under today's
 thresholds, and writes nothing unless told to. It is the tool for arguing
-with a fare.
+with a fare. Without `--policy` it uses the trip's own rate card's.
+
+**Four grades, and the fourth is the one to understand.** A verified, B
+bounded, C held — and **U unverified**: no usable trace *and* no reference
+route, so nothing vouches for the odometer and nothing contradicts it. C is
+held under every policy; U only under a trace-priced one, because there the
+contract asked to be billed on something that was not measured. Under
+`odometer` a U trip bills exactly as it always did — ADR-0035's "missing
+evidence is not a discrepancy", carried into the gate. `Modules\Billing\
+Pricing\DistanceGate` is where that is decided, for both billing paths.
+
+**Endpoints (ADR-0045 §2):** `GET /trips/{trip}/distance` serves every
+resolution of a trip, newest first — the console's evidence panel.
+`POST /trips/{trip}/distance/clearance` lifts a hold with a reason: finance's
+act (`trips.transition.finance`), audited, idempotent, and it does not change
+the figure. Nothing lists held trips yet; that queue is unbuilt.
 
 Every threshold is in the `tracking` settings group and every evidence row
 records the thresholds *as applied*. `distance_km`, `gps_distance_km` and
 `distance_variance_flagged` are untouched and mean what the sections above
-say. Tests: `tests/Unit/Distance/*` (the rule and the bookkeeping, pure, with
+say — the odometer is still captured, photographed, bounded at the transition
+and kept as the fleet's mileage record.
+
+**The kerb (ADR-0045 §5).** A walk-in fare now settles on
+`TripDistanceResolved`, not `TripCompleted` — so `PriceProvisionalWalkInFare`
+prices a **provisional** fare at completion from
+`trips.provisional_distance_km` (what the handset measured of its own
+buffered pings, sent with the completion) or the odometer delta. That figure
+is what the driver shows and takes, is never overwritten, and is what the
+driver's ledger records as `cash_collected`; `fare_earned` is the commission
+share of the settled fare, so a difference between the two shows on the
+driver's balance instead of being asserted away. Tests: `tests/Unit/Distance/*` (the rule and the bookkeeping, pure, with
 a mutation pass on record in `docs/agent-worklog.md`),
 `tests/Feature/Trips/OsrmMeasurementRouterTest.php` (the engine's HTTP,
 faked), `tests/Feature/Trips/DistanceResolutionTest.php` (the pipeline end

@@ -22,8 +22,9 @@ namespace Modules\Trips\Distance;
  *     but road known      reference allows. B if the reading sat inside it
  *                       untouched, C if it had to be clamped: a reading the
  *                       road contradicts is held for a person.
- *   no road either    → whatever there is, graded C. The platform does not
- *                       have the evidence to bill this on its own.
+ *   no road either    → the odometer, graded U: nothing vouches for it and
+ *                       nothing contradicts it. Whether that bills is the
+ *                       policy's call (`DistanceGate`), not the evidence's.
  *
  * "Trusted" is every bar at once: enough of the trip covered by pings, not
  * too much of the distance inferred across gaps, no mock-location ping
@@ -34,7 +35,8 @@ namespace Modules\Trips\Distance;
  * allowance unless the driver declared a stop. `ODOMETER` bills the reading
  * and grades it against the others — A when a trusted trace agrees with it,
  * B when it sits inside the road's corridor, C when a trusted trace
- * contradicts it or nothing can vouch for it.
+ * contradicts it or it falls outside the corridor, U when nothing can vouch
+ * for it or against it.
  *
  * ## What is *not* here
  *
@@ -117,12 +119,13 @@ class DistanceResolver
         }
 
         if ($w->odometerKm !== null) {
-            return $this->decision($w->odometerKm, DistanceGrade::HELD, $policy, false,
-                sprintf('%s; no reference route, so the odometer %.2f km stands unchecked.', $why, $w->odometerKm));
+            return $this->unverifiedOrHeld($w, $policy, $why, $w->odometerKm);
         }
 
         // No odometer at all. Whatever was measured or routed is the only
-        // figure there is, and nothing vouches for it.
+        // figure there is, and nothing vouches for it — held, because a trip
+        // with neither a reading nor a trustworthy trace has nothing a fare
+        // could honestly stand on.
         $fallback = $w->gpsKm ?? $w->routeKm ?? 0.0;
 
         return $this->decision($fallback, DistanceGrade::HELD, $policy, false,
@@ -173,8 +176,24 @@ class DistanceResolver
                         $why, $odo, $floor, $ceiling, $w->routeKm));
         }
 
-        return $this->decision($odo, DistanceGrade::HELD, $policy, false,
-            sprintf('%s; no reference route, so the odometer %.2f km stands unchecked.', $why, $odo));
+        return $this->unverifiedOrHeld($w, $policy, $why, $odo);
+    }
+
+    /**
+     * No route to check the odometer against. Nothing vouches for it — but
+     * a mock-location ping is not "nothing": a handset that faked its
+     * position has spoken against the trip, and that is held, not merely
+     * unverified, whatever the policy.
+     */
+    private function unverifiedOrHeld(DistanceWitnesses $w, DistancePolicy $policy, string $why, float $odo): DistanceDecision
+    {
+        if ($w->mockDropped > 0) {
+            return $this->decision($odo, DistanceGrade::HELD, $policy, false,
+                sprintf('%s; no reference route, and the odometer %.2f km cannot be trusted beside a faked position.', $why, $odo));
+        }
+
+        return $this->decision($odo, DistanceGrade::UNVERIFIED, $policy, false,
+            sprintf('%s; no reference route, so the odometer %.2f km stands unverified.', $why, $odo));
     }
 
     /**

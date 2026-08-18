@@ -30,9 +30,13 @@ use Modules\Trips\Models\TripEvent;
  *
  * ## Policy
  *
- * Every resolution today runs under `GPS_PRIMARY`. The policy will come from
- * the rate card version when billing is wired; the parameter exists so that
- * change is one line here rather than a second code path.
+ * The policy is the rate card version's (`distance_policy`, ADR-0045 §3),
+ * asked through `DistancePolicySource` so Trips does not import Billing.
+ * When no rate card can be resolved nothing will bill this trip anyway, and
+ * the resolution runs under `GPS_PRIMARY` so the shadow report still shows
+ * what the trace would have said. A caller may pass a policy explicitly —
+ * the replay command does, to ask "what would this trip resolve to under
+ * the other rule".
  */
 class DistanceResolutionService
 {
@@ -42,14 +46,16 @@ class DistanceResolutionService
         private readonly RouteReference $reference,
         private readonly DistanceResolver $resolver,
         private readonly SettingsService $settings,
+        private readonly DistancePolicySource $policies,
     ) {}
 
     public function inspect(
         Trip $trip,
-        DistancePolicy $policy = DistancePolicy::GPS_PRIMARY,
+        ?DistancePolicy $policy = null,
         ?DistanceThresholds $thresholds = null,
     ): ResolutionOutcome {
         $thresholds ??= DistanceThresholds::fromSettings($this->settings);
+        $policy ??= $this->policies->policyFor($trip);
 
         $trace = $this->measurer->measure(
             $this->loader->pointsFor($trip->id),
@@ -89,7 +95,7 @@ class DistanceResolutionService
      * Resolves and records. Only a completed trip has anything to resolve;
      * anything else returns null and writes nothing.
      */
-    public function resolve(Trip $trip, DistancePolicy $policy = DistancePolicy::GPS_PRIMARY): ?DistanceEvidence
+    public function resolve(Trip $trip, ?DistancePolicy $policy = null): ?DistanceEvidence
     {
         if ($trip->status !== TripStatus::TRIP_COMPLETED) {
             return null;

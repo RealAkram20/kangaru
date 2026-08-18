@@ -89,6 +89,43 @@ export type SettledFare = {
 };
 
 /**
+ * What the driver showed and took at the kerb, while the settled fare waited
+ * for the server to resolve the trip's distance (ADR-0045 §5).
+ *
+ * Priced at completion through the same engine as everything else, from the
+ * distance this handset measured of its own buffered pings. **Null once the
+ * fare has settled at the same figure** — there is nothing to distinguish —
+ * and non-null beside a settled fare only when the two differ, which is a
+ * fact the driver needs to see rather than a discrepancy to hide.
+ */
+export type ProvisionalFare = {
+  total_minor: number;
+  currency: string;
+  /** What it was priced on, in kilometres. Null when the phone had nothing. */
+  distance_km: number | null;
+  is_estimate: true;
+  is_provisional: true;
+  basis: string;
+};
+
+/**
+ * What the server made of this trip's distance (ADR-0045).
+ *
+ * `held` is the one field a screen must act on: a held trip has no settled
+ * fare and no invoice until a person in the office reviews the evidence and
+ * clears it.
+ */
+export type TripDistanceResolution = {
+  billed_km: number | null;
+  grade: 'A' | 'B' | 'C' | 'U';
+  grade_label: string;
+  resolved_at: string;
+  held: boolean;
+  cleared_at: string | null;
+  cleared_reason: string | null;
+};
+
+/**
  * How a job settles, on a trip that has a walk-in order behind it.
  *
  * `payment_method` is a raw string rather than `OfferPaymentMethod`, and the
@@ -324,6 +361,16 @@ export type Trip = {
    */
   odometer_max_km_per_trip: number;
   /**
+   * How far a typed closing reading may sit from the distance this handset
+   * measured before the app warns, from `tracking.variance_threshold_percent`
+   * (ADR-0045 §5).
+   *
+   * Served for the same reason as the ceiling above and with the same caveat:
+   * the office changes it, and the server measures the trace itself and
+   * decides. This is a warning at the keypad, not a control.
+   */
+  variance_threshold_percent: number;
+  /**
    * How this job settles, or null.
    *
    * **Null is a real answer**: a corporate trip is invoiced to the client and
@@ -348,6 +395,14 @@ export type Trip = {
    * and null forever on a corporate trip, which is invoiced instead.
    */
   fare: SettledFare | null;
+  /**
+   * The kerb figure, while the settled one waits for the resolver
+   * (ADR-0045 §5). Null when there is none, and null once it agrees with
+   * `fare`.
+   */
+  provisional_fare: ProvisionalFare | null;
+  /** What the server made of the distance, or null before it has run. */
+  distance: TripDistanceResolution | null;
   /**
    * What it is expected to fetch, before that — the figure the driver
    * accepted the job on.

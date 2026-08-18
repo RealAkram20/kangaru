@@ -61,6 +61,14 @@ class DriverLedgerService
 
             $percent = (int) $this->settings->get('billing', 'driver_commission_percent');
             $fare = (int) $trip->fare_minor;
+            // What the passenger actually handed over (ADR-0045 §5): the
+            // provisional fare shown at the kerb when there was one, else the
+            // settled fare. The driver's share is of what the trip was
+            // worth; the cash is what was taken. When the two differ the
+            // balance shows it — the driver holds the excess, or the office
+            // owes the shortfall — instead of a ledger asserting cash that
+            // never changed hands.
+            $collected = (int) ($trip->fare_provisional_minor ?? $trip->fare_minor);
 
             // The house rounds against itself. `intdiv` floors, so a fraction
             // of a shilling lands with the driver rather than the platform —
@@ -92,9 +100,11 @@ class DriverLedgerService
                 'driver_id' => $trip->driver_id,
                 'trip_id' => $trip->getKey(),
                 'kind' => LedgerEntryKind::CASH_COLLECTED,
-                'amount_minor' => -$fare,
+                'amount_minor' => -$collected,
                 'currency' => $currency,
-                'description' => "Cash taken on trip #{$trip->getKey()}; {$commission} of it is commission at {$percent}%",
+                'description' => $collected === $fare
+                    ? "Cash taken on trip #{$trip->getKey()}; {$commission} of it is commission at {$percent}%"
+                    : "Cash taken on trip #{$trip->getKey()} at the provisional fare of {$collected}; settled fare {$fare}, commission {$commission} at {$percent}%",
             ]);
 
             $this->recordPeakUplift($trip, $earned, $currency);

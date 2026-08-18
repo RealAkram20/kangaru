@@ -1,10 +1,12 @@
 import type { Trip, TripEarnings } from '../api/types';
 import {
+  collectNow,
   confirmationNote,
   earningsAnnouncement,
   earningsRows,
   isConfirmed,
   primaryAction,
+  settlementDifferenceNote,
 } from './completion';
 
 /**
@@ -37,6 +39,9 @@ function trip(earnings: TripEarnings | null): Trip {
     allowed_transitions: [],
     pickup_wait_target_seconds: 300,
     odometer_max_km_per_trip: 2000,
+  variance_threshold_percent: 10,
+  provisional_fare: null,
+  distance: null,
     payment: null,
     odometer_start: 104_320,
     odometer_end: 104_332,
@@ -172,6 +177,105 @@ describe('the trip the office has not confirmed yet', () => {
     expect(isConfirmed(undefined)).toBe(false);
     expect(earningsRows(undefined)).toBeNull();
     expect(confirmationNote(undefined)).not.toBeNull();
+  });
+});
+
+/**
+ * The kerb (ADR-0045 §5): the settled fare now waits for the server to
+ * measure the trip, and a cash passenger does not.
+ */
+describe('what the driver collects now', () => {
+  const provisional = {
+    total_minor: 74_000,
+    currency: 'UGX',
+    distance_km: 48,
+    is_estimate: true as const,
+    is_provisional: true as const,
+    basis: 'Priced at completion from the distance measured so far.',
+  };
+
+  it('shows the provisional fare while the settled one is still coming', () => {
+    const collect = collectNow({ ...trip(null), provisional_fare: provisional });
+
+    expect(collect?.amount).toContain('74,000');
+    expect(collect?.note).toContain('final fare');
+  });
+
+  it('says the office is checking rather than "the final fare follows" on a held trip', () => {
+    // A held trip is not waiting on the driver's connection, and telling them
+    // it is would be a support call.
+    const collect = collectNow({
+      ...trip(null),
+      provisional_fare: provisional,
+      distance: {
+        billed_km: 62.5,
+        grade: 'C',
+        grade_label: 'held for review',
+        resolved_at: '2026-08-18T10:00:00+00:00',
+        held: true,
+        cleared_at: null,
+        cleared_reason: null,
+      },
+    });
+
+    expect(collect?.note).toContain('checking the distance');
+    expect(confirmationNote({
+      ...trip(null),
+      distance: {
+        billed_km: 62.5,
+        grade: 'C',
+        grade_label: 'held for review',
+        resolved_at: '2026-08-18T10:00:00+00:00',
+        held: true,
+        cleared_at: null,
+        cleared_reason: null,
+      },
+    })).toContain('checking this trip’s distance');
+  });
+
+  it('shows nothing once the fare has settled, and nothing when there never was one', () => {
+    const settledTrip = {
+      ...trip(settled),
+      fare: { total_minor: 74_000, currency: 'UGX', rate_card_version_id: 1, computed_at: null, is_estimate: false as const },
+      provisional_fare: provisional,
+    };
+
+    expect(collectNow(settledTrip)).toBeNull();
+    expect(collectNow(trip(null))).toBeNull();
+    expect(collectNow(undefined)).toBeNull();
+  });
+});
+
+describe('the difference between what was taken and what settled', () => {
+  const provisional = {
+    total_minor: 74_000,
+    currency: 'UGX',
+    distance_km: 48,
+    is_estimate: true as const,
+    is_provisional: true as const,
+    basis: 'Priced at completion.',
+  };
+
+  function settledAt(totalMinor: number): Trip {
+    return {
+      ...trip(settled),
+      fare: { total_minor: totalMinor, currency: 'UGX', rate_card_version_id: 1, computed_at: null, is_estimate: false as const },
+      provisional_fare: provisional,
+    };
+  }
+
+  it('says which way the difference runs when the trip settled higher', () => {
+    expect(settlementDifferenceNote(settledAt(77_000))).toContain('in your favour');
+  });
+
+  it('and when it settled lower', () => {
+    expect(settlementDifferenceNote(settledAt(70_000))).toContain('held against your balance');
+  });
+
+  it('says nothing when the two agree, or when either is missing', () => {
+    expect(settlementDifferenceNote(settledAt(74_000))).toBeNull();
+    expect(settlementDifferenceNote(trip(settled))).toBeNull();
+    expect(settlementDifferenceNote(undefined)).toBeNull();
   });
 });
 

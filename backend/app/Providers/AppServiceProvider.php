@@ -21,6 +21,7 @@ use Modules\Administration\Policies\RolePolicy;
 use Modules\Administration\Policies\SettingPolicy;
 use Modules\Administration\Policies\UserPolicy;
 use Modules\Administration\Services\SettingsService;
+use Modules\Billing\Listeners\PriceProvisionalWalkInFare;
 use Modules\Billing\Listeners\SettleWalkInFare;
 use Modules\Billing\Models\CreditNote;
 use Modules\Billing\Models\Invoice;
@@ -30,6 +31,7 @@ use Modules\Billing\Models\RateCardVersion;
 use Modules\Billing\Models\RateCardZoneRate;
 use Modules\Billing\Policies\InvoicePolicy;
 use Modules\Billing\Policies\RateCardPolicy;
+use Modules\Billing\Pricing\RateCardDistancePolicySource;
 use Modules\Bookings\Events\BookingApproved;
 use Modules\Bookings\Events\BookingRejected;
 use Modules\Bookings\Models\Booking;
@@ -69,9 +71,12 @@ use Modules\Reports\Enums\ReportType;
 use Modules\Reports\Events\ReportExportCompleted;
 use Modules\Support\Models\SupportRequest;
 use Modules\Support\Policies\SupportRequestPolicy;
+use Modules\Trips\Distance\DistancePolicySource;
 use Modules\Trips\Distance\MeasurementRouter;
 use Modules\Trips\Distance\OsrmMeasurementRouter;
 use Modules\Trips\Events\TripCompleted;
+use Modules\Trips\Events\TripDistanceCleared;
+use Modules\Trips\Events\TripDistanceResolved;
 use Modules\Trips\Listeners\ScheduleDistanceResolution;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Models\TripRating;
@@ -129,6 +134,10 @@ class AppServiceProvider extends ServiceProvider
         // is the only implementation and the interface exists so a second
         // self-hosted engine (Valhalla) is a binding, not a rewrite.
         $this->app->bind(MeasurementRouter::class, OsrmMeasurementRouter::class);
+        // Which witness a trip bills on is the rate card version's to say
+        // (ADR-0045 §3). Trips asks; Billing answers; neither imports the
+        // other for it.
+        $this->app->bind(DistancePolicySource::class, RateCardDistancePolicySource::class);
     }
 
     /**
@@ -232,12 +241,21 @@ class AppServiceProvider extends ServiceProvider
         // Registered here for the same reason the booking listeners are —
         // Laravel's event discovery scans app/Listeners by convention and
         // would never look under Modules\.
-        Event::listen(TripCompleted::class, SettleWalkInFare::class);
+        //
+        // ADR-0045 §5 moved the settling itself: the fare is now priced from
+        // the resolver's figure, so it settles on `TripDistanceResolved` (and
+        // on `TripDistanceCleared`, when a person lifts a hold). What a
+        // walk-in gets at completion is the *provisional* fare — the figure
+        // the driver shows and takes at the kerb.
+        Event::listen(TripCompleted::class, PriceProvisionalWalkInFare::class);
+        Event::listen(TripDistanceResolved::class, SettleWalkInFare::class);
+        Event::listen(TripDistanceCleared::class, SettleWalkInFare::class);
         // **After** SettleWalkInFare, and the order is load-bearing: the
         // fare does not exist until that listener has priced the trip, and
         // the ledger pair is idempotent so a premature run would credit
         // nothing and never retry (ADR-0029 §2).
-        Event::listen(TripCompleted::class, CreditDriverForCompletedTrip::class);
+        Event::listen(TripDistanceResolved::class, CreditDriverForCompletedTrip::class);
+        Event::listen(TripDistanceCleared::class, CreditDriverForCompletedTrip::class);
         // ADR-0037 §4. Order-independent, unlike the two above: this reads
         // `trips`, not a fare, and it credits a *different* driver — the one
         // who introduced the person who just finished a job.

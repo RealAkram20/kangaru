@@ -1,8 +1,11 @@
 # ADR-0045 — Measured distance: the trace is the fare, the road is the check, the odometer is the backup
 
-**Status:** accepted, 2026-08-18. Phase 1 (shadow) built the same day;
-Phases 2–4 of `docs/measured-distance-plan.md` are sequenced there and each
-lands behind its own decision.
+**Status:** accepted, 2026-08-18. Phases 1 (shadow) **and 2 (billing and the
+handset)** built the same day; Phases 3–4 of
+`docs/measured-distance-plan.md` are sequenced there and each lands behind its
+own decision. **Phase 2 changes no fare until an operator issues a rate card
+version that says so** — `distance_policy` defaults to `odometer` on every
+existing version and every new one that does not name another.
 **Extends:** ADR-0035 (the odometer ceiling and the `tracking` settings
 group), ADR-0003 (the GPS ingestion path this measures from), ADR-0031 §2
 (the OSRM provider seam), ADR-0023 (the offline thesis this must not break).
@@ -88,13 +91,37 @@ three figures; it was dropped because a median cannot be explained to a
 driver in one sentence and it lets a bad odometer reading pull a good trace
 by a third. Every branch bills exactly one witness and says which.
 
-### 2. Three grades, and the third is a gate
+### 2. Four grades, and two of them are a gate
 
-`A` verified, `B` bounded, `C` held. A and B bill automatically. **C does not
-bill** — not an invoice, not a ledger pair — until a person with the right
-permission clears it with a reason, audited. That gate is Phase 2/3 work and
-is not wired yet; the grade is computed and stored now so its distribution is
-known before it blocks anything.
+`A` verified, `B` bounded, `C` held, **`U` unverified**. A and B bill
+automatically. **C does not bill** — not an invoice, not a ledger pair — until
+a person with `trips.transition.finance` clears it with a reason, audited
+(`POST /trips/{trip}/distance/clearance`).
+
+`U` is the grade Phase 2 forced into existence, and it is the difference
+between a watchdog and a gate. C means the evidence speaks **against** the
+figure — a trusted trace contradicts the odometer, or a reading had to be
+clamped to fit the road. U means there is **no evidence either way**: no
+usable trace and no reference route, so nothing vouches for the odometer and
+nothing contradicts it. ADR-0035 refused to *flag* such a trip — "that is
+missing evidence, not a discrepancy; flagging it would flag every trip taken
+before a device was fitted" — and the same principle decides the gate: under
+the `odometer` policy a U trip bills exactly as it always did; under a
+trace-priced one it is held, because the contract asked to be billed on
+something that was not measured.
+
+Without U, switching the resolver on would have held every trip on a fleet
+with no OSRM server — which is to say every deployment on the day it upgrades.
+The first draft did exactly that, and the whole existing invoice suite went
+red; that is how the distinction was found.
+
+**One exception, and it is not a grade:** a trace carrying a mock-location
+ping is held even with no road to check it against. A faked position is not
+"no evidence" — the device spoke against the trip.
+
+The gate is `Modules\Billing\Pricing\DistanceGate`, called by both
+`InvoiceService` and `WalkInFareService` so the two cannot drift, and switched
+by `tracking.held_blocks_billing` (default **on** — controls default on).
 
 ### 3. Policy is a commercial term and lives on the rate card version
 
@@ -106,8 +133,18 @@ still graded and still held when a trusted trace contradicts it — for a
 contract that names the odometer as its evidence).
 
 Versioned and immutable like everything else on a rate card, so changing a
-policy tomorrow cannot restate an invoice issued today. The column arrives
-with Phase 2; today every resolution runs under `gps_primary` and records so.
+policy tomorrow cannot restate an invoice issued today.
+`rate_card_versions.distance_policy` **defaults to `odometer`** on every
+existing row and every new version that does not name another: that is
+today's behaviour, so pointing the pricing engine at the resolver's figure
+changed no fare. The flip to trace-priced fares is issuing a version that
+says `gps_primary` — dated, auditable, reversible by issuing another, and
+never a deploy.
+
+The resolver asks for the policy through `DistancePolicySource`, an interface
+Trips owns and Billing implements (`RateCardDistancePolicySource`). Billing
+already depends on Trips; the alternative closed the loop and made neither
+module movable — the same reasoning that made `TripCompleted` an event.
 
 ### 4. Every threshold is the operator's, and every row records them
 
@@ -131,13 +168,32 @@ per trip, so a device draining a day's outbox schedules one run and not one
 per batch; a batch landing after a run has started schedules a fresh one.
 Each run appends an evidence row; the trip's columns reflect the latest.
 
-The trip's fare therefore cannot be settled at the kerb from this figure.
-Phase 2 moves walk-in settlement from `TripCompleted` to
-`TripDistanceResolved` (raised now, unlistened) and gives the handset a
-**provisional** fare from its own buffered pings; the server's figure is
-authoritative and a difference beyond tolerance is a driver-ledger
-adjustment, never a passenger conversation. `TripDistanceResolved` exists
-today precisely so that move is a listener registration.
+The trip's fare therefore cannot be settled at the kerb from this figure, and
+Phase 2 is that consequence worked through:
+
+- **`SettleWalkInFare` moved** from `TripCompleted` to `TripDistanceResolved`
+  and `TripDistanceCleared`. `CreditDriverForCompletedTrip` followed it, after
+  it, for the same ordering reason as before.
+- **`PriceProvisionalWalkInFare` took its place on `TripCompleted`.** It
+  prices, through the same engine, the distance that can be known at the kerb:
+  the odometer delta under the odometer policy, and the handset's own
+  measurement of its buffered pings (`provisional_distance_km`, sent with the
+  completion) under a trace-priced one. `trips.fare_provisional_minor` is
+  never overwritten — it is what the passenger was shown and what the driver
+  took.
+- **The driver's ledger records what was collected, not what settled.**
+  `cash_collected` is the provisional figure when there was one; `fare_earned`
+  is the commission share of the settled fare. When the two differ the balance
+  says so — the driver holds the excess, or the office owes the shortfall —
+  instead of a ledger asserting cash that never changed hands.
+- **The handset warns at the keypad** when the typed odometer delta disagrees
+  with what it measured, by more than `tracking.variance_threshold_percent`,
+  which is served on the trip for the reason ADR-0035 gives about the ceiling.
+  A warning, never a refusal: the phone measures crow-flight over the pings it
+  happens to hold, so it reads short on a winding road and shorter after a
+  dead zone. It is good enough to catch an extra digit while the dashboard is
+  still in front of the driver, which is the only moment that mistake is free
+  to fix.
 
 ### 6. The engine is self-hosted OSRM behind its own switch
 
@@ -171,16 +227,25 @@ in the resolver; **not yet refused at ingestion**, until it has been observed
 in the wild long enough to know how often a real handset sets it by mistake.
 The app does not send it yet — the driver app is untouched by this phase.
 
-### 9. Phase 1 changes no fare
+### 9. What is wired, and what still changes nothing
 
-`TripPricingEngine` reads `distance_km`. `SettleWalkInFare` listens to
-`TripCompleted`. `distance_km`, `gps_distance_km` and
-`distance_variance_flagged` are unchanged and mean what ADR-0035 says. What
-is new is `billed_distance_km`, `distance_grade`, `distance_resolved_at`,
-`trip_distance_evidence`, the settings, and `trips:replay-distance`. The
-flip — `chargeLines()` reading `billed_distance_km`, the grade-C gate, the
-policy column, the handset's provisional fare — is Phase 2, taken after
-weeks of shadow data and against the flip criteria the plan proposes.
+`TripPricingEngine::chargeLines()` reads `billed_distance_km ?? distance_km`.
+`distance_km`, `gps_distance_km` and `distance_variance_flagged` are unchanged
+and mean what ADR-0035 says — the odometer is still captured, still
+photographed, still bounded at the transition, and still the fleet's mileage
+record.
+
+**No fare moves until a rate card version says `gps_primary` or
+`route_capped`.** Under `odometer` the resolver's figure *is* the odometer
+delta, the gate lets an unresolved trip through, and a U trip bills as it
+always did. The flip is a commercial act on a rate card, taken after the
+shadow report shows what the grades actually look like on this fleet — the
+criteria are in the plan's Phase 1, and they are not met yet, because no OSRM
+server is running.
+
+Still not built, deliberately: the console's **review queue** for held trips
+(the evidence is served at `GET /trips/{trip}/distance` and clearance is a
+POST, but nothing lists held trips yet), and everything in Phase 4.
 
 ## Consequences
 

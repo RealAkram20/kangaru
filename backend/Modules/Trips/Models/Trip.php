@@ -54,6 +54,11 @@ use Modules\Vehicles\Models\Vehicle;
  *                                           prices from it yet — Phase 1 of `docs/measured-distance-plan.md` runs in shadow.
  * @property DistanceGrade|null $distance_grade
  * @property CarbonInterface|null $distance_resolved_at
+ * @property string|null $provisional_distance_km The handset's own measurement of its buffered pings, sent with the completion (ADR-0045 §5).
+ * @property int|null $fare_provisional_minor What the driver showed and took at the kerb; never overwritten.
+ * @property CarbonInterface|null $distance_cleared_at
+ * @property int|null $distance_cleared_by_user_id
+ * @property string|null $distance_cleared_reason
  * @property bool|null $cancellation_charge_applicable
  * @property int|null $fare_minor Whole shillings — UGX is zero-decimal. Null
  *                                until `WalkInFareService::settle()` prices the completed trip, and null
@@ -137,6 +142,11 @@ class Trip extends Model
         'billed_distance_km',
         'distance_grade',
         'distance_resolved_at',
+        'provisional_distance_km',
+        'fare_provisional_minor',
+        'distance_cleared_at',
+        'distance_cleared_by_user_id',
+        'distance_cleared_reason',
         'cancellation_charge_applicable',
         'started_at',
         'completed_at',
@@ -161,6 +171,9 @@ class Trip extends Model
             'billed_distance_km' => 'decimal:2',
             'distance_grade' => DistanceGrade::class,
             'distance_resolved_at' => 'datetime',
+            'provisional_distance_km' => 'decimal:2',
+            'fare_provisional_minor' => 'integer',
+            'distance_cleared_at' => 'datetime',
             'cancellation_charge_applicable' => 'boolean',
             'started_at' => 'datetime',
             'completed_at' => 'datetime',

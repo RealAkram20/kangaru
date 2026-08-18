@@ -1,8 +1,9 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as ImagePicker from 'expo-image-picker';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { disagreesWithBuffer } from '../location/bufferedDistance';
 import { useSync } from '../offline/SyncProvider';
 import { useTrip } from '../trips/queries';
 import { Button, Card, Field, Notice, Screen } from '../ui/components';
@@ -32,17 +33,49 @@ type Props = NativeStackScreenProps<TripsStackParams, 'Odometer'>;
 export function OdometerScreen({ route, navigation }: Props) {
   const { tripId, to, from } = route.params;
   const { data: trip } = useTrip(tripId);
-  const { queueTransition } = useSync();
+  const { queueTransition, bufferedDistanceKm } = useSync();
 
   const [reading, setReading] = useState('');
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [cameraProblem, setCameraProblem] = useState<string | null>(null);
   const [saveFailed, setSaveFailed] = useState(false);
+  // What this phone measured of its own buffered pings (ADR-0045 §5). Read
+  // once, when the closing form opens: the trip is over, so the buffer is not
+  // growing, and re-reading it under the driver's fingers would move the
+  // warning around while they type.
+  const [measuredKm, setMeasuredKm] = useState<number | null>(null);
 
   const opening = to === 'trip_completed' ? trip?.odometer_start ?? null : null;
   const error = validate(reading, opening, trip?.odometer_max_km_per_trip ?? null);
   const isOpening = to === 'trip_started';
+
+  useEffect(() => {
+    if (isOpening) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void bufferedDistanceKm(tripId).then((km) => {
+      if (!cancelled) {
+        setMeasuredKm(km);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bufferedDistanceKm, isOpening, tripId]);
+
+  // The typed journey, once it is a number worth comparing.
+  const typedKm = opening !== null && error === undefined && reading !== ''
+    ? Number.parseInt(reading, 10) - opening
+    : null;
+
+  const disagrees =
+    typedKm !== null &&
+    disagreesWithBuffer(typedKm, measuredKm, trip?.variance_threshold_percent ?? null);
 
   const takePhoto = async () => {
     setCameraProblem(null);
@@ -104,6 +137,10 @@ export function OdometerScreen({ route, navigation }: Props) {
         ...(isOpening
           ? { odometerStart: Number.parseInt(reading, 10) }
           : { odometerEnd: Number.parseInt(reading, 10) }),
+        // What this phone measured, sent with the completion so a cash
+        // passenger has a fare to pay before the server has resolved the trip
+        // (ADR-0045 §5). Omitted when there is nothing to say — never zero.
+        ...(isOpening || measuredKm === null ? {} : { provisionalDistanceKm: measuredKm }),
       });
     } catch {
       // The queue could not accept it — the database is not open yet, or the
@@ -163,6 +200,25 @@ export function OdometerScreen({ route, navigation }: Props) {
             <Notice
               tone="info"
               message={`This trip opened at ${opening.toLocaleString()} km.`}
+            />
+          )}
+
+          {/*
+            ADR-0045 §5. A warning, not a refusal: the phone's figure is a
+            crow's-flight sum over the pings it happens to hold, so it reads
+            short on a winding road and short again after a dead zone — it is
+            not good enough to refuse a reading on. It is good enough to catch
+            the extra digit while the dashboard is still in front of the
+            driver, which is the only moment that mistake is free to fix.
+          */}
+          {disagrees && typedKm !== null && measuredKm !== null && (
+            <Notice
+              tone="warning"
+              message={
+                `This phone measured about ${measuredKm.toLocaleString()} km on this trip, ` +
+                `and your reading makes it ${typedKm.toLocaleString()} km. ` +
+                'Check the number on the dashboard. If it is right, send it — the office measures the trip too.'
+              }
             />
           )}
 

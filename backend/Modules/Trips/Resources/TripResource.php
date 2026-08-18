@@ -2,6 +2,7 @@
 
 namespace Modules\Trips\Resources;
 
+use App\Support\Money\Shillings;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Collection;
@@ -14,6 +15,7 @@ use Modules\Drivers\Enums\LedgerEntryKind;
 use Modules\Drivers\Models\DriverLedgerEntry;
 use Modules\Drivers\Resources\DriverLedgerEntryResource;
 use Modules\Drivers\Resources\DriverResource;
+use Modules\Trips\Distance\DistanceGrade;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Support\ContactChannel;
@@ -153,6 +155,12 @@ class TripResource extends JsonResource
              */
             'odometer_max_km_per_trip' => (int) app(SettingsService::class)
                 ->get('tracking', 'odometer_max_km_per_trip'),
+            // Its sibling (ADR-0045 §5): how far the typed reading may sit
+            // from the handset's own measurement of the trip before the app
+            // warns at the keypad. Same reasoning, same courtesy, same
+            // caveat: the server still measures and decides.
+            'variance_threshold_percent' => (float) app(SettingsService::class)
+                ->get('tracking', 'variance_threshold_percent'),
             'odometer_start' => $this->odometer_start,
             'odometer_start_photo_path' => $this->odometer_start_photo_path,
             'odometer_end' => $this->odometer_end,
@@ -184,6 +192,17 @@ class TripResource extends JsonResource
             // completion, and null forever on a corporate trip — a client's
             // work is invoiced, and there is no per-trip cash fare to show.
             'fare' => $this->settledFare(),
+            // What the driver showed and took at the kerb, while the settled
+            // fare waits for the resolver (ADR-0045 §5). Null once settled
+            // *unless* it differs from the settled figure — then it stays,
+            // because a difference is a fact the driver and the office both
+            // need to see.
+            'provisional_fare' => $this->provisionalFare(),
+            // What the resolver said about this trip's distance, if it has
+            // spoken (ADR-0045). `held` is the one field a screen must act
+            // on: a held trip has no fare and no invoice until a person
+            // clears it.
+            'distance' => $this->distanceResolution(),
             // What it is *expected* to fetch, before that. A quote and a
             // settlement are different things and they are different fields
             // for that reason — see `estimatedFare()`.
@@ -487,6 +506,52 @@ class TripResource extends JsonResource
      * total with no rate card behind it is a number nobody can defend when
      * somebody disputes it.
      *
+     * @return array<string, mixed>|null
+     */
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function provisionalFare(): ?array
+    {
+        if ($this->fare_provisional_minor === null) {
+            return null;
+        }
+
+        if ($this->fare_minor !== null && $this->fare_minor === $this->fare_provisional_minor) {
+            return null;
+        }
+
+        return [
+            'total_minor' => $this->fare_provisional_minor,
+            'currency' => $this->fare_currency ?? Shillings::currency(),
+            'distance_km' => $this->provisional_distance_km === null ? null : (float) $this->provisional_distance_km,
+            'is_estimate' => true,
+            'is_provisional' => true,
+            'basis' => 'Priced at completion from the distance measured so far. The settled fare follows the resolved distance.',
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function distanceResolution(): ?array
+    {
+        if ($this->distance_resolved_at === null || $this->distance_grade === null) {
+            return null;
+        }
+
+        return [
+            'billed_km' => $this->billed_distance_km === null ? null : (float) $this->billed_distance_km,
+            'grade' => $this->distance_grade->value,
+            'grade_label' => $this->distance_grade->label(),
+            'resolved_at' => $this->distance_resolved_at->toIso8601String(),
+            'held' => $this->distance_grade === DistanceGrade::HELD && $this->distance_cleared_at === null,
+            'cleared_at' => $this->distance_cleared_at?->toIso8601String(),
+            'cleared_reason' => $this->distance_cleared_reason,
+        ];
+    }
+
+    /**
      * @return array<string, mixed>|null
      */
     private function settledFare(): ?array

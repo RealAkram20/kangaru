@@ -416,6 +416,17 @@ This is a short-form notice. Ask the office for the full safety policy.",
                 'default' => 120,
                 'rules' => ['required', 'integer', 'min:0', 'max:3600'],
             ],
+            /*
+             * Whether a trip graded C — held — is stopped from billing
+             * (Phase 2 of the plan; ADR-0045 §2). On, a held trip cannot be
+             * invoiced and its walk-in fare is not settled until a person
+             * with `trips.transition.finance` clears it with a reason. Off,
+             * the grade is recorded and shown and the trip bills anyway.
+             * Defaults on — controls default on — and is a switch rather than
+             * a constant so an operator drowning in a review queue they did
+             * not expect can let money move while they retune the corridor.
+             */
+            'held_blocks_billing' => ['default' => true, 'rules' => ['required', 'boolean']],
         ],
         /**
          * Maps and routing (ADR-0031 pending).

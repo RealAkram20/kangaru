@@ -9,6 +9,7 @@ import type { AvailabilityKind, TripStatus } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
 import { onSessionExpired } from '../auth/sessionEvents';
 import { OUTBOX_TICK_INTERVAL_MS } from '../config';
+import { bufferedDistanceKm as bufferedDistanceOf } from '../location/bufferedDistance';
 import { GpsPingBuffer } from '../location/GpsPingBuffer';
 import { GpsStreamer } from '../location/GpsStreamer';
 import { openDatabase } from './db';
@@ -61,6 +62,12 @@ type SyncValue = SyncState & {
     notes?: string;
     odometerStart?: number;
     odometerEnd?: number;
+    /**
+     * What this handset measured of its own buffered pings (ADR-0045 §5).
+     * Sent with the completion so a cash passenger has a fare to pay before
+     * the server has resolved the trip.
+     */
+    provisionalDistanceKm?: number;
     photoUri?: string | null;
   }) => Promise<void>;
   queueAvailabilityRequest: (input: {
@@ -73,6 +80,12 @@ type SyncValue = SyncState & {
   dismissParked: (id: string) => Promise<void>;
   sync: () => Promise<void>;
   gps: GpsStreamer | null;
+  /**
+   * How far this handset thinks a trip went, from the pings it still holds
+   * (ADR-0045 §5). Null before the database is open, and null when there is
+   * nothing usable to measure — never zero for "no idea".
+   */
+  bufferedDistanceKm: (tripId: number) => Promise<number | null>;
 };
 
 const SyncContext = createContext<SyncValue | null>(null);
@@ -262,6 +275,9 @@ export function SyncProvider({ children }: { children: ReactNode }) {
           ...(input.notes === undefined ? {} : { notes: input.notes }),
           ...(input.odometerStart === undefined ? {} : { odometer_start: input.odometerStart }),
           ...(input.odometerEnd === undefined ? {} : { odometer_end: input.odometerEnd }),
+          ...(input.provisionalDistanceKm === undefined
+            ? {}
+            : { provisional_distance_km: input.provisionalDistanceKm }),
         },
       });
 
@@ -329,6 +345,21 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     [refreshState],
   );
 
+  /**
+   * ADR-0045 §5. Reads the buffer, measures, and answers null when there is
+   * nothing to measure — never zero, which would read as "the vehicle did
+   * not move" rather than "this phone has nothing to say".
+   */
+  const bufferedDistanceKm = useCallback<SyncValue['bufferedDistanceKm']>(async (tripId) => {
+    const buffer = bufferRef.current;
+
+    if (buffer === null) {
+      return null;
+    }
+
+    return bufferedDistanceOf(await buffer.pingsFor(tripId));
+  }, []);
+
   const value = useMemo(
     () => ({
       ...state,
@@ -338,6 +369,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       dismissParked,
       sync,
       gps,
+      bufferedDistanceKm,
     }),
     [
       state,
@@ -347,6 +379,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       dismissParked,
       sync,
       gps,
+      bufferedDistanceKm,
     ],
   );
 

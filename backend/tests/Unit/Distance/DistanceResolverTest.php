@@ -116,6 +116,16 @@ it('does not trust a trace with a single mock-location ping in it', function () 
         ->and($d->reason)->toContain('mock-location');
 });
 
+it('holds — never merely unverifies — a trip whose handset faked its position, even with no road to check', function () {
+    // A mock ping is not "no evidence": the device spoke against the trip.
+    foreach ([DistancePolicy::GPS_PRIMARY, DistancePolicy::ODOMETER] as $policy) {
+        $d = decide(witnesses(['mockDropped' => 1, 'routeKm' => null]), $policy);
+
+        expect($d->grade)->toBe(DistanceGrade::HELD)
+            ->and($d->reason)->toContain('faked position');
+    }
+});
+
 it('tolerates teleports up to the limit and not one more', function () {
     expect(decide(witnesses(['teleportsDropped' => 2]))->traceTrusted)->toBeTrue()
         ->and(decide(witnesses(['teleportsDropped' => 3]))->traceTrusted)->toBeFalse();
@@ -162,12 +172,15 @@ it('bills an odometer exactly on the corridor edges as inside', function () {
         ->and(decide(witnesses(['coveragePercent' => 40.0, 'odometerKm' => 10.8]))->grade)->toBe(DistanceGrade::BOUNDED);
 });
 
-it('holds an unchecked odometer as grade C when there is neither trace nor road', function () {
+it('grades an odometer with neither trace nor road as U — unverified, not held', function () {
+    // ADR-0035's principle carried into the gate: missing evidence is not a
+    // discrepancy. Whether U bills is the policy's call, not the resolver's.
     $d = decide(witnesses(['gpsKm' => null, 'coveragePercent' => null, 'inferredSharePercent' => null, 'routeKm' => null]));
 
     expect($d->billedKm)->toBe(12.0)
-        ->and($d->grade)->toBe(DistanceGrade::HELD)
-        ->and($d->reason)->toContain('stands unchecked');
+        ->and($d->grade)->toBe(DistanceGrade::UNVERIFIED)
+        ->and($d->grade->billable())->toBeTrue()
+        ->and($d->reason)->toContain('stands unverified');
 });
 
 it('holds whatever figure exists as grade C when there is no odometer either', function () {
@@ -260,11 +273,11 @@ it('holds the odometer as C when the trace is weak and the road does not allow t
         ->and($d->reason)->toContain('outside the corridor');
 });
 
-it('holds the odometer as C when nothing can vouch for it', function () {
+it('grades the odometer U under the odometer policy when nothing can vouch for or against it', function () {
     $d = decide(witnesses(['gpsKm' => null, 'coveragePercent' => null, 'inferredSharePercent' => null, 'routeKm' => null]), DistancePolicy::ODOMETER);
 
-    expect($d->grade)->toBe(DistanceGrade::HELD)
-        ->and($d->reason)->toContain('stands unchecked');
+    expect($d->grade)->toBe(DistanceGrade::UNVERIFIED)
+        ->and($d->reason)->toContain('stands unverified');
 });
 
 it('holds whatever exists as C under the odometer policy with no odometer', function () {
