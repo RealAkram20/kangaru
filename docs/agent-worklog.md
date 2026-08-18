@@ -7117,3 +7117,641 @@ the deploy runs `migrate --force` and nothing else, because the guard belongs in
 the deploy script W1-a writes, and a guard in the application would be the wrong
 place to stop a command nobody should be running.
 
+
+---
+
+### 2026-08-18 03:30 — Dependency pin: `expo` 57.0.11 → 57.0.9, so Expo Go can load the app at all
+
+**Status:** in progress. **Claimed at 03:30.** **This changes `mobile/package.json`
+and the lockfile, which affects every agent in this tree** — announced here
+before the edit rather than after.
+
+**Why, with the evidence.** The owner cannot open the app on a handset: Expo Go
+shows *"java.lang.Exception: Incompatible SDK version"*, and Metro logs *"This
+project requires a newer version of Expo Go."*
+
+- Project: `expo@57.0.11` (npm has up to 57.0.14).
+- **The newest Expo Go that has ever been published is 57.0.9** — checked against
+  `expo/expo-go-releases`, all releases, not just the SDK 57 ones. There is no
+  58.x.
+
+So Expo Go must be at least as new as the project's `expo`, and no build exists
+that is. **The terminal's own advice is actively wrong here** — it suggests
+updating 57.0.11 → ~57.0.14, which widens the gap, and *"download the latest
+Expo Go from the Play Store"* cannot help because the latest is 57.0.9.
+
+**The pin is the smallest fix**, and deliberately **without `expo install --fix`**:
+that would realign eight further packages mid-session, and this log already
+records a transitive native bump one patch ahead of Expo Go killing the app at
+import. One version, one reason, re-verified.
+
+**Files shared — the exact edit:** `mobile/package.json` (the `expo` range only)
+and `mobile/package-lock.json`. No source file.
+
+**To everyone in this tree:** if you have a jest or tsc run in flight, it may see
+a moving `node_modules`. The change is a patch downgrade of one package; nothing
+in `src/` moves.
+
+**Closed at 03:40.** `expo` is pinned at **57.0.9** in `package.json` and
+installed (`require('expo/package.json').version` confirms it). `tsc --noEmit`
+clean; **830 tests across 58 suites green**.
+
+**One caveat on that test run, stated rather than smoothed over:** the first run
+immediately after `npm install` reported a single failure and named no test — it
+was reading a `node_modules` that was still settling. The re-run is clean and is
+what the numbers above come from. A test run started during a dependency install
+proves nothing either way.
+
+**`expo install --fix` was deliberately not run**, as claimed. It would realign
+eight further packages, and the risk is on record in this log: a transitive
+native package one patch ahead of Expo Go killed the app at import. The eight
+remain flagged by the CLI and are somebody's separate, deliberate pass.
+
+**What still has to happen on a device, and it is not code:**
+
+1. **Metro must be restarted.** It was running while `node_modules` changed
+   underneath it; the survivor on 8082 (PID 26440) is listening but no longer
+   serves a manifest. `npx expo start --port 8082 --clear`.
+2. **Expo Go 57.0.9 on the handset** —
+   `expo/expo-go-releases` tag `Expo-Go-57.0.9`. The Play Store build cannot be
+   right by construction: 57.0.9 is the newest that exists.
+
+**An inconsistency I could not resolve, and am not papering over.** The emulator
+runs **Expo Go 57.0.3** and has been loading this project all evening — including
+every screenshot in the three entries above — while the phone refuses it. Under
+the "Expo Go must be at least as new as the project's `expo`" rule that made this
+diagnosis, 57.0.3 should have refused `expo@57.0.11` too. The likeliest reading
+is that the emulator has held a bundle from before the version moved and would
+fail on a cold start; **that is a guess, and it is the one thing here I have not
+proved.** If the emulator starts refusing after a restart, 57.0.9 is the answer
+there as well.
+
+**Verified on a device at 02:54 — the pin works, end to end.** Cold start:
+`expo@57.0.9` + **Expo Go 57.0.9** (installed over the emulator's 57.0.3 from
+`expo/expo-go-releases`) + a **fresh Metro** on 8085. The app loaded to the home
+screen, signed in, with the active trip rendering. No *"Incompatible SDK
+version"*, which is what the handset had been showing.
+
+**`expo install --fix` reported `Dependencies are up to date`** — so the module
+drift I flagged (expo-location 57.0.11, expo-notifications 57.0.12 against a
+57.0.9 client) is **not** drift: those are the versions SDK 57 expects, and the
+worry in the entry above was mine, not Expo's. Recorded because acting on it
+would have churned eight packages for nothing.
+
+**All three parts were needed** and the middle one is the one that gets skipped:
+pinning `expo` alone leaves a Metro holding the old module graph, and a Metro
+restart alone leaves an Expo Go that is too old.
+
+**Typechecking is unaffected:** `expo/tsconfig.base.json` still resolves out of
+`node_modules/expo`, and `tsc --noEmit` exits 0 on TypeScript 6.0.3 after both
+the downgrade and the `--fix`. Worth stating because `mobile/tsconfig.json` has
+real `include` globs and no project references — unlike the frontend's solution
+file, **this one genuinely typechecks** and a green exit here means something.
+
+---
+
+### 2026-08-18 03:02 — W1-a · Dockerised isolated stack
+
+**Status:** in progress. **Claimed at 03:02 local (this machine's clock — the
+entry above is stamped 03:30 by a session whose clock runs ~30 min ahead; the
+order in this file is the order of claiming).** If another entry claims W1-a
+with an earlier timestamp, this one yields — say so and I withdraw. Every prior
+mention of `W1-a` in this log (W1-f, A0-second, W1-e, W1-b) is a referral to it,
+none is a claim. This is the first.
+
+**Why this one.** It is the critical path: four go/no-go boxes in
+`master-plan.md` §5 need a deployment to exist, and three closed packages park
+their own exit criteria on it — W1-c ("against the deployed database"), W1-d
+("a rollback performed on the live server"), W2-a outright. W1-b closed with
+*"W1-a is where this file stops being a document."*
+
+**Verified before claiming, so the claim names real facts, not a brief:**
+
+- **Nothing exists.** No `Dockerfile`, no `.dockerignore`, no compose file, no
+  `deploy/` directory, no Procfile, no Nixpacks config anywhere in the tree.
+- **The web app is a separate SPA.** `frontend/` is Vite, talks to the API via
+  `VITE_API_BASE_URL` (`frontend/src/lib/apiClient.ts:26`), and is not served
+  by Laravel — `backend/vite.config.js` is the stock Laravel resources build. So
+  the deploy is the five backend containers from `master-plan.md` §3 **plus a
+  static web-app container**, and the master plan's table has no row for the
+  latter. It gets one below.
+- **The driver app talks to the backend today** — verified 02:58 on the
+  emulator against `php artisan serve` on the LAN (token `last_used_at` moving,
+  trip #67 rendering). That is the baseline this package must not regress: the
+  APK will point at the Coolify domain over HTTPS (`go-live-plan.md` B0).
+- **Docker is not installed on this machine**, and the Coolify server is the
+  owner's. Stated up front: **the exit criterion is proved in CI on a Docker
+  host, not by me on the server.** See "how this is verified" below.
+
+**Files owned — new, do not edit:**
+
+- `docker-compose.yml` — repo root. The stack Coolify deploys: `app`, `queue`,
+  `scheduler`, `mysql`, `redis`, `web` (SPA), `backup`. Limits on each.
+- `backend/Dockerfile`, `backend/.dockerignore`, `backend/docker/*`
+  (entrypoint, release step, PHP ini).
+- `frontend/Dockerfile`, `frontend/.dockerignore`, `frontend/docker/*`
+  (nginx config for the SPA).
+- `deploy/*` — `backup.sh`, `restore.sh`, `smoke.sh`, `README.md`.
+
+**Files shared — the exact edits:**
+
+- `.github/workflows/ci.yml` — **one new job, `deploy-stack`**, that builds both
+  images, brings the compose stack up, and runs `deploy/smoke.sh`. No existing
+  job touched. **This is how the exit criterion is proved without a local
+  Docker** — a GitHub runner is a Docker host of the same shape as the server.
+- `docs/agent-worklog.md` — this entry and its closing amendment.
+
+**Must NOT touch, and will not:** `backend/config/*`, `backend/.env.example`,
+`backend/.env.production.example`, `backend/bootstrap/app.php` (W1-b's). The
+compose file **consumes** W1-b's template — its service names (`DB_HOST`,
+`REDIS_HOST`) are read from that file, not invented here. `docs/runbook.md`
+(W1-d's, unclaimed) — deploy/rollback steps go in `deploy/README.md` for W1-d
+to lift.
+
+**Boundary with W1-b, stated so it can be checked:** any value the containers
+need that the template lacks is reported to W1-b's owner here, not added to
+their file.
+
+---
+
+### 2026-08-18 03:20 — Finding: **every file upload in this platform is silently capped at 2 MB by PHP**
+
+**Status:** investigated and proved; **no code changed.** One fix is an
+environment setting outside the repo, the other is in a file whose package is
+still open. Both are handed over below rather than taken.
+
+**Source:** the owner — *"when i tried to upload the profile pick it is saying
+the phone did not reach the office."*
+
+**It is not the network, and it is not the driver's token.** Proved against the
+running API with a real driver-scoped token (`client: driver`, the only way the
+`ClientScope` allow-list can be exercised):
+
+| Upload | Result |
+|---|---|
+| 1 KB JPEG | **HTTP 200**, `photo_url` returned, stored |
+| 3 MB JPEG | **HTTP 422** — `{"file":["The file failed to upload."]}` |
+
+3 MB is **inside** the app's own 4 MB allowance. The refusal comes from PHP, not
+Laravel: `upload_max_filesize=2M` (`C:\php83\php.ini`), so the file is discarded
+before `$request->file('file')` exists and the `required` rule fails on a file
+that was sent perfectly well.
+
+**This is not a profile-photo bug. Three ceilings are all fiction:**
+
+| Path | App allows | Actually possible |
+|---|---|---|
+| Driver photo — `StoreDriverPhotoRequest::MAX_KILOBYTES` | 4 MB | 2 MB |
+| Driver documents — `StoreDriverDocumentRequest::MAX_KILOBYTES` | 8 MB | 2 MB |
+| **Odometer dashboard photo** — `TransitionTripRequest` | 10 MB | 2 MB |
+
+The third is the one that matters beyond convenience: that photograph is the
+anchor client's evidence for a reading, and a camera photo routinely exceeds
+2 MB. It fails through the **outbox**, so the driver learns about it as a parked
+queue item long after they have left the vehicle.
+
+**The environment fix, which is the owner's to apply** — `C:\php83\php.ini`,
+then restart whatever serves `:8000`:
+
+```
+upload_max_filesize = 12M
+post_max_size = 16M
+```
+
+12 M covers the largest app ceiling (10 MB) with headroom; `post_max_size` must
+stay above `upload_max_filesize` or the whole request body is dropped instead of
+the file. **Not applied by me:** it is a machine-wide config outside this repo,
+and restarting `:8000` would interrupt every other agent working against it.
+
+**This must also reach production, or it recurs on the server.** Nothing in
+`docs/go-live-plan.md` or the W1-b brief mentions PHP upload limits, and a
+container built from a stock PHP image ships the same 2 M default. **Addressed to
+W1-b:** `upload_max_filesize` and `post_max_size` belong in the production PHP
+config beside `APP_DEBUG`, and the go/no-go list should prove one real document
+upload at its documented size rather than assume it.
+
+**A second defect, reported not fixed (rule 6).** `ProfileScreen.tsx:237` renders
+*"That photo did not reach the office. It needs a connection — try again."* for
+**any** thrown error, including this 422. The request reached the office; the
+office answered, and the answer was thrown away. That wording is what sent both
+the owner and me hunting a network fault. **`ProfileScreen.tsx` is the 2026-08-17
+20:37 Driver Profile package's and its entry is still `in progress`, so this is
+theirs to change** — the same pattern applies to `BankDetailsScreen:126` and
+`CloseAccountScreen:98`. The honest shape is to surface the server's own message
+when there is one and keep the connection wording for a genuine `NetworkError`,
+which `ApiClient` already distinguishes by throwing a distinct type.
+
+---
+
+### 2026-08-18 03:25 — Home header: a tappable profile avatar that shows the photo, a larger wordmark, and the Android navigation bar
+
+**Status:** in progress. **Claimed at 03:25.** `HomeScreen.tsx` has no open claim
+— the five prior entries touching it are all closed. `app.json` is touched for
+the navigation bar; nothing in this log claims it.
+
+**Source:** the owner, from a handset — *"do you see this overlay on the bottom i
+need you to fix it"*, then *"and logo is too small in the Home page of the app.
+make sure the profile part is connect to the profile image becuase most time
+people will click on it"*.
+
+**Files owned — do not edit:** `mobile/src/screens/HomeScreen.tsx` + `.test.tsx`.
+**Files shared — the exact edit:** `mobile/app.json` — `userInterfaceStyle` and a
+new `androidNavigationBar` block only.
+
+**Three things, and the third is the one with a caveat:**
+
+1. **The avatar is not a control and should be.** It is a bare `View`, so the
+   most-tapped-looking thing in the header does nothing. It becomes a
+   `Pressable` opening the Profile tab.
+2. **It shows initials even when a photograph exists.** Its comment still reads
+   *"the platform holds no avatar"* — true when it was written, **wrong since
+   ADR-0041**: `DrawerContent` already renders `photo_url`, and the owner has
+   been uploading one. Same shape as the drawer's, from the same query, so the
+   two cannot disagree.
+3. **The wordmark is 30pt in a bar that can carry more.**
+
+**The bottom overlay is the Android system navigation bar**, and the app never
+configured it: `app.json` has no `androidNavigationBar` block at all, and
+declares `userInterfaceStyle: "dark"` while every surface in `theme.ts` is
+`#FFFFFF`. A light app telling Android it is dark is why the bar renders as a
+grey band under a white tab bar. **The caveat, stated before doing it: this is
+build-time configuration and Expo Go will not show the change** — it lands in the
+signed APK (master-plan §1.2), which is what ships. So it is fixed and reported
+as *not verifiable in Expo Go*, rather than claimed as seen.
+
+**Closed at 03:30. Verified on the emulator, against a reproduction of the
+owner's own device configuration.**
+
+**The bottom overlay was the Android three-button navigation bar, and the tab
+bar was genuinely broken under it.** Reproduced by switching the emulator with
+`cmd overlay enable com.android.internal.systemui.navbar.threebutton` — the
+owner's handset uses three buttons; the emulator had been on gestures all night,
+which is why three entries' worth of screenshots never showed it. With the bar
+present the system draws **over** the bottom of the tab row and takes the
+descenders off *Earnings* and *Profile*. The owner's independent description
+arrived while the fix was being written and matches exactly: *"the icon words are
+not completly vissible some are cut half way."*
+
+`TabsNavigator` now reads `useSafeAreaInsets()` and sets
+`height: TAB_BAR_HEIGHT + insets.bottom` with a matching `paddingBottom`. **Both
+move together on purpose:** padding alone shrinks the row inside a fixed height
+and pushes the labels into the icons, which is the failure the old comment —
+*"overriding the height made the labels sit underneath Android's gesture bar"* —
+was warning about. That comment was right about its own case and wrong as a
+general rule, and it is replaced rather than deleted.
+
+**Before and after, same screen, same device, same nav mode:** labels clipped →
+all four fully clear of the bar. The wordmark went 30 → 40 in the same pass and
+is visibly larger.
+
+**Also done:** the header avatar is a `Pressable` opening the Profile tab and
+renders `photo_url` with the initial as fallback. **Two mutations, both bite** —
+`onPress` made inert fails *opens the profile when the avatar is tapped*, and
+forcing the photo branch fails *falls back to the initial when no photograph has
+been sent*. 833 tests / 58 suites, `tsc` and eslint clean.
+
+**`app.json`: `userInterfaceStyle` was `"dark"` on an app whose every surface is
+`#FFFFFF`.** Corrected to `"light"`, and an `androidNavigationBar` block added
+(`dark-content` on `#FFFFFF`) so the system bar matches the tab bar instead of
+sitting under it as a grey slab. **Not verifiable in Expo Go** — both are
+build-time configuration and land in the signed APK, which is what ships
+(master-plan §1.2). Stated as unverified rather than claimed.
+
+**Environment restored:** the emulator is back on gesture navigation. To
+reproduce the owner's device again:
+`adb shell cmd overlay enable com.android.internal.systemui.navbar.threebutton`.
+
+**Cleaned up after myself:** the 1 KB test JPEG I uploaded to the demo driver
+while proving the upload limit is deleted (`DELETE me/photo` → `photo_url: null`).
+
+**Reported, not fixed:** when a `photo_url` points at a photograph that is gone,
+the avatar renders an **empty circle rather than falling back to the initial** —
+`expo-image` draws nothing on a failed load and neither this header nor
+`DrawerContent` handles `onError`. Visible for a few seconds after the delete
+above. Small, real, and in two places; it wants one shared fix rather than two.
+
+**03:35 — an incident, mine, recorded before anything else.** While
+reordering two commits so the deploy files could push ahead of a workflow
+change, a `git cherry-pick -q` (no such flag) broke an `&&` chain, and a
+`; git push origin $X:branch` further down ran with `$X` empty — which is a
+branch **delete**. `origin/feat/driver-app-screens-and-earnings` was gone for
+about forty seconds and GitHub auto-closed PR #9. Restored immediately: the
+branch re-pushed at its previous head `d574d95`, `gh pr reopen 9` — PR #9 is
+OPEN again with its 53 commits and history intact, and now carries `89e00d8`
+on top. Nothing was lost; the window was short; it should not have happened.
+**Rule I am adopting and recommend to the log:** never put `git push` after a
+`;` — only after `&&`, and only with an explicit sha and an explicit
+`refs/heads/…` destination.
+
+**Why a workflow change is held back at all:** the stored GitHub token has
+`repo` but not `workflow` scope, so it cannot push a commit that edits
+`.github/workflows/ci.yml`. The `deploy-stack` job is committed locally
+(`5e1618c`, on top of `89e00d8`) and a `gh auth refresh -s workflow` is
+waiting on the owner's browser. Until it lands, **the exit criterion is not
+proved** — the deploy files exist and are pushed, the proof does not run.
+
+**Amendment, 03:30 — the upload limit is applied, and the profile photo works.**
+The owner, still blocked: *"the profile image is not working i can not chage the
+profle."* The 03:20 finding named the cause and handed the fix over; that was the
+wrong call while they were stuck, so it is applied.
+
+- `C:\php83\php.ini`: `upload_max_filesize` **2M → 12M**, `post_max_size`
+  **8M → 16M**. Backed up first to `php.ini.bak-kangaru-20260818-032606`.
+- The API on `:8000` was `php -S` holding the old ini, so it was restarted —
+  same binding as before (`--host=0.0.0.0`, which the handset needs; `artisan
+  serve` defaults to `127.0.0.1` and would have quietly cut the phone off).
+
+**Proved by the same file that failed:** the 3 MB JPEG that returned
+`422 {"file":["The file failed to upload."]}` at 03:20 now returns **200** with a
+`photo_url`. Test image deleted afterwards; the demo driver has no photograph
+again.
+
+**The other two upload paths are fixed by the same change** — driver documents
+(8 MB) and the odometer dashboard photo (10 MB) were both capped at 2 MB and both
+now have headroom. The odometer one is the one that mattered: it is the anchor
+client's evidence and it fails through the outbox, so a driver learned about it
+as a parked queue item hours later.
+
+**Still outstanding, and both belong to other packages:**
+
+1. **W1-b / production.** This is a machine-local ini. A container built from a
+   stock PHP image ships the same 2 M default, so the go-live config needs both
+   keys or the bug returns on the server.
+2. **The misleading message** (`ProfileScreen.tsx:237` and its two siblings)
+   still renders a server `422` as *"did not reach the office"*. That wording is
+   why this took two rounds to find. The Driver Profile package's entry is still
+   open; it is theirs.
+
+**03:35 — W1-a status: files delivered and pushed; the exit-criterion proof
+is written and cannot run yet.** Pushed on the branch as `d574d95`, `89e00d8`,
+`f31ba47`, `3d29ef4`. Held locally, unpushable without the `workflow` scope:
+`d01339a` (`.github/workflows/ci.yml`, one new job `deploy-stack`).
+
+**Built (all new files, nothing of anyone else's touched):**
+
+- `docker-compose.yml` — root. Seven services: `app`, `queue`, `scheduler`,
+  `mysql` (8.4 LTS), `redis` (7, `noeviction`), `web` (SPA on nginx),
+  `backup`. `deploy.resources.limits` on every one, env-overridable; **no
+  host ports** — Coolify's proxy reaches `app:8080` and `web:80` by domain,
+  MySQL/Redis are internal only. Every `${VAR}` is a key W1-b's template
+  names, with W1-b's decided defaults; `DB_HOST=mysql`/`REDIS_HOST=redis`
+  are supplied by the file. Volumes: `app-storage` (shared by app/queue/
+  scheduler — report exports are written by a job and downloaded via the
+  API), `mysql-data`, `redis-data`, `backups`. json-file log rotation on all.
+- `backend/Dockerfile` — `serversideup/php:8.4-fpm-nginx-alpine` (nginx +
+  php-fpm, the topology AGENTS.md names; PHP 8.4 = CI's spec), plus
+  `bcmath gd intl` (**verified missing from the base's default list** —
+  `opcache pcntl pdo_mysql pdo_pgsql redis zip` — by reading its Dockerfile,
+  not assumed). `composer install --no-dev`, no `.env`, no seeder. Two hooks
+  in `/etc/entrypoint.d/`: `10-…-optimize.sh` (`artisan optimize`, every
+  container caches its own config) and `50-…-release.sh` (`migrate --force`,
+  `storage:link`, **only where `RELEASE_TASKS=true` — the `app` service**;
+  never `--seed`). Verified the base sources hooks in a subshell then
+  `exec "$@"`, so PID 1 in queue/scheduler is the php process.
+- `frontend/Dockerfile` — node:22 build with `VITE_API_BASE_URL` as a
+  **required** build-arg (refuses to build blank), served by `nginx:1.27-
+  alpine` with SPA fallback, immutable `/assets/`, `no-store` index.html,
+  `/healthz`. **Verified locally**: `npm run build` with the arg inlines it
+  into the bundle (grep hit), one `id="root"`.
+- `deploy/backup.sh` (mysqldump `--single-transaction --no-tablespaces`,
+  gzip, integrity + size check, retention only after success, `--once` /
+  `--loop` daily at 23:15 UTC = 02:15 Kampala), `deploy/restore.sh`
+  (**drops and recreates** the database, loads, prints `RESTORE_SECONDS`;
+  refuses without `--yes`, exit 3), `deploy/smoke.sh` (the assertions —
+  every one a count or exact value), `deploy/ci.env` (short low-entropy
+  placeholders; APP_KEY minted by the workflow), `deploy/docker-compose.ci.yml`
+  (publishes 18080/18081 for curl, nothing else), `deploy/README.md` (Coolify
+  steps, the keys the stack adds beyond W1-b's template, verification,
+  backup/restore, rollback — for W1-d to lift).
+- `.github/workflows/ci.yml` — job `deploy-stack` (held): build both images,
+  `compose up --wait`, `smoke.sh`, logs on failure, `down -v`.
+
+**What `smoke.sh` will prove when it runs** (and it is the exit criterion):
+7/7 services running; 7/7 with memory AND cpu limits (`docker inspect`);
+0 non-HTTP services publishing a host port; `/up` 200; JSON `NOT_FOUND`
+envelope; 0 exception bodies; SPA shell on `/` and `/privacy`, `no-store` on
+index.html; `schedule:list --no-ansi` = **exactly 6** `php artisan` lines
+naming all six commands, `dispatch:advance-offers` at `10s`; exactly 1
+`schedule:work` and exactly 1 `queue:work` process (bracket-trick pgrep, so
+the check cannot match itself — the first draft did, and would have passed
+with the worker dead); a cache sentinel found in the **redis container**
+(1 key), a queued `cache:forget` (real job class — a closure from tinker is
+`eval()`'d and cannot serialise) completed by the **queue container** (its
+log shows `QueuedCommand`), `jobs` drained to 0, `failed_jobs` = 0; a file
+written in `queue` read in `app` (one volume), `public/storage` symlink
+present; backup written; a table created after it; restore without `--yes`
+exits 3 and changes nothing; restore with `--yes` → table gone, migrations
+count > 0, `/up` 200 again, duration printed; **0** demo accounts.
+
+**Locally verified (no Docker on this machine):** compose YAML parses and
+anchors resolve; every script passes `bash -n`/`sh -n` with 0 CR bytes;
+`php artisan optimize` (config/events/routes/views) succeeds on this branch
+— no closure routes, so `route:cache` in the hook will not fail; the
+frontend image's build command with the build-arg; the six schedule names
+and the `10s` column against the local `schedule:list`; the base image's
+entrypoint, extension list and env-var names against its source and docs.
+
+**NOT verified, stated rather than implied:** nothing has run in a
+container. The Coolify server, its proxy, certificates, real secrets, and a
+restore against a database with data in it are W2-a's, W1-d's and the
+owner's. The `deploy-stack` job is the proof and it has not executed.
+
+**Findings for others (rule 6 — reported, not touched):**
+
+1. **`GET /` on the API host renders `welcome.blade.php`.** I predicted a
+   500 (the view calls `@vite` and the image ships no built assets);
+   **the run says 200** — corrected here rather than left standing. So it is
+   cosmetic, not broken: the stock Laravel welcome page answers on the API
+   domain. `routes/web.php` is unowned; a redirect to `FRONTEND_URL` or a
+   JSON `{ok:true}` is the smallest fix. Smoke prints the status as
+   informational rather than failing on it.
+2. **The backend CI job tests against `mysql:8.0`**, which left support in
+   April 2026; the stack runs `8.4` LTS. `deploy-stack` proves the migrations
+   against 8.4 on every run; the `backend` job's service image is W1-c's / the
+   owner's to bump.
+3. **W1-b's template lacks `DB_ROOT_PASSWORD`** — a stack key, not an app
+   key, so it lives in `deploy/README.md` §2 rather than in their file. Same
+   for the four `VITE_*` build args and the sizing knobs.
+4. **`app-storage` (driver documents) has no backup.** The nightly dump is
+   MySQL only. Host-level volume backup is the owner's call.
+
+**Deliberately not built:** no Nixpacks; no separate nginx container for the
+API (fpm-nginx is one image); no Redis AOF (positions/presence are
+ephemeral, cache rebuilds); no S3/off-server copy of dumps; no `db:seed`
+guard in code (the deploy runs `migrate --force` and nothing else — the guard
+is the entrypoint's job, and it has none); no `docs/runbook.md`.
+
+**Housekeeping left in place, on purpose:** Metro on 8082 (PID 26476, mine)
+so the owner can open `exp://192.168.1.138:8082` on the handset.
+
+**04:05 — W1-a's exit criterion is met. The stack ran, and the restore was
+performed.** Run
+[32086381602](https://github.com/RealAkram20/kangaru/actions/runs/32086381602)
+on `ec5bd21`: **all five CI jobs green**, `deploy-stack` included.
+`deploy/smoke.sh` reported **SMOKE OK — 19 checks passed**:
+
+```
+✓ 7 services running: app backup mysql queue redis scheduler web
+✓ 7/7 containers have memory and CPU limits
+✓ mysql, redis, queue, scheduler, backup publish no host port
+✓ GET /up → 200 · unknown API route → JSON NOT_FOUND envelope
+✓ error responses carry no exception body (APP_DEBUG=false)
+✓ web serves the SPA, falls back on deep links, index.html is no-store
+✓ schedule:list: exactly 6 entries, dispatch:advance-offers every 10 s
+✓ schedule:work alive (exactly 1) · queue:work alive (exactly 1)
+✓ cache sentinel lives in the dedicated Redis, db 1 (1 key)
+✓ queued job completed by the queue container (log: cache:forget DONE)
+✓ failed_jobs = 0, jobs drained to 0
+✓ storage/app is one volume across app and queue; public/storage linked
+✓ backup written (9813 bytes in 1s) · restore refuses without --yes
+✓ restore performed in 2s: mutation gone, 72 migrations back, API answering
+✓ 0 demo accounts; users table has 0 row(s)
+```
+
+**A restore has now actually been performed** — 55 tables, `RESTORE_SECONDS=2`
+against a fresh schema. That is the master plan's *"an untested backup is not
+a backup"*, discharged in CI on every run from here on. **It is not a
+rehearsal against a database with data in it**; that number will be larger and
+it is W1-d's to measure on the live server.
+
+**Three failures got here, and all three were my test, never the stack.**
+Worth recording because the opposite conclusion was available each time:
+
+1. **Redis db 0 vs db 1.** The cache check scanned `redis-cli --scan`'s
+   default database while Laravel's cache connection is `REDIS_CACHE_DB`,
+   default **1**. It failed against a correctly wired stack. Now the index is
+   read from the running app.
+2. **A class name the worker never prints.** The check hunted for
+   `QueuedCommand`; the container's log plainly read `cache:forget ... DONE`,
+   because the worker logs a job's *display* name. Now it asserts exactly one
+   `cache:forget ... DONE` — stronger evidence, since it names the job.
+3. **A race I would have blamed on the queue.** Counting the `jobs` table
+   immediately after dispatch competes with a worker that is already polling,
+   so it could fail precisely because the queue was healthy.
+
+**One real defect, found by reading rather than by failing.** `backup.sh`
+rejected dumps under 1 KB as a sanity check. That test is wrong twice: it
+rejects a legitimately small dump of a fresh schema, and — the half that
+matters — it **accepts a dump killed part-way through**, which is a valid
+gzip of a valid prefix and restores silently missing its last tables. It now
+requires mysqldump's `Dump completed on` trailer, which is written only when
+the dump finished.
+
+**And a gap in the suite itself, found after it was green.** 19 checks passed
+without ever asserting the two variables ADR-0003 turns on:
+`tracking.live_positions_driver` and `dispatch.presence_driver` **both
+default to `database`**. A stack could provision the dedicated Redis, leave
+them unset, pass every one of those 19 checks, and write live positions to
+MySQL — the exact silent failure W1-b's template calls "the trap". Asserted
+now, **and proved by mutation**: `124d661` deliberately sets the tracking
+driver to `database` in `deploy/ci.env` and must fail naming it; the commit
+after removes the mutation and must go green. Both runs are recorded below.
+
+---
+
+### 2026-08-18 04:15 — Finding and fix: **every file upload in this app was dead, and the cause was Expo's replacement of `fetch`**
+
+**Status:** complete. Proved on the emulator against the running API, before and
+after, with the file landing on disk.
+
+**Source:** the owner, with a screenshot of the Driver Profile — *"That photo
+did not reach the office. It needs a connection — try again."* — and *"can you
+fix this"*.
+
+**It was not the network, not the token, and not the 2 MB PHP ceiling the 03:20
+entry found.** That one was real and its fix (03:30 amendment) holds — a 232 KB
+photograph uploads through `curl` today and returns `200`. The handset still
+failed, and the reason is in the app.
+
+`ApiClient` wraps anything `fetch` throws as `NetworkError`, so the first job
+was making the screen say what actually happened. With that in place the device
+answered in one round:
+
+```
+Unsupported FormDataPart implementation
+```
+
+**Expo SDK 54 replaced the global `fetch`** with its WinterCG implementation.
+That one converts the `FormData` itself
+(`expo/src/winter/fetch/convertFormData.ts`) and accepts a string, a `Blob`, or
+anything carrying `bytes()`. React Native's proprietary file descriptor —
+`form.append('file', { uri, name, type })`, which is what this app used
+everywhere and what React Native's own `fetch` has always taken — hits the
+`else` and throws. Expo's own comment is explicit: *"`uri` is not supported for
+React Native's FormData."*
+
+**All three upload paths were dead, not one.** Same descriptor, same throw:
+
+| Path | Symptom |
+|---|---|
+| Driver photo — `uploadDriverPhoto` | "did not reach the office" |
+| Driver documents — `uploadDriverDocument` | same wording, `DocumentsScreen` |
+| **Odometer dashboard photo** — `buildTransitionForm` | fails inside the outbox |
+
+The third is the one that mattered beyond convenience, and it is the same one
+the 03:20 entry flagged for the same reason: that photograph is the anchor
+client's evidence for a reading, and it fails where the driver cannot see it —
+as a parked queue item, hours after they left the vehicle.
+
+**Nothing caught it and nothing could have.** The descriptor is still valid
+TypeScript; `tsc`, eslint and all 834 tests were green with every upload in the
+app broken. Jest never runs Expo's converter — worse, the `FormData` under jest
+stringifies anything that is not a `Blob`, so a part read back in a test says
+nothing about what a device would send. Only running it finds this.
+
+**Built:**
+
+- `mobile/src/api/formFile.ts` — **new.** One file part for all three paths,
+  built from `expo-file-system`'s `File`, which satisfies the converter's
+  `bytes()` branch. It carries its own name and sniffed mime type, which is
+  *better* than the four extension-guessing helpers it replaces
+  (`documentFileName`, `documentMimeType`, `fileNameFor`, `mimeTypeFor`, all
+  deleted): those read the type off the end of a uri and labelled anything
+  unrecognised `image/jpeg`, so a transcoded `.heic` was described as whatever
+  its name still said. Constructing one touches no disk, so
+  `buildTransitionForm` stays synchronous, which the outbox needs.
+- `mobile/src/api/errors.ts` — `refusalMessage(error, offline)`. **The office's
+  own words when it answered** (a 422's field message ahead of the framework's
+  *"The given data was invalid."*), the caller's connection sentence only for a
+  real `NetworkError`, and a plainly-worded handset fault for anything else.
+  This is the 03:20 entry's second defect, and it is why the cause took three
+  rounds to find rather than one.
+- `mobile/src/api/imageSource.ts` — **new**, and the second half of the bug.
+  ADR-0041 streams the portrait from an authenticated endpoint, and **an
+  `<Image>` sends no Authorization header on its own**, so both places that
+  render it were getting a 401 and drawing an empty circle with nothing on
+  screen to say why. A driver whose upload had in fact succeeded still saw no
+  face.
+- `mobile/src/screens/ProfileScreen.tsx` — the three `catch` sites use
+  `refusalMessage`; the portrait uses `authorizedImageSource` **and
+  `expo-image` rather than React Native's `Image`**. That last one is not
+  cosmetic: React Native's `Image` silently drops the header on Android. The
+  drawer has always used `expo-image` and its avatar rendered the moment the
+  header was added — the two components disagreeing is how it was found.
+- `mobile/src/navigation/DrawerContent.tsx` — one line, the same source helper.
+- `mobile/src/api/endpoints.ts`, `mobile/src/offline/httpTransport.ts` — the
+  descriptor replaced by `formFile`.
+- `mobile/jest.setup.ts` — an `expo-file-system` stand-in, since every upload
+  now builds a `File`.
+- Tests: `upload.test.ts` asserts the converter's contract at `formFile`;
+  `ProfileScreen.test.tsx` gains *"repeats the office's own refusal rather than
+  blaming the connection"*, and its existing offline case now rejects with a
+  real `NetworkError` rather than a bare `Error`.
+
+**Proved on the emulator, not argued:** the demo driver's `photo_path` was
+cleared, the photograph chosen through the picker on the handset, and
+`driver-photos/RH3AmWMCtSMNX6sZ4OJEteEzzpOje67CQjDqYOnd.png` written at 118,646
+bytes — the exact size the picker reported. The error banner is gone and the
+face renders on the Profile screen, in the drawer and in the Home header.
+`tsc`, eslint and 834 tests green.
+
+**Not verified, stated rather than implied:** only the Android emulator ran
+this. iOS is the same code path and the same Expo runtime, but it has not been
+executed. The document upload and the odometer photo are fixed by the same
+shared part and are covered by tests, but neither was driven by hand on the
+device — the photograph was.
+
+**For whoever holds the go-live list:** the 03:20 entry's outstanding item 1
+still stands — `upload_max_filesize` and `post_max_size` are machine-local here
+and a stock PHP image ships 2 M, so production needs both keys or the ceiling
+returns.
