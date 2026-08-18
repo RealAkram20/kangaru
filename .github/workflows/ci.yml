@@ -358,15 +358,16 @@ jobs:
           set -eo pipefail
           start=$(date +%s)
 
-          # MUTATION UNDER TEST — the order is deliberately WRONG here, to
-          # prove this job catches what docs/runbook.md §5.3 warns about:
-          # the code goes back first, so v2's migration file (and its down())
-          # is gone before anything tries to roll the schema back. The next
-          # commit restores the correct order. This run MUST fail.
+          # Schema first, and only because the down() lives in v2's image.
+          # Reversing these two blocks is the mistake docs/runbook.md §5.3
+          # warns about; it was rehearsed deliberately in runs 32126492421
+          # and 32127105596, and this job caught it both times.
+          bash deploy/rollback.sh --schema 1 --yes | tee /tmp/rollback.txt
+
+          # Then the code. On Coolify this is "redeploy the previous commit";
+          # on a plain Docker host it is the image tag going back.
           sed -i 's/^SOURCE_COMMIT=v2$/SOURCE_COMMIT=v1/' .env
           docker compose up -d --wait --wait-timeout 300 app queue scheduler
-
-          bash deploy/rollback.sh --schema 1 --yes | tee /tmp/rollback.txt
 
           end=$(date +%s)
           echo "TOTAL_ROLLBACK_SECONDS=$((end - start))" | tee -a /tmp/rollback.txt
