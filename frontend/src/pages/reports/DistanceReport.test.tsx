@@ -20,7 +20,7 @@ function summary(overrides: Partial<DistanceReportSummary> = {}): DistanceReport
   return {
     resolved: 3,
     unresolved: 0,
-    grades: { A: 2, B: 0, C: 1 },
+    grades: { A: 2, B: 0, C: 1, U: 0 },
     providers: { osrm: 3, haversine: 0 },
     no_trace: 1,
     no_reference: 1,
@@ -103,7 +103,11 @@ describe('DistanceReport', () => {
     get.mockResolvedValue(
       apiOk(
         [],
-        meta({ resolved: 5, grades: { A: 0, B: 0, C: 5 }, providers: { osrm: 0, haversine: 5 } }),
+        meta({
+          resolved: 5,
+          grades: { A: 0, B: 0, C: 5, U: 0 },
+          providers: { osrm: 0, haversine: 5 },
+        }),
       ),
     )
 
@@ -151,7 +155,7 @@ describe('DistanceReport', () => {
         [],
         meta({
           resolved: 0,
-          grades: { A: 0, B: 0, C: 0 },
+          grades: { A: 0, B: 0, C: 0, U: 0 },
           providers: { osrm: 0, haversine: 0 },
           mean_coverage_percent: null,
           coverage: { under_50: 0, '50_to_80': 0, '80_to_95': 0, '95_up': 0, unknown: 0 },

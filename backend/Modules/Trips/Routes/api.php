@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Trips\Controllers\HeldTripController;
 use Modules\Trips\Controllers\LivePositionController;
 use Modules\Trips\Controllers\OdometerPhotoController;
 use Modules\Trips\Controllers\TripController;
@@ -8,6 +9,11 @@ use Modules\Trips\Controllers\TripDistanceController;
 use Modules\Trips\Controllers\TripEventController;
 use Modules\Trips\Controllers\TripLocationController;
 use Modules\Trips\Controllers\TripRouteController;
+
+// ADR-0045: the distance review queue. **Before the resource**, or
+// `trips/{trip}` swallows it and the queue becomes a lookup for a trip whose
+// id is the string "distance-review".
+Route::get('trips/distance-review', [HeldTripController::class, 'index'])->name('trips.distance-review.index');
 
 Route::apiResource('trips', TripController::class)->only(['index', 'show', 'store']);
 Route::post('trips/{trip}/transitions', [TripController::class, 'transition'])->name('trips.transitions.store');

@@ -4560,6 +4560,52 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/trips/distance-review:
+    get:
+      summary: The distance review queue — trips whose distance is holding money up (ADR-0045 §2).
+      description: >
+        Oldest first, because a queue with a two-business-day metric against it
+        is worked from the end about to breach it. A trip is here when its
+        latest resolution is grade `C` (held under every policy), or grade `U`
+        under a trace-priced policy, and nobody has cleared it.
+
+
+        Scoped like the trips listing (ADR-0006): a client's user sees their
+        own, platform staff see every client's, and a walk-in — which belongs
+        to no client — appears for platform staff only.
+
+
+        The evidence behind a row is `GET /trips/{trip}/distance`; the act is
+        `POST /trips/{trip}/distance/clearance`.
+      parameters:
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          description: The held trips, and the size of the whole backlog.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/HeldTrip' }
+                  meta:
+                    type: object
+                    required: [cursor, total]
+                    additionalProperties: false
+                    properties:
+                      cursor: { $ref: '#/components/schemas/Cursor' }
+                      total:
+                        type: integer
+                        description: The whole backlog in scope, not the page.
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/trips/{trip}/distance:
     get:
       summary: Every resolution of this trip's distance, newest first (ADR-0045).
@@ -9409,6 +9455,54 @@ components:
         odometer policy, held under a trace-priced one.
       type: string
       enum: [A, B, C, U]
+
+    HeldTrip:
+      description: >
+        One row of the distance review queue (ADR-0045 §2). Deliberately not a
+        `Trip`: a queue row is which trip, whose, who drove it, what the
+        resolver said and how long it has waited — not a fare, a payment
+        method or a passenger's phone number.
+      type: object
+      required:
+        - trip_id
+        - tenant_id
+        - origin
+        - destination
+        - completed_at
+        - driver_name
+        - vehicle_registration
+        - grade
+        - grade_label
+        - billed_km
+        - odometer_km
+        - resolved_at
+        - waiting_days
+        - is_walk_in
+        - fare_settled
+      additionalProperties: false
+      properties:
+        trip_id: { type: integer }
+        tenant_id: { type: ['integer', 'null'] }
+        client:
+          type: ['string', 'null']
+          description: The client's name, for a cross-client reader. Absent for a client's own user, who has exactly one; null on a walk-in.
+        origin: { type: string }
+        destination: { type: string }
+        completed_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        driver_name: { type: ['string', 'null'] }
+        vehicle_registration: { type: ['string', 'null'] }
+        grade: { $ref: '#/components/schemas/DistanceGrade' }
+        grade_label: { type: string }
+        billed_km: { type: ['number', 'null'] }
+        odometer_km: { type: ['number', 'null'] }
+        resolved_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        waiting_days:
+          type: ['integer', 'null']
+          description: Whole days since the resolution — what PROJECT.md's two-business-day metric is read against.
+        is_walk_in:
+          type: boolean
+          description: A held walk-in has an unsettled fare and an unpaid driver behind it; a held corporate trip has an invoice nobody can raise.
+        fare_settled: { type: boolean }
 
     DistancePolicy:
       description: >

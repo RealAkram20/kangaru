@@ -243,9 +243,18 @@ shadow report shows what the grades actually look like on this fleet — the
 criteria are in the plan's Phase 1, and they are not met yet, because no OSRM
 server is running.
 
-Still not built, deliberately: the console's **review queue** for held trips
-(the evidence is served at `GET /trips/{trip}/distance` and clearance is a
-POST, but nothing lists held trips yet), and everything in Phase 4.
+The **review queue** is built: `GET /trips/distance-review` and
+*Operations → Distance review* in the console. It is a worklist rather than a
+report — oldest first, no filters, one action per row — because everything in
+it is waiting on the same decision and narrowing it would be a way of not
+seeing part of the backlog. It answers "held" from
+`trip_distance_evidence.policy`, the policy the resolution actually ran under,
+rather than re-resolving a rate card per row; the gate remains the authority
+at the moment money moves. The clearance dialog puts the evidence **above**
+the reason box, because a reviewer who has to leave the screen to see what
+they are overruling will stop looking.
+
+Still not built, deliberately: everything in Phase 4.
 
 ## Consequences
 

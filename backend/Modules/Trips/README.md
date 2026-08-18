@@ -447,7 +447,17 @@ Pricing\DistanceGate` is where that is decided, for both billing paths.
 resolution of a trip, newest first — the console's evidence panel.
 `POST /trips/{trip}/distance/clearance` lifts a hold with a reason: finance's
 act (`trips.transition.finance`), audited, idempotent, and it does not change
-the figure. Nothing lists held trips yet; that queue is unbuilt.
+the figure. `GET /trips/distance-review` is the queue of trips waiting on
+that decision — oldest first, no filters, `viewAny` on Trip so an operations
+user can watch the backlog even though clearing one is finance's act.
+
+`HeldTripRepository` answers "held" from `trip_distance_evidence.policy` —
+the policy the resolution ran under — rather than resolving a rate card per
+row, which would be `RateCardResolver` reimplemented in SQL. Grade C is held
+under every policy; grade U only under a trace-priced one. The one case this
+can disagree with `DistanceGate` is a card whose policy changed after a trip
+resolved and before it was billed; re-resolving corrects it, and the gate is
+still the authority when money moves.
 
 Every threshold is in the `tracking` settings group and every evidence row
 records the thresholds *as applied*. `distance_km`, `gps_distance_km` and

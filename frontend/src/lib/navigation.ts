@@ -113,6 +113,13 @@ const VISIBLE_TO: Record<string, Role[]> = {
   // fleet list needs. Deciding one takes more (ADR-0027), and the dialog's
   // buttons answer 403 for anybody who lacks it.
   'driver-applications': ALL.filter((r) => r !== 'corporate_employee' && r !== 'driver'),
+  // ADR-0045 §2. The endpoint is `viewAny` on Trip, which every role holds —
+  // so this is about *usefulness*, not permission: a Corporate Employee who
+  // requests rides and a Driver who does them have no part in reviewing the
+  // evidence behind a fare, and the server would serve them an empty queue
+  // anyway. Still reachable by URL, and still answering 200, because that is
+  // what the policy actually says.
+  'distance-review': ALL.filter((r) => r !== 'corporate_employee' && r !== 'driver'),
 }
 
 export function canUseNavItem(role: string | undefined, id: string): boolean {

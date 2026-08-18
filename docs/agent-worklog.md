@@ -7362,3 +7362,74 @@ and the mobile suite drives the screens under RTL — but nothing here has been
 opened on a handset or in a browser, for the same shared-tree reason as the
 entry above. **Before this ships: complete one walk-in trip on a device and
 watch the Collect now figure appear, then the settled fare replace it.**
+
+### 2026-08-18 — Measured distance: the review queue, and grade U on the report
+
+**Status:** built, on `feat/measured-distance` (PR #10). Backend suites green
+(`tests/Feature/Trips` + `Billing` + `Ci`: 324); **frontend 415 tests across
+44 files green**, `tsc -b --force`, eslint and prettier clean. **Three
+mutations proved and restored** — one backend guard found by a test I wrote
+before the guard existed, two on the new screen. Not driven in a browser.
+
+**Source:** the owner, "go" — the gap the previous entry named as next.
+
+**`GET /trips/distance-review` + *Operations → Distance review*.** The screen
+`measured-distance-plan.md` Phase 3 asks for, and the thing PROJECT.md's
+"flagged trips reviewed within two business days" has never had to be measured
+on.
+
+**A worklist, not a report, and the difference is the design.** Oldest first,
+**no filters**, one action per row. Everything in it is waiting on the same
+decision, so narrowing it would be a way of not seeing part of the backlog —
+and `Reports → Measured distance` already exists for looking at resolutions
+any way you like. The endpoint refuses any filter but a cursor with a 422 that
+says so and points there.
+
+**How "held" is answered without re-resolving a rate card per row.**
+`DistanceGate` asks the version that would price *that* trip, which means a
+card, a date and a tenant; doing that per row would be `RateCardResolver`
+reimplemented in SQL — the "one predicate in five places" ADR-0006 was written
+about. So `HeldTripRepository` reads `trip_distance_evidence.policy`, the
+policy the resolution actually ran under: grade C is held everywhere, grade U
+only where that policy prices the trace. **The one case this can disagree with
+the gate** is a card whose policy changed after a trip resolved and before it
+was billed; re-resolving corrects it, and the gate is still the authority when
+money moves. Written into the class docblock rather than left to be discovered.
+
+**The mutation that mattered was the guard I had not written.** The test
+"refuses an unknown filter" failed on the first run: my controller called
+`$request->validate(['cursor' => ...])`, which ignores unknown keys, so
+`?grade=C` returned 200 and silently ignored the filter — exactly what
+AGENTS.md forbids. Fixed by giving the endpoint a real `HeldTripIndexRequest`
+with an allow-list, rather than weakening the test.
+
+**Screen decisions worth the words:**
+
+- **The evidence is inside the clearance dialog, above the reason box**
+  (`DistanceEvidencePanel`). A clearance overrules the resolver; a reviewer who
+  must leave the screen to see what they are overruling will stop looking.
+- **The resolver's own sentence is the headline** of that panel. It is written
+  for a person — "odometer 100.00 km clamped to 62.50 km by the corridor
+  45.00–62.50 km around reference route 50.00 km" — and is more use than any
+  table of the same numbers.
+- **"Longest wait" is its own tile.** A backlog of forty all from this morning
+  is a different problem from a backlog of two that has sat a week, and the
+  two-business-day promise is about the second. Past two days the row's badge
+  turns warning rather than leaving a reviewer to do the arithmetic.
+- **The backlog count comes from the server**, not from the page — a reviewer
+  must not read twenty-five rows as the whole of forty. Mutation-proved.
+- **Clearing reloads rather than splicing the row out.** The count and the rows
+  both come from the server; inventing the new state locally is how the two
+  drift apart.
+- A walk-in's clearance settles a driver's pay; a corporate trip's makes it
+  invoiceable. The confirmation says which, because they are not the same news.
+
+**Also:** grade **U** reached the frontend — a fifth KPI tile on the Measured
+distance report, a filter option, and a neutral badge tone. It was added to the
+backend in the Phase 2 entry above; the report was still typed for three
+grades.
+
+**Not driven in a browser**, same shared-tree reason as the two entries above.
+The page is rendered by RTL under StrictMode in eight tests including the whole
+clear-and-reload path. **Before this ships: open Operations → Distance review
+on a running stack with one held trip and clear it.**

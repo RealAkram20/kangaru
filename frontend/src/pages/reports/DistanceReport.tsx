@@ -42,12 +42,17 @@ const GRADE_LABEL: Record<DistanceGrade, string> = {
   A: 'GPS-verified',
   B: 'Bounded',
   C: 'Held',
+  // "Unverified", not "unknown": nothing vouches for the figure and nothing
+  // contradicts it, which is a state an operator can act on (switch the
+  // engine on, check the handset) rather than a shrug.
+  U: 'Unverified',
 }
 
-const GRADE_TONE: Record<DistanceGrade, 'success' | 'info' | 'warning'> = {
+const GRADE_TONE: Record<DistanceGrade, 'success' | 'info' | 'warning' | 'neutral'> = {
   A: 'success',
   B: 'info',
   C: 'warning',
+  U: 'neutral',
 }
 
 function km(value: number | null): string {
@@ -245,7 +250,13 @@ function Summary({ summary, covers }: { summary: DistanceReportSummary; covers?:
           label="C · Held"
           value={grades.C.toLocaleString('en-US')}
           icon="triangle-alert"
-          hint={`${share(grades.C, resolved)} — the evidence does not support a figure; nothing bills from these`}
+          hint={`${share(grades.C, resolved)} — the evidence speaks against the figure; nothing bills from these`}
+        />
+        <KPIStat
+          label="U · Unverified"
+          value={grades.U.toLocaleString('en-US')}
+          icon="circle-help"
+          hint={`${share(grades.U, resolved)} — no trace and no road to check against; bills under an odometer contract, held under a measured one`}
         />
         <KPIStat
           label="Mean coverage"
@@ -419,7 +430,7 @@ export function DistanceReport({
               placeholder="All grades"
               value={grade}
               onChange={(e) => setGrade(e.target.value as '' | DistanceGrade)}
-              options={(['A', 'B', 'C'] as DistanceGrade[]).map((g) => ({
+              options={(['A', 'B', 'C', 'U'] as DistanceGrade[]).map((g) => ({
                 value: g,
                 label: `${g} · ${GRADE_LABEL[g]}`,
               }))}

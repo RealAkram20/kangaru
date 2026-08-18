@@ -19,6 +19,11 @@ const SECTIONS: SidebarSection[] = [
       // ADR-0012: the walk-in order queue, the phone-first half of dispatch.
       { id: 'walk-ins', label: 'Walk-ins', icon: 'phone-call' },
       { id: 'trips', label: 'Trips', icon: 'navigation' },
+      // ADR-0045 §2. Beside Trips rather than under Finance: it is a queue of
+      // *trips* whose evidence somebody must look at, and the reader who
+      // notices the backlog growing is the operations user watching this
+      // section — even though clearing one is finance's act.
+      { id: 'distance-review', label: 'Distance review', icon: 'scale' },
       // ADR-0019. Beside Trips rather than under Fleet: the question it
       // answers is "where is this job", not "what do we own".
       { id: 'live-map', label: 'Live map', icon: 'map' },

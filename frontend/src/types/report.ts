@@ -161,8 +161,15 @@ export interface ReportExport {
   finished_at: string | null
 }
 
-/** Mirrors Modules/Trips/Distance/DistanceGrade (ADR-0045). */
-export type DistanceGrade = 'A' | 'B' | 'C'
+/**
+ * Mirrors Modules/Trips/Distance/DistanceGrade (ADR-0045).
+ *
+ * `A` verified, `B` bounded, `C` held — the evidence speaks against the
+ * figure — and `U` unverified: no usable trace and no reference route, so
+ * nothing vouches for the odometer and nothing contradicts it. U bills under
+ * an odometer contract and is held under a trace-priced one.
+ */
+export type DistanceGrade = 'A' | 'B' | 'C' | 'U'
 
 /**
  * One completed trip's latest distance resolution — a row of the

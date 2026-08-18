@@ -24,6 +24,7 @@ import { StaffPage } from '../pages/StaffPage'
 import { SupportRequestsPage } from '../pages/SupportRequestsPage'
 import { LiveMapPage } from '../pages/LiveMapPage'
 import { TripsPage } from '../pages/TripsPage'
+import { DistanceReviewPage } from '../pages/DistanceReviewPage'
 import { VehiclesPage } from '../pages/VehiclesPage'
 import { LandingPage } from '../pages/public/LandingPage'
 import { OrderPage } from '../pages/public/OrderPage'
@@ -97,6 +98,10 @@ export const router = createBrowserRouter([
         ),
       },
       { path: 'trips', element: <TripsPage /> },
+      // ADR-0045 §2: the distance review queue. Not behind `RequireNavAccess`
+      // for the reason Roles is not — the queue is `viewAny` on Trip, which a
+      // custom role can hold, and the page shows whatever the API serves.
+      { path: 'distance-review', element: <DistanceReviewPage /> },
       // Not behind RequireNavAccess, deliberately: /live-positions is scoped
       // server-side through the trips the caller may see, so every role gets
       // a correct answer here — a corporate employee sees their own ride,
