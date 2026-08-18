@@ -126,6 +126,18 @@ tinker 'cache()->put("smoke:sentinel", "present", 600); echo cache()->get("smoke
 # index is read from the running app rather than assumed here.
 store=$(tinker 'echo config("cache.default");')
 [ "$store" = "redis" ] || fail "cache.default is '$store', not redis — the dedicated Redis is not the cache"
+
+# ADR-0003's silent failure, and the reason this check exists at all: BOTH of
+# these default to `database`. A stack that provisions the dedicated Redis and
+# leaves them unset comes up entirely healthy — every other check in this file
+# passes — while live positions and driver presence go to MySQL and the Redis
+# container sits idle. Nothing errors. The live map still draws, off the wrong
+# store, and the growth risk ADR-0003 was written about is back.
+positions=$(tinker 'echo config("tracking.live_positions_driver");')
+[ "$positions" = "redis" ] || fail "tracking.live_positions_driver is '$positions', not redis — live positions are going to MySQL (ADR-0003)"
+presence=$(tinker 'echo config("dispatch.presence_driver");')
+[ "$presence" = "redis" ] || fail "dispatch.presence_driver is '$presence', not redis — driver presence is going to MySQL (ADR-0003)"
+ok "live positions and driver presence both read redis (ADR-0003)"
 cache_db=$(tinker 'echo config("database.redis.cache.database");')
 in_redis=$(dc exec -T redis sh -c "redis-cli -a \"\$REDIS_PASSWORD\" --no-auth-warning -n ${cache_db} --scan --pattern '*smoke:sentinel*' | wc -l" | tr -d '\r ')
 [ "$in_redis" -eq 1 ] || fail "expected the sentinel in redis db ${cache_db} (1 key), found $in_redis — CACHE_STORE is not wired to this Redis"
