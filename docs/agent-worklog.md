@@ -7957,3 +7957,138 @@ claimed:** `.github/workflows/ci.yml` (one new job; `deploy-stack` untouched),
 `docs/agent-worklog.md`. **Amended, my own from W1-a:** `backend/Dockerfile`,
 `docker-compose.yml` (the `APP_BUILD` build arg). **Not touched:**
 `backend/config/*`, `backend/.env*` (W1-b's).
+
+---
+
+### 2026-08-18 16:31 — W1-c · Security gate
+
+**Status:** in progress. **Claimed at 16:31 local.** If another entry claims
+W1-c with an earlier timestamp, this one yields — say so and I withdraw. Every
+earlier mention of `W1-c` in this log (W1-f's client-scope hand-off, the Driver
+Profile entry's plaintext-documents finding, W1-b's "census and W2-a", W1-a's
+"against the deployed database") is a referral to this package, not a claim.
+This is the first.
+
+**Files owned — do not edit:**
+
+- `backend/tests/Feature/Ci/*` — new directory. Tests that pin the census
+  results so a later route or resource change fails CI rather than review.
+- `backend/tests/Feature/Tenancy/*` — new directory. Cross-tenant isolation,
+  both halves of ADR-0006, and 404-not-403 on cross-tenant reads.
+- `docs/security-gate.md` — new. The findings document: the route-by-route
+  policy census, the resource allow-list review, and the gaps, each addressed
+  to the module that owns it.
+
+**Files shared — the exact edits:**
+
+- `docs/agent-worklog.md` — this entry and its closing amendment. Nothing else.
+
+**No module source is edited by this package.** A gap in
+`backend/Modules/**` is a finding in `docs/security-gate.md`, addressed to
+whoever owns the module — the brief says so and it is the right rule: an
+auditor who fixes what they audit has audited nothing.
+
+**Like W1-f, this package deliberately does NOT use a worktree**, and for the
+same reason: the working tree is 34 files dirty, and four of those are
+`backend/Modules` changes on walk-in auto-dispatch (`OrderRequestService`,
+`DispatchOfferService`, `CustomerRideController`, `OrderRequestServiceType`)
+that no green CI run has covered. A census taken in a worktree at `HEAD` would
+not see them; the routes and the resources may differ. **The census will say,
+for every number it quotes, whether it was taken against the working tree or
+against `HEAD` (`31c87cb`).** Read-only on every source file.
+
+**The exit criteria are two halves, and one is blocked.** "Route-by-route
+policy census with zero gaps" is local and will be done in full. "Both
+isolation halves green **against the deployed database**" cannot be done:
+no Coolify project exists (W1-a delivered the files; standing it up is the
+owner's, `deploy/README.md` §2). W1-a and W1-d met this by rehearsing on the
+Docker host in CI rather than redefining the criterion, and that is the plan
+here — the isolation suite runs against a real MySQL 8.4 in the `deploy-stack`
+job if it can be made to, and the deployed half is **marked not done** either
+way. The census will not claim it.
+
+**Amendment — 18:05. One shared edit added to the claim:
+`.github/workflows/ci.yml`, the `backend` job's `services.mysql.image`,
+`mysql:8.0` → `mysql:8.4`, and the comment above it.** W1-a's closing entry
+handed this to W1-c by name ("the `backend` job's service image is W1-c's /
+the owner's to bump"). It is the cheapest honest answer to the brief's
+"prove things without the server": every isolation test — ADR-0001's client
+half, ADR-0006's platform half, and the three files this package adds — then
+runs on every push against the same MySQL major.minor the production stack
+uses (`deploy-stack` already migrates against 8.4). No other line of that
+file is touched; `deploy-stack` and `rollback-rehearsal` are W1-a's and
+W1-d's and stay as they are.
+
+**Closing amendment — 18:40. Status: done — the local half in full; the
+deployed half NOT DONE and named as such, in the census and here.**
+
+**Delivered:** `docs/security-gate.md` (172-route census with the idiom and
+the refusing mechanism per route; the resource review; the isolation results
+with counts and mutations; 23 findings addressed by module; the exit-criteria
+table); five test files under `backend/tests/Feature/{Ci,Tenancy}/`; the CI
+MySQL bump. Commits `ec72488` (tests), `063c8ab` (ci), and the docs commit
+after this. **CI run 32163521362 on `063c8ab`: green, all six jobs; Backend
+against `mysql:8.4`, 1241 tests, 4874 assertions.**
+
+**The census, in one line each.** 172 routes, all carrying one of four
+idioms — 105 policy/gate, 3 permission-helper (`ClosureRequestController`'s
+private `refuseWithoutPermission()`, the one the grep missed), 51 ownership
+by token, 11 public-and-throttled, 2 filed A/C. **Zero routes without a check.
+Zero routes on tenant scope alone.** The working tree and `HEAD` have
+identical route tables (no route file, controller signature or middleware
+differs; the four dirty `Modules` files were read and change no
+authorization), so the census is true of both; the tests ran against the
+working tree.
+
+**Proved by running, each by mutation and restored:** another client's Super
+Admin gets 404 NOT_FOUND on all 32 tenant-bound routes and the owner gets
+anything but 404 on the same URLs (dropping the scope in
+`resolveRouteBinding` was caught on the first route); a console token with no
+driver row is refused `NOT_A_DRIVER` on 32 of 35 `/me` routes with the three
+exceptions pinned by name (removing one gate was caught as a 500); driver A
+cannot name driver B's offer, block or trip (404) and lists exactly their own
+rows; customer A cannot name customer B's order or trip; no resource spreads a
+model and exactly two emit `details` wholesale (a third, and a
+`parent::toArray`, were both caught).
+
+**The three findings to read before go-live** — none is a missing policy, so
+none is a tonight-blocker by the brief's definition, and W1-c fixed none of
+them: **F2** `drivers.view` is on every role, so a client's Corporate
+Employee lists all drivers' phone, email and licence number (and every
+driver's leave reasons); **F4** the payout account's number and holder sit
+decrypted in `audit_logs.changes` (verified by execution) and are served by
+`GET /audit-logs`; **F5** the customer rating endpoint is dead — 404 on the
+customer's own completed trip, because the `{trip}` binding fails closed for
+a Customer before the controller runs (a W1-f row too: "Trip ratings — yes"
+is wrong). Also **F3** `users.show/update` answer 403 for another tenant's
+user id, and `UserAdminTest` asserts it. F23 (documents stored unencrypted,
+handed to me by the 20:37 entry) is **confirmed**.
+
+**NOT done, and each is in `docs/security-gate.md` §5 rather than only here:**
+the audit log recording a mutation **in the deployed environment**, and both
+isolation halves **against the deployed database** — no Coolify project
+exists. The suite against MySQL 8.4 in CI is the closest honest substitute
+and is not the same thing; §5 has the runbook step for the day it exists.
+
+**Two defects pinned, not skipped and not left red:** F5 (rating dead) and
+F13 (`notifications.read` 404 with no `code`) are asserted at their current
+behaviour with a message saying which test to flip — a fix is a visible edit
+here, and a green suite meanwhile does not claim either works.
+
+**Files touched:** owned — the five tests, `docs/security-gate.md`; shared —
+`.github/workflows/ci.yml` (one image line and its comment) and this file.
+Module source: read, mutated only to prove three tests bite, restored before
+each commit (`grep -c "MUTATION UNDER TEST"` is 0 everywhere; `git status`
+shows only the four pre-existing dirty walk-in files, none mine).
+
+**Not verified:** nothing against a deployed system; the frontend and driver
+app were not read; the audit log's completeness beyond F4/F6; F18 (platform
+staff `POST /bookings` → 500) is read, not run. **Two of seven census readers
+were cut off by the session limit** (Billing/Bookings/Clients had written its
+file; Reports/Trips had not) — Reports/Trips was walked by hand and is in the
+census with the same evidence standard.
+
+**Deliberately not built:** no fix to any module; no red test; no rate-limit
+tuning; no smoke-test assertion in `deploy/smoke.sh` (W1-a's file — the CI
+MySQL bump proves more, on the whole suite, than one COUNT against 55 empty
+tables would).
