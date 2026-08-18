@@ -66,18 +66,46 @@ RUN composer dump-autoload --optimize --no-dev \
 # RELEASE_TASKS=true — the `app` service, once, never the workers.
 COPY --chmod=0755 docker/entrypoint.d/ /etc/entrypoint.d/
 
-# Production PHP limits the base image reads at start. Uploads: driver
-# documents and odometer photos are capped at 8 MB by the API; 12 MB leaves
-# room for the multipart envelope. Everything else is the base's tuned default.
+# Production PHP limits the base image reads at start.
+#
+# **Uploads, and these three numbers have to be read together.** The worklog's
+# 2026-08-18 03:20 entry proved every upload on this platform was capped at
+# 2 MB by PHP's stock `upload_max_filesize`, silently: the file is discarded
+# before Laravel sees it, so a perfectly good request fails validation as
+# though nothing was sent. A stock PHP image ships that same 2 M default, so
+# it would have recurred here.
+#
+# The API's own ceilings, read from the request classes rather than assumed:
+# driver photo 4 MB (`StoreDriverPhotoRequest`), driver documents 8 MB
+# (`StoreDriverDocumentRequest`), **odometer dashboard photo 10 MB**
+# (`TransitionTripRequest`, `max:10240`) — that last one is the anchor
+# client's evidence for a reading, and a camera photo routinely exceeds 2 MB.
+#
+# So `upload_max_filesize` = 12M covers the largest ceiling with headroom, and
+# `post_max_size` must be **strictly larger** — it bounds the whole multipart
+# body, file plus fields plus boundaries, and when it is exceeded PHP discards
+# the entire body rather than the file. Setting the two equal, as this file
+# did until now, means an upload at exactly the limit fails wholesale.
+# nginx's own body limit has to clear post_max_size for the same reason, or
+# the request never reaches PHP at all.
 ENV PHP_OPCACHE_ENABLE=1 \
     PHP_MEMORY_LIMIT=256M \
-    PHP_POST_MAX_SIZE=12M \
     PHP_UPLOAD_MAX_FILE_SIZE=12M \
-    NGINX_CLIENT_MAX_BODY_SIZE=12M \
+    PHP_POST_MAX_SIZE=16M \
+    NGINX_CLIENT_MAX_BODY_SIZE=16M \
     NGINX_WEBROOT=/var/www/html/public \
     HEALTHCHECK_PATH=/up \
     AUTORUN_ENABLED=false \
     SHOW_WELCOME_MESSAGE=false
+
+# Which build is this? Without it, "roll back to the previous version" cannot
+# be verified — the stack looks identical before and after, and an operator
+# has no way to answer "what is actually running right now?" at 2am.
+# `docker compose exec app printenv APP_BUILD` answers it; docs/runbook.md
+# uses it as the first question of every incident and as the proof that a
+# rollback landed.
+ARG APP_BUILD=unknown
+ENV APP_BUILD=${APP_BUILD}
 
 USER www-data
 

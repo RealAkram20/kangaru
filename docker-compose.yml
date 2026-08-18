@@ -37,6 +37,11 @@ x-app-image: &app-image
   build:
     context: ./backend
     dockerfile: Dockerfile
+    args:
+      # Baked in so a running container can say which build it is —
+      # `docker compose exec app printenv APP_BUILD`. It is what makes a
+      # rollback verifiable rather than merely performed (docs/runbook.md).
+      APP_BUILD: ${SOURCE_COMMIT:-local}
   image: kangaruride/api:${SOURCE_COMMIT:-local}
 
 # The application environment, once, shared by app / queue / scheduler.
