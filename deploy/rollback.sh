@@ -85,8 +85,31 @@ schema_rollback() {
   log "stopping queue and scheduler"
   $COMPOSE stop queue scheduler
 
+  # Count what is applied before and after. This is not belt-and-braces: with
+  # the image already swapped back, `migrate:rollback` cannot find the
+  # migration file it is supposed to reverse and **rolls back nothing while
+  # reporting success** — it prints "Rolling back migrations." and exits 0.
+  # Proved in CI (run 32126492421): the script said "done in 12s", --verify
+  # passed, the app was healthy, and the schema had not moved. A rollback
+  # script that lies is worse than no script, so this refuses to claim a
+  # rollback it did not perform.
+  local before after
+  before=$(art tinker --execute='echo DB::table("migrations")->count();' | tr -d '\r\n ')
+
   log "migrate:rollback --step=${steps}"
   art migrate:rollback --step="$steps" --force --no-interaction
+
+  after=$(art tinker --execute='echo DB::table("migrations")->count();' | tr -d '\r\n ')
+  if [ "$after" -ge "$before" ]; then
+    log "FAILED — ${before} migrations before, ${after} after: nothing was rolled back."
+    log "The usual cause is that the code was put back FIRST: down() lives in"
+    log "the new image, so the migration file is no longer there to reverse."
+    log "Redeploy the newer build, roll the schema back, THEN go back again."
+    log "The pre-rollback backup above is untouched. See docs/runbook.md §5.3."
+    $COMPOSE start queue scheduler
+    return 1
+  fi
+  log "migrations applied: ${before} -> ${after}"
 
   log "restarting queue and scheduler"
   $COMPOSE start queue scheduler
