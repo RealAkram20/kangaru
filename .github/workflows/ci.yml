@@ -81,12 +81,15 @@ jobs:
     name: Backend (Pint, Larastan, Pest)
     runs-on: ubuntu-latest
 
-    # Targets the production spec (PHP 8.4, MySQL 8 — AGENTS.md Technology
-    # Stack) even though local dev currently runs PHP 8.3 / MariaDB via
-    # XAMPP. CI is where that gap gets caught before it matters.
+    # Targets the production spec (PHP 8.4, MySQL 8.4 LTS — AGENTS.md
+    # Technology Stack; the same image the deploy-stack job runs) even though
+    # local dev currently runs PHP 8.3 / MariaDB via XAMPP. CI is where that
+    # gap gets caught before it matters. 8.0 left support in April 2026; the
+    # bump means every isolation test in the suite runs against the engine
+    # production actually uses (W1-c).
     services:
       mysql:
-        image: mysql:8.0
+        image: mysql:8.4
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: kangaruride_ci
