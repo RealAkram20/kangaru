@@ -350,6 +350,12 @@ jobs:
 
       - name: Roll back — schema down while v2 still runs, then v1 back
         run: |
+          # Without pipefail a failing rollback.sh is swallowed by `| tee` and
+          # the step passes — proved in run 32127105596, where the script
+          # printed FAILED and CI carried on to fail two steps later on a
+          # different assertion. The guard is only load-bearing if the step
+          # it runs in actually fails.
+          set -eo pipefail
           start=$(date +%s)
 
           # MUTATION UNDER TEST — the order is deliberately WRONG here, to
