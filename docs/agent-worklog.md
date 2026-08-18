@@ -7433,3 +7433,50 @@ grades.
 The page is rendered by RTL under StrictMode in eight tests including the whole
 clear-and-reload path. **Before this ships: open Operations → Distance review
 on a running stack with one held trip and clear it.**
+
+### 2026-08-18 — MFA off for development, and the reason it cannot be off in production
+
+**Status:** built. `tests/Feature/Administration` + `tests/Feature/Auth`: 179
+green, Pint and PHPStan L8 clean. **Two mutations proved and restored.**
+
+**Source:** the owner: *"let's disable 2Fa for now we are still in
+development."*
+
+**The concern, stated once and then acted on.** AGENTS.md and ADR-0008 make
+the second factor mandatory for Super Admin and Finance because those roles
+move money, and a bank's vendor questionnaire asks about it by name. So this
+is a **switch that cannot be turned off in production** rather than a removal:
+`App\Support\Auth\MfaRequirement::inForce()` checks the environment *before*
+it reads `config/mfa.php`, so `MFA_ENABLED=false` copied into a live `.env`
+does nothing at all. `.env.example` ships it as `true`; this worktree's `.env`
+has it `false`.
+
+**What it turns off, and what it deliberately does not.** Two things: the
+demand that an MFA-required role enrol (`requiresMfa()`, which drives
+`mustEnrolInMfa()` and the `EnsureMfaEnrolled` middleware), and the challenge
+at sign-in. It deletes **nothing** — no secret, no recovery code, no
+`roles.requires_mfa` row — so turning it back on restores exactly the accounts
+that were protected, with the same secrets.
+
+**The distinction that made it clean.** `hasMfaEnabled()` is "does this
+account have a factor" and stays truthful whatever the switch says — a profile
+screen that claimed otherwise would be lying about what protects the account
+the moment it goes back on. A new `mustPresentMfa()` is "are we going to ask
+for it", and it is what `AuthService` and both branches of
+`SocialSignInService` now call. ADR-0010 decision 1 is intact: it is still the
+factor that decides who is asked, never the role.
+
+**Two things the tests taught me, both about the fixtures rather than the
+code:** `UserFactory` enrols an MFA-required role in `afterCreating`, so with
+the switch off it enrols nobody — a test about "the platform does not forget
+an enrolment" has to create the user *before* flipping the switch. And the
+challenge is a **202 with a `challenge_id`**, not a 200 with an `mfa_required`
+flag; I had written the assertion from memory and the response corrected me.
+
+**Mutations proved and restored:** dropping the production guard from
+`MfaRequirement` (caught by "is inert in production, whatever the environment
+file says"); dropping the switch from `mustPresentMfa()` (caught by two).
+
+**To turn it back on:** set `MFA_ENABLED=true` in `backend/.env` and run
+`php artisan config:clear`. Nothing else — the seeded demo accounts still hold
+`DEMO_TOTP_SECRET`, and every voluntarily enrolled account still holds its own.

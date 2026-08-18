@@ -207,6 +207,16 @@ Named here so a half-built thing is not mistaken for a finished one.
   grace period, ten single-use hashed recovery codes, an app-encrypted
   secret, and a 24-hour Sanctum expiry with a scheduled prune.
 
+  **`MFA_ENABLED=false` turns the factor off for development** (config/mfa.php,
+  ADR-0008 as amended): no forced enrolment, no challenge at sign-in. It
+  deletes nothing — every secret and recovery code survives, and turning it
+  back on restores exactly the accounts that were protected.
+  `App\Support\Auth\MfaRequirement` refuses to honour it in production, so a
+  copied `.env` cannot disable the factor on a live fleet. Two model methods
+  carry it: `requiresMfa()` (who must enrol) and `mustPresentMfa()` (who is
+  asked for a code); `hasMfaEnabled()` deliberately still reports the truth
+  about the account.
+
   **~~Voluntary MFA is reachable and pointless~~ — decided and built,
   ADR-0010 (3 August 2026).** `AuthService::login` challenged on
   `requiresMfa() && hasMfaEnabled()`, so a user in an unprivileged role

@@ -74,7 +74,11 @@ class AuthService
         // `requiresMfa()` still decides who *must* enrol, through
         // `mustEnrolInMfa()` and the EnsureMfaEnrolled middleware. It no
         // longer decides who gets asked.
-        if ($user->hasMfaEnabled()) {
+        // `mustPresentMfa()`, not `hasMfaEnabled()`: the same "the factor
+        // decides, not the role" rule, plus the development switch in
+        // config/mfa.php, which cannot be off in production. An enrolled
+        // account keeps its secret either way.
+        if ($user->mustPresentMfa()) {
             return [
                 'user' => $user,
                 'token' => null,

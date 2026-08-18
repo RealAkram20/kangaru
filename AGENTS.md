@@ -334,7 +334,7 @@ Every mutation to rate cards, contracts, invoices, payments, roles/permissions, 
 ## Technical requirements
 
 - TLS everywhere; HSTS on.
-- Passwords via Laravel defaults (bcrypt/argon2). **MFA is required for Super Admin and Finance roles in Phase 1** — these roles can move money and change rates.
+- Passwords via Laravel defaults (bcrypt/argon2). **MFA is required for Super Admin and Finance roles in Phase 1** — these roles can move money and change rates. A development switch (`MFA_ENABLED`, ADR-0008 as amended) can lift the demand and the challenge locally; it is inert in production, so this requirement is not weakened by it.
 - Encryption at rest: MySQL tablespace encryption, R2 default encryption; driver documents (IDs, licenses) additionally app-level encrypted.
 - Secrets via environment from a managed store — never in the repo.
 - Sanitize inputs, escape outputs. Prevent SQL injection, XSS, CSRF.

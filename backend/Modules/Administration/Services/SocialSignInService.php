@@ -74,7 +74,7 @@ class SocialSignInService
             return ['kind' => 'sign_up', 'name' => $claims['name'], 'email' => $claims['email']];
         }
 
-        if ($user->hasMfaEnabled()) {
+        if ($user->mustPresentMfa()) {
             return ['kind' => 'mfa_required'];
         }
 
@@ -107,7 +107,7 @@ class SocialSignInService
             return ['kind' => 'sign_up', 'name' => $user->name, 'email' => $user->email];
         }
 
-        if ($user->hasMfaEnabled()) {
+        if ($user->mustPresentMfa()) {
             return ['kind' => 'mfa_required'];
         }
 

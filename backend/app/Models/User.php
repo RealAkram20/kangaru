@@ -8,6 +8,7 @@ use App\Concerns\Auditable;
 use App\Enums\Permission;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
+use App\Support\Auth\MfaRequirement;
 use Carbon\CarbonInterface;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Builder;
@@ -136,13 +137,38 @@ class User extends Authenticatable
      */
     public function requiresMfa(): bool
     {
-        return (bool) $this->roleRecord?->requires_mfa;
+        return MfaRequirement::inForce() && (bool) $this->roleRecord?->requires_mfa;
     }
 
-    /** Enrolment is only real once a code has been verified against it. */
+    /**
+     * Enrolment is only real once a code has been verified against it.
+     *
+     * Reports the *fact* and is deliberately not gated by
+     * `MfaRequirement::inForce()`: a user with a confirmed secret has one
+     * whether or not this environment is asking for it, and a profile screen
+     * that claimed otherwise would be lying about what protects the account
+     * the moment the switch goes back on.
+     */
     public function hasMfaEnabled(): bool
     {
         return $this->mfa_secret !== null && $this->mfa_confirmed_at !== null;
+    }
+
+    /**
+     * Whether this sign-in must be completed with a code.
+     *
+     * The pair of `hasMfaEnabled()`: that one is "does this account have a
+     * factor", this one is "are we going to ask for it". They differ only
+     * with the switch off (config/mfa.php), and keeping them apart is what
+     * lets a developer sign in without the platform forgetting that the
+     * account is enrolled.
+     *
+     * ADR-0010 decision 1 still holds: it is the **factor** that decides,
+     * not the role. A user who enrolled voluntarily is still asked.
+     */
+    public function mustPresentMfa(): bool
+    {
+        return MfaRequirement::inForce() && $this->hasMfaEnabled();
     }
 
     /**
