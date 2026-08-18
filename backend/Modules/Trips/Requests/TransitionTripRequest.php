@@ -5,6 +5,7 @@ namespace Modules\Trips\Requests;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Modules\Administration\Services\SettingsService;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
 
@@ -58,6 +59,12 @@ class TransitionTripRequest extends FormRequest
                 'integer',
                 'min:0',
             ],
+            // The handset's own measurement of the trip from its buffered
+            // pings, in kilometres (ADR-0045 §5). Optional: a console user
+            // and a handset that predates the field send none, and the
+            // provisional fare is priced from the odometer instead. It is a
+            // claim, not evidence — the resolver measures the trace itself.
+            'provisional_distance_km' => ['nullable', 'numeric', 'min:0', 'max:100000'],
             // PROJECT.md: "Driver-entered value plus a dashboard photo."
             //
             // Optional, not required. A camera that will not focus in the
@@ -114,6 +121,53 @@ class TransitionTripRequest extends FormRequest
                     'odometer_end',
                     'Closing odometer reading cannot be less than the opening reading.'
                 );
+            }
+
+            /*
+             * The other end of the same rule (ADR-0035).
+             *
+             * Refused rather than flagged, and refused *here* rather than
+             * downstream: past this point the reading is a trip, then a fare,
+             * then a ledger entry or an invoice line, and correcting it means
+             * somebody unpicking money.
+             *
+             * **How this reaches a driver is not immediate, and the message is
+             * written for that.** The driver app queues the transition through
+             * the offline outbox (ADR-0023) rather than sending it, so a 422
+             * arrives on a later drain and parks the item with this message
+             * attached — the driver reads it on the sync queue screen, not at
+             * the kerb. It therefore has to name the figure and the limit and
+             * be legible out of context, because by then the dashboard is not
+             * in front of them. A console user gets it synchronously.
+             *
+             * The variance flag does not cover this case. It compares against
+             * the GPS trace, declines to judge when there is no trace, and is
+             * a review signal rather than a refusal — so an impossible reading
+             * on a trip with no pings passed silently. One did: 90,004 km,
+             * priced at UGX 198,013,800.
+             *
+             * The two odometer errors cannot both fire, and deliberately no
+             * guard enforces that: a reading below the opening one makes
+             * `$travelled` negative, which can never exceed a positive
+             * ceiling. A first draft did guard on `errors()->has()` — a
+             * mutation pass showed the guard was dead code, because the
+             * arithmetic already guarantees it. The test below pins the
+             * property rather than the guard, so it keeps holding if the
+             * ceiling ever becomes something other than a subtraction.
+             */
+            if ($this->input('to') === TripStatus::TRIP_COMPLETED->value
+                && $this->filled('odometer_end')
+                && $trip?->odometer_start !== null) {
+                $ceiling = (int) app(SettingsService::class)->get('tracking', 'odometer_max_km_per_trip');
+                $travelled = $this->integer('odometer_end') - $trip->odometer_start;
+
+                if ($travelled > $ceiling) {
+                    $validator->errors()->add(
+                        'odometer_end',
+                        "That reading makes this trip {$travelled} km, which is beyond the {$ceiling} km "
+                        .'allowed for one journey. Check the closing reading and try again.'
+                    );
+                }
             }
 
             if ($this->input('to') === TripStatus::CLOSED->value

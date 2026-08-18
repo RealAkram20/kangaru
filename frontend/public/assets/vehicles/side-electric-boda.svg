@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 320">
+  <!-- KangaruRide fleet · electric boda (step-through scooter) · side view -->
+  <defs>
+    <radialGradient id="shadow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0B1220" stop-opacity="0.20"/>
+      <stop offset="70%" stop-color="#0B1220" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#0B1220" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1CB964"/>
+      <stop offset="1" stop-color="#118A48"/>
+    </linearGradient>
+  </defs>
+
+  <ellipse cx="256" cy="272" rx="180" ry="14" fill="url(#shadow)"/>
+
+  <!-- rear swingarm -->
+  <line x1="376" y1="232" x2="318" y2="196" stroke="#5A6167" stroke-width="9" stroke-linecap="round"/>
+
+  <!-- step-through body: front shield, floorboard, under-seat unit -->
+  <path fill="url(#green)" d="M172 92 C186 90 196 98 196 110 L200 150 C202 168 208 180 224 186 L296 190 C306 168 322 156 344 156 C376 156 394 176 396 204 L390 216 C386 194 368 178 344 178 C322 178 306 192 302 214 L226 210 C198 206 182 188 176 158 L166 108 C164 98 166 94 172 92 Z"/>
+  <!-- floorboard edge -->
+  <rect x="208" y="196" width="98" height="10" rx="5" fill="#0F7A40"/>
+  <!-- under-seat battery unit -->
+  <path fill="url(#green)" d="M312 132 C334 122 362 122 380 132 C390 142 392 156 386 166 C368 158 344 158 328 166 C316 158 308 144 312 132 Z"/>
+  <ellipse cx="344" cy="131" rx="24" ry="6" fill="#FFFFFF" opacity="0.20"/>
+
+  <!-- seat -->
+  <path fill="#1D2024" d="M304 122 C326 110 366 108 388 116 C396 120 396 130 388 132 C362 126 330 126 310 134 C302 132 300 126 304 122 Z"/>
+
+  <!-- charge port dot -->
+  <circle cx="352" cy="146" r="6" fill="#0F2A1D"/>
+  <circle cx="352" cy="146" r="2.5" fill="#7CE0AC"/>
+
+  <!-- front fender + headlamp -->
+  <path fill="url(#green)" d="M100 206 C106 184 122 170 144 164 L152 178 C134 182 120 194 114 210 Z"/>
+  <ellipse cx="170" cy="102" rx="11" ry="9" fill="#E8ECEF"/>
+
+  <!-- fork + handlebar + mirror -->
+  <g stroke="#31363C" stroke-width="8" stroke-linecap="round">
+    <line x1="134" y1="232" x2="182" y2="112"/>
+    <line x1="182" y1="112" x2="164" y2="84"/>
+    <line x1="164" y1="84" x2="148" y2="80"/>
+  </g>
+  <line x1="164" y1="84" x2="176" y2="60" stroke="#4A5057" stroke-width="4" stroke-linecap="round"/>
+  <ellipse cx="179" cy="56" rx="8" ry="6" fill="#26292E"/>
+
+  <!-- wheels: smaller scooter wheels, solid alloy -->
+  <g>
+    <circle cx="134" cy="232" r="40" fill="#17191C"/>
+    <circle cx="134" cy="232" r="26" fill="#EDF0F3"/>
+    <g stroke="#B6BDC4" stroke-width="4">
+      <line x1="134" y1="210" x2="134" y2="254"/>
+      <line x1="112" y1="232" x2="156" y2="232"/>
+    </g>
+    <circle cx="134" cy="232" r="7" fill="#5A6167"/>
+    <circle cx="376" cy="232" r="40" fill="#17191C"/>
+    <circle cx="376" cy="232" r="26" fill="#EDF0F3"/>
+    <g stroke="#B6BDC4" stroke-width="4">
+      <line x1="376" y1="210" x2="376" y2="254"/>
+      <line x1="354" y1="232" x2="398" y2="232"/>
+    </g>
+    <circle cx="376" cy="232" r="7" fill="#5A6167"/>
+  </g>
+</svg>

@@ -194,6 +194,7 @@ An in-flight trip is reported as in progress, not as a deficient record.
 | GET | `/api/v1/reports/drivers` | `viewReports` gate |
 | GET | `/api/v1/reports/vehicles` | `viewReports` gate |
 | GET | `/api/v1/reports/financial` | `viewReports` gate |
+| GET | `/api/v1/reports/distance` | `viewReports` gate — ADR-0045's shadow report; on-screen only, not exportable |
 | POST | `/api/v1/reports/exports` | `viewReports` gate — request a file; `202` |
 | GET | `/api/v1/reports/exports` | `viewReports` gate — this tenant's recent exports |
 | GET | `/api/v1/reports/exports/{id}` | `viewReports` gate — poll until `is_terminal` |
@@ -212,10 +213,39 @@ silent ignore:
 | trips | `from`, `to`, `vehicle_id`, `driver_id`, `status`, `tenant_id`¹ |
 | drivers, vehicles | `from`, `to` |
 | financial | `from`, `to`, `group_by`, `tenant_id`¹ ² |
+| distance | `from`, `to`, `grade`, `provider`, `tenant_id`¹ |
 
 ¹ Platform staff only. A client's user sending `tenant_id` gets the ordinary
 unrecognised-filter `422` — they have exactly one tenant and it is not a
 parameter they get to choose. ² Required for platform staff; see below.
+
+## The measured-distance report (ADR-0045)
+
+`GET /reports/distance` is the instrument Phase 1 of
+`docs/measured-distance-plan.md` exists to produce: one row per completed
+trip — its **latest** `trip_distance_evidence` row — and, over the whole
+filtered set, the grade counts (A verified / B bounded / C held), the engine
+used (`osrm` road-matched or `haversine` straight-line), how the trace's
+figure sits against the odometer and against the reference route in
+deviation buckets, coverage buckets, and `unresolved`: completed trips in the
+period with no resolution at all, which is the "is the queue running" figure
+ADR-0035 wished it had. `DistanceReportRepository` is a query-builder join
+(evidence → trips → drivers → vehicles); the summary is one aggregate over
+the same join, so rows and totals cannot disagree about which trips they
+cover.
+
+**It is not a `ReportType`, deliberately.** That enum is the seam for reports
+that are exported — source, slug, row noun and tenant-filter rule in one
+place. This report is on-screen only; it takes the trip report's tenant rule
+(optional for platform staff, refused for a client's user) directly in
+`DistanceReportRequest`, whose docblock says when it would become one.
+Nothing on it is billed: it shows what the resolver *would* bill on, so the
+flip to trace-priced fares is taken on evidence.
+
+Frontend: `frontend/src/pages/reports/DistanceReport.tsx`, offered as
+"Measured distance" in the report picker on `ReportsPage`, with the export
+panel withheld on it. The `tracking` settings card on `SystemSettingsPage`
+carries the switch and the dials.
 
 ## Whose figures a report is about (ADR-0007)
 

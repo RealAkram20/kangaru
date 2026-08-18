@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Models\Customer;
 use App\Models\Tenant;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Modules\Drivers\Models\Driver;
@@ -24,10 +25,14 @@ class TripFactory extends Factory
     protected $model = Trip::class;
 
     /**
-     * `vehicle_id` and `driver_id` resolve from whatever `tenant_id` ended
-     * up as, so `Trip::factory()->forTenant($t)` yields a trip whose
-     * vehicle and driver are in that same tenant — never a cross-tenant
-     * trip built by accident.
+     * The trip carries the tenant; its vehicle and driver do not.
+     *
+     * Both used to be built with `['tenant_id' => $attributes['tenant_id']]`,
+     * which ADR-0005 turned into a column that is not there — so the bare
+     * `Trip::factory()->create()` threw "Unknown column 'tenant_id'" and
+     * only the `forVehicle()/forDriver()` spellings worked. Every existing
+     * test happened to use those, so nothing failed and the trap stayed set
+     * for the next person.
      *
      * @return array<string, mixed>
      */
@@ -35,12 +40,8 @@ class TripFactory extends Factory
     {
         return [
             'tenant_id' => Tenant::factory(),
-            'vehicle_id' => fn (array $attributes) => Vehicle::factory()->create([
-                'tenant_id' => $attributes['tenant_id'],
-            ])->id,
-            'driver_id' => fn (array $attributes) => Driver::factory()->create([
-                'tenant_id' => $attributes['tenant_id'],
-            ])->id,
+            'vehicle_id' => fn () => Vehicle::factory()->create()->id,
+            'driver_id' => fn () => Driver::factory()->create()->id,
             'origin' => 'Kampala',
             'destination' => fake()->randomElement(['Entebbe', 'Jinja', 'Mbarara', 'Gulu']),
             'status' => TripStatus::ASSIGNED,
@@ -50,6 +51,25 @@ class TripFactory extends Factory
     public function forTenant(Tenant $tenant): static
     {
         return $this->state(fn (array $attributes) => ['tenant_id' => $tenant->id]);
+    }
+
+    /**
+     * A walk-in customer's trip (ADR-0024 §1): owned by a customer, and
+     * therefore owned by no tenant.
+     *
+     * `tenant_id` is nulled here as well as set, because `definition()`
+     * supplies a `Tenant::factory()` and leaving it would both create a
+     * client company nobody asked for and produce a trip with two owners —
+     * the exact state `TripService::assertExactlyOneOwner` refuses. A
+     * factory that can build a row the service would reject is a factory
+     * that will eventually be used to "prove" the invariant holds.
+     */
+    public function forCustomer(Customer $customer): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'tenant_id' => null,
+            'customer_id' => $customer->id,
+        ]);
     }
 
     public function forVehicle(Vehicle $vehicle): static

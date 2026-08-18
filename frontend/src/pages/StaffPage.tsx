@@ -345,7 +345,13 @@ function StaffDialog({
             hint="At least 12 characters. Tell them in person, not by email, and ask them to change it."
             error={errors.password}
           >
-            <Input id="s-password" type="password" value={form.password} onChange={set('password')} />
+            <Input
+              id="s-password"
+              type="password"
+              value={form.password}
+              onChange={set('password')}
+              revealable
+            />
           </FormField>
         )}
       </div>

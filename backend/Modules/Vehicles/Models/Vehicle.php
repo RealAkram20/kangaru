@@ -38,9 +38,36 @@ class Vehicle extends Model
      * site: Modules/Billing prices per category, so a category that exists
      * in one list and not another would be a vehicle nobody can invoice.
      *
+     * **`boda` and `tricycle` were missing, and the failure this docblock
+     * predicted had already happened.** The walk-in tariff priced both, a
+     * vehicle in the fleet was already recorded as a `boda`, and
+     * `DriverAppSeeder` writes them — all by inserting rows directly, which
+     * skips the validation that would have refused them. The visible symptom
+     * was that a new version of the public tariff could not be saved through
+     * the API at all: `StoreRateCardVersionRequest` validates against this
+     * list, so it rejected two of the six categories the tariff already
+     * priced.
+     *
+     * Ordered smallest first, which is how a chooser should read. Nothing
+     * depends on the order; the lists are compared by content.
+     *
+     * Mirrored in `frontend/src/lib/billing.ts` and `docs/api/openapi.yaml`.
+     * The self-drive subset in `StorePublicOrderRequest` is deliberately
+     * narrower and is not this list — nobody self-drives a boda.
+     *
      * @var array<int, string>
      */
-    public const CATEGORIES = ['sedan', 'suv', 'van', 'minibus', 'bus', 'pickup', 'truck'];
+    public const CATEGORIES = [
+        'boda',
+        'tricycle',
+        'sedan',
+        'suv',
+        'van',
+        'minibus',
+        'bus',
+        'pickup',
+        'truck',
+    ];
 
     /**
      * Explicit, because Laravel's default factory resolver only guesses

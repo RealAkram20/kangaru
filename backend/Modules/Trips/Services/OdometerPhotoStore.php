@@ -56,10 +56,28 @@ class OdometerPhotoStore
         $extension = $photo->extension() ?: 'jpg';
         $name = sprintf('%s-%s.%s', $moment, Str::uuid7(), $extension);
 
-        return $photo->storeAs(
-            sprintf('tenants/%d/trips/%d/odometer', $trip->tenant_id, $trip->id),
-            $name,
-        ) ?: null;
+        return $photo->storeAs($this->directoryFor($trip), $name) ?: null;
+    }
+
+    /**
+     * Where a trip's photos live, by owner (ADR-0024 §1).
+     *
+     * A walk-in trip has no tenant, and `sprintf('%d', null)` renders it as
+     * `0` — so every walk-in photo in the platform would have piled into
+     * `tenants/0/`, a directory named after a client that does not exist.
+     * That is not a crash, which is exactly what makes it worth a branch:
+     * it would have worked, silently, until somebody went looking for a
+     * disputed odometer reading.
+     *
+     * The two prefixes are siblings rather than nested so that a retention
+     * or export job can address either owner's files without pattern
+     * matching on a path.
+     */
+    private function directoryFor(Trip $trip): string
+    {
+        return $trip->customer_id !== null
+            ? sprintf('customers/%d/trips/%d/odometer', $trip->customer_id, $trip->id)
+            : sprintf('tenants/%d/trips/%d/odometer', $trip->tenant_id, $trip->id);
     }
 
     /**

@@ -1,10 +1,27 @@
 /// <reference types="vitest/config" />
+import { fileURLToPath, URL } from 'node:url'
+
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+
+  /*
+   * `@/` -> `src/`. Declared here and in tsconfig.app.json, and both are
+   * required: TypeScript resolves the alias for the editor and `tsc -b`,
+   * Vite resolves it for the bundle and for Vitest, which shares this file.
+   *
+   * It exists for Animate UI. Its icon sources are distributed through the
+   * shadcn registry importing `@/components/animate-ui/...`, so the alias is
+   * what lets an updated icon be pulled in unedited.
+   */
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
 
   /*
    * Vitest lives in this file rather than its own vitest.config.ts so tests
@@ -25,6 +42,16 @@ export default defineConfig({
     globals: false,
 
     setupFiles: ['./src/test/setup.ts'],
+
+    /*
+     * Vitest defaults to 5s per test. These are Testing Library flows that
+     * type character by character through multi-step forms, and the runner
+     * executes files in parallel — so under load the slowest of them tip
+     * over 5s and fail in a different combination on every run. The work
+     * is genuine, not a hang; 20s removes the false negatives without
+     * hiding a real deadlock, which would still blow through it.
+     */
+    testTimeout: 20_000,
 
     /*
      * The app's styling is design tokens in plain CSS. None of it changes

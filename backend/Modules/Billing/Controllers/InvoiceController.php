@@ -10,6 +10,8 @@ use Illuminate\Http\JsonResponse;
 use Modules\Billing\Models\Invoice;
 use Modules\Billing\Models\RateCard;
 use Modules\Billing\Pricing\RateCardNotConfiguredException;
+use Modules\Billing\Pricing\TripDistanceHeldException;
+use Modules\Billing\Pricing\TripDistanceUnresolvedException;
 use Modules\Billing\Repositories\InvoiceRepository;
 use Modules\Billing\Requests\GenerateInvoiceRequest;
 use Modules\Billing\Requests\InvoiceIndexRequest;
@@ -18,6 +20,7 @@ use Modules\Billing\Services\IdempotencyKeyReusedException;
 use Modules\Billing\Services\InvoiceAlreadyIssuedException;
 use Modules\Billing\Services\InvoiceService;
 use Modules\Billing\Services\TripNotInvoiceableException;
+use Modules\Billing\Services\WalkInTripNotInvoiceableException;
 use Modules\Trips\Models\Trip;
 
 /**
@@ -95,8 +98,19 @@ class InvoiceController extends Controller
                 $user,
                 $rateCard,
             );
+        } catch (WalkInTripNotInvoiceableException $e) {
+            // Its own code, above the sibling below it, because the two
+            // mean different things to a client: this trip will never be
+            // invoiceable, and a screen that reads only TRIP_NOT_INVOICEABLE
+            // would keep offering an action that can only ever fail.
+            return ApiResponse::error(ErrorCode::TRIP_NOT_INVOICEABLE_WALK_IN, $e->getMessage(), [], 409);
         } catch (TripNotInvoiceableException $e) {
             return ApiResponse::error(ErrorCode::TRIP_NOT_INVOICEABLE, $e->getMessage(), [], 409);
+        } catch (TripDistanceUnresolvedException $e) {
+            // "Not yet", like the sibling above (ADR-0045).
+            return ApiResponse::error(ErrorCode::TRIP_DISTANCE_UNRESOLVED, $e->getMessage(), [], 409);
+        } catch (TripDistanceHeldException $e) {
+            return ApiResponse::error(ErrorCode::TRIP_DISTANCE_HELD, $e->getMessage(), [], 409);
         } catch (InvoiceAlreadyIssuedException $e) {
             return ApiResponse::error(ErrorCode::TRIP_ALREADY_INVOICED, $e->getMessage(), [], 409);
         } catch (IdempotencyKeyReusedException $e) {

@@ -4,7 +4,9 @@ namespace Modules\Trips\Services;
 
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Modules\Administration\Services\SettingsService;
 use Modules\Trips\Enums\TripStatus;
+use Modules\Trips\Events\TripCompleted;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Models\TripEvent;
 
@@ -20,12 +22,26 @@ class TripStateMachine
         private readonly TripAssignmentGuard $guard,
         private readonly RouteDistanceCalculator $routeDistance,
         private readonly OdometerPhotoStore $photos,
+        private readonly SettingsService $settings,
     ) {}
 
     /**
+     * Moves a trip along its lifecycle, recording who did it.
+     *
+     * `$actor` is nullable because not every principal on this platform is a
+     * `User`. A walk-in passenger cancelling their own ride (ADR-0024 §7) is
+     * authenticated on the `customer` guard and has no staff account, and
+     * inventing a system user to stand in for them would put a fictitious
+     * name on a real audit row. `trip_events.user_id` is already nullable and
+     * `TripEvent::record` already takes `?User`; this signature was the only
+     * thing insisting otherwise.
+     *
+     * Null means "no staff user did this", not "nobody did" — callers pass a
+     * note saying who, and every existing caller still passes an actor.
+     *
      * @param  array<string, mixed>  $payload
      */
-    public function transition(Trip $trip, TripStatus $to, User $actor, array $payload = []): Trip
+    public function transition(Trip $trip, TripStatus $to, ?User $actor, array $payload = []): Trip
     {
         $from = $trip->status;
 
@@ -52,6 +68,16 @@ class TripStateMachine
                 $trip->save();
 
                 TripEvent::record($trip, $from, $to, $actor, $payload['notes'] ?? null);
+
+                // Announced, not acted on. `trip_completed` is the
+                // transition that captures the closing odometer and computes
+                // the distance, so it is the first moment a fare can exist —
+                // and this module deliberately does not know that anybody
+                // prices anything (see the event's docblock, and
+                // `BookingApproved` before it).
+                if ($to === TripStatus::TRIP_COMPLETED) {
+                    TripCompleted::dispatch($trip);
+                }
 
                 return $trip->refresh();
             });
@@ -106,6 +132,12 @@ class TripStateMachine
         // two different types depending on whether the model was reloaded.
         $trip->distance_km = (string) ($trip->odometer_end - $trip->odometer_start);
 
+        // ADR-0045 §5: what the handset measured, kept as a claim beside the
+        // odometer's. Only ever set here, and only from the completion.
+        if (isset($payload['provisional_distance_km'])) {
+            $trip->provisional_distance_km = (string) round((float) $payload['provisional_distance_km'], 2);
+        }
+
         $this->reconcileAgainstGps($trip);
     }
 
@@ -149,8 +181,14 @@ class TripStateMachine
 
         $variancePercent = abs($odometerKilometres - $gpsKilometres) / $odometerKilometres * 100;
 
+        // The office's number, not an env var's (ADR-0035). It was
+        // `config('tracking.variance_threshold_percent')`, which meant the
+        // threshold behind PROJECT.md's "reviewed within two business days"
+        // metric could only be changed by a deploy, was invisible in the
+        // console, and was not audited. Same default, so nothing moves until
+        // somebody decides it should.
         $trip->distance_variance_flagged = $variancePercent
-            > (float) config('tracking.variance_threshold_percent', 10);
+            > (float) $this->settings->get('tracking', 'variance_threshold_percent');
     }
 
     /**

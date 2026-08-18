@@ -110,6 +110,18 @@ class TripPolicy
         return $trip->driver?->user_id === $user->id;
     }
 
+    /**
+     * Lifting a held distance (ADR-0045 §2): finance's act, on a trip they
+     * may see. The same permission that closes and disputes a trip — the
+     * finance end of the lifecycle — because clearing a hold is what lets a
+     * fare or an invoice exist, and the roles holding it are the ones MFA
+     * already gates for moving money.
+     */
+    public function clearDistance(User $user, Trip $trip): bool
+    {
+        return $user->hasPermission(Permission::TRIPS_TRANSITION_FINANCE) && $this->view($user, $trip);
+    }
+
     public function transition(User $user, Trip $trip, TripStatus $to): bool
     {
         if ($user->hasPermission(Permission::TRIPS_TRANSITION_ANY)) {

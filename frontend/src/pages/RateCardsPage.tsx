@@ -12,13 +12,29 @@ import { apiError } from '../lib/apiError'
 import { canManageBilling, nightWindowLabel } from '../lib/billing'
 import { formatUgx } from '../lib/format'
 import type { ApiSuccess } from '../types/api'
-import type { RateCard, RateCardRate, RateCardVersion } from '../types/billing'
+import type { RateAmounts, RateCard, RateCardVersion } from '../types/billing'
 import { RateCardVersionDialog } from './billing/RateCardVersionDialog'
 
-type RateRow = RateCardRate & { id: string }
+/**
+ * One priced row: a vehicle category's default price, or a zone price that
+ * replaces it inside one boundary (ADR-0021).
+ *
+ * Both are flattened into the same table because they are the same five
+ * amounts and a reader's question is "what is a sedan charged, and where" —
+ * which a second table beside the first cannot answer at a glance.
+ */
+type RateRow = RateAmounts & { id: string; vehicle_category: string; zone: string | null }
 
 const RATE_COLUMNS: DataColumn<RateRow>[] = [
   { key: 'vehicle_category', header: 'Category' },
+  {
+    key: 'zone',
+    header: 'Zone',
+    // "Anywhere else" rather than a dash: null here is a positive statement
+    // — this is the price wherever no zone rate applies — and a dash would
+    // read as missing data on a pricing document.
+    render: (r) => (r.zone === null ? 'Anywhere else' : r.zone),
+  },
   { key: 'base_fare_minor', header: 'Base fare', numeric: true, render: (r) => formatUgx(r.base_fare_minor) },
   { key: 'per_km_minor', header: 'Per km', numeric: true, render: (r) => formatUgx(r.per_km_minor) },
   {
@@ -113,7 +129,7 @@ export function RateCardsPage() {
       <EmptyState
         icon="lock"
         title="Rate cards are not visible to your role"
-        description="Pricing is restricted to Finance, Super Admin, Operations Manager and Corporate Admin. Ask an administrator if you need access."
+        description="Restricted to Finance and administrators. Ask for access."
       />
     )
   }
@@ -158,10 +174,27 @@ export function RateCardsPage() {
 
       {(cards ?? []).map((card) => (
         <RateCardPanel
-          key={card.id}
+          /*
+            **Keyed on the newest version, not just the card.**
+
+            `RateCardPanel` picks which version to expand with a `useState`
+            initialiser, which runs once per mounted instance. Keyed on
+            `card.id` alone the instance survives every refetch, so adding a
+            version left `expanded` pointing at the version that *used* to be
+            newest: the list gained a row and the panel went on showing the old
+            prices. Somebody had just changed a tariff and the screen appeared
+            not to have noticed.
+
+            Folding the newest version's id into the key remounts the panel
+            exactly when the answer to "which version is current" changes, and
+            leaves it alone on every other reload. An effect syncing the state
+            would do the same thing and trip `react-hooks/set-state-in-effect`,
+            which this codebase already documents as a rule it keeps.
+          */
+          key={`${card.id}:${card.versions?.[0]?.id ?? 'none'}`}
           card={card}
           canManage={canManage}
-          onAddVersion={() => setDialogFor({ card })}
+          onEdit={() => setDialogFor({ card })}
           onMakeDefault={() => void makeDefault(card)}
         />
       ))}
@@ -184,12 +217,12 @@ export function RateCardsPage() {
 function RateCardPanel({
   card,
   canManage,
-  onAddVersion,
+  onEdit,
   onMakeDefault,
 }: {
   card: RateCard
   canManage: boolean
-  onAddVersion: () => void
+  onEdit: () => void
   onMakeDefault: () => void
 }) {
   // Versions arrive newest first. The top one is what a trip run today
@@ -213,9 +246,23 @@ function RateCardPanel({
               </Button>
             )
           )}
+          {/*
+            **One Edit, opening the same form the card was created with.**
+
+            There were two buttons here — *Edit* for the name and *New version*
+            for the prices — and the owner put the two dialogs side by side and
+            said the edit was a different thing from the create. It was: the
+            immutability rule had been made the *shape of the UI* rather than
+            the behaviour of Save.
+
+            It is the behaviour of Save now. The form carries everything;
+            renaming issues a PATCH, repricing adds a version, and doing both
+            does both. The rule is unchanged and the dialog states it — what
+            went away is having to know which button implements which half.
+          */}
           {canManage && (
-            <Button size="sm" iconLeft="plus" onClick={onAddVersion}>
-              New version
+            <Button size="sm" iconLeft="pencil" onClick={onEdit}>
+              Edit
             </Button>
           )}
         </div>
@@ -289,10 +336,21 @@ function VersionBlock({
       {open && (
         <DataTable<RateRow>
           columns={RATE_COLUMNS}
-          rows={(version.rates ?? []).map((rate) => ({
-            ...rate,
-            id: `${version.id}-${rate.vehicle_category}`,
-          }))}
+          rows={(version.rates ?? []).flatMap((rate) => [
+            {
+              ...rate,
+              id: `${version.id}-${rate.vehicle_category}`,
+              zone: null,
+            },
+            // Each zone price directly under the default it overrides, so
+            // the two are read together rather than looked up separately.
+            ...(rate.zone_rates ?? []).map((zoneRate) => ({
+              ...zoneRate,
+              id: `${version.id}-${rate.vehicle_category}-${zoneRate.zone_id}`,
+              vehicle_category: rate.vehicle_category,
+              zone: zoneRate.zone_name,
+            })),
+          ])}
           dense
           emptyMessage="This version prices no vehicle category"
         />

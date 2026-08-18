@@ -75,6 +75,66 @@ Returns `201` with the created Trip. A Corporate Admin may raise and approve
 bookings but never dispatch the fleet, so `dispatch` mirrors
 `TripPolicy::create` rather than the Bookings desk roles.
 
+### What a driver is shown before accepting (ADR-0024 §3)
+
+| Method | Path | Policy |
+|---|---|---|
+| GET | `/api/v1/me/offers` | none — `/me/`, so the driver *is* the token |
+| POST | `/api/v1/me/offers/{id}/acceptance` | scoped lookup; another driver's id 404s |
+| POST | `/api/v1/me/offers/{id}/decline` | the same |
+
+`DispatchOfferResource` renders a decision, not a record, and everything on
+it earns its place against a fifteen-second clock: where the job starts, how
+far away that is, how far the job itself runs, what is being sent, how it
+settles, and what it is estimated to fetch.
+
+**Two rules govern what may go on it, and both are easy to break by
+accident.**
+
+*Nothing that identifies anybody.* ADR-0024 §7 releases the passenger's name
+and number only after the accept, and this payload is also what a push
+notification is built from — so it reaches a lock screen. The trap is
+`order_requests.details`: on a delivery it holds `sender_phone` and
+`recipient_phone`, and a resource emitting that column under a field called
+`details` would leak two numbers without looking wrong in review.
+`DispatchOfferResource::PACKAGE_FIELDS` and `PAYMENT_FIELDS` are allow-lists
+for exactly that reason — a key added to the public order form defaults to
+*not* shipping, and `allowed()` is the single place that column is read, so
+the complete set of keys that can escape is four names in one screen.
+`DriverOfferPayloadTest` asserts over the whole encoded body rather than
+over one path, so a leak through some future field fails too.
+
+`payment` carries `payment_method` and `payer` and is present on every
+service, because every job is paid for — unlike `package`, which is null on
+a ride because a ride genuinely has no parcel. Both members are null
+whenever the person ordering did not say, which is the common case, and
+**`cash` is not a permitted default.** A driver who reads "Cash", arrives
+with no float and is offered a mobile-money transfer they cannot take has
+been told something the platform never knew.
+
+*No number the platform cannot stand behind.* `pickup_distance_km` and
+`trip_distance_km` are both great-circle (ADR-0020 §3) and neither may be
+turned into an ETA by a client — real roads are longer than the crow's
+flight, and the invented figure is the one that would need defending.
+`estimated_fare` comes from `WalkInFareService::quote()` against the public
+tariff (ADR-0026 §2) and is named a **fare, not earnings**: there is no
+commission model and settlement is deferred (ADR-0026 §3), so a field named
+for the driver's take would become false in every shipped build the day a
+platform cut is introduced.
+
+`estimated_fare` is null whenever it cannot be computed honestly — no
+vehicle, no coordinates, no published tariff, or a category nobody has
+priced. The last two arrive as `RateCardNotConfiguredException` and are
+**caught here rather than propagated**, because this is a list a driver polls
+every few seconds: an unpriced boda should cost that driver a figure on one
+card, not their whole offer list to a 500. The loud failure ADR-0026 asks for
+still happens at completion, where money actually changes hands.
+
+It costs two queries per offer, and ADR-0024 §4's sequential waves mean a
+driver holds one at a time. If the wave size is ever raised far enough for
+that to show in the poll's latency, resolve the tariff version once per
+request — do not drop the figure.
+
 ### What an allocation does to a dispatch (ADR-0009)
 
 Since ADR-0009 the pool is no longer flat. For a booking belonging to
@@ -118,19 +178,56 @@ trustworthy answer inside the locked transaction, which answers it with a
 
 ## What's explicitly deferred
 
-1. **Automatic dispatch** — moved *into* Phase 1 by owner approval on
-   2 August 2026 (PROJECT.md), and still not built. `DispatchService` takes
-   the vehicle and driver as arguments; nothing suggests them. ADR-0006
-   unblocks it rather than delivering it: the cross-client queue a matcher
-   needs now exists. The availability half remains buildable; the distance
-   half still waits on ADR-0003's live positions, and a dispatcher that
-   cannot tell which driver is nearest is a queue, not a matcher.
+1. **~~Automatic dispatch~~ — built, ADR-0020 (7 August 2026).** The
+   oldest item on this list. `DispatchRecommender` ranks (vehicle, driver)
+   pairs for a booking; `GET /bookings/{id}/recommendation` reads the
+   ranking and `POST /bookings/{id}/auto-assignment` commits the top one
+   behind the `dispatch.automatic_enabled` flag, **off by default**.
+
+   It suggests; `DispatchService::assign` decides. Committing goes through
+   the same locked path a human uses, so the pessimistic locks, ADR-0009's
+   allocation rules and ADR-0017's availability refusals all still apply —
+   a matcher with its own assignment path would be a second way to write a
+   trip, and the race guarantee is only as good as its narrowest path.
+
+   Hard filters (availability, seating capacity, exclusive allocation) drop
+   candidates rather than ranking them low: offering something that 409s is
+   worse than offering fewer. What survives is scored — contract +1000,
+   proximity `500/(1+km)`, spare seats a small penalty — and every component
+   comes back as a readable sentence, because a ranking nobody can audit is
+   one a dispatcher overrides on instinct.
+
+   A third input was missing and only surfaced here: **bookings had no
+   pickup coordinates**. `origin_latitude`/`origin_longitude` are now
+   nullable columns; nothing populates them yet, so most bookings rank
+   without distance and say so. Wiring the public order form's existing
+   geocoding through is the obvious next step.
+
+   Still out: preferred driver/vehicle (no such columns), geofence, branch
+   and depot (no reference tables — item 2 below), and any unattended
+   scheduled dispatching. A human presses the button.
+
 2. **Dispatch inputs listed in PROJECT.md** — preferred driver/vehicle,
-   geofence, vehicle category, branch, depot. None are consulted; the
-   reference tables they need (`Modules/Fleet`, geofencing) do not exist.
-3. **Driver availability beyond "not on another live trip"** — shifts,
-   rest periods, leave and qualifications are `Modules/Drivers` scope and
-   are not yet modelled.
+   geofence, vehicle category, branch, depot. Vehicle category is consulted
+   (seating capacity is a hard filter, ADR-0020) and **geofencing now
+   exists** (ADR-0021) but is not yet an input here: adding it is a filter
+   and a weight on the existing scorer rather than a rewrite. Preferred
+   driver/vehicle have no columns to read; branch and depot have no
+   reference tables (`Modules/Fleet/README.md` item 7).
+3. **~~Driver availability beyond "not on another live trip"~~ — mostly
+   built, ADR-0017.** Shifts, leave, rest and vehicle maintenance are now
+   modelled in `Modules/Fleet` and enforced here: `DispatchService` refuses
+   an unavailable pair and `VehicleCandidates` marks blocked vehicles
+   `dispatchable: false`. Both go through one `AvailabilityService`, so the
+   list and the endpoint cannot drift apart.
+
+   `ON_TRIP` is deliberately *not* enforced from that service —
+   `TripAssignmentGuard` keeps it, because it is the only thing holding the
+   pessimistic locks that make the answer race-proof.
+
+   Still not modelled: **qualifications** (who may drive a bus), and
+   hours-of-service caps — see `Modules/Drivers/README.md` for why the
+   latter waits on an operations decision rather than engineering time.
 4. **Dispatch decision-time metric** — AGENTS.md's observability section
    wants it on the dashboard; nothing emits it yet.
 5. **The queue does not page.** `BookingsPage` and `TripsPage` gained a
@@ -139,13 +236,27 @@ trustworthy answer inside the locked transaction, which answers it with a
    unassigned bookings is a staffing problem before it is a paging one —
    but at fifty clients it will need one, and narrowing to a client is
    currently what stands in for it.
-6. **Eligibility filtering and route preview in the UI** — the design mock
-   (`KangaruRide Design System/ui_kits/platform/DispatchScreen.jsx`) shows
-   candidates filtered by category, geofence, depot and distance, plus a
-   Mapbox route preview. `DispatchPage` offers every active vehicle and
-   driver instead and lets the server decide: the reference tables and
-   Mapbox integration those controls need do not exist, and a filter that
-   looks real but filters nothing is worse than no filter.
+6. **~~Eligibility filtering in the UI~~ — largely built (ADR-0017).**
+   `DispatchPage` now loads `/candidate-vehicles` **and** the new
+   `/candidate-drivers` when a booking is selected, and renders anything the
+   assignment endpoint would refuse as a **disabled option carrying its
+   reason**. Contracts (ADR-0009) and availability (ADR-0017) are decided
+   server-side and merely displayed here, so the board and the endpoint
+   cannot disagree — a test asserts they agree for the same driver.
+
+   Disabled rather than dropped: a dispatcher who knows the fleet will ask
+   where UAA 123B went, and an option that has quietly vanished is the worst
+   available answer.
+
+   Until this, both endpoints existed and *nothing consumed them* — the rule
+   was enforced only by being stopped at the 409. That is what this item
+   recorded, and it is now the reverse: the reason is visible before the
+   click.
+
+   Still unbuilt, and honestly so: **geofence and depot filtering**, which
+   need reference tables that do not exist, and the **Mapbox route
+   preview**. A filter that looks real but filters nothing remains worse
+   than no filter.
 
 ## Frontend
 

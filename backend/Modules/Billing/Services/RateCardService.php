@@ -10,6 +10,8 @@ use Modules\Billing\Enums\RoundingMode;
 use Modules\Billing\Models\RateCard;
 use Modules\Billing\Models\RateCardRate;
 use Modules\Billing\Models\RateCardVersion;
+use Modules\Billing\Models\RateCardZoneRate;
+use Modules\Trips\Distance\DistancePolicy;
 
 /**
  * Creates rate cards and adds versions to them.
@@ -51,7 +53,16 @@ class RateCardService
                 $this->makeDefault($card);
             }
 
-            return $card->refresh();
+            // `forActor`, not `refresh()`. The model's own refresh goes back
+            // through `TenantScope`, which fails closed — so a platform
+            // actor creating the public tariff (ADR-0026 §4) would insert
+            // the row correctly and then fail to read it back, with a
+            // "no query results" for a card created two statements earlier.
+            //
+            // `$actor->tenant_id` is already what decides the card's owner
+            // above, so a platform actor makes a platform card; this is the
+            // read side of that same fact.
+            return RateCard::forActor($actor)->findOrFail($card->id);
         });
     }
 
@@ -69,12 +80,12 @@ class RateCardService
             // (rate_card_id, version) is the backstop if this is ever
             // bypassed.
             /** @var RateCard $locked */
-            $locked = RateCard::whereKey($card->id)->lockForUpdate()->firstOrFail();
+            $locked = RateCard::forActor($actor)->whereKey($card->id)->lockForUpdate()->firstOrFail();
 
             $version = RateCardVersion::create([
                 'tenant_id' => $locked->tenant_id,
                 'rate_card_id' => $locked->id,
-                'version' => $this->nextVersionNumber($locked),
+                'version' => $this->nextVersionNumber($locked, $actor),
                 'effective_from' => $data['effective_from'],
                 'currency' => Shillings::currency(),
                 'rounding_mode' => RoundingMode::tryFrom((string) ($data['rounding_mode'] ?? ''))
@@ -83,6 +94,8 @@ class RateCardService
                 'night_starts_at' => $data['night_starts_at'] ?? null,
                 'night_ends_at' => $data['night_ends_at'] ?? null,
                 'night_multiplier_bp' => $data['night_multiplier_bp'] ?? RateCardVersion::NO_MULTIPLIER_BP,
+                'distance_policy' => DistancePolicy::tryFrom((string) ($data['distance_policy'] ?? ''))
+                    ?? DistancePolicy::ODOMETER,
                 'created_by_user_id' => $actor->id,
                 'notes' => $data['notes'] ?? null,
             ]);
@@ -91,22 +104,91 @@ class RateCardService
             $rates = $data['rates'];
 
             foreach ($rates as $rate) {
-                RateCardRate::create([
+                $created = RateCardRate::create([
                     'tenant_id' => $locked->tenant_id,
                     'rate_card_version_id' => $version->id,
                     'vehicle_category' => $rate['vehicle_category'],
-                    'base_fare_minor' => (int) ($rate['base_fare_minor'] ?? 0),
-                    'per_km_minor' => (int) ($rate['per_km_minor'] ?? 0),
-                    'per_waiting_minute_minor' => (int) ($rate['per_waiting_minute_minor'] ?? 0),
-                    'minimum_charge_minor' => (int) ($rate['minimum_charge_minor'] ?? 0),
-                    'maximum_charge_minor' => isset($rate['maximum_charge_minor'])
-                        ? (int) $rate['maximum_charge_minor']
-                        : null,
+                    ...self::amounts($rate),
                 ]);
+
+                /** @var array<int, array<string, mixed>> $zoneRates */
+                $zoneRates = $rate['zone_rates'] ?? [];
+
+                foreach ($zoneRates as $zoneRate) {
+                    // Attached to the rate, not to the version: a zone price
+                    // for a category the version does not otherwise price
+                    // has nowhere to be written (ADR-0021, billing half).
+                    RateCardZoneRate::create([
+                        'tenant_id' => $locked->tenant_id,
+                        'rate_card_rate_id' => $created->id,
+                        'zone_id' => (int) $zoneRate['zone_id'],
+                        ...self::amounts($zoneRate),
+                    ]);
+                }
             }
 
-            return $version->load('rates');
+            return $version->load('rates.zoneRates.zone');
         });
+    }
+
+    /**
+     * The five money columns a rate carries, defaulted the way the schema
+     * defaults them.
+     *
+     * Shared by a default rate and a zone rate because they are the same
+     * five amounts with the same meanings — a second copy is where one of
+     * them quietly stops being written.
+     *
+     * @param  array<string, mixed>  $rate
+     * @return array<string, int|null>
+     */
+    private static function amounts(array $rate): array
+    {
+        return [
+            'base_fare_minor' => (int) ($rate['base_fare_minor'] ?? 0),
+            'per_km_minor' => (int) ($rate['per_km_minor'] ?? 0),
+            'per_waiting_minute_minor' => (int) ($rate['per_waiting_minute_minor'] ?? 0),
+            'minimum_charge_minor' => (int) ($rate['minimum_charge_minor'] ?? 0),
+            // Null means uncapped, never "capped at zero".
+            'maximum_charge_minor' => isset($rate['maximum_charge_minor'])
+                ? (int) $rate['maximum_charge_minor']
+                : null,
+        ];
+    }
+
+    /**
+     * Renames a card, redescribes it, or archives it.
+     *
+     * **The card's *label*, never its prices.** Nothing reachable from here
+     * touches a `RateCardVersion` or a `PricedRate`, which throw
+     * `FinancialRecordImmutableException` on update anyway — the point is that
+     * this method offers no route to try. Changing what a client is charged
+     * stays `addVersion()`, so an invoice already sent stays reproducible from
+     * the version it was priced by.
+     *
+     * `RateCard` is `Auditable`, so the rename is recorded with its before and
+     * after. That is the reason to do this through the model rather than a
+     * query-builder update: a pricing document's name changing with nobody
+     * accountable for it is the kind of thing an auditor asks about.
+     *
+     * Archiving is deliberately **not** blocked when the card is the default.
+     * The two flags answer different questions and the existing guard is
+     * elsewhere: `makeDefault()` owns which card prices an unnamed trip, and
+     * `RateCardResolver` already refuses to price against a card with no
+     * usable version. Adding a second rule here would put the same decision in
+     * two places.
+     *
+     * @param  array<string, mixed>  $details  only the keys the client sent
+     */
+    public function updateDetails(RateCard $card, array $details, User $actor): RateCard
+    {
+        $card->fill($details)->save();
+
+        // `forActor`, not `refresh()` — the same trap `create()` documents at
+        // length. The model's own refresh goes back through `TenantScope`,
+        // which fails closed, so a platform actor renaming the public tariff
+        // would write the row and then fail to read it back.
+        return RateCard::forActor($actor)->findOrFail($card->id);
     }
 
     /**
@@ -133,8 +215,33 @@ class RateCardService
         });
     }
 
-    private function nextVersionNumber(RateCard $card): int
+    /**
+     * The next version number for this card, counted the way the card itself
+     * was loaded.
+     *
+     * **`forActor()`, not `$card->versions()`.** The plain relation carries
+     * the global `TenantScope`, which fails closed — `1 = 0` — whenever no
+     * tenant is bound. Platform staff have no tenant of their own, so for a
+     * **platform-owned** rate card (`tenant_id` null, which the public walk-in
+     * tariff is) the count came back empty and this returned 1 for ever. The
+     * insert then died on the `(rate_card_id, version)` unique index, so the
+     * public tariff could not be given a second version through the API at
+     * all — a 500, every time.
+     *
+     * It was never noticed because that card is the only platform-owned one
+     * and it had exactly one version. `Vehicle::CATEGORIES` hid it further:
+     * the request refused the tariff's own `boda` and `tricycle` rows with a
+     * 422 before execution ever reached here.
+     *
+     * Reading past the scope grants nothing. `$card` has already been resolved
+     * through `RateCard::forActor()` and authorised by the policy; this only
+     * asks how many versions that same card has, filtered to it by id.
+     */
+    private function nextVersionNumber(RateCard $card, User $actor): int
     {
-        return (int) $card->versions()->reorder()->max('version') + 1;
+        return (int) RateCardVersion::forActor($actor)
+            ->where('rate_card_id', $card->getKey())
+            ->reorder()
+            ->max('version') + 1;
     }
 }

@@ -40,15 +40,18 @@ return [
     | Odometer / GPS variance
     |--------------------------------------------------------------------------
     |
-    | PROJECT.md: "Odometer distance is automatically reconciled against
-    | GPS-calculated distance; variances beyond a configurable threshold are
-    | flagged for review." This is that threshold, as a percentage of the
-    | odometer distance.
+    | SUPERSEDED by the `tracking` settings group (ADR-0035). The threshold
+    | and the odometer ceiling are now operator policy, set in the console,
+    | validated, cached and audited like every other setting — an env var
+    | needed a deploy to change and appeared nowhere an office could see it.
     |
-    | 10% is deliberately loose for a first pass: GPS traces are noisy, and a
-    | flag nobody trusts is a flag nobody reviews. PROJECT.md's success metric
-    | is that flagged trips are reviewed within 2 business days, which only
-    | works if the flag is rare.
+    | This entry is left as documentation of where the number used to live.
+    | Nothing reads it: `TripStateMachine::reconcileAgainstGps()` asks
+    | `SettingsService`, whose catalogue default is the same 10, so an
+    | existing deployment behaves identically until somebody changes it.
+    |
+    | If TRACKING_VARIANCE_THRESHOLD_PERCENT is set in an environment, it is
+    | now inert. Set the value in the console instead.
     |
     */
 
@@ -81,5 +84,44 @@ return [
     */
 
     'min_segment_metres' => (float) env('TRACKING_MIN_SEGMENT_METRES', 5),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Live positions (ADR-0019)
+    |--------------------------------------------------------------------------
+    |
+    | Where "where is the fleet right now" is answered from. `redis` is what
+    | ADR-0003 specifies and what production should run; `database` is a
+    | `live_positions` table of one row per vehicle, which meets the same
+    | requirement at this scale and is the only driver testable without a
+    | Redis server.
+    |
+    | The default is `database` deliberately: the Redis driver has never been
+    | exercised in this repository's environment, and defaulting to an
+    | unrun code path is shipping a guess.
+    |
+    */
+
+    'live_positions_driver' => env('TRACKING_LIVE_POSITIONS_DRIVER', 'database'),
+
+    /*
+    | How long a Redis position entry survives without an update. Past this
+    | a vehicle simply disappears from the map, which is the honest
+    | behaviour — a stale marker is worse than none, because somebody
+    | dispatches against it. Unused by the database driver, which keeps the
+    | row and lets `stale` on the response say so.
+    */
+
+    'live_ttl_seconds' => (int) env('TRACKING_LIVE_TTL_SECONDS', 900),
+
+    /*
+    | Older than this and a position is reported `stale: true`. PROJECT.md
+    | asks for "<15 s freshness" on the live map; this is deliberately
+    | looser, because 15 s is the target for the ingestion pipeline and a
+    | marker flashing stale every time a driver goes under a flyover would
+    | train dispatchers to ignore the flag.
+    */
+
+    'live_stale_after_seconds' => (int) env('TRACKING_LIVE_STALE_AFTER_SECONDS', 60),
 
 ];

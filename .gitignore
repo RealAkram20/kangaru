@@ -10,6 +10,12 @@ Thumbs.db
 # Claude Code — personal, machine-local settings (not shared)
 .claude/settings.local.json
 
+# Skill run artifacts — a hook cache keyed to one machine's paths, and
+# critiques of a single working copy at a single moment. The skills themselves
+# are tracked (.claude/skills, .agents/skills, skills-lock.json); what they
+# leave behind while running is not shared state.
+.impeccable/
+
 # Node / Vite (frontend, once scaffolded)
 node_modules/
 dist/
@@ -21,6 +27,11 @@ vendor/
 .env
 .env.*
 !.env.example
+# The production TEMPLATE, which holds no secret — every value is either a
+# decided default or the literal `<<OWNER>>`. `.env.*` above would otherwise
+# swallow it silently, which is how a template gets written and never shipped.
+# `.env.production` itself stays ignored: only the `.example` suffix is exempt.
+!.env.production.example
 storage/*.key
 bootstrap/cache/*
 storage/logs/*

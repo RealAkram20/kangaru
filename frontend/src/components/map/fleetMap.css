@@ -1,0 +1,37 @@
+/* Live fleet markers (ADR-0019). Only what MapLibre's DOM markers need —
+   everything else on this page is inline design tokens like the rest of
+   the console. */
+
+.kr-fleet-marker {
+  cursor: pointer;
+  line-height: 0;
+  /* MapLibre owns the root's transform for positioning. Anything that
+     rotates or scales goes on the inner glyph, never here. */
+}
+
+.kr-fleet-dot {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-pill);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgb(0 16 40 / 35%);
+}
+
+.kr-fleet-arrow {
+  display: block;
+  /* The arrow is drawn pointing north, so the rotation is the compass
+     heading with no offset to remember. */
+  transform-origin: 50% 50%;
+  filter: drop-shadow(0 1px 3px rgb(0 16 40 / 35%));
+}
+
+/* A marker jumps ten seconds' worth of road on each poll. Easing that jump
+   reads as travel; without it the fleet teleports. Kept short — a long
+   transition would still be animating when the next poll arrives, and the
+   marker would never be where the server says it is. */
+@media (prefers-reduced-motion: no-preference) {
+  .maplibregl-marker:has(.kr-fleet-marker) {
+    transition: transform 600ms linear;
+  }
+}

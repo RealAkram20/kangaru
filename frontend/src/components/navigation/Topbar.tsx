@@ -29,10 +29,10 @@ export interface TopbarProps extends HTMLAttributes<HTMLElement> {
    *
    * Optional together rather than always-on, because `Topbar` is used by
    * the design-system previews with no router and no auth behind it; a menu
-   * whose Settings item navigates nowhere would be worse than the plain
+   * whose Profile item navigates nowhere would be worse than the plain
    * identity it replaces.
    */
-  onOpenSettings?: () => void
+  onOpenProfile?: () => void
   onSignOut?: () => void
   /** Supply to render the global search field. */
   onSearch?: (query: string) => void
@@ -45,7 +45,7 @@ export function Topbar({
   user,
   actions,
   leading,
-  onOpenSettings,
+  onOpenProfile,
   onSignOut,
   onSearch,
   style,
@@ -154,13 +154,13 @@ export function Topbar({
         */}
         <NotificationBell />
         {user &&
-          (onOpenSettings && onSignOut ? (
+          (onOpenProfile && onSignOut ? (
             <UserMenu
               name={user.name}
               role={user.role}
               email={user.email}
               initials={user.initials}
-              onSettings={onOpenSettings}
+              onProfile={onOpenProfile}
               onSignOut={onSignOut}
             />
           ) : (

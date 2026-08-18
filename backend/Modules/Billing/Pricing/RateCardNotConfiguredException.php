@@ -26,6 +26,23 @@ class RateCardNotConfiguredException extends \RuntimeException
         );
     }
 
+    /**
+     * No public tariff has been set up (ADR-0026 §1).
+     *
+     * Its own constructor rather than reusing `noDefaultCard()`, whose
+     * message says "your organisation" — which is exactly wrong here. A
+     * walk-in belongs to no organisation, and pointing an operator at a
+     * client's rate cards to fix the public tariff would send them to the
+     * wrong screen.
+     */
+    public static function noWalkInTariff(): self
+    {
+        return new self(
+            'This walk-in ride cannot be priced because no public tariff has been set up. '.
+            'Create a platform rate card, mark it as the default, and give it a rate for this vehicle category.'
+        );
+    }
+
     public static function noEffectiveVersion(string $cardName, string $tripDate): self
     {
         return new self(sprintf(

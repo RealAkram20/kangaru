@@ -219,7 +219,7 @@ export function AuditLogPage() {
         <EmptyState
           icon="lock"
           title="The audit log is not available to your account"
-          description="Reading the audit trail is reserved for administrators. Ask a Super Admin or your Corporate Admin if you need access."
+          description="Ask a Super Admin or your Corporate Admin for access."
         />
       </Card>
     )

@@ -9,6 +9,7 @@ use Modules\Billing\Enums\DocumentType;
 use Modules\Billing\Models\Invoice;
 use Modules\Billing\Models\InvoiceLine;
 use Modules\Billing\Models\RateCard;
+use Modules\Billing\Pricing\DistanceGate;
 use Modules\Billing\Pricing\PricedLine;
 use Modules\Billing\Pricing\RateCardNotConfiguredException;
 use Modules\Billing\Pricing\RateCardResolver;
@@ -47,6 +48,7 @@ class InvoiceService
         private readonly DocumentNumberGenerator $numbers,
         private readonly InvoiceRepository $invoices,
         private readonly TripStateMachine $trips,
+        private readonly DistanceGate $distances,
     ) {}
 
     /**
@@ -58,6 +60,7 @@ class InvoiceService
      * passed in still holds its previous status afterwards. Call
      * `$trip->refresh()` before using it again.
      *
+     * @throws WalkInTripNotInvoiceableException the trip has no client to bill (ADR-0024)
      * @throws TripNotInvoiceableException the trip is not at Trip Completed
      * @throws InvoiceAlreadyIssuedException the trip is billed, under a different key
      * @throws IdempotencyKeyReusedException the key belongs to another trip's invoice
@@ -65,22 +68,42 @@ class InvoiceService
      */
     public function generateForTrip(Trip $trip, string $idempotencyKey, User $actor, ?RateCard $rateCard = null): Invoice
     {
+        // First, before anything reads the tenant (ADR-0024).
+        //
+        // A walk-in trip has none, and the very next statement would either
+        // create a document number series belonging to nobody or fail on an
+        // integrity constraint three layers down — surfacing to whoever
+        // pressed Invoice as a database error about counters.
+        //
+        // Asked as "is there a client" rather than `$trip->isWalkIn()`,
+        // even though the ADR-0024 §1 invariant makes the two equivalent.
+        // Every use below is of the tenant specifically — the number
+        // series, the ledger row, the whole billing scope is per client —
+        // so the absence of a tenant is the precise thing that blocks this,
+        // and naming it is what lets the reader (and the analyser) see that
+        // nothing beyond this line can be holding a null.
+        $tenantId = $trip->tenant_id;
+
+        if ($tenantId === null) {
+            throw new WalkInTripNotInvoiceableException($trip);
+        }
+
         $issuedAt = now();
 
         // Outside the transaction, deliberately: creating the counter row
         // inside it makes two simultaneous first-ever invoices deadlock on
         // its unique index. Observed, not theorised — see
         // DocumentNumberSequenceRepository.
-        $this->numbers->ensureSeries($trip->tenant_id, DocumentType::INVOICE, $issuedAt);
+        $this->numbers->ensureSeries($tenantId, DocumentType::INVOICE, $issuedAt);
 
-        return DB::transaction(function () use ($trip, $idempotencyKey, $actor, $rateCard, $issuedAt) {
+        return DB::transaction(function () use ($trip, $tenantId, $idempotencyKey, $actor, $rateCard, $issuedAt) {
             // The serialisation point, and the first statement in the
             // transaction. Everything below reads or writes rows that do
             // not exist yet, and locking reads on absent rows take gap
             // locks that two concurrent generators deadlock on as soon as
             // both insert. Holding the tenant's counter first means only
             // one generation per tenant is ever in flight.
-            $this->numbers->lockSeries($trip->tenant_id, DocumentType::INVOICE, $issuedAt);
+            $this->numbers->lockSeries($tenantId, DocumentType::INVOICE, $issuedAt);
 
             // Serialises every generator working on this trip specifically.
             /** @var Trip $locked */
@@ -96,7 +119,7 @@ class InvoiceService
                 throw new TripNotInvoiceableException($locked);
             }
 
-            return $this->issue($locked, $idempotencyKey, $actor, $rateCard, $issuedAt);
+            return $this->issue($locked, $tenantId, $idempotencyKey, $actor, $rateCard, $issuedAt);
         });
     }
 
@@ -138,21 +161,34 @@ class InvoiceService
     }
 
     /**
+     * @param  int  $tenantId  the client being billed, proved non-null by the
+     *                         caller's walk-in guard (ADR-0024) — passed rather
+     *                         than re-read off the trip so that proof travels
+     *                         with it instead of having to be repeated here
+     *
      * @throws RateCardNotConfiguredException
      */
     private function issue(
         Trip $trip,
+        int $tenantId,
         string $idempotencyKey,
         User $actor,
         ?RateCard $rateCard,
         CarbonInterface $issuedAt,
     ): Invoice {
         $version = $this->rateCards->resolveFor($trip, $rateCard);
+
+        // ADR-0045 §2: a trace-priced contract does not invoice an unresolved
+        // trip, and no contract invoices a held one. Refused here, inside the
+        // lock and before a number is drawn, so a refusal costs no sequence
+        // gap.
+        $this->distances->assertBillable($trip, $version);
+
         $price = $this->pricing->price($trip, $version);
 
         $invoice = Invoice::create([
-            'tenant_id' => $trip->tenant_id,
-            'invoice_number' => $this->numbers->next($trip->tenant_id, DocumentType::INVOICE, $issuedAt),
+            'tenant_id' => $tenantId,
+            'invoice_number' => $this->numbers->next($tenantId, DocumentType::INVOICE, $issuedAt),
             'trip_id' => $trip->id,
             'rate_card_version_id' => $version->id,
             'currency' => $version->currency,

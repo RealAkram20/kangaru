@@ -1,14 +1,29 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Trips\Controllers\HeldTripController;
+use Modules\Trips\Controllers\LivePositionController;
 use Modules\Trips\Controllers\OdometerPhotoController;
 use Modules\Trips\Controllers\TripController;
+use Modules\Trips\Controllers\TripDistanceController;
 use Modules\Trips\Controllers\TripEventController;
 use Modules\Trips\Controllers\TripLocationController;
+use Modules\Trips\Controllers\TripRouteController;
+
+// ADR-0045: the distance review queue. **Before the resource**, or
+// `trips/{trip}` swallows it and the queue becomes a lookup for a trip whose
+// id is the string "distance-review".
+Route::get('trips/distance-review', [HeldTripController::class, 'index'])->name('trips.distance-review.index');
 
 Route::apiResource('trips', TripController::class)->only(['index', 'show', 'store']);
 Route::post('trips/{trip}/transitions', [TripController::class, 'transition'])->name('trips.transitions.store');
 Route::get('trips/{trip}/events', [TripEventController::class, 'index'])->name('trips.events.index');
+Route::get('trips/{trip}/route', [TripRouteController::class, 'show'])->name('trips.route.show');
+
+// ADR-0045: the distance evidence behind a trip's billed figure, and the one
+// act the review queue performs — lifting a hold, with a reason.
+Route::get('trips/{trip}/distance', [TripDistanceController::class, 'index'])->name('trips.distance.index');
+Route::post('trips/{trip}/distance/clearance', [TripDistanceController::class, 'clear'])->name('trips.distance.clear');
 
 // The dashboard photo captured with each odometer reading (PROJECT.md's
 // anchor-client requirement). Streamed behind auth rather than served from
@@ -21,3 +36,11 @@ Route::get('trips/{trip}/odometer-photo/{moment}', [OdometerPhotoController::cla
 // 201: the pings are validated and buffered, not yet written.
 Route::post('trips/{trip}/locations', [TripLocationController::class, 'store'])->name('trips.locations.store');
 Route::get('trips/{trip}/locations', [TripLocationController::class, 'index'])->name('trips.locations.index');
+
+// Where the fleet is right now (ADR-0019). A collection of its own rather
+// than a field on the trips listing: a live map polls this every few
+// seconds and must not drag a page of trip rows along with it.
+//
+// No policy call — visibility is resolved by the trips query inside, which
+// is the one place that predicate lives.
+Route::get('live-positions', [LivePositionController::class, 'index'])->name('live-positions.index');

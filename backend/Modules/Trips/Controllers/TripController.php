@@ -120,7 +120,18 @@ class TripController extends Controller
     {
         $this->authorize('view', $trip);
 
-        return ApiResponse::success(new TripResource($trip->load(['vehicle', 'driver'])));
+        // `orderRequest` here and deliberately not on `index`: it is what
+        // carries the pickup coordinates and what lets the resource quote a
+        // fare, and a quote costs queries through Billing. One trip pays for
+        // one; a dispatch board would have paid for fifty. `TripResource::
+        // estimatedFare()` documents the bound it depends on.
+        //
+        // `ledgerEntries` is bounded the same way and for the same reason —
+        // it is what `TripResource::driverEarningsFor()` reads to tell a
+        // driver their share of the job, and it is unbounded per row.
+        return ApiResponse::success(
+            new TripResource($trip->load(['vehicle', 'driver', 'orderRequest', 'ledgerEntries'])),
+        );
     }
 
     public function store(StoreTripRequest $request): JsonResponse

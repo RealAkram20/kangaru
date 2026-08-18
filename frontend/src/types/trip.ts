@@ -1,6 +1,7 @@
 import type { ClientSummary } from './tenant'
 import type { Driver } from './driver'
 import type { Vehicle } from './vehicle'
+import type { DistanceGrade } from './report'
 
 /**
  * Mirrors Modules/Trips/Enums/TripStatus.php. The backend enforces the
@@ -78,4 +79,61 @@ export interface TripEvent {
 
 export interface CursorMeta {
   cursor: { next: string | null }
+}
+
+/**
+ * One row of the distance review queue (ADR-0045 §2) — a trip whose distance
+ * is holding money up.
+ *
+ * Deliberately not a `Trip`: a queue row is which trip, whose, who drove it,
+ * what the resolver said, and how long it has waited. No fare, no payment
+ * method, no passenger's phone number.
+ */
+export interface HeldTrip {
+  trip_id: number
+  tenant_id: number | null
+  /** Absent for a client's own user, who has exactly one; null on a walk-in. */
+  client?: string | null
+  origin: string
+  destination: string
+  completed_at: string | null
+  driver_name: string | null
+  vehicle_registration: string | null
+  grade: DistanceGrade
+  grade_label: string
+  billed_km: number | null
+  odometer_km: number | null
+  resolved_at: string | null
+  /** Whole days since the resolution — PROJECT.md's two-business-day metric. */
+  waiting_days: number | null
+  /** A held walk-in has an unsettled fare and an unpaid driver behind it. */
+  is_walk_in: boolean
+  fare_settled: boolean
+}
+
+/** One resolution of a trip's distance — `GET /trips/{trip}/distance`. */
+export interface DistanceEvidence {
+  id: number
+  resolved_at: string
+  policy: 'gps_primary' | 'route_capped' | 'odometer'
+  grade: DistanceGrade
+  grade_label: string
+  billed_km: number
+  reason: string
+  odometer_km: number | null
+  gps_km: number | null
+  matched_km: number | null
+  inferred_km: number | null
+  haversine_km: number | null
+  route_km: number | null
+  reference_source: 'pins' | 'trace' | null
+  coverage_percent: number | null
+  inferred_share_percent: number | null
+  pings_total: number
+  pings_kept: number
+  gaps_routed: number
+  dropped: Record<string, number>
+  provider: 'osrm' | 'haversine' | null
+  matched_polylines: string[]
+  thresholds: Record<string, number | boolean>
 }

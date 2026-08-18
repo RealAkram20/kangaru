@@ -6,6 +6,7 @@ use App\Enums\ErrorCode;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Support\Api\ApiResponse;
+use App\Support\Auth\ClientScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -88,6 +89,7 @@ class AuthController extends Controller
             $result = $this->authService->verifyMfa(
                 $request->validated('challenge_id'),
                 $request->validated('code'),
+                $request->validated('client') ?? ClientScope::CONSOLE,
             );
         } catch (InvalidMfaChallengeException $e) {
             return ApiResponse::error(ErrorCode::MFA_CHALLENGE_INVALID, $e->getMessage(), [], 401);

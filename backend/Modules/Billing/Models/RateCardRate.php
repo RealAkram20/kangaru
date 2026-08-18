@@ -2,45 +2,27 @@
 
 namespace Modules\Billing\Models;
 
-use App\Concerns\Auditable;
-use App\Concerns\BelongsToTenant;
-use App\Exceptions\FinancialRecordImmutableException;
-use App\Support\Money\MoneyMinorCast;
-use Brick\Money\Money;
-use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Modules\Fleet\Models\Zone;
 
 /**
- * The prices one rate card version charges for one vehicle category.
+ * The prices one rate card version charges for one vehicle category
+ * **wherever no zone rate says otherwise**.
  *
- * Immutable for the same reason its parent version is — a version whose
- * child rates could still be edited would be immutable in name only.
+ * The money casts, the immutability and the audit trail live on
+ * `PricedRate`, shared with `RateCardZoneRate` so the default price and a
+ * zone price cannot drift apart on the properties that make them financial
+ * records.
  *
- * Every money attribute is cast to Brick\Money\Money, so the pricing engine
- * cannot accidentally do integer arithmetic on a rate: `$rate->per_km_minor
- * * $km` is a TypeError, which is the point (AGENTS.md: "Raw integer math
- * on money outside the value object fails review").
- *
- * The `@property` names carry the `_minor` suffix because that is the
- * attribute name — the column stays an integer and the cast is what makes
- * it read back as Money. Naming them without the suffix would document
- * attributes that do not exist, and static analysis would go on believing
- * the real ones are ints.
- *
- * @property int $id
- * @property int $tenant_id
  * @property int $rate_card_version_id
  * @property string $vehicle_category
- * @property Money $base_fare_minor
- * @property Money $per_km_minor
- * @property Money $per_waiting_minute_minor
- * @property Money $minimum_charge_minor
- * @property Money|null $maximum_charge_minor
+ * @property-read RateCardVersion $version
+ * @property-read Collection<int, RateCardZoneRate> $zoneRates
  */
-class RateCardRate extends Model
+class RateCardRate extends PricedRate
 {
-    use Auditable, BelongsToTenant;
-
     protected $fillable = [
         'tenant_id',
         'rate_card_version_id',
@@ -52,63 +34,39 @@ class RateCardRate extends Model
         'maximum_charge_minor',
     ];
 
-    /**
-     * The columns stay `*_minor` integers in the database; every one of
-     * them reads back as Money in PHP. The named accessors below exist so
-     * pricing code never has to mention `_minor` at all — a name that still
-     * said `_minor` invites someone to treat the value as an int again.
-     */
-    protected function casts(): array
-    {
-        return [
-            'base_fare_minor' => MoneyMinorCast::class,
-            'per_km_minor' => MoneyMinorCast::class,
-            'per_waiting_minute_minor' => MoneyMinorCast::class,
-            'minimum_charge_minor' => MoneyMinorCast::class,
-            'maximum_charge_minor' => MoneyMinorCast::class,
-        ];
-    }
-
-    public static function booted(): void
-    {
-        static::updating(function (self $rate) {
-            throw new FinancialRecordImmutableException($rate, 'edited');
-        });
-
-        static::deleting(function (self $rate) {
-            throw new FinancialRecordImmutableException($rate, 'deleted');
-        });
-    }
-
     /** @return BelongsTo<RateCardVersion, $this> */
     public function version(): BelongsTo
     {
         return $this->belongsTo(RateCardVersion::class, 'rate_card_version_id');
     }
 
-    public function baseFare(): Money
+    /** @return HasMany<RateCardZoneRate, $this> */
+    public function zoneRates(): HasMany
     {
-        return $this->base_fare_minor;
+        return $this->hasMany(RateCardZoneRate::class);
     }
 
-    public function perKilometre(): Money
+    /**
+     * The zone price that overrides this one for a given zone, or null when
+     * this category is not priced differently there.
+     *
+     * Reads the loaded collection rather than querying, so pricing a trip
+     * costs no extra round trip and `RateCardResolver`'s eager load is the
+     * single place that decides what billing reads.
+     */
+    public function zoneRateFor(Zone $zone): ?RateCardZoneRate
     {
-        return $this->per_km_minor;
+        return $this->zoneRates->firstWhere('zone_id', $zone->id);
     }
 
-    public function perWaitingMinute(): Money
+    /** Null: this is the rate that applies where no zone rate does. */
+    public function pricingZoneId(): ?int
     {
-        return $this->per_waiting_minute_minor;
+        return null;
     }
 
-    public function minimumCharge(): Money
+    public function pricingZoneName(): ?string
     {
-        return $this->minimum_charge_minor;
-    }
-
-    /** Null means uncapped, never "capped at zero". */
-    public function maximumCharge(): ?Money
-    {
-        return $this->maximum_charge_minor;
+        return null;
     }
 }

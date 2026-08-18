@@ -1,0 +1,245 @@
+/*
+ * Motion curves for the public pages.
+ *
+ * The CSS built-ins are too weak to read as intentional — `ease-out` is
+ * cubic-bezier(0, 0, .2, 1), which barely leaves the line. These are the
+ * stronger variants: movement the eye registers as a decision rather than
+ * as a lag. `--kr-ease-drawer` is the iOS sheet curve, and it is what makes
+ * the bottom sheet feel like a native one rather than a div that resized.
+ *
+ * Never ease-in on an interaction: it withholds motion for the first
+ * frames, which are exactly the frames the user is watching.
+ */
+:root {
+  --kr-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --kr-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --kr-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/*
+ * The order page map's "you are here" motif and decorative fleet. Static on
+ * purpose: they set the scene, they are not live data.
+ */
+.kr-loc {
+  position: relative;
+  width: 190px;
+  height: 190px;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.kr-loc::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    rgba(45, 116, 246, 0.16) 0%,
+    rgba(45, 116, 246, 0.08) 55%,
+    rgba(45, 116, 246, 0) 72%
+  );
+}
+
+.kr-loc::after {
+  content: '';
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #2d74f6;
+  border: 3px solid #ffffff;
+  box-shadow: 0 1px 6px rgba(0, 16, 40, 0.35);
+}
+
+/*
+ * Once an order is placed the marker stops being "the phone is here" and
+ * becomes "the captain is coming here", so it turns green. Hardcoded green
+ * rather than var(--kr-green) for the same reason .kr-loc hardcodes its
+ * blue — this sits on the basemap, which is always the light one, so it
+ * must not follow the page into dark mode.
+ */
+.kr-loc--green::before {
+  background: radial-gradient(
+    circle,
+    rgba(1, 144, 61, 0.16) 0%,
+    rgba(1, 144, 61, 0.08) 55%,
+    rgba(1, 144, 61, 0) 72%
+  );
+}
+
+.kr-loc--green::after {
+  background: #01903d;
+}
+
+/* While dispatch is still looking, that halo becomes a defined disc: the
+   area being searched, with a hard enough edge to read as a boundary
+   rather than as a glow. */
+.kr-loc--searching {
+  width: 180px;
+  height: 180px;
+  border-radius: 9999px;
+}
+
+.kr-loc--searching::before {
+  background: radial-gradient(
+    circle,
+    rgba(1, 144, 61, 0.28) 0%,
+    rgba(1, 144, 61, 0.26) 64%,
+    rgba(1, 144, 61, 0.2) 78%,
+    rgba(1, 144, 61, 0) 80%
+  );
+}
+
+/* The sprites carry their own soft ground shadow; no CSS filter on top. */
+.kr-vehicle {
+  pointer-events: none;
+  line-height: 0;
+}
+
+/* Below lg the floating header card owns the top edge; push the map's
+   zoom controls out from under it. The `aside` prefix outweighs the SDK's
+   own `.maplibregl-ctrl-top-right { top: 0 }`, which loads after this file. */
+@media (max-width: 1023px) {
+  aside .maplibregl-ctrl-top-right,
+  aside .mapboxgl-ctrl-top-right {
+    top: 4.5rem;
+  }
+}
+
+/*
+ * Entry motion for the public pages only. CSS-only on purpose: the app has
+ * no animation library and a landing page does not justify adding one.
+ * Everything here collapses to static under prefers-reduced-motion.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .kr-rise {
+    opacity: 0;
+    transform: translateY(16px);
+    animation: kr-rise 0.6s var(--kr-ease-out) forwards;
+  }
+
+  .kr-rise-delay-1 {
+    animation-delay: 0.08s;
+  }
+
+  .kr-rise-delay-2 {
+    animation-delay: 0.16s;
+  }
+
+  .kr-rise-delay-3 {
+    animation-delay: 0.24s;
+  }
+
+  @keyframes kr-rise {
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* The order page's mobile bottom sheet slides up once on mount. Enter
+     only: leaving the page unmounts it, so no exit pair is needed. */
+  .kr-sheet {
+    transform: translateY(24px);
+    animation: kr-sheet 0.5s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+  }
+
+  @keyframes kr-sheet {
+    to {
+      transform: translateY(0);
+    }
+  }
+
+  /* The search radius sends out a ring while we are still looking. The
+     disc itself stays put — it is the area being searched, not the
+     animation, and pulsing the whole thing made the map feel unstable. */
+  .kr-loc--searching {
+    animation: kr-radius 2.6s ease-out infinite;
+  }
+
+  @keyframes kr-radius {
+    0% {
+      box-shadow: 0 0 0 0 rgba(1, 144, 61, 0.26);
+    }
+    70% {
+      box-shadow: 0 0 0 30px rgba(1, 144, 61, 0);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(1, 144, 61, 0);
+    }
+  }
+
+  /* An offer has no knowable duration, so the rail breathes instead of
+     advancing — motion that says "still waiting" without claiming progress. */
+  .kr-rail-pulse {
+    animation: kr-rail 1.6s ease-in-out infinite;
+  }
+
+  @keyframes kr-rail {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+
+  /* The card's car nudges along while captains are being contacted. */
+  .kr-hunting {
+    animation: kr-hunting 1.5s ease-in-out infinite;
+  }
+
+  @keyframes kr-hunting {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    50% {
+      transform: translateX(5px);
+    }
+  }
+
+  /*
+   * Fields arriving together read as a wall. A short stagger lets the eye
+   * follow them down the sheet in the order they are meant to be filled —
+   * which is the order they are in. Delays stay under 50ms apart: longer
+   * and the form feels like it is loading rather than arriving, and the
+   * whole cascade must finish before a fast user reaches the first field.
+   */
+  .kr-stagger > * {
+    opacity: 0;
+    transform: translateY(10px);
+    animation: kr-rise 0.34s var(--kr-ease-out) forwards;
+  }
+
+  .kr-stagger > *:nth-child(2) {
+    animation-delay: 40ms;
+  }
+  .kr-stagger > *:nth-child(3) {
+    animation-delay: 80ms;
+  }
+  .kr-stagger > *:nth-child(4) {
+    animation-delay: 120ms;
+  }
+  .kr-stagger > *:nth-child(n + 5) {
+    animation-delay: 150ms;
+  }
+
+  /* Month changes in the rental calendar glide rather than snap. */
+  .kr-month {
+    animation: kr-month 0.18s ease-out;
+  }
+
+  @keyframes kr-month {
+    from {
+      opacity: 0;
+      transform: translateX(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}

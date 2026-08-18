@@ -141,6 +141,162 @@ to the FQCN — it throws `ClassMorphViolationException` from
 nothing could write to it. `AuditableModelsHaveMorphAliasTest` now asserts
 the pair for every audited model.
 
+## Availability (ADR-0017)
+
+The second thing this module owns: **when** a driver or vehicle can work, as
+distinct from **who** a vehicle is contracted to.
+
+- `AvailabilityBlock` — a dated period a driver or vehicle is unavailable.
+  One table for both, discriminated by a closed `resource_type` enum.
+  Half-open overlap `[starts_at, ends_at)`, so a van out of the workshop at
+  14:00 is available at 14:00; `ends_at` null is open-ended.
+- `DriverShiftWindow` — a weekly roster. **No rows means available at any
+  hour**, which is what keeps the feature additive for the drivers who
+  predate it.
+- `AvailabilityService` — the one place status, live trips, blocks and
+  rosters are combined. `Modules/Dispatch` calls it from both the candidate
+  listing and the assignment path, so the two cannot drift.
+
+| Method | Path | Policy |
+|---|---|---|
+| GET | `/api/v1/availability-blocks` | `viewAny` — `drivers.view` or `vehicles.view` |
+| POST | `/api/v1/availability-blocks` | `createFor` — `drivers.manage` or `vehicles.manage`, following the resource |
+| POST | `/api/v1/availability-blocks/{id}/answer` | `respond` — same, and never your own request |
+| DELETE | `/api/v1/availability-blocks/{id}` | `delete` — same |
+
+A block carries a status because the Driver's Application is where a driver
+*asks* for time off and this is where the office answers. Only `approved`
+withholds anything from dispatch — a request nobody has answered is not yet
+time off. Answering twice is `409 AVAILABILITY_ALREADY_ANSWERED`.
+
+**The driver's own half** (ADR-0017 §6, shipped 7 August 2026):
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/v1/me/availability-requests` | the caller's own requests and their answers |
+| POST | `/api/v1/me/availability-requests` | asks; throttled 10/min |
+| DELETE | `/api/v1/me/availability-requests/{id}` | withdraws, only while unanswered |
+
+These take **no `resource_id` and no `status`** — both are set by the
+controller, so a driver cannot ask on somebody else's behalf or grant
+themselves leave. That is structural, not validated, and both pins are
+mutation-tested. An account with no driver profile gets `403 NOT_A_DRIVER`.
+
+`AvailabilityService` reports `ON_TRIP` but `DispatchService` ignores that
+one verdict, leaving trip clashes to `TripAssignmentGuard` — the only thing
+holding the locks that make that answer race-proof.
+
+## Geofencing (ADR-0021)
+
+The third thing this module owns: **where** things are, as distinct from
+when (availability) and whose (allocations).
+
+- `Zone` — a named ring with a kind (`service_area`, `pricing`, `client`,
+  `branch`, `depot`), a priority and an optional tenant. Boundaries are JSON
+  arrays of `{lat, lng}` objects, never GeoJSON's positional `[lng, lat]` —
+  that ordering is the bug ADR-0020 records this codebase actually hitting.
+- `BoundaryRing` — the geometry, tested on its own in
+  `tests/Unit/BoundaryRingTest.php`. A point on the boundary counts as
+  inside, with a ~1 m tolerance, because a hairline edge behaves randomly.
+- `ZoneResolver` — the one place a point becomes a set of zones. Returns
+  them narrowest-first, so no caller needs to know the priority numbers.
+
+| Method | Path | Policy |
+|---|---|---|
+| GET | `/api/v1/zones` | `viewAny` — `zones.view`, on every system role |
+| GET | `/api/v1/zones/resolve` | `viewAny` — which zones contain a point |
+| POST | `/api/v1/zones` | `create` — `zones.manage` (Ops Manager, Super Admin) |
+| PATCH | `/api/v1/zones/{id}` | `update` — same |
+| DELETE | `/api/v1/zones/{id}` | `delete` — soft, so priced invoices keep their reference |
+
+**Coverage is opt-in.** `withinServiceArea()` is true when no service area
+has been drawn — an operator mid-mapping must not have every order refused.
+Once one exists, `POST /public/order-requests` refuses a pickup outside it,
+which is what finally catches a swapped lat/lng.
+
+**Zone pricing is built, in `Modules/Billing`** (ADR-0021 §7–§11).
+`ZoneResolver::pricingZoneAt()` is its only entry point here;
+`Billing\Pricing\TripZoneResolver` owns the separate question of *which
+point* prices a trip, and `RateCardZoneRate` holds what that zone charges.
+Billing depends on Fleet; Fleet does not depend on Billing.
+
+Two consequences land on this module:
+
+- **A zone rate can hold a `zone_id` open.** `rate_card_zone_rates.zone_id`
+  and `invoice_lines.zone_id` are both `restrictOnDelete`. Retiring a zone
+  soft-deletes it, so that is not a wall an operator can hit — but a hard
+  delete of a zone that priced an invoice is now refused by the database,
+  which is the intent.
+- **Deactivating a zone is a pricing act.** A switched-off zone stops being
+  resolved, so any rate card rate attached to it quietly stops applying and
+  the vehicle category's default rate takes over. That is deliberate: an
+  immutable rate card version must not be invalidated by a map edit. It is
+  also why `zones.manage` sits with Operations Manager and Super Admin only.
+
+Zone-based dispatch eligibility is still not built; the resolver is the
+input it will use.
+
+## Duty sessions (ADR-0038)
+
+`driver_duty_sessions` records one row per shift — on duty at `started_at`,
+off duty at `ended_at` — so the driver app's Performance screen can say how
+long somebody was online. Before this, it could not: `driver_presence` is one
+row per driver, overwritten in place, and holds no history at all.
+
+**This is not the presence history ADR-0024 §2 refused.** That objection is
+about *telemetry* — a row per heartbeat, carrying coordinates, answering
+"where was this driver at 11:04", and the source of its 500M-row estimate.
+This table takes two rows per driver per day and has nowhere to put a
+position. `driver_presence` keeps its job unchanged.
+
+### The three ways a shift ends
+
+| Ending | Written by | `ended_reason` |
+|---|---|---|
+| The driver signs off | `PUT /me/duty` with `on_duty: false` | `driver` |
+| The platform stops hearing from them | `duty:close-stale`, **at the last heartbeat** | `stale` |
+| They sign on again without signing off | `open()` reuses the running shift | — (none opened) |
+
+The staleness rule is what makes the figure honest rather than flattering. A
+shift that only ever ended when somebody remembered to end it would report a
+phone left in a drawer over a weekend as a fifty-hour week.
+
+It reuses `dispatch.presence_ttl_seconds` rather than taking a setting of its
+own **on purpose**: that is already the line at which dispatch stops offering
+this driver work, and a driver the platform will not send a job to was not
+online. Two settings would eventually disagree, and the disagreement would
+surface as somebody being credited hours in which nobody could reach them.
+
+### The exception the rule needs
+
+**A driver on a live trip is never swept, and the sweep refreshes their
+session instead.** The app's heartbeat is a JavaScript `setInterval` and stops
+when the handset backgrounds the app — exactly what happens when a phone goes
+into a cradle and the driver drives. Without this a two-hour journey would
+report as three minutes online, and the sweep would sign the driver off with a
+passenger aboard.
+
+Refreshing rather than merely skipping matters: when the trip ends the shift
+must be closable from a *recent* mark, or the whole journey is discarded by
+the next sweep.
+
+### Running it
+
+```
+php artisan duty:close-stale          # scheduled every minute
+php artisan duty:close-stale --ttl=60 # a tighter window, for testing
+```
+
+A missed run degrades the figure rather than breaking it — an unclosed session
+is simply still open, and the next run closes it at the same last heartbeat it
+would have used an hour earlier.
+
+`RosterService` answers the other half: how many hours a driver was
+**rostered** for over a span, from `driver_shift_windows`. It returns **null**,
+never zero, for a driver with no windows — ADR-0017 §3 makes that mean
+"available at any hour", which is not a number, and the screen draws no arc
+against it.
+
 ## What's explicitly deferred
 
 Named here so a half-built thing is not mistaken for a finished one.
@@ -177,6 +333,13 @@ Named here so a half-built thing is not mistaken for a finished one.
 7. **Branches, depots and depot boundaries.** PROJECT.md's Fleet Management
    module names all three and `Modules/Dispatch` lists them among the inputs
    it does not consult. None are modelled.
+
+8. **No office view of who is on duty, or for how long.** ADR-0038 gives that
+   feature its table and its arithmetic — `DutySessionService::secondsIn()`
+   answers it for any driver over any window — but the only surface reading it
+   is the driver's own Performance screen. A fleet office asking a driver to
+   work more hours should be quoting a figure rather than an impression, and
+   right now they cannot see one.
 
 8. **Automatic dispatch is not this.** ADR-0009 supplies a ranking *input*;
    it is not the matcher. Distance still blocks that, and distance needs

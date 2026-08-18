@@ -20,6 +20,18 @@ const SR_ONLY: CSSProperties = {
 export interface FormFieldProps extends HTMLAttributes<HTMLDivElement> {
   /** Inter Medium 14px. Sentence case, no colon. */
   label?: string
+  /**
+   * Keeps the label in the accessibility tree while removing it from the
+   * page.
+   *
+   * For a form laid out as a grid — a rate card's rows of Base fare, Per km,
+   * Minimum — the column headings are shown once and every row below reads
+   * from position. Dropping the label from those rows leaves their controls
+   * with no accessible name at all, which is what a screen reader has
+   * instead of the alignment a sighted user reads. Clipping keeps the name
+   * and drops only the repetition.
+   */
+  labelHidden?: boolean
   htmlFor?: string
   /** Helper text below the control; replaced by `error` when present. */
   hint?: string
@@ -61,6 +73,7 @@ function describeControl(
 
 export function FormField({
   label,
+  labelHidden = false,
   htmlFor,
   hint,
   error,
@@ -90,7 +103,14 @@ export function FormField({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, ...style }} {...rest}>
       {label && (
-        <label htmlFor={htmlFor} style={{ font: 'var(--type-label)', color: 'var(--text-body)' }}>
+        <label
+          htmlFor={htmlFor}
+          style={
+            labelHidden
+              ? SR_ONLY
+              : { font: 'var(--type-label)', color: 'var(--text-body)' }
+          }
+        >
           {label}
           {required && (
             <>

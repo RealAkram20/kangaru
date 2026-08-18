@@ -61,6 +61,12 @@ const REPORT_READERS: Role[] = ALL.filter((r) => r !== 'driver' && r !== 'corpor
  * (dashboard, notifications) that every account has.
  */
 const VISIBLE_TO: Record<string, Role[]> = {
+  // RoleSeeder's `order_requests.manage` grant (ADR-0012): Dispatcher plus
+  // the Super Admin who holds everything. Menu visibility only; the
+  // /order-requests route is not behind RequireNavAccess, for the same
+  // reason Roles is not — a custom role holding the permission is invisible
+  // to a slug list, and the page gates on whether the API answers.
+  'walk-ins': ['super_admin', 'dispatcher'],
   // Bookings and Trips are open to all roles; the server narrows *what* is
   // in them (a Corporate Employee sees their own, a Driver sees theirs), so
   // hiding the entry would remove the one page they most need.
@@ -82,6 +88,16 @@ const VISIBLE_TO: Record<string, Role[]> = {
   // /audit-log route is not behind RequireNavAccess, for the same reason
   // Roles is not.
   'audit-log': USER_ADMINISTRATORS,
+  // SettingPolicy::viewAny — `settings.manage`, held only by Super Admin
+  // as seeded (ADR-0014). Menu visibility only; the /system-settings
+  // route is not behind RequireNavAccess, for the same reason Roles is
+  // not — the page gates on whether the API answers.
+  'system-settings': ['super_admin'],
+  // CustomerPolicy::viewAny — `customers.view` (ADR-0018), seeded on Super
+  // Admin, Operations Manager and Dispatcher. Deliberately closed to a
+  // Corporate Admin: these are Shanitah's retail customers, not their
+  // staff, and the two populations have different privacy stories.
+  customers: ['super_admin', 'operations_manager', 'dispatcher'],
   invoices: BILLING_READERS,
   'rate-cards': BILLING_READERS,
   reports: REPORT_READERS,
@@ -93,6 +109,17 @@ const VISIBLE_TO: Record<string, Role[]> = {
   companies: ALL.filter((r) => r !== 'corporate_employee' && r !== 'driver'),
   vehicles: ALL.filter((r) => r !== 'corporate_employee' && r !== 'driver'),
   drivers: ALL.filter((r) => r !== 'corporate_employee' && r !== 'driver'),
+  // DriverApplicationPolicy::viewAny — `drivers.view`, the same read the
+  // fleet list needs. Deciding one takes more (ADR-0027), and the dialog's
+  // buttons answer 403 for anybody who lacks it.
+  'driver-applications': ALL.filter((r) => r !== 'corporate_employee' && r !== 'driver'),
+  // ADR-0045 §2. The endpoint is `viewAny` on Trip, which every role holds —
+  // so this is about *usefulness*, not permission: a Corporate Employee who
+  // requests rides and a Driver who does them have no part in reviewing the
+  // evidence behind a fare, and the server would serve them an empty queue
+  // anyway. Still reachable by URL, and still answering 200, because that is
+  // what the policy actually says.
+  'distance-review': ALL.filter((r) => r !== 'corporate_employee' && r !== 'driver'),
 }
 
 export function canUseNavItem(role: string | undefined, id: string): boolean {

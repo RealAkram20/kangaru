@@ -21,6 +21,15 @@ use Modules\Clients\Models\Company;
  *
  * Discovered by filesystem scan rather than a hand-kept list: a list is
  * exactly the thing that was already out of date.
+ *
+ * **The scan reads classes, not file text.** An earlier version skipped any
+ * file that did not literally contain `App\Concerns\Auditable`, which was
+ * fast and wrong: a model that inherits the trait from an abstract parent
+ * — `RateCardZoneRate` extends `PricedRate` — never mentions it, so it was
+ * silently never checked. Removing its morph entry left this file green,
+ * which is the precise failure the file exists to prevent. `class_exists`
+ * plus `class_uses_recursive` costs an autoload per file and cannot be
+ * fooled by where the `use` statement happens to sit.
  */
 
 /**
@@ -41,23 +50,33 @@ function auditableModels(): array
                 continue;
             }
 
-            $contents = $file->getContents();
-
-            // The trait is only ever applied by name, and `use Auditable`
-            // inside a class body is the single way it enters one.
-            if (! str_contains($contents, 'App\Concerns\Auditable')) {
-                continue;
-            }
-
-            if (! preg_match('/namespace\s+([^;]+);/', $contents, $ns)) {
+            if (! preg_match('/namespace\s+([^;]+);/', $file->getContents(), $ns)) {
                 continue;
             }
 
             $class = trim($ns[1]).'\\'.$file->getFilenameWithoutExtension();
 
-            if (class_exists($class) && in_array(Auditable::class, class_uses_recursive($class), true)) {
-                $models[] = $class;
+            if (! class_exists($class) || ! is_subclass_of($class, Model::class)) {
+                continue;
             }
+
+            if (! in_array(Auditable::class, class_uses_recursive($class), true)) {
+                continue;
+            }
+
+            // An abstract model is never instantiated and never audited on
+            // its own — `Modules\Billing\Models\PricedRate` carries the trait
+            // so that `RateCardRate` and `RateCardZoneRate` inherit it, and
+            // those two are what need aliases. Requiring one for the parent
+            // would demand a morph entry for a class no row can ever be.
+            //
+            // Narrow on purpose: only `abstract` is skipped, so a concrete
+            // auditable model still cannot slip past this scan.
+            if ((new ReflectionClass($class))->isAbstract()) {
+                continue;
+            }
+
+            $models[] = $class;
         }
     }
 

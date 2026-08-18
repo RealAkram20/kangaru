@@ -82,8 +82,16 @@ isolation suite non-skippable; this records why one member changed meaning.
   role and branch/depot dispatch inputs; there is nothing for them to
   point at. Ownership by a fleet owner or driver-partner is a `Modules/Fleet`
   concern and is unbuilt.
-- **No availability model.** A vehicle has a `status` string; there is no
-  calendar, no reservation window, and no way to ask "is this vehicle free
-  at 14:00 on Thursday" except by looking at trips.
+- **~~No availability model~~ — built, ADR-0017 (7 August 2026).**
+  `availability_blocks` records maintenance, inspection and repair periods
+  against a vehicle, and `Modules\Fleet\Services\AvailabilityService`
+  answers "is this vehicle free at 14:00 on Thursday". Dispatch refuses a
+  vehicle in the workshop and the candidate list marks it undispatchable.
+
+  Overlap is half-open, so a vehicle out of the workshop at 14:00 is
+  available at 14:00; `ends_at` null is open-ended, for the honest record
+  when a vehicle fails an inspection and nobody yet knows what the part
+  costs. Recording one needs `vehicles.manage` — the permission follows the
+  resource rather than being one of its own.
 - **No telematics.** Odometer readings come from the driver at trip start
   and end (`Modules/Trips`), not from the vehicle.

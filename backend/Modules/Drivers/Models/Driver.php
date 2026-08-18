@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Modules\Vehicles\Models\Vehicle;
 
 /**
  * A driver profile. Employed and managed by the platform, not by a client
@@ -25,6 +26,8 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property string $name
  * @property string $license_number
  * @property string $status
+ * @property string|null $referral_code Minted on first use — see ReferralService::codeFor().
+ * @property string|null $photo_path Private-disk path; streamed, never linked (ADR-0041).
  */
 class Driver extends Model
 {
@@ -44,6 +47,11 @@ class Driver extends Model
         'user_id',
         'name',
         'phone',
+        // The vehicle this driver actually drives — theirs, in most cases,
+        // and inseparably so for a boda rider. `driver_presence.vehicle_id`
+        // is still the per-shift answer and wins when set; this is what a
+        // driver falls back to, and what makes them offerable at all.
+        'vehicle_id',
         'email',
         'license_number',
         'license_expiry',
@@ -72,5 +80,21 @@ class Driver extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * The vehicle they drive.
+     *
+     * Nullable, and that is not an edge case: a corporate driver takes
+     * whatever the depot hands them that morning, and
+     * `driver_presence.vehicle_id` is the per-shift answer for them. This is
+     * the durable one — the driver's own vehicle, which for a boda rider is
+     * not separable from the driver at all.
+     *
+     * @return BelongsTo<Vehicle, $this>
+     */
+    public function vehicle(): BelongsTo
+    {
+        return $this->belongsTo(Vehicle::class);
     }
 }

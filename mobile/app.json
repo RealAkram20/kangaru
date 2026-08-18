@@ -1,0 +1,64 @@
+{
+  "expo": {
+    "name": "KangaruRide Driver",
+    "slug": "kangaruride-driver",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "kangaruride-driver",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "ug.co.kangaruride.driver",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "KangaruRide records the route of a trip you are driving, so the office can verify distance against your odometer readings.",
+        "NSCameraUsageDescription": "KangaruRide lets you photograph the dashboard when you record an odometer reading. The photo is optional."
+      }
+    },
+    "android": {
+      "package": "ug.co.kangaruride.driver",
+      "adaptiveIcon": {
+        "backgroundColor": "#0F172A",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "CAMERA"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-sqlite",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "KangaruRide records the route of a trip you are driving, so the office can verify distance against your odometer readings."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "KangaruRide lets you photograph the dashboard when you record an odometer reading. The photo is optional."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/android-icon-monochrome.png",
+          "color": "#2563EB"
+        }
+      ],
+      "expo-font",
+      "expo-image",
+      "expo-web-browser",
+      "@react-native-community/datetimepicker"
+    ]
+  }
+}

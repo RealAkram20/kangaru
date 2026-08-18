@@ -3,6 +3,7 @@
 namespace Modules\Administration\Services;
 
 use App\Models\User;
+use App\Support\Auth\ClientScope;
 use Illuminate\Support\Facades\Hash;
 use Modules\Administration\Requests\LoginRequest;
 
@@ -32,6 +33,10 @@ class AuthService
      */
     public function login(LoginRequest $request): array
     {
+        // ADR-0022. Absent means the staff console, so every client that
+        // predates this keeps the unscoped token it has always had.
+        $client = $request->validated('client') ?? ClientScope::CONSOLE;
+
         $user = User::where('email', $request->validated('email'))->first();
 
         if (! $user || ! Hash::check($request->validated('password'), $user->password)) {
@@ -79,7 +84,7 @@ class AuthService
 
         return [
             'user' => $user,
-            'token' => $user->createToken('api')->plainTextToken,
+            'token' => $this->issueToken($user, $client),
             'challenge' => null,
         ];
     }
@@ -91,7 +96,7 @@ class AuthService
      *
      * @throws InvalidMfaChallengeException|InvalidMfaCodeException
      */
-    public function verifyMfa(string $challenge, string $code): array
+    public function verifyMfa(string $challenge, string $code, string $client = ClientScope::CONSOLE): array
     {
         $user = $this->mfa->verifyChallenge($challenge, $code);
 
@@ -103,7 +108,30 @@ class AuthService
             throw new InvalidCredentialsException;
         }
 
-        return ['user' => $user, 'token' => $user->createToken('api')->plainTextToken];
+        return ['user' => $user, 'token' => $this->issueToken($user, $client)];
+    }
+
+    /**
+     * Mints a token scoped to the app that asked for it (ADR-0022).
+     *
+     * The client is **self-declared**, and that is honest rather than weak.
+     * It cannot defend against the person signing in — they may always ask
+     * for a console token, exactly as they may open the web console. What
+     * it bounds is a *token's* reach: one sitting on a driver's phone, in a
+     * mobile app's storage, or in a proxy log, can only ever touch the
+     * driver surface. Losing a phone stops being a question about what that
+     * driver is allowed to do.
+     *
+     * The token's name carries the client too. Somebody reading
+     * `personal_access_tokens` during an incident needs to know which
+     * device a row is for, and every one of them used to say "api".
+     */
+    public function issueToken(User $user, string $client): string
+    {
+        // Public since ADR-0028: the social sign-in path mints its tokens
+        // here too, so a Google login can never end up with a differently
+        // scoped token than a password login for the same client.
+        return $user->createToken($client, ClientScope::abilitiesFor($client))->plainTextToken;
     }
 
     public function logout(User $user): void

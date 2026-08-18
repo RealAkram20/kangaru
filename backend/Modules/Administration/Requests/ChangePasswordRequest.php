@@ -35,7 +35,14 @@ class ChangePasswordRequest extends FormRequest
             'current_password' => ['required', 'string'],
             // `confirmed` requires a matching password_confirmation, so a
             // typo locks nobody out of their own account.
-            'password' => ['required', 'string', 'confirmed', Password::min(12), 'different:current_password'],
+            //
+            // Eight, matching `PasswordResetController` and
+            // `StoreDriverApplicationRequest` — the three doors a driver can
+            // reach from the phone. Accounts the office mints
+            // (`StoreUserRequest`, `StoreDriverAccountRequest`) still hold
+            // twelve; those are typed by staff at a desk, not by a driver on a
+            // handset in the sun.
+            'password' => ['required', 'string', 'confirmed', Password::min(8), 'different:current_password'],
         ];
     }
 

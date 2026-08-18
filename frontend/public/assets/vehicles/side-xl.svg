@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 320">
+  <!-- KangaruRide fleet · XL van (up to 6 seats) · side view -->
+  <defs>
+    <radialGradient id="shadow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0B1220" stop-opacity="0.20"/>
+      <stop offset="70%" stop-color="#0B1220" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#0B1220" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.7" stop-color="#F2F4F6"/>
+      <stop offset="1" stop-color="#DDE2E7"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3A4047"/>
+      <stop offset="1" stop-color="#16181D"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1CB964"/>
+      <stop offset="1" stop-color="#118A48"/>
+    </linearGradient>
+  </defs>
+
+  <ellipse cx="256" cy="262" rx="208" ry="15" fill="url(#shadow)"/>
+
+  <!-- body: one tall box with a short sloped nose -->
+  <path fill="url(#body)" d="M42 218 C34 200 36 182 50 174 C60 168 82 162 108 158 C118 118 138 84 186 78 L400 74 C438 76 456 92 460 128 L462 196 C462 208 456 216 446 218 Z"/>
+
+  <!-- windshield -->
+  <path fill="url(#glass)" d="M124 152 C132 118 148 94 186 88 L196 88 L192 148 C168 150 142 152 124 152 Z"/>
+  <!-- side windows band -->
+  <path fill="url(#glass)" d="M210 90 L436 88 C446 92 450 102 450 116 L450 140 L210 146 Z"/>
+  <!-- pillars -->
+  <rect x="288" y="88" width="10" height="58" fill="#F2F4F6"/>
+  <rect x="368" y="87" width="10" height="57" fill="#F2F4F6"/>
+
+  <!-- sliding-door seam -->
+  <g stroke="#D7DCE1" stroke-width="3" fill="none" stroke-linecap="round">
+    <path d="M292 150 L292 212"/>
+    <path d="M206 92 L204 212"/>
+    <path d="M374 150 L376 210"/>
+  </g>
+
+  <!-- brand panel -->
+  <rect x="220" y="160" width="150" height="40" rx="12" fill="url(#green)"/>
+  <rect x="226" y="165" width="138" height="14" rx="7" fill="#FFFFFF" opacity="0.16"/>
+
+  <!-- door handles -->
+  <rect x="252" y="153" width="24" height="5" rx="2.5" fill="#B6BDC4"/>
+  <rect x="320" y="153" width="24" height="5" rx="2.5" fill="#B6BDC4"/>
+
+  <!-- lights -->
+  <path fill="#E8ECEF" d="M46 180 C56 176 70 174 82 174 L78 190 C66 190 52 188 46 184 Z"/>
+  <path fill="#C9505A" d="M462 150 L462 186 L452 186 L452 150 Z"/>
+
+  <!-- wheels -->
+  <g>
+    <circle cx="136" cy="218" r="42" fill="#17191C"/>
+    <circle cx="136" cy="218" r="24" fill="#C9CFD5"/>
+    <circle cx="136" cy="218" r="9" fill="#8E969E"/>
+    <circle cx="386" cy="218" r="42" fill="#17191C"/>
+    <circle cx="386" cy="218" r="24" fill="#C9CFD5"/>
+    <circle cx="386" cy="218" r="9" fill="#8E969E"/>
+  </g>
+</svg>

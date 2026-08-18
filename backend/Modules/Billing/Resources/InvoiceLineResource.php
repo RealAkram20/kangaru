@@ -59,8 +59,16 @@ class InvoiceLineResource extends JsonResource
             'inputs' => [
                 'rate_card_version_id' => $this->rate_card_version_id,
                 'vehicle_category' => $this->vehicle_category,
-                // Always null until the geofencing engine exists.
+                // The zone whose rate priced this line — its name as it read
+                // when the invoice was issued, plus the id that identifies
+                // the rate row, since a zone can be renamed afterwards.
+                //
+                // Null on both means the vehicle category's default rate
+                // priced the line. That is the meaning the column has always
+                // carried, so every invoice issued before zone pricing
+                // existed still reads correctly.
                 'zone' => $this->zone,
+                'zone_id' => $this->zone_id,
                 'distance_km' => $this->distance_km,
                 'waiting_minutes' => $this->waiting_minutes,
                 'multiplier_bp' => $this->multiplier_bp,

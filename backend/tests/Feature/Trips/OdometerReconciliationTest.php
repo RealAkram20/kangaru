@@ -4,6 +4,7 @@ use App\Enums\UserRole;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
+use Modules\Administration\Services\SettingsService;
 use Modules\Drivers\Models\Driver;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
@@ -100,14 +101,22 @@ it('does not flag a trip that has no GPS trace at all', function () {
     expect($trip->distance_variance_flagged)->toBeFalse();
 });
 
-it('respects the configured threshold', function () {
+it('respects the threshold the office has set', function () {
     // 50 km vs 44 km is 12% — over the default 10%, under a configured 20%.
-    config()->set('tracking.variance_threshold_percent', 20);
+    //
+    // **Settings, not `config()`** (ADR-0035). The threshold behind
+    // PROJECT.md's "flagged trips reviewed within two business days" metric
+    // used to live in `config/tracking.php` behind an env var, which meant a
+    // deploy to change it, no sight of it in the console, and no audit trail.
+    // Setting `tracking.variance_threshold_percent` via `config()` now changes
+    // nothing at all, and this test fails if the state machine goes back to
+    // reading it.
+    app(SettingsService::class)->setGroup('tracking', ['variance_threshold_percent' => 20]);
 
     ['trip' => $loose] = completedTripWithRoute(odometerKm: 50, gpsKm: 44.0);
     expect($loose->distance_variance_flagged)->toBeFalse();
 
-    config()->set('tracking.variance_threshold_percent', 5);
+    app(SettingsService::class)->setGroup('tracking', ['variance_threshold_percent' => 5]);
 
     ['trip' => $strict] = completedTripWithRoute(odometerKm: 50, gpsKm: 44.0);
     expect($strict->distance_variance_flagged)->toBeTrue();

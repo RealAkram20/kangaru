@@ -13,6 +13,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Modules\Billing\Enums\RoundingMode;
+use Modules\Fleet\Models\Zone;
+use Modules\Trips\Distance\DistancePolicy;
 
 /**
  * One immutable priced revision of a rate card.
@@ -32,7 +34,8 @@ use Modules\Billing\Enums\RoundingMode;
  * numbers were in force. Creating another version costs nothing.
  *
  * @property int $id
- * @property int $tenant_id
+ * @property int|null $tenant_id Null on the platform's public tariff
+ *                               (ADR-0026 §1), which belongs to no client.
  * @property int $rate_card_id
  * @property int $version
  * @property CarbonInterface $effective_from
@@ -42,6 +45,7 @@ use Modules\Billing\Enums\RoundingMode;
  * @property string|null $night_starts_at
  * @property string|null $night_ends_at
  * @property int $night_multiplier_bp
+ * @property DistancePolicy $distance_policy Which witness this version bills on (ADR-0045 §3).
  * @property CarbonInterface|null $locked_at
  * @property-read RateCard $rateCard
  * @property-read Collection<int, RateCardRate> $rates
@@ -69,6 +73,7 @@ class RateCardVersion extends Model
         'night_starts_at',
         'night_ends_at',
         'night_multiplier_bp',
+        'distance_policy',
         'created_by_user_id',
         'notes',
     ];
@@ -81,6 +86,7 @@ class RateCardVersion extends Model
             'rounding_mode' => RoundingMode::class,
             'free_waiting_minutes' => 'integer',
             'night_multiplier_bp' => 'integer',
+            'distance_policy' => DistancePolicy::class,
             'locked_at' => 'datetime',
         ];
     }
@@ -161,13 +167,29 @@ class RateCardVersion extends Model
     }
 
     /**
-     * The rates for one vehicle category, or null when this version does
-     * not price that category at all. Callers must treat null as a refusal
-     * to invoice, never as "charge nothing".
+     * The prices for one vehicle category, in one zone, or null when this
+     * version does not price that category at all. Callers must treat null
+     * as a refusal to invoice, never as "charge nothing".
+     *
+     * A zone narrows the answer; it never withholds one. If the category is
+     * priced and the zone is not, the category's default rate is returned —
+     * which is what makes a rate card with no zone rows behave exactly as it
+     * did before ADR-0021's billing half existed, and what stops a newly
+     * drawn zone from silently making a rate card unable to bill.
+     *
+     * Passing null asks for the default rate explicitly, which is the right
+     * answer for a trip whose pickup coordinates are unknown.
      */
-    public function rateFor(string $vehicleCategory): ?RateCardRate
+    public function rateFor(string $vehicleCategory, ?Zone $zone = null): ?PricedRate
     {
-        return $this->rates->firstWhere('vehicle_category', $vehicleCategory);
+        /** @var RateCardRate|null $rate */
+        $rate = $this->rates->firstWhere('vehicle_category', $vehicleCategory);
+
+        if ($rate === null || $zone === null) {
+            return $rate;
+        }
+
+        return $rate->zoneRateFor($zone) ?? $rate;
     }
 
     public function hasNightRate(): bool

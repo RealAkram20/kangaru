@@ -1,26 +1,58 @@
-import { createBrowserRouter } from 'react-router-dom'
+import { Navigate, createBrowserRouter } from 'react-router-dom'
 import { ProtectedRoute } from '../auth/ProtectedRoute'
 import { RequireNavAccess } from './RequireNavAccess'
 import { AppShell } from '../components/layout/AppShell'
 import { AuditLogPage } from '../pages/AuditLogPage'
 import { BookingsPage } from '../pages/BookingsPage'
 import { CompaniesPage } from '../pages/CompaniesPage'
+import { CustomersPage } from '../pages/CustomersPage'
 import { DashboardPage } from '../pages/DashboardPage'
 import { DispatchPage } from '../pages/DispatchPage'
+import { DriverApplicationsPage } from '../pages/DriverApplicationsPage'
 import { DriversPage } from '../pages/DriversPage'
 import { InvoicesPage } from '../pages/InvoicesPage'
 import { LoginPage } from '../pages/LoginPage'
 import { MfaEnrolmentPage } from '../pages/MfaEnrolmentPage'
 import { NotificationsPage } from '../pages/NotificationsPage'
+import { OrderRequestsPage } from '../pages/OrderRequestsPage'
 import { RateCardsPage } from '../pages/RateCardsPage'
 import { ReportsPage } from '../pages/ReportsPage'
 import { RolesPage } from '../pages/RolesPage'
-import { SettingsPage } from '../pages/SettingsPage'
+import { ProfilePage } from '../pages/ProfilePage'
+import { SystemSettingsPage } from '../pages/SystemSettingsPage'
 import { StaffPage } from '../pages/StaffPage'
+import { SupportRequestsPage } from '../pages/SupportRequestsPage'
+import { LiveMapPage } from '../pages/LiveMapPage'
 import { TripsPage } from '../pages/TripsPage'
+import { DistanceReviewPage } from '../pages/DistanceReviewPage'
 import { VehiclesPage } from '../pages/VehiclesPage'
+import { LandingPage } from '../pages/public/LandingPage'
+import { OrderPage } from '../pages/public/OrderPage'
+import { PrivacyNoticePage } from '../pages/public/PrivacyNoticePage'
 
 export const router = createBrowserRouter([
+  // Public, unauthenticated (ADR-0012 §5). `/` is the landing page for
+  // everyone, signed in or not: it is a product surface now, not a
+  // doormat. Bouncing authenticated users to /dashboard meant staff could
+  // never see what customers see, and a shared device would answer the
+  // walk-in customer with someone else's dashboard. Staff reach theirs
+  // from the nav, which says "Dashboard" once they are signed in.
+  {
+    path: '/',
+    element: <LandingPage />,
+  },
+  {
+    path: '/order',
+    element: <OrderPage />,
+  },
+  // Unauthenticated by necessity, not by oversight: this is what somebody
+  // reads to decide whether to hand over their data, so it cannot sit behind
+  // the account that handing it over creates. master-plan.md §5 gates go-live
+  // on it being readable before submission.
+  {
+    path: '/privacy',
+    element: <PrivacyNoticePage />,
+  },
   {
     path: '/login',
     element: <LoginPage />,
@@ -40,16 +72,23 @@ export const router = createBrowserRouter([
       </ProtectedRoute>
     ),
   },
+  // Pathless on purpose: `/` is taken by HomeGate above, and giving this
+  // branch the same path would shadow it. Children still resolve from the
+  // root, so every existing app URL (/bookings, /trips, …) is unchanged;
+  // only the dashboard moved, from `/` to /dashboard.
   {
-    path: '/',
     element: (
       <ProtectedRoute>
         <AppShell />
       </ProtectedRoute>
     ),
     children: [
-      { index: true, element: <DashboardPage /> },
+      { path: 'dashboard', element: <DashboardPage /> },
       { path: 'bookings', element: <BookingsPage /> },
+      // Deliberately not behind RequireNavAccess, like Roles: a custom role
+      // holding `order_requests.manage` is invisible to a slug list. The
+      // page gates on whether the API answers.
+      { path: 'order-requests', element: <OrderRequestsPage /> },
       {
         path: 'dispatch',
         element: (
@@ -59,6 +98,15 @@ export const router = createBrowserRouter([
         ),
       },
       { path: 'trips', element: <TripsPage /> },
+      // ADR-0045 §2: the distance review queue. Not behind `RequireNavAccess`
+      // for the reason Roles is not — the queue is `viewAny` on Trip, which a
+      // custom role can hold, and the page shows whatever the API serves.
+      { path: 'distance-review', element: <DistanceReviewPage /> },
+      // Not behind RequireNavAccess, deliberately: /live-positions is scoped
+      // server-side through the trips the caller may see, so every role gets
+      // a correct answer here — a corporate employee sees their own ride,
+      // and a role holding trips.view.all sees the fleet.
+      { path: 'live-map', element: <LiveMapPage /> },
       {
         path: 'invoices',
         element: (
@@ -90,7 +138,28 @@ export const router = createBrowserRouter([
       // *only ever* about the signed-in user. Every endpoint it calls acts
       // on the caller and takes no user parameter, so there is no role that
       // should be turned away from their own password.
-      { path: 'settings', element: <SettingsPage /> },
+      { path: 'profile', element: <ProfilePage /> },
+      // This page used to live at /settings, next to a sidebar entry of the
+      // same name that meant the platform's configuration. The redirect is
+      // not ceremony: /settings is in people's history and bookmarks, and
+      // the alternative is a 404 on a URL that worked yesterday.
+      { path: 'settings', element: <Navigate to="/profile" replace /> },
+      // Platform settings (ADR-0014). Not behind RequireNavAccess, like
+      // Roles: a custom role holding `settings.manage` is invisible to a
+      // slug list, so the page gates on whether the API answers.
+      { path: 'system-settings', element: <SystemSettingsPage /> },
+      // ADR-0018. Behind RequireNavAccess like Staff, not unguarded like
+      // Roles: `customers.view` is seeded on real roles rather than being a
+      // permission a custom role is expected to carry, and the register is
+      // members of the public — the safer side to err on.
+      {
+        path: 'customers',
+        element: (
+          <RequireNavAccess id="customers">
+            <CustomersPage />
+          </RequireNavAccess>
+        ),
+      },
       {
         path: 'staff',
         element: (
@@ -134,6 +203,22 @@ export const router = createBrowserRouter([
             <DriversPage />
           </RequireNavAccess>
         ),
+      },
+      {
+        // Deliberately NOT behind RequireNavAccess, for the same reason
+        // Roles and Settings are not: `drivers.view` can live on a custom
+        // role that a slug list cannot see, and the page gates on whether
+        // the API answers — a 403 renders as an answer, not an apology.
+        path: 'driver-applications',
+        element: <DriverApplicationsPage />,
+      },
+      {
+        // ADR-0044. Not behind `RequireNavAccess`, for the same reason the
+        // applications queue above is not: `drivers.manage` can live on a
+        // custom role a slug list cannot see, and the page gates on whether
+        // the API answers.
+        path: 'support-requests',
+        element: <SupportRequestsPage />,
       },
     ],
   },

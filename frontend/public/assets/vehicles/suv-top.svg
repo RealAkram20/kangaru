@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- KangaruRide fleet · compact SUV · true top-down · unified scale with sedan-top.svg -->
+  <defs>
+    <radialGradient id="shadow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0B1220" stop-opacity="0.20"/>
+      <stop offset="65%" stop-color="#0B1220" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#0B1220" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#D7DCE2"/>
+      <stop offset="0.16" stop-color="#F4F6F8"/>
+      <stop offset="0.5" stop-color="#FFFFFF"/>
+      <stop offset="0.84" stop-color="#F4F6F8"/>
+      <stop offset="1" stop-color="#D7DCE2"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0.7" y2="1">
+      <stop offset="0" stop-color="#33383F"/>
+      <stop offset="0.5" stop-color="#1D2025"/>
+      <stop offset="1" stop-color="#111318"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1CB964"/>
+      <stop offset="1" stop-color="#118A48"/>
+    </linearGradient>
+  </defs>
+
+  <ellipse cx="256" cy="256" rx="126" ry="210" fill="url(#shadow)"/>
+
+  <!-- tires -->
+  <g>
+    <rect x="143" y="118" width="24" height="68" rx="11" fill="#17191C"/>
+    <rect x="345" y="118" width="24" height="68" rx="11" fill="#17191C"/>
+    <rect x="143" y="326" width="24" height="68" rx="11" fill="#17191C"/>
+    <rect x="345" y="326" width="24" height="68" rx="11" fill="#17191C"/>
+    <g fill="#8E969E">
+      <rect x="148" y="140" width="5" height="26" rx="2.5"/>
+      <rect x="358" y="140" width="5" height="26" rx="2.5"/>
+      <rect x="148" y="348" width="5" height="26" rx="2.5"/>
+      <rect x="358" y="348" width="5" height="26" rx="2.5"/>
+    </g>
+  </g>
+
+  <!-- mirrors -->
+  <rect x="134" y="152" width="32" height="16" rx="8" transform="rotate(-16 150 160)" fill="#EEF1F4"/>
+  <rect x="346" y="152" width="32" height="16" rx="8" transform="rotate(16 362 160)" fill="#EEF1F4"/>
+
+  <!-- body shell: boxier, fuller rear than the sedan -->
+  <path fill="url(#body)" d="M256 60 C306 60 342 72 346 122 L350 210 L350 350 L348 404 C344 442 310 452 256 452 C202 452 168 442 164 404 L162 350 L162 210 L166 122 C170 72 206 60 256 60 Z"/>
+
+  <!-- panel seams -->
+  <g stroke="#DDE2E7" stroke-width="3" fill="none" stroke-linecap="round">
+    <path d="M168 208 L194 205"/>
+    <path d="M344 208 L318 205"/>
+    <path d="M166 296 L192 294"/>
+    <path d="M346 296 L320 294"/>
+    <path d="M182 420 C214 430 298 430 330 420"/>
+    <path d="M186 100 C212 86 300 86 326 100"/>
+  </g>
+
+  <!-- windshield: more upright than the sedan, so shorter in plan -->
+  <path fill="url(#glass)" d="M188 142 C188 130 212 123 256 123 C300 123 324 130 324 142 L318 178 C316 188 294 193 256 193 C218 193 196 188 194 178 Z"/>
+
+  <!-- long panoramic roof, running close to the tailgate -->
+  <rect x="188" y="182" width="136" height="188" rx="30" fill="url(#glass)"/>
+
+  <!-- roof rails -->
+  <rect x="180" y="192" width="9" height="168" rx="4.5" fill="#2A2E33"/>
+  <rect x="323" y="192" width="9" height="168" rx="4.5" fill="#2A2E33"/>
+
+  <!-- roof gloss streak -->
+  <path fill="#FFFFFF" opacity="0.07" d="M200 192 L238 188 L212 366 L196 344 Z"/>
+
+  <!-- brand panel -->
+  <rect x="222" y="230" width="68" height="94" rx="17" fill="url(#green)"/>
+  <rect x="228" y="236" width="56" height="36" rx="12" fill="#FFFFFF" opacity="0.14"/>
+
+  <!-- tailgate window: short and steep -->
+  <path fill="url(#glass)" d="M196 366 L316 366 C321 380 321 390 317 398 C298 406 214 406 195 398 C191 390 191 380 196 366 Z"/>
+</svg>

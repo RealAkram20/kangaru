@@ -198,23 +198,121 @@ it('numbers versions per card, so two cards both start at 1', function () {
     expect(RateCardVersion::where('rate_card_id', $second->id)->max('version'))->toBe(1);
 });
 
-it('exposes no route that could edit or delete a rate card', function () {
+it('exposes no route that could delete a rate card, or reprice one', function () {
     ['finance' => $finance, 'card' => $card] = BillingFixtures::tenantWithRateCard();
 
-    // The absence is the design, not an oversight: prices change by adding
-    // a version. Asserted so that adding `update`/`destroy` to the
-    // apiResource later is a deliberate act with a failing test attached.
-    //
-    // 405, not 404: the URI exists for GET, so the router reports that the
-    // *method* is not allowed. Either would prove the route is absent; 405
-    // is what actually happens and is the honest thing to assert.
-    $this->actingAs($finance, 'sanctum')
-        ->patchJson("/api/v1/rate-cards/{$card->id}", ['name' => 'Renamed'])
-        ->assertStatus(405);
-
+    /*
+     * **This case used to assert that PATCH was 405 too, and the owner has
+     * since asked for card editing.** The original wording and its reasoning
+     * are kept here because the half that mattered is still true:
+     *
+     *   "The absence is the design, not an oversight: prices change by adding
+     *    a version. Asserted so that adding `update`/`destroy` to the
+     *    apiResource later is a deliberate act with a failing test attached."
+     *
+     * It was a deliberate act, and this is the failing test it was attached
+     * to. What changed is only *which* absence is being defended. `PATCH` now
+     * exists and edits a card's name, description and status — labels on a
+     * pricing document. It still cannot reach a price: `UpdateRateCardRequest`
+     * offers no such field and `PricedRate` throws on update, which the
+     * immutability case below still proves.
+     *
+     * `DELETE` is unchanged and stays 405. A rate card that priced an invoice
+     * is evidence; `status: archived` is how one is taken out of the way, and
+     * that is what makes removing the route affordable rather than awkward.
+     *
+     * 405, not 404: the URI exists for GET, so the router reports that the
+     * *method* is not allowed.
+     */
     $this->actingAs($finance, 'sanctum')
         ->deleteJson("/api/v1/rate-cards/{$card->id}")
         ->assertStatus(405);
 
     expect($card->fresh()->name)->toBe('Standard');
+});
+
+/**
+ * Editing a rate card — **its label, never its prices.**
+ *
+ * The owner asked to be able to edit rate cards, and the honest answer split in
+ * two: a version cannot be edited (that is the module's central rule and what
+ * makes an issued invoice reproducible), but a card's *name*, *description* and
+ * *status* are not prices and had no edit path at all. A typo in a card name
+ * was permanent, and `archived` sat in the enum with nothing able to set it.
+ *
+ * These cases pin the line between the two halves.
+ */
+it('renames a rate card without touching its prices', function () {
+    ['finance' => $finance, 'card' => $card] = BillingFixtures::tenantWithRateCard();
+
+    $before = $card->versions()->first()->rates()->get()
+        ->map(fn ($rate) => $rate->vehicle_category.':'.$rate->base_fare_minor->getMinorAmount()->toInt())
+        ->sort()->values()->all();
+
+    $this->actingAs($finance, 'sanctum')
+        ->patchJson("/api/v1/rate-cards/{$card->getKey()}", [
+            'name' => 'Renamed tariff',
+            'description' => 'Now says what it is.',
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.name', 'Renamed tariff')
+        ->assertJsonPath('data.description', 'Now says what it is.');
+
+    $after = $card->fresh()->versions()->first()->rates()->get()
+        ->map(fn ($rate) => $rate->vehicle_category.':'.$rate->base_fare_minor->getMinorAmount()->toInt())
+        ->sort()->values()->all();
+
+    // The whole point of allowing this edit at all: the money is untouched, so
+    // every invoice already priced by this version stays reproducible.
+    expect($after)->toBe($before);
+});
+
+it('leaves a field alone when the patch omits it', function () {
+    ['finance' => $finance, 'card' => $card] = BillingFixtures::tenantWithRateCard();
+    $originalName = $card->name;
+
+    $this->actingAs($finance, 'sanctum')
+        ->patchJson("/api/v1/rate-cards/{$card->getKey()}", ['status' => 'archived'])
+        ->assertOk()
+        ->assertJsonPath('data.status', 'archived');
+
+    // A PATCH that nulls the fields it did not mention is the classic way to
+    // lose a description nobody meant to delete.
+    expect($card->fresh()->name)->toBe($originalName);
+});
+
+it('cannot promote a card or reprice it through the edit endpoint', function () {
+    ['finance' => $finance] = BillingFixtures::tenantWithRateCard();
+
+    // A second, non-default card — the fixture's own is already the default,
+    // which would make an is_default assertion vacuous.
+    $created = $this->actingAs($finance, 'sanctum')
+        ->postJson('/api/v1/rate-cards', rateCardPayload(['name' => 'Secondary', 'is_default' => false]))
+        ->assertStatus(201);
+
+    $id = $created->json('data.id');
+
+    // Neither key has a rule, so neither is in `validated()`. `is_default` has
+    // its own endpoint because promotion must demote the incumbent in one
+    // transaction, and a second way in is the one that forgets to.
+    $this->actingAs($finance, 'sanctum')
+        ->patchJson("/api/v1/rate-cards/{$id}", [
+            'name' => 'Still fine',
+            'is_default' => true,
+            'version' => ['rates' => [['vehicle_category' => 'sedan', 'base_fare_minor' => 1]]],
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.name', 'Still fine')
+        ->assertJsonPath('data.is_default', false);
+
+    // One version still, priced as it was — nothing in that payload reached it.
+    expect(RateCard::query()->findOrFail($id)->versions()->count())->toBe(1);
+});
+
+it('refuses an edit from a role that may not set prices', function () {
+    ['dispatcher' => $dispatcher, 'card' => $card] = BillingFixtures::tenantWithRateCard();
+
+    $this->actingAs($dispatcher, 'sanctum')
+        ->patchJson("/api/v1/rate-cards/{$card->getKey()}", ['name' => 'Nope'])
+        ->assertForbidden();
 });

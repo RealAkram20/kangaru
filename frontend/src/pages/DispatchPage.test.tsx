@@ -68,6 +68,7 @@ function driver(overrides: Partial<Driver> = {}): Driver {
     license_number: 'DL-99881',
     license_expiry: '2028-01-01',
     status: 'active',
+    account: null,
     created_at: '2026-01-01T00:00:00.000000Z',
     updated_at: '2026-01-01T00:00:00.000000Z',
     ...overrides,
@@ -81,11 +82,39 @@ function board(
   drivers: Driver[] = [driver()],
 ) {
   get.mockImplementation((url: string) => {
+    // Before the plain `/bookings` arm: these are `/bookings/{id}/...` and
+    // the prefix match would otherwise hand the picker the booking queue.
+    if (url.includes('/candidate-vehicles')) {
+      // Active-only, because that is what the server does
+      // (`VehicleCandidates` / `DriverCandidates` both scope to active).
+      // A mock that returned retired vehicles would let a regression in the
+      // real filter pass here unnoticed.
+      return Promise.resolve(
+        apiOk(
+          vehicles.filter((v) => v.status === 'active').map((v) => ({ ...v, ...freeCandidate })),
+        ),
+      )
+    }
+    if (url.includes('/candidate-drivers')) {
+      return Promise.resolve(
+        apiOk(
+          drivers.filter((d) => d.status === 'active').map((d) => ({ ...d, ...freeCandidate })),
+        ),
+      )
+    }
     if (url.startsWith('/bookings')) return Promise.resolve(apiOk(queue))
     if (url.startsWith('/vehicles')) return Promise.resolve(apiOk(vehicles))
     if (url.startsWith('/drivers')) return Promise.resolve(apiOk(drivers))
     return Promise.reject(new Error(`unexpected GET ${url}`))
   })
+}
+
+/** Everything free, which is what most of these cases are not about. */
+const freeCandidate = {
+  allocated: false,
+  dispatchable: true,
+  requires_override_reason: false,
+  note: null,
 }
 
 beforeEach(() => {
@@ -151,6 +180,110 @@ describe('DispatchPage', () => {
     expect(within(drivers).queryByRole('option', { name: /Ben Okello/ })).not.toBeInTheDocument()
   })
 
+  /**
+   * ADR-0017 on this screen. The board used to offer everything and let the
+   * assignment endpoint refuse, so a dispatcher learned the rule by being
+   * stopped. These assert the two halves of the fix: the reason is visible
+   * *before* the click, and the option still exists.
+   */
+  it('shows an unavailable vehicle with its reason instead of hiding it', async () => {
+    const user = userEvent.setup()
+    const inWorkshop = vehicle({ id: 9, registration_number: 'UCC 333C' })
+
+    get.mockImplementation((url: string) => {
+      if (url.includes('/candidate-vehicles')) {
+        return Promise.resolve(
+          apiOk([
+            { ...vehicle(), ...freeCandidate },
+            {
+              ...inWorkshop,
+              ...freeCandidate,
+              dispatchable: false,
+              note: 'Not available for this time.',
+            },
+          ]),
+        )
+      }
+      if (url.includes('/candidate-drivers')) {
+        return Promise.resolve(apiOk([{ ...driver(), ...freeCandidate }]))
+      }
+      if (url.startsWith('/bookings')) return Promise.resolve(apiOk([booking()]))
+      if (url.startsWith('/vehicles')) return Promise.resolve(apiOk([vehicle(), inWorkshop]))
+      if (url.startsWith('/drivers')) return Promise.resolve(apiOk([driver()]))
+      return Promise.reject(new Error(`unexpected GET ${url}`))
+    })
+
+    renderAs(<DispatchPage />)
+    await user.click(await screen.findByRole('button', { name: /Kampala → Entebbe/ }))
+
+    const vehicles = await screen.findByLabelText(/vehicle/i)
+    const blocked = await within(vehicles).findByRole('option', { name: /UCC 333C/ })
+
+    // Listed, so a dispatcher who knows the fleet is not left wondering
+    // where it went — and carrying the reason, so they do not have to guess.
+    expect(blocked).toBeInTheDocument()
+    expect(blocked).toHaveTextContent('Not available for this time.')
+    // But unpickable: the server would answer 409 anyway, and finding that
+    // out after the confirmation dialog is the experience this replaces.
+    expect(blocked).toBeDisabled()
+
+    expect(within(vehicles).getByRole('option', { name: /UAA 111A/ })).toBeEnabled()
+  })
+
+  it('shows an unavailable driver the same way', async () => {
+    const user = userEvent.setup()
+    const onLeave = driver({ id: 5, name: 'Ben Okello' })
+
+    get.mockImplementation((url: string) => {
+      if (url.includes('/candidate-vehicles')) {
+        return Promise.resolve(apiOk([{ ...vehicle(), ...freeCandidate }]))
+      }
+      if (url.includes('/candidate-drivers')) {
+        return Promise.resolve(
+          apiOk([
+            { ...driver(), ...freeCandidate },
+            { ...onLeave, dispatchable: false, note: 'Not rostered for this time.' },
+          ]),
+        )
+      }
+      if (url.startsWith('/bookings')) return Promise.resolve(apiOk([booking()]))
+      if (url.startsWith('/vehicles')) return Promise.resolve(apiOk([vehicle()]))
+      if (url.startsWith('/drivers')) return Promise.resolve(apiOk([driver(), onLeave]))
+      return Promise.reject(new Error(`unexpected GET ${url}`))
+    })
+
+    renderAs(<DispatchPage />)
+    await user.click(await screen.findByRole('button', { name: /Kampala → Entebbe/ }))
+
+    const drivers = await screen.findByLabelText(/driver/i)
+    const blocked = await within(drivers).findByRole('option', { name: /Ben Okello/ })
+
+    // "Not rostered" and "on leave" are different problems with different
+    // fixes, and the board says which.
+    expect(blocked).toHaveTextContent('Not rostered for this time.')
+    expect(blocked).toBeDisabled()
+  })
+
+  it('still offers the plain fleet when the candidate lookup fails', async () => {
+    const user = userEvent.setup()
+
+    get.mockImplementation((url: string) => {
+      if (url.includes('/candidate-')) return Promise.reject(new Error('down'))
+      if (url.startsWith('/bookings')) return Promise.resolve(apiOk([booking()]))
+      if (url.startsWith('/vehicles')) return Promise.resolve(apiOk([vehicle()]))
+      if (url.startsWith('/drivers')) return Promise.resolve(apiOk([driver()]))
+      return Promise.reject(new Error(`unexpected GET ${url}`))
+    })
+
+    renderAs(<DispatchPage />)
+    await user.click(await screen.findByRole('button', { name: /Kampala → Entebbe/ }))
+
+    // Losing the annotation costs a dispatcher the preview, not the ability
+    // to work — the assignment endpoint enforces availability regardless.
+    const vehicles = await screen.findByLabelText(/vehicle/i)
+    expect(within(vehicles).getByRole('option', { name: /UAA 111A/ })).toBeEnabled()
+  })
+
   it('will not assign until both a vehicle and a driver are chosen', async () => {
     const user = userEvent.setup()
     renderAs(<DispatchPage />)
@@ -213,7 +346,7 @@ describe('DispatchPage', () => {
     await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(before))
   })
 
-  it('shows the server\'s refusal verbatim when it loses a race for the vehicle', async () => {
+  it("shows the server's refusal verbatim when it loses a race for the vehicle", async () => {
     const user = userEvent.setup()
     post.mockRejectedValue(
       apiFailure(

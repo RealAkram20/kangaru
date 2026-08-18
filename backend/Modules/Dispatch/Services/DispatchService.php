@@ -9,6 +9,8 @@ use Modules\Bookings\Enums\BookingStatus;
 use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Services\InvalidBookingTransitionException;
 use Modules\Fleet\Services\AllocationLookup;
+use Modules\Fleet\Services\Availability;
+use Modules\Fleet\Services\AvailabilityService;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Services\DriverUnavailableException;
 use Modules\Trips\Services\TripService;
@@ -30,6 +32,7 @@ class DispatchService
     public function __construct(
         private readonly TripService $trips,
         private readonly AllocationLookup $allocations,
+        private readonly AvailabilityService $availability,
     ) {}
 
     /**
@@ -68,6 +71,19 @@ class DispatchService
                 $locked, $vehicleId, $driverId, $overrideReason, $dispatcher,
             );
 
+            // ADR-0017, and here for exactly the reason the allocation rules
+            // are here: the candidate listing is a convenience, this is the
+            // rule. A dispatcher may post any pair of ids, so a driver on
+            // approved leave has to be refused by the endpoint and not only
+            // greyed out on a board somebody may not have been looking at.
+            //
+            // After the locks above, deliberately. The verdict reads `trips`
+            // among other tables, and a plain SELECT taken before the locks
+            // would fix this transaction's snapshot early — the precise
+            // mistake the comment in applyAllocationRules() records having
+            // already been made once here.
+            $this->assertAvailable($locked, $vehicleId, $driverId);
+
             // TripService takes the pessimistic lock on the vehicle and
             // driver rows (TripAssignmentGuard) and throws if either is
             // already committed elsewhere, rolling this whole transaction
@@ -86,6 +102,43 @@ class DispatchService
 
             return $trip;
         });
+    }
+
+    /**
+     * Refuses a driver or vehicle that is not free for the booking's window
+     * (ADR-0017).
+     *
+     * Reuses `VehicleUnavailableException` / `DriverUnavailableException`
+     * rather than introducing a third pair. To every client the fact is the
+     * same — this vehicle cannot take this job — and the *reason* travels in
+     * the message, which is where a dispatcher reads it. Minting
+     * `VEHICLE_ON_LEAVE` and `VEHICLE_IN_WORKSHOP` would ask every consumer,
+     * including the Driver's Application, to learn a new code for each new
+     * way of being busy.
+     *
+     * @throws VehicleUnavailableException
+     * @throws DriverUnavailableException
+     */
+    private function assertAvailable(Booking $booking, int $vehicleId, int $driverId): void
+    {
+        [$from, $to] = $this->availability->windowFor($booking->scheduled_for);
+
+        $vehicle = $this->availability->forVehicle($vehicleId, $from, $to);
+
+        if (! $vehicle->free && $vehicle->code !== Availability::ON_TRIP) {
+            // ON_TRIP is deliberately passed over here and left to
+            // TripAssignmentGuard, which is the only thing holding the locks
+            // that make that particular answer race-proof. Two checks of the
+            // same fact, one of them unlocked, is how a guarantee gets
+            // quietly downgraded to a probability.
+            throw new VehicleUnavailableException($vehicleId, 0, $vehicle->note);
+        }
+
+        $driver = $this->availability->forDriver($driverId, $from, $to);
+
+        if (! $driver->free && $driver->code !== Availability::ON_TRIP) {
+            throw new DriverUnavailableException($driverId, 0, $driver->note);
+        }
     }
 
     /**

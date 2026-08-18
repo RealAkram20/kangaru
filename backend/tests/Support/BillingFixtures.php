@@ -7,8 +7,10 @@ use App\Models\Tenant;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
 use Modules\Billing\Models\RateCard;
+use Modules\Billing\Models\RateCardRate;
 use Modules\Billing\Models\RateCardVersion;
 use Modules\Billing\Services\RateCardService;
+use Modules\Bookings\Models\Booking;
 use Modules\Drivers\Models\Driver;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
@@ -95,11 +97,71 @@ class BillingFixtures
     }
 
     /**
+     * The platform's public tariff — a rate card with no tenant (ADR-0026 §1).
+     *
+     * Lives here rather than in one suite because two now need it: Billing
+     * asks what a walk-in ride *costs*, and Dispatch asks what a driver is
+     * *shown* before accepting one. Both answers come from this card, and
+     * two copies of it would drift.
+     *
+     * @param  array<string, array{0: int, 1: int}>  $rates  category => [base fare, per km], in minor units
+     */
+    public static function publicTariff(array $rates = ['sedan' => [2_000, 1_500]]): RateCard
+    {
+        // Through `RateCardService`, never straight into `rate_card_versions`
+        // — rule 1 in this class's docblock. The service allocates the
+        // version number under a lock and seals a version once used, so a
+        // hand-written row is a history no service could have produced.
+        //
+        // The service audits who set a price, so it needs an actor. A
+        // platform Super Admin is who would set the public tariff in
+        // practice (ADR-0026 §4 — `rate_cards.manage`, platform staff only).
+        $actor = User::factory()->create(['tenant_id' => null, 'role' => UserRole::SUPER_ADMIN]);
+
+        $card = app(RateCardService::class)->create([
+            'name' => 'Public tariff '.fake()->unique()->numerify('####'),
+            'is_default' => true,
+            'version' => [
+                'effective_from' => '2020-01-01',
+                'rounding_mode' => 'half_up',
+                'free_waiting_minutes' => 0,
+                'night_starts_at' => null,
+                'night_ends_at' => null,
+                'night_multiplier_bp' => RateCardVersion::NO_MULTIPLIER_BP,
+                'rates' => collect($rates)->map(fn (array $pair, string $category) => [
+                    'vehicle_category' => $category,
+                    'base_fare_minor' => $pair[0],
+                    'per_km_minor' => $pair[1],
+                    'per_waiting_minute_minor' => 0,
+                    'minimum_charge_minor' => 0,
+                    'maximum_charge_minor' => null,
+                ])->values()->all(),
+            ],
+        ], $actor);
+
+        // The service fills `tenant_id` from the ambient context, which is
+        // correct for every client card and cannot be right for this one.
+        // Moved to the platform after the fact rather than by teaching the
+        // service a special case — that belongs in the service's own change,
+        // and this fixture is not it.
+        $card->forceFill(['tenant_id' => null])->save();
+        RateCardVersion::query()->where('rate_card_id', $card->id)->update(['tenant_id' => null]);
+        RateCardRate::query()->whereIn(
+            'rate_card_version_id',
+            RateCardVersion::query()->where('rate_card_id', $card->id)->pluck('id'),
+        )->update(['tenant_id' => null]);
+
+        return $card->refresh();
+    }
+
+    /**
      * Walks a new trip all the way to Trip Completed through the real state
      * machine, so it arrives at billing with a genuine timeline.
      *
      * @param  array<int, int>  $waitingPeriodSeconds  one entry per Waiting -> Trip Resumed
      *                                                 pause, each the number of seconds waited
+     * @param  Booking|null  $booking  the booking this trip fulfils, when the test needs
+     *                                 the pickup coordinates zone pricing resolves against
      */
     public static function completedTrip(
         Tenant $tenant,
@@ -109,11 +171,13 @@ class BillingFixtures
         int $odometerStart = 15_000,
         int $odometerEnd = 15_042,
         array $waitingPeriodSeconds = [],
+        ?Booking $booking = null,
     ): Trip {
         self::bindTenant($tenant);
 
         $trip = app(TripService::class)->create([
             'tenant_id' => $tenant->id,
+            'booking_id' => $booking?->id,
             'vehicle_id' => $vehicle->id,
             'driver_id' => $driver->id,
             'origin' => 'Kampala',

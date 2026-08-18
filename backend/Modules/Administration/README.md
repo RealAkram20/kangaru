@@ -59,6 +59,9 @@ permission catalogue, and the audit log.
 | POST | `/api/v1/auth/logout` | Sanctum | Revokes the current access token |
 | GET | `/api/v1/auth/me` | Sanctum | Returns the authenticated user |
 | PATCH | `/api/v1/auth/password` | Sanctum | Own password only. Rate limited 5/min. Revokes every token, including the caller's |
+| POST | `/api/v1/auth/password/forgot` | none | Rate limited 3/min/IP. ADR-0028 §2: emails a 6-digit code, hashed at rest, 15-min TTL. **Identical 202 whether or not the email exists.** 409 `AUTH_METHOD_DISABLED` until the owner enables it and SMTP is configured |
+| POST | `/api/v1/auth/password/reset` | none | Rate limited 5/min/IP. Exchanges the code for a new password; single-use, five wrong guesses burn it; success revokes every token |
+| POST | `/api/v1/auth/social` | none | Rate limited 5/min/IP. ADR-0028 §3: verifies a Google/Facebook proof server-side against admin-stored credentials. 200 signed_in (driver-scoped token) · 202 sign_up (verified name+email, **nothing created** — ADR-0027 holds) · 409 `MFA_REQUIRED` · 403 `NOT_A_DRIVER` · 401 `SOCIAL_TOKEN_INVALID` |
 | GET | `/api/v1/users` | Sanctum + tenant | `UserPolicy::viewAny`. Whitelisted filters `status`, `role`, `q`; unknown params → 422. `meta.assignable_roles` carries the roles this actor may hand out |
 | POST | `/api/v1/users` | Sanctum + tenant | `UserPolicy::create`. Administrator sets the initial password |
 | GET | `/api/v1/users/{user}` | Sanctum + tenant | `UserPolicy::view` |
@@ -67,6 +70,12 @@ permission catalogue, and the audit log.
 | POST | `/api/v1/roles` | Sanctum + tenant | `RolePolicy::create` — `roles.manage`. Slug derived from the name when omitted |
 | PATCH | `/api/v1/roles/{slug}` | Sanctum + tenant | `RolePolicy::update`. A system role's permissions may change; its name may not |
 | DELETE | `/api/v1/roles/{slug}` | Sanctum + tenant | `RolePolicy::delete` — custom roles only, and 409 `ROLE_IN_USE` while anyone holds it |
+| GET | `/api/v1/public/settings` | none | Rate limited 30/min/IP. The branding subset only — what may appear is decided by the catalogue's `public` flags (ADR-0014 §5), never by the controller. Asset paths arrive as absolute URLs |
+| GET | `/api/v1/public/legal` | none | Rate limited 30/min/IP. The Terms and Privacy notices the Driver App's sign-up form requires consent to. Unauthenticated of necessity: it is read on the one screen that exists before an account does. Kept off `/public/settings` because the documents are long and that endpoint is fetched on every page load |
+| GET | `/api/v1/settings` | Sanctum | `settings.manage`. Every group resolved against catalogue defaults; secrets appear as `{configured: bool}`, never as values |
+| PATCH | `/api/v1/settings/{group}` | Sanctum | `settings.manage`. Unknown group or key → 422 rather than a silent skip. Audited with before/after; secrets masked as `***` |
+| POST | `/api/v1/settings/assets/{asset}` | Sanctum | `settings.manage`. Multipart logo/favicon upload to the public disk |
+| POST | `/api/v1/settings/mail/test` | Sanctum | `settings.manage`. Sends a test message using the stored SMTP credentials; refuses until mail is configured |
 | GET | `/api/v1/audit-logs` | Sanctum + tenant | `AuditLogPolicy::viewAny` — `audit.view`. Whitelisted filters: `auditable_type` (any alias in the enforced morph map), `action`, `user_id`, `from`/`to` (`Y-m-d`; `to` includes its whole day). Unknown params → 422. Cursor-paginated. `meta.filters` carries the accepted values plus the actors present in this reader's slice; `meta.scope` is `platform` or `tenant` |
 
 ## Frontend
@@ -106,6 +115,31 @@ Two things the page states rather than hides:
   on the page.
 
 ## Notes
+
+**A token is now scoped to the app that asked for it (ADR-0022).** `POST
+/auth/login` and `POST /auth/mfa/verify` take an optional
+`client: console | driver`. Absent means `console`, which holds `*` exactly
+as every token did before, so the web app and existing integrations are
+untouched. A `driver` token reaches the nineteen route names in
+`App\Support\Auth\ClientScope::routesFor()` and answers
+`403 TOKEN_SCOPE_EXCEEDED` on everything else.
+
+Three things about it are easy to get wrong later:
+
+- **The list is fail-closed.** Adding a route to this API leaves it *shut*
+  to the driver app until somebody names it. If the mobile team reports a
+  403 on something they legitimately need, the fix is a line in
+  `ClientScope`, not a change to the middleware.
+- **The client is self-declared and the code says so.** It is not a defence
+  against the person signing in — they may always ask for a console token.
+  It bounds what a credential sitting on a lost handset is worth. Do not
+  let it be described as more than that.
+- **It refuses before the policy check**, so a super admin on the driver app
+  gets `TOKEN_SCOPE_EXCEEDED` rather than `INSUFFICIENT_PERMISSIONS`. That
+  ordering is what makes the feature testable: a test using a driver-role
+  token alone would pass with the whole thing deleted, because the role
+  refuses those endpoints anyway. `TokenScopeTest` signs a super admin in on
+  the driver app for exactly that reason, and the guard is mutation-checked.
 
 **Tenant scoping on `/users` is manual and must stay that way.** `User`
 deliberately has no `BelongsToTenant`: login must find an account by email

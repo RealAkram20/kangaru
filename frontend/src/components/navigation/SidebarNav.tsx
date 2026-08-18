@@ -38,6 +38,15 @@ export interface SidebarNavProps extends HTMLAttributes<HTMLElement> {
   onNavigate?: (id: string) => void
   /** Identity card pinned under the logo. */
   user?: SidebarUser
+  /**
+   * Supply to make the identity card open the signed-in user's own profile.
+   *
+   * Optional rather than always-on: the design-system previews render this
+   * sidebar with no router behind it, and a widget that looks pressable and
+   * goes nowhere is the exact defect this fixes. When it is omitted the card
+   * stays the plain `<div>` it has always been.
+   */
+  onUserClick?: () => void
   /** Pinned to the bottom above the footer — logout, dark mode. Same rows, same handler. */
   bottomItems?: SidebarItem[]
   /** Icon-only 64px rail. */
@@ -70,6 +79,7 @@ export function SidebarNav({
   active,
   onNavigate,
   user,
+  onUserClick,
   bottomItems = [],
   collapsed = false,
   mobile = false,
@@ -272,87 +282,129 @@ export function SidebarNav({
           )}
         </div>
 
-        {user && (
-          <>
-            <div style={DIVIDER} />
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--space-3)',
-                padding: collapsed ? 'var(--space-3) 0' : 'var(--space-3) var(--space-4)',
-                justifyContent: collapsed ? 'center' : 'flex-start',
-                flex: '0 0 auto',
-              }}
-              title={collapsed ? `${user.name}${user.role ? ` — ${user.role}` : ''}` : undefined}
-            >
-              {user.avatarUrl ? (
-                <img
-                  src={user.avatarUrl}
-                  alt=""
+        {user &&
+          (() => {
+            // A `<button>` only when there is somewhere to go, so the
+            // preview harness keeps the inert card it has always had.
+            const Identity = onUserClick ? 'button' : 'div'
+            const on = active === 'profile'
+            const hot = hovered === 'sidebar-user' && !on
+
+            return (
+              <>
+                <div style={DIVIDER} />
+                <Identity
+                  {...(onUserClick
+                    ? {
+                        type: 'button' as const,
+                        onClick: onUserClick,
+                        onMouseEnter: () => setHovered('sidebar-user'),
+                        onMouseLeave: () => setHovered(null),
+                        'aria-current': on ? ('page' as const) : undefined,
+                        'aria-label': `${user.name} — your profile`,
+                      }
+                    : {})}
                   style={{
-                    width: 36,
-                    height: 36,
-                    flex: '0 0 auto',
-                    borderRadius: 'var(--radius-pill)',
-                    objectFit: 'cover',
-                  }}
-                />
-              ) : (
-                <span
-                  aria-hidden="true"
-                  style={{
-                    width: 36,
-                    height: 36,
-                    flex: '0 0 auto',
-                    borderRadius: 'var(--radius-pill)',
-                    background: 'var(--action-primary)',
-                    color: 'var(--text-on-brand)',
-                    display: 'inline-flex',
+                    display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'center',
-                    font: 'var(--type-label)',
-                    fontWeight: 'var(--weight-semibold)',
+                    gap: 'var(--space-3)',
+                    width: onUserClick ? '100%' : undefined,
+                    padding: collapsed ? 'var(--space-3) 0' : 'var(--space-3) var(--space-4)',
+                    justifyContent: collapsed ? 'center' : 'flex-start',
+                    flex: '0 0 auto',
+                    border: 'none',
+                    background: on
+                      ? 'var(--surface-chrome-elevated)'
+                      : hot
+                        ? 'var(--action-ghost-hover-bg-chrome)'
+                        : 'transparent',
+                    font: 'inherit',
+                    color: 'inherit',
+                    textAlign: 'left',
+                    cursor: onUserClick ? 'pointer' : undefined,
+                    transition: 'var(--transition-control)',
                   }}
+                  title={
+                    collapsed ? `${user.name}${user.role ? ` — ${user.role}` : ''}` : undefined
+                  }
                 >
-                  {initialsOf(user)}
-                </span>
-              )}
-              {!collapsed && (
-                <span style={{ minWidth: 0, lineHeight: 1.25 }}>
-                  <span
-                    style={{
-                      display: 'block',
-                      font: 'var(--type-label)',
-                      fontWeight: 'var(--weight-semibold)',
-                      color: 'var(--text-on-chrome)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {user.name}
-                  </span>
-                  {user.role && (
-                    <span
+                  {user.avatarUrl ? (
+                    <img
+                      src={user.avatarUrl}
+                      alt=""
                       style={{
-                        display: 'block',
-                        font: 'var(--type-caption)',
-                        color: 'var(--text-on-chrome-secondary)',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
+                        width: 36,
+                        height: 36,
+                        flex: '0 0 auto',
+                        borderRadius: 'var(--radius-pill)',
+                        objectFit: 'cover',
+                      }}
+                    />
+                  ) : (
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        width: 36,
+                        height: 36,
+                        flex: '0 0 auto',
+                        borderRadius: 'var(--radius-pill)',
+                        background: 'var(--action-primary)',
+                        color: 'var(--text-on-brand)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        font: 'var(--type-label)',
+                        fontWeight: 'var(--weight-semibold)',
                       }}
                     >
-                      {user.role}
+                      {initialsOf(user)}
                     </span>
                   )}
-                </span>
-              )}
-            </div>
-            <div style={DIVIDER} />
-          </>
-        )}
+                  {!collapsed && (
+                    <span style={{ minWidth: 0, lineHeight: 1.25 }}>
+                      <span
+                        style={{
+                          display: 'block',
+                          font: 'var(--type-label)',
+                          fontWeight: 'var(--weight-semibold)',
+                          color: 'var(--text-on-chrome)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {user.name}
+                      </span>
+                      {user.role && (
+                        <span
+                          style={{
+                            display: 'block',
+                            font: 'var(--type-caption)',
+                            color: 'var(--text-on-chrome-secondary)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {user.role}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                  {/* The card reads as identity, not as a control, without
+                  something pointing off it. One chevron is enough. */}
+                  {onUserClick && !collapsed && (
+                    <Icon
+                      name="chevron-right"
+                      size={16}
+                      style={{ marginLeft: 'auto', color: 'var(--text-on-chrome-secondary)' }}
+                    />
+                  )}
+                </Identity>
+                <div style={DIVIDER} />
+              </>
+            )
+          })()}
 
         <div
           style={{

@@ -42,6 +42,43 @@ php artisan migrate --seed
 php artisan serve       # http://127.0.0.1:8000
 ```
 
+**And, in a second terminal, a queue worker — this is not optional:**
+
+```bash
+php artisan queue:work
+```
+
+`QUEUE_CONNECTION=database`, and several things that look like plain
+request/response features are actually queued jobs. Without a worker they
+queue silently, forever, with **no error anywhere**:
+
+| Job | What silently stops |
+|---|---|
+| `RecordTripLocations` | GPS pings never reach `trip_locations` — so route replay is empty, `gps_distance_km` stays null, and **odometer readings are never reconciled against GPS** |
+| `TripOfferedNotification` | drivers are never pushed job offers |
+
+This has already cost real debugging time once. Because the API answers
+**202 Accepted** for a ping batch, every layer looks healthy: the app uploads
+fine, the server accepts, nothing errors, and the evidence simply never
+appears. A single mistyped odometer digit then reached the driver ledger as a
+UGX 198,013,800 fare, because the check that exists to catch exactly that had
+never run. See `docs/distance-and-fare-integrity-plan.md`.
+
+If GPS traces or offers seem missing, check the queue **first**:
+
+```bash
+php artisan tinker --execute="echo DB::table('jobs')->count();"
+```
+
+Anything above zero and climbing means no worker is running.
+
+**For a physical handset**, the driver app also needs the API on the machine's
+LAN address rather than loopback — see `mobile/.env`:
+
+```bash
+php artisan serve --host=0.0.0.0 --port=8000
+```
+
 Frontend (from `frontend/`):
 
 ```bash

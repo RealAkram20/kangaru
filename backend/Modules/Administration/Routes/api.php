@@ -3,12 +3,50 @@
 use Illuminate\Support\Facades\Route;
 use Modules\Administration\Controllers\AuditLogController;
 use Modules\Administration\Controllers\AuthController;
+use Modules\Administration\Controllers\PasswordResetController;
+use Modules\Administration\Controllers\PublicLegalController;
+use Modules\Administration\Controllers\PublicSettingsController;
 use Modules\Administration\Controllers\RoleController;
+use Modules\Administration\Controllers\SettingsController;
+use Modules\Administration\Controllers\SocialAuthController;
 use Modules\Administration\Controllers\UserController;
+
+// The branding subset, unauthenticated (ADR-0014 §5): the landing page,
+// login screen and document head read their identity from here. Only
+// catalogue keys flagged `public` can appear; throttled like any public
+// read.
+Route::get('/public/settings', [PublicSettingsController::class, 'index'])
+    ->middleware('throttle:30,1')
+    ->name('public.settings');
+
+// The Terms and Privacy notices the Driver App's sign-up form requires
+// consent to (ADR-0014, `legal` group). Unauthenticated of necessity: it is
+// read on the one screen that exists before anybody has an account.
+Route::get('/public/legal', [PublicLegalController::class, 'index'])
+    ->middleware('throttle:30,1')
+    ->name('public.legal');
 
 Route::post('/auth/login', [AuthController::class, 'login'])
     ->middleware('throttle:5,1')
     ->name('auth.login');
+
+// Forgot-password by emailed code (ADR-0028 §2). Unauthenticated: the
+// caller's whole problem is that they cannot authenticate. The forgot leg
+// is throttled below even auth's rate — each hit can send an email, and
+// outbound mail is the resource being defended.
+Route::post('/auth/password/forgot', [PasswordResetController::class, 'forgot'])
+    ->middleware('throttle:3,1')
+    ->name('auth.password.forgot');
+Route::post('/auth/password/reset', [PasswordResetController::class, 'reset'])
+    ->middleware('throttle:5,1')
+    ->name('auth.password.reset');
+
+// "Continue with Google / Facebook" (ADR-0028 §3). Unauthenticated — it IS
+// authentication — and throttled at the login rate, because that is what it
+// is.
+Route::post('/auth/social', [SocialAuthController::class, 'store'])
+    ->middleware('throttle:5,1')
+    ->name('auth.social');
 Route::post('/auth/logout', [AuthController::class, 'logout'])
     ->middleware('auth:sanctum')
     ->name('auth.logout');
@@ -86,6 +124,19 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::post('/users', [UserController::class, 'store'])->name('users.store');
     Route::get('/users/{user}', [UserController::class, 'show'])->name('users.show');
     Route::patch('/users/{user}', [UserController::class, 'update'])->name('users.update');
+
+    // Platform settings (ADR-0014), behind `settings.manage` via
+    // SettingPolicy. PATCH takes the group name so each save is one
+    // audited, validated write of related keys.
+    Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
+    Route::patch('/settings/{group}', [SettingsController::class, 'update'])->name('settings.update');
+    Route::post('/settings/assets/{asset}', [SettingsController::class, 'uploadAsset'])
+        ->name('settings.assets.upload');
+    // Throttled: each call opens a real SMTP connection to whatever host
+    // is stored, which must not become an outbound-probe primitive.
+    Route::post('/settings/mail/test', [SettingsController::class, 'sendTestMail'])
+        ->middleware('throttle:5,1')
+        ->name('settings.mail.test');
 
     // The role catalogue (ADR-0004). Platform-wide and curated by whoever
     // holds `roles.manage` — Super Admin alone, as seeded. Route key is the

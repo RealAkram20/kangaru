@@ -99,6 +99,9 @@ class StoreVehicleAllocationRequest extends FormRequest
             return [Rule::exists('tenants', 'id')];
         }
 
-        return [Rule::in(array_filter([$actor?->tenant_id]))];
+        // A non-`User` actor — a `Customer` since ADR-0013 — has no tenant,
+        // so the allowed set is empty and every tenant_id is refused.
+        // Allocating a vehicle to a contract is not a customer's act.
+        return [Rule::in(array_filter([$actor instanceof User ? $actor->tenant_id : null]))];
     }
 }
