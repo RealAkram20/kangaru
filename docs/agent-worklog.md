@@ -7755,3 +7755,51 @@ device — the photograph was.
 still stands — `upload_max_filesize` and `post_max_size` are machine-local here
 and a stock PHP image ships 2 M, so production needs both keys or the ceiling
 returns.
+
+**04:20 — mutation proved and restored; W1-a closed.**
+
+- **Mutation run**
+  [32087273920](https://github.com/RealAkram20/kangaru/actions/runs/32087273920)
+  (`124d661`) — **failed, as required**, and named the consequence:
+  *"tracking.live_positions_driver is 'database', not redis — live positions
+  are going to MySQL (ADR-0003)"*. **Every check before it passed**: seven
+  containers healthy, limits, schedule, both workers alive. The stack was
+  perfectly healthy with the wrong store behind the live map, which is
+  precisely why the assertion had to exist.
+- **Restored run**
+  [32087666385](https://github.com/RealAkram20/kangaru/actions/runs/32087666385)
+  (`eba5b44`) — **all five jobs green, SMOKE OK, 20 checks, restore 1s.**
+  `deploy/ci.env` carries no mutation; `grep -c MUTATION` = 0.
+
+**Status: done.** Commits on the branch: `d574d95`, `89e00d8`, `f31ba47`,
+`3d29ef4`, `d01339a`, `68a6841`, `ec5bd21`, `124d661`, `eba5b44`.
+
+**Files owned, corrected to what was actually touched:** `docker-compose.yml`;
+`backend/Dockerfile`, `backend/.dockerignore`, `backend/docker/.gitattributes`,
+`backend/docker/entrypoint.d/{10-kangaruride-optimize,50-kangaruride-release}.sh`;
+`frontend/Dockerfile`, `frontend/.dockerignore`,
+`frontend/docker/{nginx.conf,security-headers.conf}`;
+`deploy/{README.md,backup.sh,restore.sh,smoke.sh,ci.env,docker-compose.ci.yml,.gitattributes}`.
+**Shared, as claimed:** `.github/workflows/ci.yml` — one new job, no existing
+job touched; `docs/agent-worklog.md` — this entry. **Nothing in
+`backend/config/*` or `backend/.env*` was touched** (W1-b's), and no
+`docs/runbook.md` was created (W1-d's).
+
+**What is verified, and it is narrow on purpose:** the stack, on a GitHub
+runner, from the same compose file Coolify will deploy. **What is not:** the
+Coolify server itself, its proxy, its certificates, real secrets, any
+performance claim, a backup of the `app-storage` volume, and a restore
+against a database that has data in it. **A green `deploy-stack` is not a
+deployment** — it is the strongest statement CI can make about one, and the
+go/no-go boxes it touches still need W2-a to close them on the real domain.
+
+**Deliberately not built** (unchanged from the claim): no Nixpacks; no
+separate nginx container for the API; no Redis AOF; no off-server copy of
+dumps; no `db:seed` guard in application code; no `docs/runbook.md`.
+
+**Handover to W1-d:** `deploy/README.md` §5 has the rollback shape but **no
+rehearsal and no timing** — that is your exit criterion, on the live server,
+and the only number I can give you is CI's 1–2 s restore of an empty schema.
+
+**Handover to whoever takes the Coolify project:** `deploy/README.md` §2 is
+the step list, and §2's table names every key beyond W1-b's template.
