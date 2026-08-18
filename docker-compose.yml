@@ -231,12 +231,13 @@ services:
     logging: *logging
 
   # ---------------------------------------------------------------------------
-  # mysql — dedicated. 8.0, which is what CI proves the migrations against.
+  # mysql — dedicated. 8.4 LTS (8.0 left support in April 2026); the CI
+  # deploy-stack job proves the migrations against it on every run.
   # No published port. Binary log off: there is no replica, and an unbounded
   # binlog is the classic way a small VPS runs out of disk.
   # ---------------------------------------------------------------------------
   mysql:
-    image: mysql:8.0
+    image: mysql:8.4
     restart: unless-stopped
     command:
       - mysqld
@@ -334,7 +335,7 @@ services:
   # the restore rehearsal, and CI performs one on every run.
   # ---------------------------------------------------------------------------
   backup:
-    image: mysql:8.0
+    image: mysql:8.4
     restart: unless-stopped
     entrypoint: ["/bin/bash", "/opt/kangaruride/backup.sh"]
     command: ["--loop"]

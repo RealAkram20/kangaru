@@ -3,7 +3,7 @@
 # KangaruRide — MySQL backup (W1-a)
 # =============================================================================
 #
-# Runs inside the `backup` service (image mysql:8.0, so mysqldump matches the
+# Runs inside the `backup` service (image mysql:8.4, so mysqldump matches the
 # server). Two modes:
 #
 #   backup.sh --once     take one dump now and exit (what CI and a human run)

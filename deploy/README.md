@@ -21,10 +21,10 @@ neighbour.
 | `app` | `backend/Dockerfile` (nginx + php-fpm, PHP 8.4) | the API; runs the **release step** on start | Coolify proxy → port 8080 · domain `api.…` |
 | `queue` | same image | `queue:work` — GPS batch-insert (ADR-0003), notifications, report exports | nothing |
 | `scheduler` | same image | `schedule:work` — `dispatch:advance-offers` **every 10 s**, `duty:close-stale` every minute, the nightly/weekly jobs | nothing |
-| `mysql` | `mysql:8.0` | the database, dedicated; binlog off | internal network only |
+| `mysql` | `mysql:8.4` (LTS) | the database, dedicated; binlog off | internal network only |
 | `redis` | `redis:7-alpine` | live positions, presence, cache, scheduler locks; `noeviction` | internal network only |
 | `web` | `frontend/Dockerfile` (static nginx) | the SPA — console and public site | Coolify proxy → port 80 · domain `www.…` / apex |
-| `backup` | `mysql:8.0` + `deploy/backup.sh` | nightly `mysqldump` to the `backups` volume, 14 days kept; hosts `restore.sh` | nothing |
+| `backup` | `mysql:8.4` + `deploy/backup.sh` | nightly `mysqldump` to the `backups` volume, 14 days kept; hosts `restore.sh` | nothing |
 
 **Only `app` and `web` are routable, and only through the proxy.** No
 service publishes a host port. MySQL and Redis cannot be reached from the
