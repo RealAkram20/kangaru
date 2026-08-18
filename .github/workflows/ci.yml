@@ -220,3 +220,49 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # W1-a — the production stack, stood up on the runner from the same
+  # docker-compose.yml Coolify deploys, and proved rather than assumed:
+  # both images build; all seven containers come up healthy with limits;
+  # `schedule:list` shows the six commands; a queued job is completed by the
+  # queue container through the dedicated Redis; a backup is taken and a
+  # RESTORE IS PERFORMED and timed (master-plan.md §3: "an untested backup
+  # is not a backup"). deploy/smoke.sh holds the assertions.
+  #
+  # This is not the Coolify server. It is the closest thing CI can be to it:
+  # a Docker host running the identical file with placeholder secrets.
+  deploy-stack:
+    name: Deploy stack (compose up, smoke, backup + restore)
+    runs-on: ubuntu-latest
+
+    env:
+      COMPOSE_FILE: docker-compose.yml:deploy/docker-compose.ci.yml
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # deploy/ci.env holds placeholders only; APP_KEY is minted here so no
+      # key of any kind, even a throwaway, lives in the repository.
+      - name: Prepare environment
+        run: |
+          cp deploy/ci.env .env
+          echo "APP_KEY=base64:$(openssl rand -base64 32)" >> .env
+          echo "SOURCE_COMMIT=${GITHUB_SHA::12}" >> .env
+          docker compose config --quiet
+
+      - name: Build images
+        run: docker compose build --pull
+
+      - name: Start the stack
+        run: docker compose up -d --wait --wait-timeout 300
+
+      - name: Smoke test
+        run: bash deploy/smoke.sh
+
+      - name: Container logs
+        if: failure()
+        run: docker compose logs --no-color --tail=150
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans
