@@ -156,7 +156,10 @@ it('resolves a completed trip after completion and writes the evidence, without 
         ->and((float) $evidence->billed_km)->toBe(50.0)
         ->and($evidence->pings_total)->toBe(201)
         ->and($evidence->pings_kept)->toBe(201)
-        ->and($evidence->dropped)->toBe(['mock' => 0, 'accuracy' => 0, 'duplicate' => 0, 'teleport' => 0, 'jitter' => 0])
+        // Canonicalising: MySQL 8 stores JSON objects with keys reordered
+        // (MariaDB, locally, keeps insertion order), and the order of a
+        // tally is not a fact about the trace.
+        ->and($evidence->dropped)->toEqualCanonicalizing(['mock' => 0, 'accuracy' => 0, 'duplicate' => 0, 'teleport' => 0, 'jitter' => 0])
         ->and($evidence->thresholds['traceMatchingEnabled'])->toBeFalse()
         ->and($evidence->thresholds['corridorCeilingPercent'])->toBe(125)
         ->and($evidence->reason)->toContain('stands unchecked');
