@@ -13,9 +13,9 @@
 # (backend/.env.production.example, last section; master-plan.md §5.)
 set -eu
 
-if [ "${RELEASE_TASKS:-false}" != "true" ]; then
-  exit 0
-fi
+# Guarded with an if rather than an early exit, so the hook is harmless
+# even if the base image ever sources it instead of executing it.
+if [ "${RELEASE_TASKS:-false}" = "true" ]; then
 
 cd /var/www/html
 
@@ -45,3 +45,5 @@ echo "[release] storage:link"
 php artisan storage:link --force --no-interaction
 
 echo "[release] done"
+
+fi

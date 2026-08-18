@@ -113,34 +113,36 @@ queue_alive=$(dc exec -T queue sh -c "pgrep -f '[a]rtisan queue:work' | wc -l" |
 ok "queue:work process alive in the queue container (exactly 1)"
 
 echo "== 4. queue through Redis"
-before=$(tinker 'echo cache()->get("smoke:queue") ?? "absent";')
-[ "$before" = "absent" ] || fail "cache key present before the test ($before)"
-tinker 'dispatch(function () { cache()->put("smoke:queue", gethostname(), 600); }); echo "dispatched";' | grep -q dispatched || fail "could not dispatch"
-queued=$(tinker 'echo DB::table("jobs")->count();')
-echo "  · jobs table after dispatch: $queued"
+# A sentinel goes into the cache from the app container; a QUEUED artisan
+# command (Illuminate\Foundation\Console\QueuedCommand — a real job class,
+# not a closure, which tinker's eval()'d code could not serialise) is
+# dispatched to forget it. Only the queue container runs a worker, so the
+# key disappearing proves that container completed the job — through the
+# database queue and against the dedicated Redis.
+tinker 'cache()->put("smoke:sentinel", "present", 600); echo cache()->get("smoke:sentinel");' | grep -q present || fail "could not seed the cache sentinel"
+in_redis=$(dc exec -T redis sh -c 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning --scan --pattern "*smoke:sentinel*" | wc -l' | tr -d '\r ')
+[ "$in_redis" -eq 1 ] || fail "expected the sentinel in the redis container (1 key), found $in_redis — CACHE_STORE is not wired to this Redis"
+ok "cache sentinel lives in the dedicated Redis (1 key)"
 
-got="absent"
+tinker 'Artisan::queue("cache:forget", ["key" => "smoke:sentinel"]); echo "queued:" . DB::table("jobs")->count();' | tee /tmp/smoke-queued.txt | grep -q 'queued:1' || fail "dispatch did not land exactly one row in the jobs table: $(cat /tmp/smoke-queued.txt)"
+ok "one job queued in the database queue"
+
+gone="no"
 for _ in $(seq 1 30); do
-  got=$(tinker 'echo cache()->get("smoke:queue") ?? "absent";')
-  [ "$got" != "absent" ] && break
+  if [ "$(tinker 'echo cache()->has("smoke:sentinel") ? "yes" : "no";')" = "no" ]; then gone="yes"; break; fi
   sleep 2
 done
-[ "$got" != "absent" ] || fail "queued job not completed within 60 s"
-queue_host=$(dc exec -T queue hostname | tr -d '\r')
-[ "$got" = "$queue_host" ] || fail "job ran on '$got', not in the queue container '$queue_host'"
-ok "queued job completed by the queue container ($queue_host)"
+[ "$gone" = "yes" ] || fail "queued job not completed within 60 s — the queue worker is not consuming"
+processed=$(dc logs --no-color queue 2>/dev/null | grep -c 'QueuedCommand' || true)
+[ "$processed" -ge 1 ] || fail "the queue container's log shows no QueuedCommand — something else consumed the job"
+ok "queued job completed by the queue container (log shows $processed QueuedCommand line(s))"
 
 failed=$(tinker 'echo DB::table("failed_jobs")->count();')
 [ "$failed" = "0" ] || fail "failed_jobs has $failed row(s)"
 left=$(tinker 'echo DB::table("jobs")->count();')
 [ "$left" = "0" ] || fail "jobs table still has $left row(s)"
 ok "failed_jobs = 0, jobs drained to 0"
-
-# The value must be in THIS Redis, under the configured prefix — proving
-# CACHE_STORE=redis is wired to the dedicated container, not to MySQL.
-in_redis=$(dc exec -T redis sh -c 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning --scan --pattern "*smoke:queue*" | wc -l' | tr -d '\r ')
-[ "$in_redis" -eq 1 ] || fail "expected 1 smoke key in the redis container, found $in_redis"
-ok "cache key lives in the dedicated Redis (1 key)"
+queue_host=$(dc exec -T queue hostname | tr -d '\r')
 
 echo "== 5. shared storage volume"
 dc exec -T queue sh -c 'echo "$(hostname)" > /var/www/html/storage/app/private/.smoke-volume'

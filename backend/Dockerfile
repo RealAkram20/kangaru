@@ -48,7 +48,7 @@ COPY --chown=www-data:www-data . .
 # The autoloader with the full source present, then Laravel's package
 # discovery (the post-autoload-dump script we skipped above, minus anything
 # that would need a database). No `.env` exists here and none is needed.
-RUN composer dump-autoload --optimize --classmap-authoritative --no-dev \
+RUN composer dump-autoload --optimize --no-dev \
  && php artisan package:discover --ansi \
  && mkdir -p storage/app/private storage/app/public \
              storage/framework/cache/data storage/framework/sessions \
