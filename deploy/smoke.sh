@@ -120,12 +120,26 @@ echo "== 4. queue through Redis"
 # key disappearing proves that container completed the job — through the
 # database queue and against the dedicated Redis.
 tinker 'cache()->put("smoke:sentinel", "present", 600); echo cache()->get("smoke:sentinel");' | grep -q present || fail "could not seed the cache sentinel"
-in_redis=$(dc exec -T redis sh -c 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning --scan --pattern "*smoke:sentinel*" | wc -l' | tr -d '\r ')
-[ "$in_redis" -eq 1 ] || fail "expected the sentinel in the redis container (1 key), found $in_redis — CACHE_STORE is not wired to this Redis"
-ok "cache sentinel lives in the dedicated Redis (1 key)"
+# Laravel's cache connection is REDIS_CACHE_DB, which defaults to database
+# 1, while `redis-cli --scan` reads database 0. The first version of this
+# check scanned db 0 and failed against a correctly wired stack — so the
+# index is read from the running app rather than assumed here.
+store=$(tinker 'echo config("cache.default");')
+[ "$store" = "redis" ] || fail "cache.default is '$store', not redis — the dedicated Redis is not the cache"
+cache_db=$(tinker 'echo config("database.redis.cache.database");')
+in_redis=$(dc exec -T redis sh -c "redis-cli -a \"\$REDIS_PASSWORD\" --no-auth-warning -n ${cache_db} --scan --pattern '*smoke:sentinel*' | wc -l" | tr -d '\r ')
+[ "$in_redis" -eq 1 ] || fail "expected the sentinel in redis db ${cache_db} (1 key), found $in_redis — CACHE_STORE is not wired to this Redis"
+ok "cache sentinel lives in the dedicated Redis, db ${cache_db} (1 key)"
 
-tinker 'Artisan::queue("cache:forget", ["key" => "smoke:sentinel"]); echo "queued:" . DB::table("jobs")->count();' | tee /tmp/smoke-queued.txt | grep -q 'queued:1' || fail "dispatch did not land exactly one row in the jobs table: $(cat /tmp/smoke-queued.txt)"
-ok "one job queued in the database queue"
+# Asserted from config rather than by counting rows in `jobs`: the worker
+# polls continuously, so a count taken just after dispatch races it and
+# would fail intermittently for the best possible reason. That the job went
+# through the database queue is proved by the connection plus the worker's
+# own log below.
+conn=$(tinker 'echo config("queue.default");')
+[ "$conn" = "database" ] || fail "queue.default is '$conn', not database (master-plan.md §3: durable across a Redis restart)"
+tinker 'Artisan::queue("cache:forget", ["key" => "smoke:sentinel"]); echo "dispatched";' | grep -q dispatched || fail "could not dispatch the queued command"
+ok "queue connection is database; cache:forget dispatched"
 
 gone="no"
 for _ in $(seq 1 30); do
