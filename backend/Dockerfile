@@ -22,15 +22,15 @@ ARG PHP_IMAGE=serversideup/php:8.4-fpm-nginx-alpine
 FROM ${PHP_IMAGE} AS base
 
 # --- extensions the lockfile needs and the base does not ship -----------------
-# gd: dompdf (invoice/report PDFs) and bacon-qr-code (MFA enrolment QR).
-# Everything else — pdo_mysql, redis, bcmath, intl, opcache, pcntl, zip — is
-# already in the base image; `install-php-extensions` is a no-op for those.
+# The base ships opcache, pcntl, pdo_mysql, redis, zip on top of php's own
+# (mbstring, dom, fileinfo, tokenizer, ...). Verified against its Dockerfile,
+# not assumed. Missing and needed here:
+#   bcmath — money arithmetic (AGENTS.md Money & Billing)
+#   intl   — locale/number formatting used by the framework and dompdf
+#   gd     — dompdf (invoice/report PDFs) and bacon-qr-code (MFA enrolment)
+# Composer is already in the base image (COPY --from=composer:2).
 USER root
-RUN install-php-extensions gd
-
-# Composer from the official image rather than curl|sh: pinned major, no
-# network fetch of an installer script at build time.
-COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
+RUN install-php-extensions bcmath gd intl
 
 WORKDIR /var/www/html
 
@@ -58,8 +58,10 @@ RUN composer dump-autoload --optimize --no-dev \
  && chmod -R ug+rwX storage bootstrap/cache
 
 # --- start-up hooks -------------------------------------------------------------
-# The base image runs every executable /etc/entrypoint.d/*.sh, in order,
-# before the main process. Ours: 10 caches config/routes/views for THIS
+# The base image sources every /etc/entrypoint.d/*.sh in a subshell, in
+# order, before `exec`-ing the command — for the default nginx+fpm and for
+# the queue/scheduler command overrides alike (verified in its entrypoint
+# script). Ours: 10 caches config/routes/views for THIS
 # container; 50 runs the release step (migrate, storage:link) only where
 # RELEASE_TASKS=true — the `app` service, once, never the workers.
 COPY --chmod=0755 docker/entrypoint.d/ /etc/entrypoint.d/
@@ -71,6 +73,9 @@ ENV PHP_OPCACHE_ENABLE=1 \
     PHP_MEMORY_LIMIT=256M \
     PHP_POST_MAX_SIZE=12M \
     PHP_UPLOAD_MAX_FILE_SIZE=12M \
+    NGINX_CLIENT_MAX_BODY_SIZE=12M \
+    NGINX_WEBROOT=/var/www/html/public \
+    HEALTHCHECK_PATH=/up \
     AUTORUN_ENABLED=false \
     SHOW_WELCOME_MESSAGE=false
 
