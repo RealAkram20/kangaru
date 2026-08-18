@@ -74,19 +74,24 @@ take_backup() {
   fi
   rm -f "$creds"
 
-  # A dump that is not a valid gzip, or is implausibly small, is not kept as
-  # if it were one. An empty schema still dumps to well over a kilobyte.
+  # Two integrity checks, and the second is the one that matters. A dump
+  # killed part-way — disk full, OOM, container stopped — can still be a
+  # valid gzip of a valid prefix of a dump, and would restore silently
+  # missing its last tables. mysqldump writes "Dump completed on <date>" as
+  # its final line only when it finished, so that marker is the difference
+  # between a backup and a file. A byte-count floor cannot tell them apart
+  # (and would reject a legitimately small dump of a fresh schema).
   if ! gzip -t "$tmp"; then
     rm -f "$tmp"
     log "FAILED — gzip integrity check"
     return 1
   fi
-  bytes=$(stat -c %s "$tmp")
-  if [ "$bytes" -lt 1024 ]; then
+  if ! gunzip -c "$tmp" | tail -5 | grep -q 'Dump completed'; then
     rm -f "$tmp"
-    log "FAILED — dump is ${bytes} bytes, refusing to keep it"
+    log "FAILED — no 'Dump completed' marker; the dump is truncated"
     return 1
   fi
+  bytes=$(stat -c %s "$tmp")
 
   mv "$tmp" "$target"
   finished=$(date +%s)

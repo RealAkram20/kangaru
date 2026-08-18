@@ -147,9 +147,13 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 [ "$gone" = "yes" ] || fail "queued job not completed within 60 s — the queue worker is not consuming"
-processed=$(dc logs --no-color queue 2>/dev/null | grep -c 'QueuedCommand' || true)
-[ "$processed" -ge 1 ] || fail "the queue container's log shows no QueuedCommand — something else consumed the job"
-ok "queued job completed by the queue container (log shows $processed QueuedCommand line(s))"
+# The worker logs a job by its DISPLAY name, not its class: QueuedCommand
+# reports as the command string. Grepping for the class name found nothing
+# while the log plainly read "cache:forget ... DONE" — so this asserts what
+# the worker actually prints, and asserts exactly one completion.
+processed=$(dc logs --no-color queue 2>/dev/null | grep -c 'cache:forget.*DONE' || true)
+[ "$processed" -eq 1 ] || fail "expected exactly 1 'cache:forget ... DONE' line in the queue container's log, found $processed — something else consumed the job"
+ok "queued job completed by the queue container (its log shows cache:forget DONE)"
 
 failed=$(tinker 'echo DB::table("failed_jobs")->count();')
 [ "$failed" = "0" ] || fail "failed_jobs has $failed row(s)"
