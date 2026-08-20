@@ -65,8 +65,8 @@ class DispatchOfferResource extends JsonResource
             // own clock, and this so the first render is right even on a
             // handset whose clock is minutes out — which is common enough
             // on cheap Android hardware to matter, and would otherwise show
-            // a driver a job that had already expired, or one with 40
-            // seconds left on a 15-second offer.
+            // a driver a job that had already expired, or one with minutes
+            // left on an offer that runs for well under one.
             'expires_at' => $this->expires_at->toIso8601String(),
             'expires_in_seconds' => max(0, (int) now()->diffInSeconds($this->expires_at, false)),
 

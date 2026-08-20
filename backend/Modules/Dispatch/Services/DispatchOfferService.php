@@ -6,12 +6,14 @@ use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Modules\Bookings\Enums\OrderRequestServiceType;
 use Modules\Bookings\Enums\OrderRequestStatus;
 use Modules\Bookings\Models\OrderRequest;
 use Modules\Dispatch\Enums\DispatchOfferStatus;
 use Modules\Dispatch\Models\DispatchOffer;
 use Modules\Drivers\Models\Driver;
 use Modules\Notifications\Notifications\TripOfferedNotification;
+use Modules\Notifications\Notifications\TripOfferWithdrawnNotification;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Services\DriverUnavailableException;
@@ -80,6 +82,15 @@ class DispatchOfferService
         $this->settleLapsedFor($request);
 
         if ($request->trip_id !== null) {
+            return collect();
+        }
+
+        // A self-drive rental is not a journey and has nobody to collect
+        // (`OrderRequestServiceType::dispatchesToDriver`). Refused here rather
+        // than only at the two call sites, because this method is the single
+        // door into `dispatch_offers` and a guard on the door cannot be walked
+        // past by a caller added later.
+        if (! $request->service_type->dispatchesToDriver()) {
             return collect();
         }
 
@@ -184,6 +195,24 @@ class DispatchOfferService
             // should show both. ADR-0024 §3 said this; only the code did not.
             $trip = $this->stateMachine->transition($trip, TripStatus::ACCEPTED, $actor);
 
+            // And straight on to the road. A walk-in offer is answered from
+            // the driver's seat with the passenger already standing at a
+            // kerb (ADR-0024 §7 withholds the number until now, so nothing
+            // has happened yet that would need them anywhere else); saying
+            // yes *is* setting off. Asking for a second press — "On my way",
+            // on another screen — was one more tap on the moment a driver's
+            // hands are busiest, and until it was pressed the passenger's
+            // screen sat on "Captain assigned" while the captain was already
+            // moving. The owner's ruling: automatic the moment they accept.
+            //
+            // Two transitions, not a new edge: `accepted -> driver_en_route`
+            // is the graph as it stands, both rows land on the timeline, and
+            // a corporate trip assigned by a dispatcher for four o'clock —
+            // which comes through `DispatchService::assign`, not here — still
+            // stops at `accepted`, because a driver saying yes to Tuesday is
+            // not a driver setting off now.
+            $trip = $this->stateMachine->transition($trip, TripStatus::DRIVER_EN_ROUTE, $actor);
+
             $locked->update([
                 'status' => DispatchOfferStatus::ACCEPTED,
                 'responded_at' => now(),
@@ -195,14 +224,29 @@ class DispatchOfferService
             // written for that case rather than against today's default —
             // a wave size that silently leaks stale offers the first time
             // somebody raises it is a trap set for a config change.
-            DispatchOffer::query()
+            //
+            // Read before the update, because after it there is nothing left
+            // to find: `->live()` is what identifies them, and the update is
+            // what stops them being live. The rows are needed either way to
+            // reach each driver's handset.
+            $losers = DispatchOffer::query()
                 ->where('order_request_id', $request->id)
                 ->whereKeyNot($locked->id)
                 ->live()
+                ->with('driver.user')
+                ->get();
+
+            DispatchOffer::query()
+                ->whereKey($losers->modelKeys())
                 ->update([
                     'status' => DispatchOfferStatus::SUPERSEDED,
                     'responded_at' => now(),
                 ]);
+
+            // After the write, never before: a handset told to stop and then
+            // re-fetching `GET /me/offers` against un-updated rows would be
+            // handed the job straight back, and start ringing again.
+            $this->withdraw($losers);
 
             $request->forceFill([
                 'trip_id' => $trip->id,
@@ -326,6 +370,11 @@ class DispatchOfferService
         $stale = OrderRequest::query()
             ->whereNull('trip_id')
             ->whereIn('status', [OrderRequestStatus::NEW, OrderRequestStatus::CONTACTED])
+            // Rides and deliveries only. `dispatch()` refuses a rental anyway,
+            // so this is not the guard — it is here so the sweep does not load
+            // every rental in the retry window on every tick to refuse it one
+            // by one, ten times a minute.
+            ->whereIn('service_type', OrderRequestServiceType::dispatchableToDriver())
             ->where('created_at', '>=', now()->subMinutes($window))
             // Immediate rides only, matching `receive()`: a booking for this
             // evening is not something to offer now.
@@ -535,6 +584,47 @@ class DispatchOfferService
     private function close(DispatchOffer $offer, DispatchOfferStatus $status): void
     {
         $offer->update(['status' => $status, 'responded_at' => now()]);
+    }
+
+    /**
+     * Stops the phones still ringing for offers that are over (ADR-0046 §4).
+     *
+     * Public because two callers kill an offer under a driver and both owe
+     * them silence: the accept path here, which supersedes the rest of a
+     * wave, and `CustomerRideController`, where the passenger cancelled.
+     *
+     * ## Everything about this is best-effort, on purpose
+     *
+     * The device stops on its own. `Ringtone` arms a deadline from the offer's
+     * own window when it starts, so a handset falls quiet shortly after the
+     * offer could no longer be live whether this arrives or not — and Android
+     * will not deliver a silent push to an app it has killed at all. This
+     * makes the common case immediate; it does not make it correct, because
+     * it already was.
+     *
+     * So it swallows, exactly as `ring()` above does and for the same reason:
+     * it runs inside the transaction that accepted a ride, and a passenger's
+     * trip must not roll back because a third-party push service timed out.
+     *
+     * **Called after the status write, never before.** A driver whose handset
+     * received this and re-fetched `GET /me/offers` before the row was
+     * updated would be handed the offer straight back, and the ringing would
+     * resume — the one failure mode this method can create rather than fix.
+     *
+     * @param  iterable<DispatchOffer>  $offers
+     */
+    public function withdraw(iterable $offers): void
+    {
+        foreach ($offers as $offer) {
+            try {
+                $offer->driver?->user?->notify(TripOfferWithdrawnNotification::for($offer));
+            } catch (\Throwable $e) {
+                Log::warning('dispatch.offer_withdrawal_failed', [
+                    'offer_id' => $offer->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
     }
 
     /**
