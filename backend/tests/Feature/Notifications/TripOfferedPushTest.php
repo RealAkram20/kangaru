@@ -5,10 +5,12 @@ use App\Models\User;
 use App\Support\Auth\ClientScope;
 use Illuminate\Support\Facades\Http;
 use Modules\Dispatch\Models\DispatchOffer;
+use Modules\Dispatch\Services\DispatchOfferService;
 use Modules\Notifications\Channels\ExpoPushChannel;
 use Modules\Notifications\Enums\NotificationChannel;
 use Modules\Notifications\Enums\NotificationType;
 use Modules\Notifications\Models\DeviceToken;
+use Modules\Notifications\Notifications\KangaruNotification;
 use Modules\Notifications\Notifications\TripOfferedNotification;
 use Modules\Notifications\Notifications\TripOfferWithdrawnNotification;
 
@@ -225,7 +227,7 @@ it('will not let a notification redirect its own push to another handset', funct
 
     [$user] = driverWithDevice();
 
-    $hostile = new class extends \Modules\Notifications\Notifications\KangaruNotification
+    $hostile = new class extends KangaruNotification
     {
         public function type(): NotificationType
         {
@@ -327,7 +329,7 @@ it('tells the losing drivers of a wave that the job is gone', function () {
         'last_seen_at' => now(),
     ]);
 
-    app(\Modules\Dispatch\Services\DispatchOfferService::class)->withdraw([$loser->fresh()]);
+    app(DispatchOfferService::class)->withdraw([$loser->fresh()]);
 
     Http::assertSent(fn ($request) => $request['0']['to'] === 'ExponentPushToken[loser]'
         && $request['0']['data']['withdrawn'] === true);
@@ -346,7 +348,7 @@ it('never lets a failing withdrawal break the accept that raised it', function (
     $escaped = null;
 
     try {
-        app(\Modules\Dispatch\Services\DispatchOfferService::class)->withdraw([$offer->fresh()]);
+        app(DispatchOfferService::class)->withdraw([$offer->fresh()]);
     } catch (Throwable $e) {
         $escaped = $e;
     }

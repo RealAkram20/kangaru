@@ -16,6 +16,7 @@ use Modules\Fleet\Support\DriverPresence;
 use Modules\Fleet\Support\DriverPresenceStore;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
+use Modules\Trips\Models\TripEvent;
 use Modules\Vehicles\Models\Vehicle;
 
 /**
@@ -148,7 +149,7 @@ it('turns an accept into a customer-owned trip', function () {
     expect($trip->status)->toBe(TripStatus::DRIVER_EN_ROUTE);
     // Past the tenant scope, like the trip itself: a walk-in's events have no
     // tenant either.
-    $statuses = \Modules\Trips\Models\TripEvent::query()->withoutGlobalScopes()
+    $statuses = TripEvent::query()->withoutGlobalScopes()
         ->where('trip_id', $trip->id)->orderBy('id')->pluck('to_status')
         ->map(fn (TripStatus $s) => $s->value)->all();
     expect($statuses)->toContain('accepted', 'driver_en_route');

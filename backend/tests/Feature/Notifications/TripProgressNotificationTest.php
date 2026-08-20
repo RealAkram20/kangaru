@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\UserRole;
+use App\Models\Customer;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
@@ -9,6 +10,7 @@ use Modules\Drivers\Models\Driver;
 use Modules\Notifications\Enums\NotificationType;
 use Modules\Notifications\Models\Notification;
 use Modules\Trips\Enums\TripStatus;
+use Modules\Trips\Models\Trip;
 use Modules\Trips\Services\TripService;
 use Modules\Vehicles\Models\Vehicle;
 
@@ -20,7 +22,7 @@ use Modules\Vehicles\Models\Vehicle;
  */
 
 /**
- * @return array{tenant: Tenant, requester: User, dispatcher: User, booking: Booking, trip: \Modules\Trips\Models\Trip}
+ * @return array{tenant: Tenant, requester: User, dispatcher: User, booking: Booking, trip: Trip}
  */
 function tripProgressFixture(): array
 {
@@ -122,7 +124,7 @@ it('tells nobody about a walk-in trip, which has no booking to have requested it
     ['dispatcher' => $dispatcher] = tripProgressFixture();
     $before = Notification::query()->count();
 
-    $customer = \App\Models\Customer::factory()->create();
+    $customer = Customer::factory()->create();
     app(TripService::class)->create([
         'customer_id' => $customer->id,
         'vehicle_id' => Vehicle::factory()->create()->id,
