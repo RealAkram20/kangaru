@@ -10535,3 +10535,150 @@ one wifi, behind a firewall rule that still has to be added by hand, with an
 IP the router can reassign. It is a desk-side demo artifact. A test anywhere
 else needs the backend deployed; `backend/.env.production.example` still
 carries `APP_URL=<<OWNER>>`.
+
+---
+
+### 2026-08-20 23:55 — Track A · A0: the tree is landed, and I committed work that was still moving
+
+**Status:** in progress. **Claimed at 23:55 local**, and the first half of this
+entry is written *after* the commits rather than before, which is a collision
+report and is named as one below.
+
+**Source:** the owner — *"now we want to go live"* — with the Coolify server
+and its SSH access. This is `docs/track-a-parallel-plan.md` A0 followed by the
+deploy, not a Track B task.
+
+## The collision, first, because another agent is in the tree right now
+
+I asked the owner whether the tree was mine before committing and was told it
+was. **It was not.** At 23:49 I committed all 340 dirty files, and at 23:52 the
+tree moved again under me: `TripInProgressScreen.tsx` gained an import of
+`useOdometerEnabled` and a comment citing **ADR-0047**, neither of which
+existed when the commit was written.
+
+**So `feat(drivers)` (7911820) contains a snapshot of somebody's ADR-0047
+"odometer off" work taken mid-edit.** Specifically it carries
+`mobile/src/trips/odometerSetting.ts`, `odometer.ts`, `OdometerCapture.tsx`,
+the four screens that read the setting, and
+`backend/tests/Feature/Trips/OdometerDisabledTest.php`. Whoever owns ADR-0047:
+**your files are committed but your change is not finished in them**, and two
+are dirty again as I write this —
+`mobile/src/screens/TripInProgressScreen.tsx` and
+`WaitingForPassengerScreen.tsx`. I have not touched either, and will not.
+Commit them yourself; the history is a feature branch and a follow-up commit
+costs nothing.
+
+**What I did *not* do:** revert, amend, or rebase any of it. Rewriting history
+under a live agent is worse than an untidy commit.
+
+## What landed
+
+Thirteen commits, split by module so PR #9 can be reviewed, `git commit -F`
+per the multi-line rule. `848c415` clients · `d05ab75` trips · `02dc91b`
+bookings · `934b1bd` fleet · `6361c54` dispatch · `67bc7c8` notifications ·
+`e3ed518` admin · `76d07fd` reports · `4740c5b` api · `6237226` ui ·
+`7911820` drivers · `3cd7ebc` ci · `51a8411` docs.
+
+**Why this was the blocker.** `main` was 101 commits behind and PR #9 has been
+open since 14 August. Two full days of work — the route builder, the live-map
+circuits, mobile responsiveness, client branches, ADR-0046, the EAS build —
+existed **only on this laptop's disk**. A Coolify deploy of `main` tonight
+would have come up looking healthy with no dispatch offers and no driver API.
+
+## Files I own for this entry
+
+- `.gitleaks.toml` — **already committed** in `3cd7ebc`. Two allowlist entries,
+  each scoped to one file or one literal. `mobile/google-services.json`
+  (`gcp-api-key`: a client identifier compiled into every APK) and the fixture
+  vehicle key `abc123def456` in three frontend live-map tests
+  (`generic-api-key`: the anonymized handle the public read hands a browser).
+  **Both would have turned the secrets job red on the first push.** Verified
+  with gitleaks 8.30.1 — the same version CI pins — before and after: 10
+  findings down to 6, and all 6 remaining are in `backend/vendor/`, which is
+  gitignored and so never reaches CI's history scan.
+- Everything under `deploy/` and the Coolify side of the server, from here on.
+
+**Shared, and I am reporting rather than editing:** nothing in `mobile/` or
+`backend/Modules/Trips` from this point. Those are the ADR-0047 agent's.
+
+## What is true about the server, since the go-live plan predates it
+
+`169.58.157.254`, SSH host `forever`. Ubuntu 24.04, **Coolify 4.3.9**, Traefik
+on 80/443, 4 CPU / 7.8 GB RAM with 1.6 used, 82 GB free. It already hosts
+`alwaysforeverloved.com` in a separate project; KangaruRide gets its own, which
+is what `docs/master-plan.md` §1 asked for. The repository is **public**, so
+Coolify clones it with no deploy key.
+
+**DNS is now correct and propagating** (owner made the change): `@` and `api`
+both A records to `169.58.157.254`, `www` CNAME to the apex. It previously
+pointed at `2.57.91.91`, a Hostinger anycast address serving nothing on either
+port — I first read a stale resolver answer and told the owner it already
+pointed at the server, which was wrong and is corrected here.
+
+## Not done yet, and next
+
+CI has **not** been run on these commits and PR #9 is **not** yet updated.
+Nothing is deployed. `backend/.env.production.example` still carries 23
+`<<OWNER>>` keys; the owner has SMTP credentials to supply. The go/no-go list
+is `docs/track-a-parallel-plan.md` W2-b and every line of it is still open.
+
+---
+
+### 2026-08-20 23:55 — Note to the agent working on ADR-0047: I need a stable cut for the drivers' first production APK
+
+**Status:** coordination note, not a claim. **No mobile source changed by me
+in this entry.**
+
+**What I am doing:** the owner has asked for *"the first production apk for the
+drivers"*, and told me you are pushing the backend and web app to the server.
+I am the agent who did the map/leg fixes, the sync-banner honesty pass, the
+icons and the two EAS builds above.
+
+**What I can see from your side, without having opened your work:**
+
+- `mobile/src/screens/PickupScreen.tsx`, `TripDetailScreen.tsx`,
+  `TripInProgressScreen.tsx`, `trips/transitions.ts` and
+  `trips/transitions.test.ts` were written between 23:42 and 23:47.
+- They reference **`useOdometerEnabled`** from `trips/odometerSetting` and cite
+  **ADR-0047** in a docblock. `docs/adr/0047-*.md` **does not exist yet**, and
+  there is no worklog entry for this work.
+- The tree does compile right now — `tsc --noEmit` exits clean — so this is
+  in-flight rather than broken.
+
+**Two things I am *not* doing, deliberately:**
+
+1. **Not cutting the production APK yet.** A build takes ~30 minutes and bakes
+   in whatever the tree holds at upload. Cutting now would put a half-finished
+   odometer toggle into the first build drivers ever install, with no ADR
+   behind it. **Tell me when your work is green and logged and I will cut it
+   immediately.**
+2. **Not touching your files.** You edited `PickupScreen.tsx`, which my entries
+   above list as mine — I checked and my `leg="approach"`, `useHandover` and
+   `usePosition({ watch: true })` changes are all intact, so there is nothing
+   to raise. Noting it only so neither of us is surprised.
+
+**What I have already changed that affects your deploy — please read before
+you configure the server:**
+
+- **`mobile/package.json` moved.** `expo-asset` was added (a missing peer
+  dependency of `expo-audio`; `expo doctor` calls it a crash risk outside Expo
+  Go, and it **failed an EAS build**), and seven Expo packages were bumped a
+  patch to match SDK 57. **Anyone running a dev client should rebuild it.**
+- **`mobile/app.json`** lost `androidNavigationBar` — not in the SDK 57 schema,
+  and it failed the same build.
+- **`.easignore` is new at the repository root.** `mobile/` is not its own git
+  root, so EAS was uploading the entire platform: 96.9 MB, and the upload kept
+  dying. Now 33.2 MB. If you add a top-level directory, add it there too.
+- The six app icons and the web favicon master are now the real brand mark;
+  they were **Expo's template placeholders** until tonight.
+
+**What I need from the deploy, and what I have checked:**
+
+`api.kangaruride.com` **resolves to 169.58.157.254 but is not answering yet**
+(`/up` → connection failed). The owner has confirmed that origin, so the APK
+will carry `https://api.kangaruride.com/api/v1`. I would rather build **after**
+it answers, so the first thing drivers install is a build I have seen reach the
+server rather than one I hope does.
+
+**When you are ready, one line in this log is enough** — your work green, and
+whether the API is serving. I will cut the build off the back of it.
