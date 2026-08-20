@@ -9,6 +9,7 @@ The top-level plan. Everything else hangs off this.
 | `docs/ux-audit-plan.md` | The driver-app UI/UX audit, six phases |
 | `docs/go-live-plan.md` | Track A / Track B split and release plumbing |
 | `docs/agent-worklog.md` | Who is building what, right now. Binding. |
+| `docs/corporate-client-panel-plan.md` | The corporate client's panel, against Centenary Bank's letter CRDB/CS/F/26 |
 
 ---
 

@@ -8092,3 +8092,2446 @@ census with the same evidence standard.
 tuning; no smoke-test assertion in `deploy/smoke.sh` (W1-a's file — the CI
 MySQL bump proves more, on the whole suite, than one COUNT against 55 empty
 tables would).
+
+---
+
+### 2026-08-19 02:20 — Finding and fix: **the Home screen swallowed the duty refusal**, and Demo Driver's roster hid every night-time offer
+
+**Status:** done. `HomeScreen.tsx` carries a 03:25 claim still marked *in
+progress* (~23 h old); this is a minimal, contained edit to the duty wiring
+and its two tests, recorded here rather than waited on because the owner asked
+for the fix live from a handset. If that entry's agent is still active, the
+duty section is what changed — nothing in the header.
+
+**Source:** the owner, at 02:07 local with the app open and beside the pickup
+— *"i can not get the order notification i thought that the system runs as
+who is closer and active?"*, then *"but the button is not even working"*.
+
+**What was actually happening, proved against the dev DB:**
+
+1. Orders #22 and #23 (Misindye, `vehicle_class: boda`) produced **zero
+   offers**. Not distance — distance only ranks. `WalkInRecommender` filters
+   availability *first* (ADR-0024 §2), and `AvailabilityService::forDriver(15)`
+   answered `OFF_SHIFT — "This driver is not rostered for that time."`:
+   `DriverAppSeeder` gives Demo Driver a Mon–Sat 07:00–17:00 roster, and it
+   was Wednesday 02:07 Africa/Kampala. Driver 15's presence was on duty, vehicle
+   19 (Bajaj Boxer, `boda`, active), position 100 m from the pickup — gates 2
+   and 3 passed; gate 1 dropped them before distance was computed. Boda /
+   electric are not filtered by the recommender at all.
+2. The owner then toggled off and on. **Off** succeeded (never refused);
+   every **on** was `409 DRIVER_UNAVAILABLE` from
+   `DriverPresenceController::refusalToStartShift()` — the same roster
+   verdict — and `HomeScreen` showed nothing: it called `useSetDuty().mutate`
+   directly, with no `onError` and no read of `setDuty.error`, so the switch
+   stayed put and read as broken. The shared `useDutyToggle` hook — which
+   asks location permission at sign-on, carries the shift's vehicle, and
+   keeps the server's refusal sentence — was used by `DutyBar` and (until
+   the 03:25 drawer change, whose entry says "`HomeScreen` still shows the
+   refusal, unchanged" — it never did) by the drawer, but not by this screen.
+
+**Fixes:**
+
+- **Dev DB only:** deleted driver 15's seven `driver_shift_windows` rows (six
+  seeded, one Monday 17:00→07:00 added by hand on 2026-08-17). ADR-0017: no
+  roster ⇒ available at any hour, so the demo driver can be dispatched
+  whenever the owner tests. The Performance dial handles a null roster
+  (`presentation.ts:296`). Not a code change; the seeder still writes the
+  roster on a fresh DB.
+- **`HomeScreen.tsx`:** both duty controls (`DutyRow` switch, `GoDutyButton`)
+  now go through `useDutyToggle`; `DutyRow` renders `refusal` under the switch
+  as an `alert`, amber, in `DutyBar`'s voice. `useDuty`/`useSetDuty` imports
+  dropped; `duty` still comes from the hook for `ActiveTripCard`.
+- **`HomeScreen.test.tsx`:** mocks the hook instead of the queries (a
+  queries-level mock would pass against the exact bypass this fixed); three
+  new cases — refusal shown and announced, nothing shown when none, both
+  controls call `toggle`. **Proved by mutation:** hiding the refusal and
+  wiring the button to a no-op failed exactly those two; restored. `tsc`,
+  `eslint`, 9/9 green.
+
+**Files touched:** `mobile/src/screens/HomeScreen.tsx`, `.test.tsx`; this
+file. Nothing in `backend/`.
+
+**Not verified:** the refusal rendering on a handset — the running bundle
+predates this edit; the owner was asked to toggle again against the fixed
+roster. **Deliberately not built:** a "you are on duty but not dispatchable
+right now" state on Home (`DutyBar` has it via `dispatchable`; Home's switch
+still only knows on/off) — worth a design pass, raised, not done here; no
+change to what the seeder rosters.
+
+### 2026-08-19 — The corporate client's console: what a bank's transport officer sees
+
+**Status:** in progress.
+
+**Source:** the owner — *"now we need to work on the corporate client's
+side … they need all the data, reports and trips that took place, invoices
+etc."*
+
+**What was found by signing in as the seeded Corporate Admin
+(`admin@centenarybank.test`) and screenshotting every page in the nav.**
+The *data* is already there and already tenant-scoped — `/bookings`,
+`/trips` (with timeline), `/invoices` (with credit notes), `/reports/trips`,
+`/reports/financial` (scope `tenant`, covers "Centenary Bank"), exports,
+`/audit-logs`, `/users`, `/allocations` all answer 200 with only this
+client's rows. What is wrong is the *console around it*: it is the
+operator's console with the operator's framing, shown to the client.
+
+1. **Dashboard** shows "Companies 1", "Active companies 1 / 1", "Aggregate
+   credit limit UGX 0" and a raw audit feed ("System created zone #3"). An
+   operator's KPIs, meaningless to a bank; and `UGX 0` is a zero standing in
+   for unknown (`docs/screen-rules.md` §1).
+2. **Nav** offers Vehicles, Drivers, Applications and Driver reports to a
+   corporate role. `/drivers` renders every platform driver's phone and
+   licence number with **Documents** and **Payout** buttons — security-gate
+   **F2** (High), seen on screen.
+3. **Topbar** says "Tenant 1".
+4. **Reports** renders a dangling "Client" label for a tenant-scope user
+   (the select renders nothing; the `FormField` still does) and fetches
+   `/vehicles` + `/drivers` for filter pickers.
+5. **Companies** shows the client their own company as a one-row register
+   with "Credit limit UGX 0".
+
+**Plan (decided, not asked — each is the conventional answer):**
+
+- **Client dashboard** for `corporate_admin` / `corporate_employee`: this
+  month's trips, distance, invoiced/outstanding — from the *same*
+  `/reports/trips` and `/reports/financial` summaries the Reports page
+  shows, so dashboard and report agree by construction; bookings awaiting
+  approval (`/bookings?status=pending`); trips on the road (`/live-positions`);
+  recent trips. No new endpoint: every figure is already produced and proved
+  tenant-scoped, and a second aggregation would be a second thing to audit.
+- **Nav:** the Fleet section hidden from both corporate roles.
+- **F2, the corporate half:** `DRIVERS_VIEW` and `VEHICLES_VIEW` dropped
+  from Corporate Admin and Corporate Employee in `RoleSeeder` (the gate's
+  own recommended fix); Driver role untouched (its app may read the fleet —
+  out of this entry's scope). Reports page tolerates the two lists being
+  refused and hides those filters.
+- **Topbar:** the tenant's name (`UserResource.tenant_name`, additive) —
+  "Centenary Bank" for a client, "Platform" for staff.
+- **Companies → "Organisation"** for a corporate admin: the profile as a
+  card and the vehicles allocated to them (`/allocations`), no credit limit.
+
+**Files owned:**
+
+- `frontend/src/pages/dashboard/ClientDashboard.tsx` (+ `.test.tsx`) — new
+- `frontend/src/pages/companies/OrganisationView.tsx` (+ `.test.tsx`) — new
+- `frontend/src/lib/navigation.test.ts` — new
+- `backend/tests/Feature/Administration/UserTenantNameTest.php` — new
+
+**Files shared — the exact edits:**
+
+- `frontend/src/pages/DashboardPage.tsx` — branch to `ClientDashboard` for
+  corporate roles; nothing else.
+- `frontend/src/pages/CompaniesPage.tsx` — branch to `OrganisationView`
+  for a corporate admin.
+- `frontend/src/lib/navigation.ts` — `VISIBLE_TO` rows for the fleet ids
+  and `rate-cards`; a `navLabel()` for the corporate relabel.
+- `frontend/src/components/layout/AppShell.tsx` — Topbar `tenant` prop
+  and the label/title override.
+- `frontend/src/pages/ReportsPage.tsx` — hide the Client field on tenant
+  scope; the two fleet lists become best-effort.
+- `frontend/src/types/auth.ts`, `test/harness.tsx` — `tenant_name`.
+- `backend/Modules/Administration/Resources/UserResource.php` —
+  `tenant_name`; `backend/database/seeders/RoleSeeder.php` — the two
+  permissions off the two corporate roles; `docs/api/openapi.yaml` — `User`
+  gains `tenant_name`; the Administration README; `docs/security-gate.md` —
+  F2's status line.
+- This file.
+
+Working tree, not a worktree — same reason as W1-f/W1-c: the walk-in
+auto-dispatch edits are uncommitted and the frontend must build against
+what is really here.
+
+---
+
+### 2026-08-19 03:00 — Finding and fix: **the driver app was fed an empty order**, and the kerb took two screens
+
+**Status:** done. Follows the 02:20 entry above; same owner, same handset, same
+night. Files claimed and released in this entry; the 03:25 HomeScreen claim is
+untouched by this one.
+
+**Source:** the owner after ride KR-7J4XT8 (trip #77) — *"we want to limit the
+clicks … when we onboard the client it automatically starts the trip … we
+have not route in the app as it is in the user side … the estimate fare is
+showing nothing, Payment nothing, Journey nothing … so i think the app is
+useless"*, and *"we all know that the trip can not be a straight line"*.
+
+**What was actually wrong, each proved against the dev DB and the running server:**
+
+1. **Estimated fare / Journey / Payment blank** — not the app. Order #24 arrived
+   with `dropoff_latitude/longitude = NULL` and no `payment_method`.
+   `TripResource::estimatedFare()` quotes from the drop-off point; the Journey
+   cell is great-circle pickup→drop-off; Payment reads `details.payment_method`.
+   Cause on the web: `orderCoordinates.ts` sends coordinates only for a place
+   *picked* from the list; typed / hero-form text went up as a string, and
+   `RideScreen` then geocoded it **client-side after placing the order, just to
+   draw its own line** — the customer saw a route while the platform never
+   learnt the destination. And the ride flow never asked how the passenger
+   pays; only the delivery flow did.
+2. **No road route in the app** — routing was **switched off**
+   (`maps.routing_enabled = false`, ADR-0031 §2 "off by default"), and the one
+   endpoint only ever routed to the drop-off, so the pickup screen could not
+   draw the approach even when on. OSRM itself answered fine from PHP.
+3. **The kerb was two screens** — "Start Trip" → odometer form → "Record and
+   start trip". `OdometerScreen` already queued boarding+start together; the
+   second screen was the cost, not the commit.
+
+**Fixes (owner's rulings recorded: reading captured at "I've arrived", start on
+the boarding tap; web root fix now):**
+
+- **Web** — `orderCoordinates.ts` `withGeocodedEnds()`: any end with text and
+  no coordinates is geocoded *before* `submitPublicOrder`, best-effort, typed
+  text looked up as written (the picked-place strictness stays).
+  `PaymentMethodField.tsx` extracted from `DeliverySummary`; the ride review
+  step asks it (cash label "Cash") and `details.payment_method` travels on
+  rides. Tests: 3 new in `orderCoordinates.test.ts`; `tsc -b --force` clean;
+  42/42 across the two public suites.
+- **Backend** — `TripRouteController` takes `to=pickup|dropoff` (default
+  drop-off). `to=pickup` needs a `from` fix and answers null without one.
+  3 new tests in `TripRouteTest` (18/18); leg selection **proved by mutation**
+  (forced to drop-off → the approach test failed; restored). Pint clean.
+- **Dev DB** — `maps.routing_enabled = true`, provider `osrm`,
+  `https://router.project-osrm.org`. Live: `/trips/76/route` → 46.7 km road
+  polyline; `?to=pickup&from=…` → 2.3 km approach; `?to=pickup` with no fix →
+  null. **This is a setting the office can flip back in System Settings; it is
+  not code.**
+- **Mobile** — `trips/odometer.ts` (`validateOdometerReading`, moved) and
+  `trips/OdometerCapture.tsx` (reading + optional photo, extracted);
+  `OdometerScreen` uses both, behaviour unchanged (9/9). `WaitingForPassenger`
+  captures the opening reading inline and its one button, **"Passenger on
+  board"**, queues `passenger_onboard` then `trip_started` (with the reading)
+  and `replace`s to Trip in Progress; disabled until the reading is valid;
+  save-failure keeps the reading on screen. `fetchTripRoute`/`useTripRoute`
+  take the leg (keyed on it); `PickupScreen` asks `to=pickup` from `here`;
+  `WaitingForPassenger` asks pickup→drop-off. `PickupMap` unchanged — a road
+  polyline already replaces the dashed guess outright. Tests: waiting-screen
+  suite rewritten for the one-press flow (11/11), **proved by mutation**
+  (dropping the boarding transition and the reading gate each failed the
+  test written for it; restored); `useTripRoute` mocked in the two screen
+  suites; 61/61 across Pickup / Waiting / TripInProgress / TripMap / api.
+  `waitFor` under this file's fake timers poisons later renders — the presses
+  are flushed inside `act` instead, and the test says why.
+
+**Files touched:** owned — `frontend/src/pages/public/PaymentMethodField.tsx`
+(new), `orderCoordinates.ts` + `.test.ts`, `DeliverySummary.tsx`,
+`OrderPage.tsx` (import, ride `details`, submit line, review step);
+`backend/Modules/Trips/Controllers/TripRouteController.php`,
+`tests/Feature/Trips/TripRouteTest.php`; `mobile/src/trips/odometer.ts` (new),
+`trips/OdometerCapture.tsx` (new), `screens/OdometerScreen.tsx`,
+`screens/WaitingForPassengerScreen.tsx` + `.test.tsx`, `screens/PickupScreen.tsx`
++ `.test.tsx`, `api/endpoints.ts` (`fetchTripRoute`), `trips/queries.ts`
+(`useTripRoute`); this file. Prettier flags `OrderPage.tsx`, `OdometerScreen.tsx`,
+`endpoints.ts`, `queries.ts`, `PickupScreen.tsx`, `WaitingForPassengerScreen.tsx`
+**at HEAD too** (CRLF checkout vs `endOfLine`) — not reformatted, not mine.
+
+**Not verified:** any of it on a handset — the running bundle predates these
+edits; the owner needs a Metro reload and a fresh order placed *after* the
+frontend rebuild for the drop-off point to arrive. Trip #77 (no drop-off pin,
+sitting in `waiting`) will stay blank whatever the app does.
+
+**Raised, not built:** `TripInProgress`'s "Start waiting" is the mid-trip
+pause and sits where a driver at a kerb expects "waiting for passenger" — #77
+was parked there by exactly that mistake; a label or placement pass is due.
+`TripMap.tsx`'s docblock still says the platform holds no coordinates for the
+ends; it does now. ADR-0031 §2 still says the provider enum's only member is
+`google`; `osrm` exists and is what the dev DB runs. The web's `RideScreen`
+still geocodes locally for its own line — harmless now, redundant.
+
+**Closing amendment — status: done.** The owner, mid-build: *"Centenary
+Bank is simply another client, not a tenant — they don't have fleet-related
+menus … they can manage their own staff … we don't have tenants; it's
+simply Shanitah General Enterprises Ltd, the rest are either corporate
+clients or walk-in."* And the letter that started it: Centenary's
+CRDB/CS/F/26 of 22 July 2026 asks, per trip, for commence/complete
+date-time, vehicle registration, origin/destination, opening/closing
+odometer, distance, duration — the six columns `/reports/trips` already
+carries. So the plan above held; the vocabulary got firmer.
+
+**Delivered, and seen in Chrome as `admin@centenarybank.test` (Vite 5173,
+screenshots in the session scratchpad):**
+
+- **Nav** for both corporate roles: Dashboard · Bookings · Trips · Live map
+  · **Organisation** · Invoices · Rate cards · Reports · Staff · Roles ·
+  Audit log · Notifications. The Fleet section is gone for them
+  (`FLEET_OPERATORS`; `support-requests` added to the map — it was
+  unlisted, so shown to everyone). Topbar chip: **"Centenary Bank"**
+  (`UserResource.tenant_name`; "Platform" for staff on an old API).
+- **`ClientDashboard`** (`pages/dashboard/`): four figures for the month —
+  trips completed / commenced, distance and time on the road, invoiced
+  less credited, outstanding to date — read from `/reports/trips` and
+  `/reports/financial` `meta.summary`, never computed here and never with
+  a `tenant_id`; bookings awaiting approval; vehicles reporting a
+  position; the last eight trips with the letter's six columns. A refused
+  report renders `—` and "Report unavailable", not `UGX 0`. A Corporate
+  Employee gets no figures section and no `/reports/*` request.
+- **`OrganisationView`** (`pages/companies/`): the client's profile
+  (`/companies`, one row) and **"Vehicles supplied to you"**
+  (`/allocations`, `ALLOCATIONS_VIEW` was already theirs) — plate, make /
+  model / year, category, seats, from / until, shared / exclusive, in force.
+  **Not shown, on purpose:** the credit limit (recorded, never enforced —
+  `UGX 0` would read as a fact) and the VIN (Shanitah's asset record).
+- **`ReportsPage`**: the dangling "Client" `FormField` is only rendered on
+  `scope === 'platform'`; `/vehicles` and `/drivers` are best-effort and the
+  two pickers vanish when refused — the report itself never waits on them.
+- **Backend:** `RoleSeeder` `$clientReads = [COMPANIES_VIEW, ZONES_VIEW]` on
+  both corporate roles (F2's corporate half; the Driver role untouched);
+  `UserResource.tenant_name` (+ `with('tenant')` on the users index, the
+  `User` schema in `docs/api/openapi.yaml`, Administration README);
+  `tests/Feature/Clients/CorporateConsoleTest.php` — 7 tests: `/auth/me`
+  names the tenant / null for staff; every staff row carries it; `/drivers`
+  and `/vehicles` are 403 to both corporate roles; `/companies` still 200.
+- **`lib/period.ts`** — `currentMonth()` moved out of `ReportsPage` (it is
+  now used twice), plus `recentMonths()`.
+- `docs/security-gate.md` F2 row: dated status; `AuditLogPage` platform
+  subtitle "Every tenant" → "Every client" (+ its test).
+- **Dev DB:** `php artisan db:seed --class=RoleSeeder` re-run so the seeded
+  corporate roles lost the two permissions. **A deployed DB needs the same
+  command** — the seeder is idempotent and this is what it is for.
+
+**Verified:** frontend `tsc -b --force`, `eslint src`, `vitest run` —
+**45 files, 432 tests green** (29 new: `lib/navigation.test.ts`,
+`ClientDashboard.test.tsx`, `OrganisationView.test.tsx`). Backend
+Administration · Auth · Drivers · Fleet · Vehicles · Reports · Bookings ·
+Tenancy · Ci · Clients · Trips — **1008 tests, 0 failed** (Trips run
+through `php -d memory_limit=1G vendor/bin/pest`: `artisan test`'s child
+process dies at 128 MB on a fake-image fixture late in the run — an
+environment limit, pre-existing, not a failure). **Three mutations, each
+caught and restored** (`grep -rc "MUTATION UNDER TEST"` is 0): the figures
+section offered to a Corporate Employee (→ "asks for no report" failed);
+`vehicles`/`drivers` back to `ALL` (→ three nav tests failed); a credit
+limit row on the organisation page (→ "never a credit limit" failed).
+Rendered as the corporate admin: dashboard populated (11 completed / 12,
+1,260 km, UGX 4,347,200 invoiced, UGX 12,761,700 outstanding, 3 pending, 0
+on the road), Organisation with four allocations, Reports with no Client
+label and no fleet pickers.
+
+**Files touched — owned:** `frontend/src/pages/dashboard/ClientDashboard.tsx`
+(+ `.test.tsx`), `frontend/src/pages/companies/OrganisationView.tsx`
+(+ `.test.tsx`), `frontend/src/lib/navigation.test.ts`,
+`frontend/src/lib/period.ts`, `frontend/src/types/allocation.ts`,
+`backend/tests/Feature/Clients/CorporateConsoleTest.php`. **Shared, minimal
+edits:** `DashboardPage.tsx` (role branch, `PlatformDashboard` is the old
+body), `CompaniesPage.tsx` (role branch, `CompanyRegister` is the old
+body), `lib/navigation.ts`, `components/layout/AppShell.tsx` (chip +
+`navLabel`), `pages/ReportsPage.tsx`, `pages/AuditLogPage.tsx` (+ test),
+`types/auth.ts`, `test/harness.tsx`; backend `UserResource.php`,
+`UserController.php` (one `with`), `RoleSeeder.php`,
+`docs/api/openapi.yaml`, `Modules/Administration/README.md`,
+`docs/security-gate.md`; this file. `frontend/src/lib/navigation.test.ts`
+was new — no existing test pinned that map.
+
+**Not verified:** a Corporate Employee's dashboard in the browser (unit
+tests only — no seeded employee password was looked up); dark mode of the
+two new pages; the console below 1024 px; the exports as a client
+(`/reports/exports` answered 200 in the tour, not clicked). **Not
+touched:** the driver app.
+
+**Deliberately not built, each a real fork for the owner:**
+
+1. **Editing the organisation profile.** `COMPANIES_UPDATE` is theirs and
+   `PATCH /companies/{id}` exists; the page tells them to contact their
+   account manager instead. Whether a bank edits its own billing email or
+   Shanitah does is a commercial question, not a UI one.
+2. **F2's remaining halves** — the Driver role still holds `drivers.view`
+   and `vehicles.view` (its app may list the fleet; out of this scope), and
+   `DriverResource` still emits phone / licence / account to whoever *is*
+   allowed. The gate's second option (masking unless `drivers.manage`) is
+   the belt to this braces.
+3. **A per-client "By month" table** on the dashboard — the Financial
+   report is one click away and does it with the server's own headers.
+4. **Rate cards for a client**: kept, read-only (they are the pricing the
+   client is billed on; `RateCardPolicy` already allows it). If the owner
+   would rather clients not see the card, that is one `VISIBLE_TO` row.
+5. **Departments / branches / cost centres** (Modules/Clients README's
+   deferred list): a bank will want its invoice split by branch. Not
+   modelled anywhere yet; not started here.
+
+**Amendment — the menu, trimmed to the owner's list.** Shown the Roles
+page as a Corporate Admin (the whole platform catalogue — Branch Manager,
+Dispatcher, Driver…), the owner: *"most of the menus are not needed here …
+we only need to leave what is required of the corporate clients."* Asked
+which of the optional three to keep; answer: Live map and Organisation,
+not Audit log. `VISIBLE_TO` now: `roles` and `audit-log` → `super_admin`
+only; `rate-cards` → billing readers minus `corporate_admin`. Policies
+untouched — menu only, the pages still answer by URL. A Corporate Admin's
+menu is **Dashboard · Bookings · Trips · Live map · Organisation · Invoices
+· Reports · Staff · Notifications**; a Corporate Employee's is Dashboard ·
+Bookings · Trips · Live map · Notifications. `lib/navigation.test.ts` pins
+both lists; 40 nav/roles tests green; rendered and read.
+
+**Amendment — the plan.** The owner: *"we need a plan for the corporate
+clients' panel according to the pdf I shared — this is our main client and
+we are solving this problem."* Written as
+`docs/corporate-client-panel-plan.md` (linked from `docs/master-plan.md`):
+the letter's six data points and five outcomes, where each stands today
+(verified against the API as the Centenary admin: trip detail, events,
+route, odometer-photo endpoint, exports all answer 200 to the client; the
+Driver report answers 200 **with licence numbers**; there is no invoice
+document route), then Phases A–D with acceptance in the Bank's words, the
+order to build them, the rules, and five questions for the Bank. Nothing
+built under it yet.
+
+---
+
+### 2026-08-19 04:10 — Six more from the same night: countdown, auto en-route, the passenger's ending, the tariff, and the red banner
+
+**Status:** done. Same owner, same handset, follows the 03:00 entry.
+`WalkInAutoDispatchTest.php` and `DispatchOfferService.php` were already dirty
+from another agent's self-drive guard (its docs read as finished); the edits
+here are contained — one transition in `accept()`, one assertion — and named
+below.
+
+**Source:** *"we don't need to go to the trip detail if the trip is not
+complete … the on-trip status should also change on the web app the moment
+the driver ends the trip … on my way should be automatic the moment the driver
+accepts … the count down is not working right … the web app is showing the
+trip price according to the vehicles, of which I thought the logic was
+implemented … the cancel trip is not working on the web app"*, and a
+screenshot of a red "2 items need your attention" band drawn under the status
+bar on Home, in dark green on red.
+
+**Causes and fixes, each proved:**
+
+1. **Countdown ran at double speed.** `useCountdown` subtracted locally
+   elapsed seconds from a server figure the poll *refreshed and shrank* every
+   5 s: 15 → 5 → 0 with the offer still open. Seeded once at mount now.
+   `useCountdown.test.tsx` (new) re-renders with a fresher figure — mutation
+   (reading the prop again) showed exactly the bug: 5 where 10 was due.
+2. **"On my way" is automatic on accept.** `DispatchOfferService::accept()`
+   moves the new trip `accepted → driver_en_route` in the same transaction —
+   the graph as it stands, both rows on the timeline, and a dispatcher-
+   assigned corporate trip (`DispatchService::assign`) still stops at
+   `accepted`. `WalkInAutoDispatchTest` asserts the status and both events.
+   The app then lands on **Pickup** straight from the accept: a container ref
+   (`navigation/navigationRef.ts`, `openPickup`) because `OfferPresenter`
+   sits outside the navigator. **This is what removed the tap the owner
+   called "going to the trip detail"** — the accepted job used to sit behind
+   the home card until tapped. No live status routes to `TripDetail`
+   (`activeTripRoute` sends only `assigned` and the ended states there); if
+   the owner meant another screen, it is not found in this tree.
+3. **The passenger's screen never saw the ending — completion *or*
+   cancellation.** `CustomerRideController::active()` answered null the
+   instant the trip stopped occupying the vehicle, and the web poll ignores
+   null on purpose (holds the last state) — so "on trip" after the driver
+   finished, "captain assigned" after the passenger cancelled: **the cancel
+   *worked* on the server and the screen never said so.** Now a finished ride
+   stays active for a 30-minute afterglow (`justEnded()`), and
+   `CustomerRideResource` carries `estimated_fare` (same
+   `WalkInFareService::quote()` the driver sees) and `fare` (settled total,
+   currency, measured km) — both were hard-coded null in `liveRideSource`,
+   so the completion card could never render. Web: `Fare.breakdown` optional
+   (the platform stores one figure; three invented lines would be a bill
+   nobody issued), rows drawn only when present; a 409 on cancel now surfaces
+   the server's sentence as `notice` (was swallowed — "not working").
+   OpenAPI extended (ADR-0011). Tests: 2 new in `CustomerRideCancellationTest`,
+   `RideContactTest`'s pinned "null on completion" rewritten to the afterglow,
+   `liveRideSource.test.ts` +1 and the 409 case now asserts the notice.
+4. **The tariff was never connected to the customer, and did not exist on
+   the dev DB.** No platform (tenant-null) rate card existed at all — every
+   walk-in quote threw `RateCardNotConfiguredException` (silently null in
+   `TripResource`, so the driver's estimate was blank *even with* pins), and
+   settlement at completion logged and skipped. The web showed literals ("from
+   UGX 12,500"). Fixes: **dev DB** — "Public tariff" (rate card 3, default,
+   nine categories; boda per the documented 2,000 + 1,000/km, the rest
+   placeholders for the office) created through `RateCardService` as super
+   admin. **Backend** — `RideVehicleClass` enum (class → `Vehicle::CATEGORIES`
+   member; `StorePublicOrderRequest` reads its values) and
+   `GET /public/fare-quotes` (`PublicFareQuoteController`, 30/min/IP, null
+   per unpriced class and 200; census + `security-gate.md` + OpenAPI). **Web**
+   — `fetchFareQuotes`; the ride-class cards show "est. UGX …" from the tariff
+   once both ends are placed, "from …" only as the fallback. Live: boda
+   16,330 / economy 33,660 / xl 55,856 for Misindye → Kamwokya.
+   **Assumption on record:** `electric_boda` → `boda` (not a fleet category;
+   one enum line when it is).
+5. **The red banner.** `SyncBanner` painted `primaryText` (dark green) on the
+   danger and offline tones — unreadable exactly when it had something to say
+   — and `HomeScreen` mounted it *above* the bar that carries the status-bar
+   inset. Ink now follows the ground; Home mounts it under the top bar like
+   every other screen; wording names where the items are (Profile → Updates &
+   sync), not "Account".
+
+**Files touched:** mobile — `duty/useCountdown.ts` + `.test.tsx` (new),
+`duty/OfferPresenter.tsx`, `navigation/navigationRef.ts` (new),
+`navigation/RootNavigator.tsx` (ref + import), `ui/SyncBanner.tsx`,
+`screens/HomeScreen.tsx`. backend — `Dispatch/Services/DispatchOfferService.php`
+(one transition), `tests/Feature/Dispatch/WalkInAutoDispatchTest.php` (one
+assertion), `Customers/Controllers/CustomerRideController.php`,
+`Customers/Resources/CustomerRideResource.php`, `Bookings/Enums/RideVehicleClass.php`
+(new), `Bookings/Controllers/PublicFareQuoteController.php` (new),
+`Bookings/Routes/public.php`, `Bookings/Requests/StorePublicOrderRequest.php`,
+`tests/Feature/Bookings/PublicFareQuoteTest.php` (new),
+`tests/Feature/Trips/CustomerRideCancellationTest.php`, `RideContactTest.php`,
+`tests/Feature/Ci/RoutePolicyCensusTest.php` (173/12). web —
+`publicOrder.ts`, `OrderPage.tsx`, `ride.ts`, `ride.test.ts`, `liveRideSource.ts`
++ `.test.ts`, `RideScreen.tsx`. docs — `api/openapi.yaml`, `security-gate.md`,
+this file. **Green:** backend 733 across Trips/Billing/Drivers/Dispatch/
+Customers/Bookings + census; mobile 152 across 13 suites; web 67 across the
+public suites; `tsc`/eslint/pint clean on everything mine (`TripsPage.tsx` is
+another session's mid-edit and fails `tsc -b`; not touched).
+
+**Dev-DB state changed tonight, none of it code:** demo driver's roster
+deleted (02:20); `maps.routing_enabled = true` on OSRM (03:00); public tariff
+created (04:10). All reversible from System Settings / Rate cards.
+
+**Not verified:** on a handset — the bundle predates all of it. **Not
+built:** a breakdown on the passenger's bill (needs the invoice lines);
+`electric_boda` as a real category; the "Start waiting" label; TripDetail's
+Accept for a corporate trip still stays on TripDetail (a 4pm job is not "on
+my way").
+
+**Amendment — the plan, implemented: Phase A in full, E2.** The owner:
+*"go on implement them."* Built in the order the plan gives.
+
+- **A1 · Trip record page** — `frontend/src/pages/trips/TripRecordPage.tsx`
+  at `/trips/:id` (router; `AppShell` titles it "Trip record" and lights
+  Trips). The six facts as a sheet; **both odometer photographs**
+  (`pages/trips/OdometerPhoto.tsx` — authenticated blob fetch of
+  `trips/{id}/odometer-photo/{start|end}`, thumbnail → dialog; a 404
+  renders "No dashboard photo captured for this reading", never a
+  placeholder); the **recorded GPS trace** on a map
+  (`components/map/TripTraceMap.tsx`, MapLibre line from
+  `/trips/{id}/locations?per_page=1000`, palette tokens resolved at draw
+  time — no hex); the timeline (`pages/trips/TripEventsList.tsx`,
+  extracted from `TripsPage`'s panel so both render one history); the
+  invoice the trip produced (`/invoices?trip_id=`; refused → no card, not
+  an error). Reached from the Trips panel's new **Full record** button and
+  from the dashboard's recent-trips rows.
+- **A2 · The record verdict** — `lib/tripStatus.ts` `recordVerdict()` /
+  `RECORD_VERDICT`: Verified · Check · Unverified · Incomplete, named from
+  what the server stored (`distance_variance_flagged`, the readings,
+  `gps_distance_km`); a "Record" column on the Trips page and the badge +
+  explanation on the record page. Not on the trip *report* (rows carry no
+  variance field) — noted, not done.
+- **A3 · Driver report off the client** — backend
+  `ReportType::permissions()`: DRIVERS now needs `drivers.view` as well
+  (the same rule that gates FINANCIAL on `invoices.view`);
+  `FleetReportController` authorises `viewReport` per type; exports follow.
+  `ReportsPage` hides the picker entry via `canUseNavItem(role, 'drivers')`.
+  Test in `FleetReportTest`.
+- **A4 · Records complete** — a fifth dashboard stat from the trip report's
+  own `completeness_percent` / `records_incomplete`; links to Trips.
+- **E2 · Client capabilities** — `backend/app/Enums/ClientCapability.php`
+  (`approves_bookings`, `sees_finance`, `manages_staff`; each a bundle of
+  existing permissions), migration `2026_08_19_100000_add_client_capabilities_to_users`
+  (`users.capabilities` JSON, `users.books_without_approval`),
+  `User::permissions()` unions role + capabilities (unknown slug → nothing;
+  no role → nothing), `Store/UpdateUserRequest` validate + escalation
+  (`holdsAll`) + refuse on platform accounts, `UserAdminService` persists,
+  `UserResource` emits both, users index `meta.capabilities` catalogue,
+  `BookingService::create()` auto-approves for `books_without_approval`.
+  Contract: `ClientCapability` schema, `User` fields, request bodies, meta.
+  Frontend: `types/staff.ts`, `StaffPage` "Can also" column + switch panel
+  in the dialog (server labels), `types/auth.ts` `capabilities`,
+  `lib/navigation.ts` `canUseNavItem(role, id, capabilities)` opens
+  Invoices/Reports/Staff for a switched-on employee, `billing.ts`
+  `canViewInvoices` and `ClientDashboard` honour `sees_finance`.
+- **Dev DB, for the demo (D1 in part):** trip 29 given a 40-point GPS trace
+  (`tenant_id` set — `TripLocation` is tenant-scoped, a raw insert without
+  it is invisible), two generated dashboard photos under `odometer/demo-29-*.jpg`,
+  and the platform's own `reconcileAgainstGps()` re-run: 195.8 km by GPS vs
+  236 km by odometer → **flagged**, so the demo has its "Check" trip.
+  Migration run. `staff@centenary-bank.test` toggled through the UI and
+  reset.
+
+**Verified:** frontend `tsc -b --force`, `eslint src`, `vitest run` —
+**47 files, 456 tests** (new: `lib/tripStatus.test.ts`,
+`pages/trips/TripRecordPage.test.tsx`, Staff switch tests, nav capability
+tests, dashboard completeness tests; `TripsPage`, `CrossClientQueue` tests
+mock the router the panel now uses). Backend: `tests/Feature/Clients/ClientCapabilityTest.php`
+(11), `FleetReportTest` +1; Administration · Auth · Clients · Bookings ·
+Reports · Ci · Tenancy · Drivers · Fleet · Trips green (counts in the log
+above / below). **Mutations caught and restored:** verdict `check` branch
+removed → 4 tests; photo 404 → placeholder → 1 test. **Rendered as the
+Centenary admin:** `/trips/29` with photos, trace, "Check" verdict, invoice,
+timeline; Trips list with the Record column; Staff with the switch panel,
+a switch saved and shown on the row.
+
+**Files owned (new):** `frontend/src/pages/trips/{TripRecordPage,TripRecordPage.test,OdometerPhoto,TripEventsList}.tsx`,
+`frontend/src/components/map/TripTraceMap.tsx`, `frontend/src/lib/tripStatus.test.ts`,
+`backend/app/Enums/ClientCapability.php`, the migration,
+`backend/tests/Feature/Clients/ClientCapabilityTest.php`. **Shared, minimal:**
+`TripsPage.tsx` (+test), `ReportsPage.tsx`, `ClientDashboard.tsx` (+test),
+`StaffPage.tsx` (+test), `CrossClientQueue.test.tsx`, `lib/tripStatus.ts`,
+`lib/navigation.ts` (+test), `lib/billing.ts`, `routes/router.tsx`,
+`routes/RequireNavAccess.tsx`, `AppShell.tsx`, `types/{auth,staff}.ts`;
+backend `User.php`, `UserResource.php`, `UserController.php`,
+`UserAdminService.php`, `Store/UpdateUserRequest.php`, `BookingService.php`,
+`ReportType.php`, `FleetReportController.php`, `FleetReportTest.php`,
+`docs/api/openapi.yaml`, Administration README, the plan; this file.
+
+**Not built from the plan yet:** E1 (invite by email — SMTP is disabled by
+the owner; last sign-in — no column), E3 (organisation settings — waits on
+the Bank's answers, §5), E4, B1–B3, C1–C3, D2–D3. **Not verified:** the
+record page on a narrow viewport; the trace map's dark theme.
+
+**Amendment — B1, and a regression caught by the suite.**
+
+- **B1 · The requester is told.** `Modules\Trips\Events\TripStatusChanged`
+  (trip, from, to) — dispatched inside the transaction by
+  `TripStateMachine::transition()` for every move and by
+  `TripService::create()` for creation (`from` null); `TripCompleted` stays,
+  its three listeners untouched. `Modules\Notifications\Notifications\TripProgressNotification`
+  (one class, three `NotificationType` cases: `trip.assigned`,
+  `trip.driver_arrived`, `trip.completed`; in-app + mail like a booking
+  decision) sent by `Listeners\SendTripProgressNotification` to the booking's
+  requester; every other transition silent; walk-in trips (no booking) send
+  nothing; driver named by first name only; the completion body carries the
+  six data points and links `/trips/{id}`. Registered in
+  `AppServiceProvider`; contract enum widened; frontend
+  `types/notification.ts` + `lib/notifications.ts` icons (`car`,
+  `map-pin-check`, `flag`). `tests/Feature/Notifications/TripProgressNotificationTest.php`
+  (4) — driven through `TripService` and the real transitions endpoint.
+  Notifications README updated.
+- **Regression:** `CrossClientQueueLabellingTest` "reads the clients without
+  an N+1" went 18 > 14 — `UserResource.tenant_name` lazy-loaded the tenant
+  for every nested actor on the bookings list. Fixed: `whenLoaded('tenant')`,
+  eager-loaded on `/auth/*` and `/users*` (the surfaces the console reads it
+  from); `User.tenant_name` is optional in the contract, described as
+  present on those responses and absent on a nested actor. Suite green
+  again (28 across Tenancy/Clients/Auth).
+
+**Closing amendment — status: done for this session.** Built from the plan,
+in its order: **A1 A2 A3 A4 · E2 · B1**, plus the console skeleton and the
+menu trim recorded above. Not built: E1, E3, E4, B2, B3, C1–C3, D2, D3 —
+each still described in `docs/corporate-client-panel-plan.md` with its
+acceptance test. Every backend change carries policy, contract entry,
+README and tests; every screen was rendered as the Centenary admin and its
+guards proved by mutation. Nothing committed: another session's edits to
+`TripRouteController`/`TripRouteTest` and the walk-in dispatch files share
+this tree — the owner will say when.
+
+---
+
+### 2026-08-19 05:00 — The raised list worked off: the waiting trap, the not-findable gap, ten unsettled fares, and two stale documents
+
+**Status:** done. Continues the 04:10 entry ("let's continue"). No collision:
+the corporate-console entry owns the frontend nav and Administration files;
+nothing here touches them.
+
+**Dev DB, not code:** the ten completed walk-ins that finished before the
+tariff existed (trips 67–78, fare_minor null — the owner's "Earnings today
+UGX 0") were settled through the same idempotent pair the completion path
+runs, `WalkInFareService::settle()` then
+`DriverLedgerService::recordCompletedTrip()`. Trip 78 (odometer typo,
+123→500 = 377 km) settled at the boda maximum of 150,000 — ADR-0035's
+backstop doing its job. Trip 77 = 32,000 for 30 km. Earnings and Wallet now
+carry real figures. Trip 77 itself was already resumed and completed by the
+owner from the app; nothing was transitioned by hand.
+
+**Mobile:**
+
+- **`transitions.ts`: `waiting`'s action label is "Pause trip"** — the same
+  words `TripInProgressScreen`'s own button already used — not "Start
+  waiting", which a driver at a kerb reads as "record that I am waiting for
+  the passenger". Trip #77 was parked in `waiting` by exactly that tap, and
+  `waiting` occupies the vehicle, so the driver got no offers until it was
+  resumed. Renders on `TripDetailScreen` (the only surface that uses the
+  shared label for it).
+- **`HomeScreen`: the on-duty-but-not-findable gap is now said out loud.**
+  `DutyRow` renders `DutyBar`'s sentence verbatim ("Waiting for a location
+  fix — you may not get jobs yet") when `onDuty && !dispatchable` and no
+  refusal is up. This was the 02:20 entry's "deliberately not built". Two new
+  tests; **proved by mutation** (dropping `!dispatchable` failed the
+  says-nothing-extra case; restored). 221 green across 14 suites; tsc/eslint
+  clean.
+- **`TripMap.tsx` docblock corrected**: it claimed the platform holds no
+  coordinates for the trip's ends — it has since `TripResource` grew
+  `pickup`/`dropoff` — so the pin-not-route choice is now argued from what the
+  home glance is *for*, which was always the real reason.
+
+**Docs:** ADR-0031 §2 amended (dated note): `osrm` is the provider enum's
+second member, keyless, what dev runs; Google remains the production choice;
+everything else in the ADR stands.
+
+**Files touched:** `mobile/src/trips/transitions.ts`, `trips/TripMap.tsx`,
+`screens/HomeScreen.tsx` + `.test.tsx`, `docs/adr/0031-…md`, this file.
+
+**Not verified:** on a handset (bundle predates it). **Left on the list, and
+why:** passenger's bill breakdown (needs invoice lines served to customers —
+an API design, not a patch); `electric_boda` as a fleet category (office
+decision; one enum line when made); `RideScreen`'s local geocode fallback
+(harmless, still covers pre-fix orders); TripDetail's corporate Accept stays
+put (a 4pm job is not "on my way").
+
+---
+
+### 2026-08-20 00:10 — Live map, made real: the fleet *and* the drivers waiting for it, with names
+
+**Status:** done. 404 backend tests green across Fleet/Trips/Dispatch/Ci;
+all 468 frontend tests green; `tsc -b --force` and eslint clean; pint clean.
+**Four guards proved by mutation and restored:** dropping the controller's
+`authorize` failed the corporate-refusal test; spreading the whole Driver
+model failed the allow-list test; dropping `buildUnits`' trip dedupe failed
+the drawn-twice test; ignoring `poolRefused` failed the stops-asking test.
+**Verified in Chrome (playwright-core)** as Dispatcher and as Corporate
+Admin: tiles, both marker shapes (blue heading arrow moving, green dot
+waiting, grey dot stale), fit-once framing, row→marker fly-to with the
+unfolded record and "Open trip #76", filter chips, and the client's view
+running with the pool 403 swallowed and no banner.
+
+**Source:** the owner — *"http://localhost:5173/live-map — we need to make
+this page real."*
+
+**What was found.** `/live-map` rendered an empty-state card ("Nothing is
+moving") with no map at all whenever no trip was under way — which, on the
+dev DB tonight, was always: the only `live_positions` row belongs to a trip
+that finished. When it did draw, it showed `#19` / `#78` for a vehicle and
+a trip, a 520px map with a table under it, and clicking anything did
+nothing. The on-duty drivers a dispatcher actually wants to see
+(`driver_presence`, ADR-0024 §2 — the dispatch pool) were not on it at all,
+because no office-facing read of presence existed.
+
+**Plan (decided, the conventional answers):**
+
+- **Backend, additive.** `LivePositionResource` gains nested `vehicle`
+  (plate, make, model), `driver` (name) and `trip` (status, origin,
+  destination, client) — flat fields untouched, ClientDashboard keeps
+  working. `GET /live-positions` gains `meta.scope` + `meta.filters.clients`
+  like `/trips`, so the page can offer the same client filter.
+  **New `GET /driver-presence`** (Fleet): every on-duty driver with their
+  last position, vehicle, and the occupying trip they are on if any.
+  Gated by `DriverPolicy::viewAny` (`drivers.view`) — the roles that
+  operate the fleet; a corporate client is refused, as the fleet register
+  is (security-gate F2). `DriverPresenceStore::onDuty()` added to the
+  interface and both stores.
+- **Frontend.** The page becomes a full-height workspace: map + side panel.
+  Units are merged client-side (`lib/livePositions.ts`, unit-tested): a
+  vehicle on a trip from `/live-positions`; a driver waiting for work from
+  `/driver-presence`; a driver on a trip whose vehicle has not reported
+  yet shows with the handset's position, labelled. Filter chips
+  (All · On a trip · Waiting · Not reporting), search by plate/driver/trip,
+  client filter for platform staff, row ↔ marker selection both ways, a
+  detail card for the selected unit with "Open trip", "Recentre". The map
+  is always drawn; the empty state becomes a line in the panel.
+
+**Files owned:**
+
+- `frontend/src/pages/LiveMapPage.tsx` (+ `.test.tsx`) — rewrite
+- `frontend/src/components/map/FleetMap.tsx`, `fleetMap.css`
+- `frontend/src/lib/livePositions.ts` (+ `.test.ts`)
+- `frontend/src/types/livePosition.ts`
+- `backend/Modules/Trips/Controllers/LivePositionController.php`,
+  `Resources/LivePositionResource.php`
+- `backend/Modules/Fleet/Controllers/DriverPresenceIndexController.php` — new
+- `backend/Modules/Fleet/Resources/OnDutyDriverResource.php` — new
+- `backend/Modules/Fleet/Support/DriverPresenceStore.php` (+ both stores) —
+  `onDuty()`
+- `backend/tests/Feature/Fleet/OnDutyDriversTest.php` — new;
+  `tests/Feature/Trips/LivePositionTest.php` — additions only
+
+**Files shared — the exact edits:** `backend/Modules/Fleet/Routes/api.php`
+(one route); `tests/Feature/Ci/RoutePolicyCensusTest.php` (one census row,
+count 173→174); `docs/api/openapi.yaml` (`LivePosition` schema additions,
+`/driver-presence` path); `Modules/Fleet/README.md`, `Modules/Trips/README.md`
+(a paragraph each); this file.
+
+Working tree, not a worktree — the corporate-console entry's frontend edits
+are uncommitted and this page must build against what is really here.
+
+**Corrections to the plan, post-build:** the controller is
+`OnDutyDriverController` + `OnDutyDriverResource` (not
+"DriverPresenceIndexController" — `DriverPresenceResource` stays the
+driver's own `/me/duty` answer, which carries handset instructions this
+list must not). Census count 173→174 and its two idiom tallies. The page
+merge lives in `buildUnits()` and the row detail says when a dot came from
+the driver's handset rather than the vehicle.
+
+**Dev DB touched (not code):** `live_positions` gained a row for vehicle 2
+on trip 76 (the owner's real occupying walk-in, which had none), and
+driver 15's `driver_presence.recorded_at` was freshened — both only so the
+page could be seen with data. Both decay naturally.
+
+**Deliberately not built:** narrowing the pool by the client filter (a
+waiting driver is shared capacity, and `/driver-presence` is refused to
+clients anyway); a responsive stack for the map+panel row (the console is
+desktop-first everywhere); broadcasting (ADR-0019 defers Reverb — the
+polling constant is the seam); marker clustering (irrelevant below
+hundreds of concurrent markers).
+
+---
+
+### 2026-08-20 01:10 — Nearby vehicles, made real: the ambient fleet becomes live data on the order page and the client's live map
+
+**Status:** done. Backend: 10 new endpoint tests, 414 green across
+Fleet/Trips/Dispatch/Ci; census 175 routes / 13 public. Frontend: 478
+green across 48 suites; tsc/eslint/pint clean. **Five mutations proved
+and restored:** dropping the busy-driver exclusion, leaking `driver_id`
+into the response, removing the hourly key rotation (which first exposed
+a test that could not fail — the travelled hour made presence stale and
+the list empty, so `null !== key` passed vacuously; the test now
+re-heartbeats after the hour and asserts non-null), zeroing the jitter
+guard in `mergeFleet`, and dropping the 403→public fallback. **Verified
+in Chrome:** the order page draws the demo vehicles at their true
+positions with stable distinct headings; a Corporate Admin's live map
+lists "Boda / Sedan / Suv · Waiting for work" with no names anywhere; the
+Dispatcher's named pool is unchanged (plates, names, green and grey dots).
+See the post-build notes at the end of this entry.
+
+**Source:** the owner — *"now we need to fix these near by driver vehicles.
+they should be real from both the corporate clients live maps and front
+facing page. these vehicles should be live and be picking live data."*
+
+**What was found.** The order page's map draws six vehicles at hardcoded
+offsets from wherever the map is centred (`MapPanel.tsx` `NEARBY_VEHICLES`,
+honest at the time: "the public API exposes none"). The Google variant
+draws none at all. A corporate client's `/live-map` shows only their own
+trips — `/driver-presence` refuses them by design, so they see no
+available capacity. ADR-0005 deferred "nearby-driver search" on the
+missing live positions; ADR-0024 §2 has since built presence, so the
+blocker it named is gone.
+
+**Plan (decided):**
+
+- **New `GET /public/nearby-vehicles?latitude=&longitude=`** (Fleet,
+  idiom D, throttled 30/min like `/public/fare-quotes`): the dispatchable
+  pool — on duty, fresh position, **not on an occupying trip** — nearest
+  first, capped, radius-bounded. **Anonymized hard:** an hourly-rotating
+  opaque `key` (marker continuity across polls, no all-day tracking), the
+  vehicle `category`, a sprite `kind`, coordinates, `age_seconds`. No
+  driver id, name, plate, phone — the register stays behind
+  `drivers.view` (security-gate F2 unchanged).
+- **Order page:** `NEARBY_VEHICLES` deleted; both map panels (GL and
+  Google) take a live `fleet` prop; `OrderPage` polls the endpoint every
+  10s centred on the fix/pickup, tab-visibility aware. Same hide-on-route
+  and hide-on-matching rules as the decorative fleet had. Headings derived
+  from movement between polls, never invented.
+- **Client's live map:** when `/driver-presence` answers 403, the page
+  falls back to the same public read and shows anonymous available
+  vehicles ("Boda · Waiting for work") beside their own trips. Platform
+  staff keep the named pool; nothing changes for them.
+
+**Files owned:**
+
+- `backend/Modules/Fleet/Controllers/PublicNearbyVehicleController.php` — new
+- `backend/Modules/Fleet/Routes/public.php` — new
+- `backend/tests/Feature/Fleet/PublicNearbyVehiclesTest.php` — new
+- `frontend/src/pages/public/nearbyVehicles.ts` (+ `.test.ts`) — new
+- `frontend/src/pages/public/MapPanel.tsx`, `GoogleMapPanel.tsx`
+- `frontend/src/pages/LiveMapPage.tsx` (+ `.test.tsx`),
+  `frontend/src/lib/livePositions.ts` (+ `.test.ts`) — mine from the 00:10
+  entry, still mine
+
+**Files shared — the exact edits:** `backend/routes/api.php` (one require);
+`tests/Feature/Ci/RoutePolicyCensusTest.php` (one census row; 174→175,
+public 12→13); `docs/api/openapi.yaml` (path + `NearbyVehicle` schema);
+`Modules/Fleet/README.md` (a section); `docs/security-gate.md` (route
+evidence row); `frontend/src/pages/public/OrderPage.tsx` (the poll and the
+`fleet` prop — nothing else); this file.
+
+Working tree, not a worktree — same reason as the 00:10 entry.
+
+**Post-build notes.** The endpoint also excludes drivers on an occupying
+trip (their car is not capacity) via a narrow, commented
+`withoutGlobalScopes()` existence check — a public route has no tenant
+bound, so the plain scope would fail closed and every mid-ride driver
+would read as available; the cross-tenant read only ever *removes* rows.
+That exclusion proved itself immediately: the dev DB's Demo Driver was on
+trip 84 (`trip_resumed`) and the endpoint correctly refused to serve them.
+Radius is 15km, cap 12, key = sha256(driver | hour | app key) truncated.
+Headings on the public map are derived from movement between polls
+(`mergeFleet`), a stable per-key rotation on first sighting — never a
+claim, always either data or ambience.
+
+**Dev DB touched (not code):** drivers 2, 5 and 7 were put on duty with
+positions near the centre to verify visually, then **set off duty again**
+so the matcher does not offer real jobs to handsets that do not exist.
+Driver 15's and vehicle 2's timestamps were freshened for screenshots and
+decay naturally.
+
+**Not verified:** `GoogleMapPanel`'s fleet markers in a real browser — dev
+has no Google Maps key, so it always falls back to the GL panel. The code
+mirrors the captain-marker pattern that panel already uses; its rotation
+is deliberately not drawn (classic image Markers cannot rotate — noted in
+the file, returns with the AdvancedMarkerElement migration).
+
+**Deliberately not built:** serving the assigned captain's live position
+to the customer's ride screen (`liveRideSource` still has `lngLat: null` —
+that is a Customers-module API change, ADR-0024 §7 territory, and its own
+work item); narrowing the pool by the live map's client filter (shared
+capacity); a config knob for radius/cap (constants until somebody needs
+to tune them).
+
+### 2026-08-20 01:40 — Three owner reports from a live session: the stale location warning, the blank-detail detour, and the banner under the clock
+
+**Status:** complete. All three seen by the owner on a handset mid-session,
+fixed, and re-verified live on the emulator the same night. PickupScreen
+suite 15/15 (three new), PresenceController suite 3/3 (new file), five-screen
+banner sweep 76/76, `tsc --noEmit` clean, eslint clean. Both behavioural
+fixes mutation-checked: each removed guard fails exactly its test.
+
+**1. "Waiting for a location fix" outlived the fix**
+(`duty/PresenceController.tsx`). The heartbeat's response is a full
+`DriverPresence` with `dispatchable` recomputed against the position just
+sent — and it was dropped on the floor, while `useDuty` has no poll. A
+driver whose position went stale (backgrounded app, dead zone, left on duty
+overnight) wore the warning until an unrelated refetch, while the server had
+been offering them work since the first ping after coverage returned.
+Observed: three minutes of warning against a position nine seconds old. Now
+`queryClient.setQueryData(['duty'], presence)` on every successful ping —
+the same pattern `useSetDuty.onSuccess` already used — guarded by the
+existing `cancelled` flag so a reply landing after unmount writes nothing.
+
+**2. "Start trip" detoured through a blank record view**
+(`screens/PickupScreen.tsx`). `WaitingForPassengerScreen` — reading inline,
+boarding and start one press, straight to `TripInProgress` — was reachable
+only from the Home card. A driver tapping through the leg on the Pickup
+screen never met it: "I've arrived" left them on Pickup, whose next action
+("Start trip", requires a reading) was handed to `TripDetail` — em dashes
+and one button asking for the same press again. Two changes: the
+"I've arrived" press now `replace`s to `WaitingForPassenger` (the seam
+`isPickupPhase`'s docblock already named), and an odometer-requiring action
+goes straight to `Odometer` instead of `TripDetail`. `TripDetail` remains
+the decline's home (it owns the notes sheet) and the record view for lists.
+Verified live twice: the owner drove trip 84 through the new flow on a
+handset (arrived → started in 23 s, boarding and start queued together),
+and trip 85 was driven end-to-end on the emulator — including offline.
+
+**3. The sync banner painted under the clock**
+(`OdometerScreen`, `RideCompleteScreen`, `PickupScreen`,
+`TripInProgressScreen`, `WaitingForPassengerScreen`). `SyncBanner` mounted
+before `ScreenHeader` sat at y=0 with no inset — the owner's screenshot has
+the red "items need your attention" band through the status bar.
+HomeScreen's own comment already recorded the rule ("under the top bar, not
+above it — its first line was drawn under the clock"); five screens never
+followed it. The banner now mounts below the header on all five, and the
+header-less loading/missing paths gained the same `ScreenHeader` (it is
+what carries the inset, and it gives those states a working back arrow).
+Verified on the emulator offline on Pickup, Waiting and TripInProgress:
+banner below the title, clock untouched.
+
+**Why the owner's phone showed three parked items** (not a code defect):
+trips 82/83 were test trips cancelled *directly in the dev DB* while the
+handset still held queued transitions for them. The outbox drained into
+409s, reconciled, and parked the work with the payload intact — exactly
+ADR-0023's design (never silently discard a driver's recorded work; in
+production this happens when dispatch cancels underneath queued taps). The
+cards clear with Discard. Wording gripe noted for later: "Check the trip
+and try again" is wrong when the trip is terminally gone — there is nothing
+to try; the card's message could name what actually happened.
+
+**Dev DB touched (not code):** test orders KR-2MTF2K … KR-EKF53H posted to
+the public endpoint; trips 81–83 set `cancelled` by hand (the source of the
+parked items above); trip 84 completed by the owner; trip 85 completed via
+the emulator UI. `DISPATCH_OFFER_TTL_SECONDS` was temporarily 60/90 in
+`.env` for live testing and **is removed again** — offers are back on the
+15 s default.
+
+---
+
+### 2026-08-20 02:20 — Live map: the dot becomes the vehicle
+
+**Status:** done. Backend 23 green (LivePosition + OnDutyDrivers) and the
+Fleet/Trips/Ci suites green; frontend 480 green across 48 suites;
+tsc/eslint/pint clean. One mutation proved and restored (forcing every
+silhouette to `boda` failed both sprite-mapping tests). Verified in Chrome
+as Dispatcher: sedan/SUV/pickup silhouettes with corner status dots, the
+boda rider for Demo Driver, the moving vehicle rotated to its heading.
+
+**Source:** the owner — *"in the live map side we are seeing a dot instead
+of the available vehicle."*
+
+**What changed.** `FleetMap` markers are now the same top-down vehicle
+sprites the public order page draws (`/assets/vehicles/*-top.svg`) — one
+visual vocabulary for "a vehicle on a map" across the platform. The tone
+that used to be the whole marker survives as a 12px corner status dot
+(blue on a trip, green waiting, grey stale) paired with the tooltip and
+the row badge; a stale vehicle's sprite is greyed, never hidden — it is
+the call to make. Rotation only when the device reported a heading.
+
+To pick the silhouette, `LivePositionResource.vehicle` and
+`OnDutyDriverResource.vehicle` gained `category` (additive; the same field
+the public read already mapped to `kind`), and `lib/livePositions.ts`
+carries the shared category→sprite table (`spriteKindFor`) with `sedan` as
+the honest generic. OpenAPI `LiveMapVehicle` updated; allow-list tests
+extended to the new field.
+
+**Files:** the 00:10 entry's files (still mine) — both resources, both
+controllers (one column each), `FleetMap.tsx`, `fleetMap.css`,
+`lib/livePositions.ts` (+ tests), `types/livePosition.ts`,
+`docs/api/openapi.yaml`, both feature tests. Dev DB: drivers 2/5/7 staged
+on duty for the screenshot and set off duty again.
+
+### 2026-08-20 03:30 — The map that reloaded itself: both WebView maps rebuilt their whole document on every change
+
+**Status:** complete. `TripMap.tsx` and `PickupMap.tsx` restructured;
+TripMapScreen / TripInProgress / Home / Pickup / Waiting suites 75/75 (two
+assertions retargeted to the new seam, same pins), `tsc --noEmit` clean,
+eslint clean — including the compiler's own `react-hooks/refs` rule, which
+caught the first draft reading a ref during render. Verified live on the
+emulator: trip 88's pickup map rendered all three markers with the "You"
+marker created *by injection* (the fix landed after page load), and five
+GPS moves later the page had zero console errors and no reload.
+
+**The report:** "we get this kind of Directions, then the screen shakes
+then shows the route, but still seems not accurate."
+
+**The mechanism:** both maps interpolated every prop into the HTML document
+and keyed the `useMemo` on the prop *objects*. A changed `source.html`
+makes `react-native-webview` reload the entire page — white flash, CDN
+refetch, camera snapped back to its initial frame. And the objects changed
+constantly: `pickup`/`dropoff` are rebuilt by `toCoordinates` in the render
+body, so **`TripInProgressScreen`'s one-second elapsed ticker reloaded the
+map once a second for the length of a trip**; `usePosition({watch:true})`
+reloaded it every 100 m; the route arriving reloaded it again — that last
+one is the "shows Directions, shakes, then the route" sequence verbatim.
+The "not accurate" tail is mostly ADR-0031 §4's deliberate 100 m origin
+snap (the cost control on billed routing) plus OSRM/Google road snapping —
+unchanged, and bounded at ~2 px at city zoom.
+
+**The fix, same shape in both files:** the document is built once, keyed on
+what cannot change mid-screen (`pickup`/`dropoff` primitives, `fill`), and
+everything that can — the driver's position, `boarded`, the route — travels
+into the running page via `injectJavaScript`, replayed from `onLoadEnd` so
+an Android WebView process restart re-seeds itself. In-page, sources are
+created empty on load and every update is `setData` (the operation MapLibre
+does without a flicker); the "You" marker is `setLngLat`, not a rebuild;
+and the camera moves only when the *route geometry* changes — animated
+(`duration: 600`), never teleported — or eases after the dot on `TripMap`,
+whose whole subject is the dot. Position ticks move a marker and nothing
+else; a camera that chases every tick is the shake under another name.
+
+**Moved with it:** the legs derivation (route-or-dashes, never both) now
+lives in the page's `legFeatures`, since legs must recompute per injected
+update. `TripMapScreen.test` pinned `addLegs([])` in the document; it now
+pins the guard the derivation hangs on (`state.route === null`), and the
+marker-label assertions follow the labels into page-side strings. The
+untyped `backgroundColor` WebView prop went — adding `ref` changed overload
+resolution and TypeScript finally noticed it; `styles.web` already sets the
+same transparency.
+
+**Known debts, restated not created:** the two documents still duplicate
+the MapLibre scaffold (fold onto one builder when neither file is hot);
+`PickupScreen` reads its position once (`watch: false`), so its distance
+badge and You marker do not follow the driver — a separate decision for a
+separate day.
+
+---
+
+### 2026-08-20 02:40 — The rating that went nowhere: a theatre button, and the dead endpoint behind it (F5 closed)
+
+**Status:** done. Backend: 5 new lifecycle tests + the pinned F5 test
+flipped to 201; every suite green in three chunks (294 + 364 + 521, plus
+118 for the dompdf pair run alone — the full single-process run dies on a
+pre-existing 128M memory accumulation in dompdf, unrelated, passes
+chunked). Frontend: 486 green across 48 suites; tsc/eslint/pint clean.
+**Three mutations proved and restored:** ignoring the rating outcome
+(screen), failure-as-success (live source), dropping the resolver's
+Customer branch (backend). **Proved over real HTTP:** throwaway customer +
+completed trip → 201, row landed with denormalised driver_id and comment,
+second attempt refused 422 verbatim; every throwaway row deleted after.
+
+**Source:** the owner — *"i have used mobile money as the payment and gave
+this drive a rating but it was not given to the driver."* (Trip 86,
+23:12–23:19.)
+
+**The rating failed twice over, independently:**
+
+1. **The screen never sent it.** `RideScreen`'s "Submit rating" flipped a
+   local flag (`onRated={() => setRated(true)}`) and the card thanked the
+   passenger — no request existed anywhere in the file. Now: `RideSource`
+   gains `rate(stars): Promise<RatingOutcome>` (on the source, like
+   `cancel`, so the screen never learns an endpoint); `RideState` gains
+   `tripId`; the live source POSTs `/customer/trips/{id}/rating` and hands
+   back `{recorded, message}` both ways; the confirmation renders **only
+   after the platform said recorded**, and a refusal keeps the stars on
+   screen with the server's sentence verbatim.
+2. **The endpoint was dead anyway — W1-c-F5, pinned since 2026-08-18.**
+   `{trip}` resolved through `BelongsToTenant::resolveRouteBinding`, which
+   dropped TenantScope only for a platform User; a Customer binds no
+   tenant, the scope failed closed, and the binding 404d before
+   `TripRatingController` ran. Fixed in the resolver: a Customer is the
+   other tenant-less actor and gets the same treatment, with the
+   controller's `customer_id` check as the refusal (404, id still masked —
+   `TripRatingTest` proves the stranger case).
+
+**Files:** `frontend/src/pages/public/ride.ts`, `liveRideSource.ts`
+(+ `.test.ts`), `RideScreen.tsx` (+ `.test.tsx`);
+`backend/app/Concerns/BelongsToTenant.php`,
+`tests/Feature/Trips/TripRatingTest.php` (new),
+`tests/Feature/Tenancy/CustomerOwnershipIsolationTest.php` (the flip its
+own docblock demanded), `tests/Feature/Ci/RoutePolicyCensusTest.php` (one
+comment), `docs/security-gate.md` (F5 closed), this file.
+
+**The owner's actual rating for trip 86 is not recoverable** — it was
+never transmitted. The trip is still `trip_completed` and the endpoint now
+accepts a rating for it at any age, but the ride screen's afterglow window
+(the ride stops being "active" minutes after it ends) has passed, so there
+is no UI path back to it. Nothing was fabricated: if the owner says what
+stars they gave, it can be filed for real.
+
+**On the "mobile money" half:** payment is a separate, known deferral —
+ADR-0014 shipped provider credential slots and no integration; the payment
+card's own comment says it records intent and must not look like a
+checkout. Nothing about the payment method affected the rating; the two
+shared a card, and only the rating had a live endpoint to lose.
+
+**Deliberately not built:** a way back into a finished ride to rate it
+later (needs a "your past rides" surface for customers — its own work
+item); payment recording (ADR-0014's deferral stands); pushing the rating
+to the driver app in real time (the Performance screen reads aggregates on
+open, which is enough until broadcasting lands).
+
+---
+
+### 2026-08-20 — Client routes and multi-stop journeys: the backend foundation (ADR-0045, step 1)
+
+**Status:** backend done and verified. The builder screen is the next step
+and is not built. 14 new tests green; 1,291 feature tests green across the
+whole suite in three chunks (273 + 561 + 457); Pint and PHPStan level 8
+clean on everything touched; migrations proved reversible both ways against
+MySQL 8 on `kangaruride_testing`. **Four mutations proved and restored** —
+see below.
+
+**Source:** the owner — corporate clients servicing ATM estates send a team
+round a circuit, so a journey needs stops, and the client needs to build the
+circuit themselves and watch it on the live map.
+
+**Decisions already ruled on by the owner and recorded in
+`docs/adr/0045-multi-stop-journeys-and-client-routes.md`:** pricing unchanged
+(km + waiting); a driver may add a stop and it is flagged, never billed;
+route members are the team who ride it; no schedule (B3 keeps that);
+`@dnd-kit` for the builder's reorder; Google Maps as the builder's engine.
+
+**This step is the backend foundation only** — the plan side of ADR-0045 §1.
+`trip_stops`, the driver's stop actions and the live-map layer are later
+steps and are NOT claimed here.
+
+**Files I expect to own:**
+
+- `backend/database/migrations/2026_08_20_*_create_client_places_table.php`
+  and the three beside it (routes, route stops, route members)
+- `backend/Modules/Clients/Models/{ClientPlace,ClientRoute,ClientRouteStop}.php`
+- `backend/Modules/Clients/Policies/{ClientPlacePolicy,ClientRoutePolicy}.php`
+- `backend/Modules/Clients/Controllers/{ClientPlaceController,ClientRouteController}.php`
+- `backend/Modules/Clients/Requests/*`, `Resources/*`, `Services/ClientRouteService.php`
+- `backend/database/factories/{ClientPlaceFactory,ClientRouteFactory}.php`
+- `backend/tests/Feature/Clients/ClientRouteTest.php` and
+  `ClientRouteIsolationTest.php`
+
+**Shared files I must touch, with the exact edit:**
+
+- `backend/app/Enums/Permission.php` — two new cases, `ROUTES_VIEW` /
+  `ROUTES_MANAGE`. Additive; no existing case altered.
+- `backend/app/Enums/ClientCapability.php` — one new case,
+  `MANAGES_ROUTES`. Additive.
+- `backend/database/seeders/RoleSeeder.php` — `routes.view` onto the two
+  corporate roles and the platform reads; `routes.manage` onto Corporate
+  Admin. No existing grant removed.
+- `backend/app/Providers/AppServiceProvider.php` — two `Gate::policy` lines
+  and two route-binding entries.
+- `backend/Modules/Clients/Routes/api.php` — the new resource routes.
+- `docs/api/openapi.yaml` — new paths; CI fails on drift.
+
+**Not built in this step, deliberately:** `trip_stops` and the copy-on-booking
+path (ADR-0045 §1), the driver's arrive/continue/skip actions (§2), the
+live-map stop layer, and — at the time this was written — waypoint routing
+and the builder screen. **Both of those then landed; see the continuation
+below.**
+
+**Mutations proved, and one that did not count.**
+
+1. **The cross-tenant place guard** — `if (false)` in place of the ownership
+   check. `ClientRouteTest` fails: another client's ATM lands on the circuit.
+2. **Omitted vs empty** — replacing the `array_key_exists('stops', …)` guard
+   with an unconditional `replaceStops($route, $attributes['stops'] ?? [])`.
+   A rename becomes a delete and the test catches it (`0 is not 1`).
+3. **Stop order** — `sort($stops)` before the insert loop. The officer's drag
+   order becomes id order; the reorder test catches it.
+4. **The policy's tenancy half** — dropping `! $user->isPlatformLevel()` from
+   `mayBuild()`. A Super Admin write answers **500, not 403** — the NOT NULL
+   violation the policy docblock predicts, confirmed rather than argued.
+
+   **The one that proved nothing:** swapping `array_key_exists` for `isset`
+   passed, and correctly so — `isset([])` is true, so the two are
+   behaviourally identical for every case validation allows through. Recorded
+   because a passing mutation looks like a weak test and this one is not; the
+   real bug is mutation 2.
+
+**Left alone on purpose:** the three comments that say this platform has no
+stops — `mobile/src/trips/record.ts:16`, `Modules/Bookings/README.md:132`,
+and the earlier worklog entry. They are about **trip** stops, which this step
+does not build, so they are still accurate today. ADR-0045's consequences
+require correcting them; that belongs with `trip_stops`, not here, and
+correcting them now would make them wrong in the other direction.
+
+**Contract, census and counts updated:** four `/places` and `/routes` paths
+plus four schemas and two responses in `docs/api/openapi.yaml`; three new
+`ErrorCode` cases and the `manages_routes` capability slug in their enums;
+ten census rows in `RoutePolicyCensusTest` (185 routes / 172 guarded / 158
+staff, D unchanged at 13); six newly tenant-bound routes and their fixtures
+in `CrossTenantAnswers404Test` (32 → 38).
+
+---
+
+### 2026-08-20 — The scroll that moved the page instead of the list, and the preview nobody could see
+
+**Status:** in progress. Claiming before code, per `docs/screen-rules.md`.
+
+**Source:** the owner — *"we have scroller on the pages like trips page but
+this scroller is outside the list which makes the page longer other that the
+list is self. can we have this inside here … and make sure the preview is
+[visible] so that we don't need to scroll on bottom to view this. we have to
+make the ui better and Professional for the other pages too."*
+
+**The two faults, precisely.** `AppShell`'s `<main>` is already the scroller,
+so the *page* scrolls, not the table: a 25-row list makes the whole page tall,
+the column header scrolls out of sight, and the filter box in the card header
+goes with it. And `TripsPage` appends the selected trip's timeline **below**
+the table (`{selected && <TripTimeline/>}`), so choosing a row puts the thing
+you asked for off-screen, behind a full-page scroll.
+
+**Decisions, run against the north star before writing code:**
+
+1. **The list scrolls, the page does not.** The card fills the viewport, the
+   table body scrolls inside it with a sticky column header, and the card
+   header (title, filter, search) and footer (Load more) stay put. Fewer
+   pixels travelled to scan a list, and the header you are scanning *against*
+   stays on screen.
+2. **The detail docks below the list, inside the same viewport — not to one
+   side.** Considered a right-hand panel and rejected it: Trips carries ten
+   columns at full width and the timeline's own layout is a horizontal row of
+   six facts. A side panel would squeeze both. The list yields height to the
+   panel; neither needs a page scroll.
+3. **Shared, not per-page.** Nineteen files use `DataTable`. Per AGENTS.md
+   ("if something appears twice, it becomes a shared component") this is a
+   layout primitive, not a TripsPage patch.
+4. **No entrance animation on the panel.** Selecting rows is list navigation —
+   Emil's frequency table and `motion.css`'s own note ("enterprise operators
+   watch these screens all day") both say reduce or remove. The panel appears
+   instantly.
+
+**Files I expect to own:**
+
+- `frontend/src/components/layout/PageFill.tsx` (new) — the fill-viewport page
+  shell and its scrolling/docked regions.
+
+**Shared files I must touch, with the exact edit:**
+
+- `frontend/src/components/data/DataTable.tsx` — a `stickyHeader` prop plus a
+  `fill` mode that makes the wrapper the vertical scroller. Additive and
+  defaulted off; every existing caller renders exactly as before.
+- `frontend/src/components/core/Card.tsx` — a `fill` prop so the card can be a
+  flex column whose body is the flexing child, and a `footer` slot for
+  Load more. Additive, defaulted off.
+- `frontend/src/pages/TripsPage.tsx` — adopt the new layout.
+
+**Not built in this step, deliberately:** row virtualization (the audit's
+separate finding — "Load more" twenty times still mounts 500 live rows, and
+that is a different change with its own dependency question), and conversion
+of the remaining table pages beyond the ones named in the closing entry.
+
+**Status: done.** 486 frontend tests across 48 suites, `tsc -b --force` and
+eslint clean. Twelve pages rendered in Chrome at 1440×820 and measured, not
+eyeballed: `<main>` overflow is **0px** on every one, each has an inner
+scroller, and every column heading computes `position: sticky`.
+
+**What was actually built.** `PageFill` (new) with `.Flex` and `.Docked`;
+`Card` gained `fill` and a `footer` slot; `DataTable` gained `fill` and
+`stickyHeader`, plus `dataTable.css` for the scroll affordance. All three
+props default off, which is why 486 tests and 19 existing `DataTable` callers
+were unaffected.
+
+**Converted (12):** Trips, Bookings, Vehicles, Drivers, Customers, Companies,
+Staff, Roles, Audit log, Invoices, Driver applications, Driver reports.
+Trips and Invoices also moved their detail panel into `PageFill.Docked`.
+
+**Three details that were not obvious:**
+
+1. **A sticky `<th>` under `border-collapse: collapse` loses its border.**
+   The rule belongs to the table grid, not the cell, so it scrolls out from
+   under the pinned heading and leaves the headings floating. `box-shadow:
+   inset 0 -1px 0` is painted by the cell and sticks with it.
+2. **`minHeight: 0` at every level.** A flex column will not shrink below its
+   content's intrinsic height, so without it the inner scroller never gets a
+   bounded height and the page overflow simply comes back.
+3. **The list stops looking scrollable.** Twenty-five trips showing five rows
+   with "Load more" beneath reads as a list of five, and the platform default
+   overlay scrollbar fades out. `.kr-scroll` keeps a thin bar visible and
+   reserves its gutter so the columns do not shift when it appears.
+
+**Also fixed, and it was pre-existing:** the timeline's six facts wrapped onto
+a second row at `minmax(180px)`, which cost ~60px of a now height-capped
+panel. 150px fits all six.
+
+**Deliberately not converted, with reasons:** `RateCardsPage` is a stack of
+per-card panels rather than one list — a page of panels legitimately scrolls,
+and filling it would add machinery for no gain. `ReportsPage` and
+`DashboardPage` are mixed-content dashboards, same reasoning. Row
+virtualization is still not done: "Load more" twenty times still mounts 500
+live rows, and that is a separate change with its own dependency question.
+
+**Verification note.** `super_admin` and `finance` carry `requires_mfa = true`
+again (a re-seed restored it, exactly as
+`finance-and-super-admin-logins-need-a-totp-code` warns), while
+`mfa_confirmed_at` is null — so those accounts land on `/mfa/setup` and no
+page under the shell renders. It was toggled off to render the five
+admin-only pages and **restored to `true` immediately afterwards**; both
+columns are back as found.
+
+**Untouched, seen mid-write:** `frontend/src/pages/routes/` appeared during
+this session and briefly failed `tsc` with a stray character. It is another
+agent's ADR-0045 builder; left alone per the rule above, and it compiles now.
+Its two router entries are eager imports rather than `page()`, so they sit
+outside the code-splitting the rest of the router uses — their author's call
+to make, flagged rather than changed.
+
+---
+
+### 2026-08-20 — The visual route builder, and the waypoints under it (ADR-0045 §7, step 2)
+
+**Status:** done. Frontend: 510 tests green across 50 suites, `tsc -b --force`
+and eslint clean. Backend: 295 green across Clients/Tenancy/Ci/Trips, Pint and
+PHPStan level 8 clean. **Rendered in a real browser** against the dev stack,
+signed in as the seeded Centenary admin. **Three more mutations proved and
+restored** (see below).
+
+**Waypoint routing came first, because the screen could not be honest without
+it.** A builder that cannot draw a line has two options: draw a straight one
+between the pins, or state no distance. `PickupMap` already refuses the first
+(a straight line is not a road) and `docs/screen-rules.md` §1 refuses the
+invented figure — so the only way to give the officer a distance was to make
+the platform able to measure one.
+
+- `RouteProvider` went from four floats to an ordered point list. One method,
+  not two: a second would have duplicated every failure path. Both providers
+  widened — OSRM semicolon-joins its `lng,lat` pairs, Google gets `waypoints`
+  **without** `optimize:true` (ADR-0045 §7 refuses to let a provider reorder a
+  cash run to save kilometres).
+- `RouteService::between()` now delegates to `via()`, and the two-point cache
+  key is byte-for-byte what it was — a fleet's warm cache survives the deploy
+  rather than being invalidated wholesale. Longer circuits hash the tail.
+- Google's totals are summed across legs, and **one unmeasurable leg makes the
+  whole circuit unmeasurable**: a partial sum would state a distance shorter
+  than the drive, which is the understatement ADR-0031 exists to stop. Same
+  rule one step stronger for duration (§6 forbids deriving one at all).
+- `POST /routes/preview` draws a draft that has no id yet. A POST for a read,
+  and the docblock says why: 25 ids in a query string is a URL long enough for
+  a proxy to truncate, and a truncated list draws a *shorter circuit* rather
+  than failing.
+
+**The screen.** `/routes` lists the circuits; `/routes/new` and `/routes/:id`
+are the builder — a 360px itinerary rail beside a Google map, stacking under
+1024px with the map first.
+
+- **Three ways to reorder, one `reorder()` underneath.** WCAG AA makes the
+  keyboard path mandatory, so drag-only was never on the table; `@dnd-kit` was
+  chosen because its `KeyboardSensor` supplies that path plus the screen-reader
+  announcements. Visible move-up/down buttons stay because a lift gesture is
+  not discoverable.
+- **One search box adds every kind of stop.** The client's saved places match
+  locally and rank first with a `Saved` badge; the geocoder fills in below
+  after `usePlaceSearch`'s existing debounce — no fourth copy of that logic.
+  Picking a geocoder hit *saves the place and then adds it*, so the ATM
+  register builds itself as a by-product of the work.
+- **`DraftStop` carries its own key**, not the place id: head office at both
+  ends of a cash run is two rows, and a rail keyed by place id renders one.
+
+**What the screenshot caught that no test did.** The three-figure stat row put
+**"7 min estimate" on screen at 32px KPI size**, where the qualifier shouted
+louder than the number, and `4.6 km` wrapped onto three lines because a flex
+row let the widest figure squeeze the others. Now a 3-column grid, section-title
+scale, and `durationParts()` splits the qualifier into a caption — still
+travelling with the figure (`is_estimate` is why), just no longer the headline.
+
+**Mutations proved and restored:** a missing distance rendering `0.0 km`
+instead of an em dash; `summaryLine` joining unconditionally, producing
+`2 stops · — · —`; and stripping the stop names off the rail's controls, which
+took out three tests at once. Earlier, on the backend, the policy's tenancy
+half — dropping it answers **500, not 403**, the NOT NULL violation its
+docblock predicts.
+
+**Dependencies added, with the owner's approval:** `@dnd-kit/core`,
+`/sortable`, `/utilities`, `/modifiers` — MIT, free, no subscription.
+`npm audit` reports 4 pre-existing highs (`react-router`, `nanoid`,
+`brace-expansion`); **none are dnd-kit's**, and none are new.
+
+**Unverified, and it is the notable gap: the map itself.** This dev
+environment has no `VITE_GOOGLE_MAPS_API_KEY`, so every render fell to the
+honest empty state ("The map is not available here") — which *is* verified,
+and the rail keeps working beside it. **The numbered pins, the drawn polyline,
+the draggable pin and the bounds-fit have never been seen.** They need a key
+in `frontend/.env` and a second look.
+
+**Also left on the dev database:** two `client_places` for tenant 1 ("Acacia
+Mall", "Nakawa") created by the browser run. Harmless and realistic; deleting
+them would only make the feature look emptier than it is.
+
+**Deliberately not built:** stop-order optimisation (§7 refuses it), dwell
+minutes and per-stop driver notes in the UI (the columns and the API accept
+them; the rail does not yet edit them), route members on the builder (the API
+saves them, `RoutesPage` counts them, nothing sets them yet), and everything
+still queued from step 1 — `trip_stops`, the driver's actions, the live-map
+layer.
+
+---
+
+### 2026-08-20 — The map that never drew, and the circuits on the live map (ADR-0045, step 2b)
+
+**Status:** done. 526 frontend tests green across 52 suites; `tsc -b --force`
+and eslint clean. **Both maps rendered in a real browser** and screenshotted.
+
+**Source:** the owner, with a screenshot of a grey panel — *"we need to see
+these routes in real time"*, then *"this should be synced on the live-map
+page"*, then *"we also need to see the name of the point instead of just a
+number"*.
+
+**The builder's map never drew, and the previous entry called that
+"unverified" when it was in fact broken.** `googleMapsAvailable()` is false
+without `VITE_GOOGLE_MAPS_API_KEY`, and the key is optional —
+`frontend/.env.example` says so in as many words. So on every deployment
+without a Directions plan, a *visual* route builder had no visual half. It
+degraded honestly and was still useless, which is a lesson worth keeping: an
+honest empty state is not the same as a working screen.
+
+Fixed with the dual-engine shape `MapPanel`/`GoogleMapPanel` already use:
+`RouteMap` is now a chooser, `GoogleRouteMap` is the extracted original, and
+`LibreRouteMap` is the keyless MapLibre/CARTO engine `FleetMap` and
+`TripTraceMap` already run. Verified: real road polyline following real
+streets, numbered pins, 4.6 km / 7 min, no key.
+
+**`polyline.ts` is new and is why the fallback can draw a line at all.**
+`google.maps.geometry.encoding.decodePath` exists only on the paid engine, so
+a line that only draws there is a line most deployments never see. Twenty
+lines of arithmetic instead, pinned against **Google's own documented
+reference vector**. `looksLikeUganda` guards the one silent failure the format
+has — precision-6 data read at precision 5 decodes to well-formed coordinates
+ten times too large, and drawing those puts a plausible road in the Atlantic.
+
+**A test caught its own author.** The "round-trips a Kampala line" case used a
+polyline string I typed by hand; it decoded cleanly to 5.4°N, which is not
+Kampala. The fixture is now the encoding of two real points.
+
+**The live map layer.** `routeOverlay.ts` flattens routes into site pins;
+`FleetMap` gained one optional `routePins` prop and draws them under the
+vehicles; `LiveMapPage` fetches `/routes` **once, outside the poll** — a route
+changes when somebody edits it, positions change every ten seconds, and
+folding the two together would multiply a rare read by 360 an hour. Verified:
+11 pins from 4 routes, and unticking the toggle removes them.
+
+**Pins, not lines, and the layer says "planned".** Drawing a road per route
+would be one billed routing request per route on every page load. And nothing
+on this layer reports progress: `trip_stops` does not exist, so a "visited"
+colour would be a state the platform cannot observe. Every pin reads the same.
+
+**Names on the pins** (the owner's third message): a row of numbered dots is a
+riddle a dispatcher solves against a list they are not looking at. Both maps
+now render `2 · Ntinda Village 4`, capped and ellipsised so a long site name
+cannot turn a pin into a paragraph over the roads.
+
+**Known and visible: labelled pins overlap at city zoom.** In the verification
+screenshot "Acacia Mall" sits partly behind "Wandegeya". That is the cost of
+names over numbers and it is the owner's call whether to accept it; collision
+handling or a zoom threshold would be the fix.
+
+**Not a bug, seen in every run:** `403 /driver-presence` on the live map for a
+corporate client. `LiveMapPage`'s own docblock documents it — the riders are
+Shanitah's (security-gate F2), the page stops asking and switches to the
+anonymized `/public/nearby-vehicles` read.
+
+**Raised, not built: the driver picking a route.** The owner's fourth
+requirement conflicts with ADR-0045 §8 (members are who rides, *not* a
+permission), has no existing link to hang on ("the person who onboarded the
+driver" is fleet staff or self-registration, never a client's employee), and
+is really `trip_stops` wearing a different hat. Put to the owner rather than
+guessed at.
+
+---
+
+### 2026-08-20 — Mobile responsiveness for the admin console and the corporate client console
+
+**Status:** in progress. Claiming before code, per `docs/screen-rules.md`.
+
+**Source:** the owner — *"now we need make the all the admin side and corporate
+client side professionally mobile responsive for all devices."*
+
+**Measured first, at 360 / 390 / 768 / 1440 in Chrome.** What is actually
+broken, rather than what looks broken:
+
+1. **Nobody can sign in on a phone.** `LoginPage` is a two-column layout that
+   never collapses: at 390px the document is 725px wide, the marketing panel
+   fills the screen and the form — including the Sign in button at x=388 —
+   sits off-screen to the right. Playwright could not click Sign in at all.
+   This is the entry point to both consoles and it is the first fix.
+2. **Tables cannot be tables on a phone.** `/trips` renders a 1905px table
+   into a 360px viewport; `/drivers` 1302px, `/bookings` 1231px. The page
+   itself does not overflow (the `.kr-scroll` work below contained it), so
+   this is horizontal scrolling inside the card — five screens of travel to
+   read one row.
+3. **52 tap targets under 44px on `/drivers`**, 5 on bookings, 4 on customers.
+4. **Card headers collapse badly**: `Card`'s header is a `space-between` flex
+   with no wrap, so on a phone the title column squeezes to ~130px and the
+   subtitle reads one word per line beside overflowing filter controls.
+5. Smallest rendered font is 11px.
+
+**Good news, and it shapes the plan:** the corporate client console is *the
+same console* — same `AppShell`, `Card`, `DataTable`, same pages, with a
+role-filtered menu plus `ClientDashboard` and `OrganisationView`. Fixing the
+shared components fixes both sides at once. The sidebar already becomes an
+off-canvas drawer below 900px and its toggle is reachable at every width;
+that part works and is not being rebuilt.
+
+**Decision the owner ruled on:** below the breakpoint, a list row becomes a
+**card per row** — the 3–4 fields that matter, tap for the full detail —
+rather than a table with hidden columns or frozen-column scrolling.
+
+**Decisions I took, against the north star:**
+
+- **One breakpoint, not two.** `useSidebarState` already switches at 900px;
+  the card/table switch reuses it rather than inventing a second idea of
+  "small". Extracted so the two cannot drift.
+- **Declarative, on the column.** `DataColumn` gains a `card` hint
+  (`title` | `status` | `meta` | `hide`) so each page says which fields lead,
+  and an untagged table still degrades to readable label/value pairs instead
+  of a 1905px scroll.
+- **The docked detail becomes a full-height sheet on a phone.** 45% of an
+  800px screen is 360px, which is not a detail panel.
+
+**Files I expect to own:**
+
+- `frontend/src/lib/useMediaQuery.ts` (new) — the shared breakpoint + hook.
+- `frontend/src/components/data/DataCards.tsx` (new) — the phone card list.
+
+**Shared files I must touch, with the exact edit:**
+
+- `frontend/src/components/navigation/useSidebarState.ts` — import the
+  breakpoint from the new module instead of its private `MOBILE_QUERY`
+  constant. Behaviour identical.
+- `frontend/src/components/data/DataTable.tsx` — `card` field on
+  `DataColumn`; render `DataCards` below the breakpoint.
+- `frontend/src/components/core/Card.tsx` — header wraps and stacks below the
+  breakpoint.
+- `frontend/src/components/layout/PageFill.tsx` — `Docked` becomes a sheet on
+  small screens.
+- `frontend/src/components/navigation/Topbar.tsx` — compact identity on small
+  screens so the page title survives.
+- `frontend/src/pages/LoginPage.tsx` — collapse to one column.
+- The list pages — `card` hints on their columns only.
+
+**Not in this step, deliberately:** row virtualization (still the separate
+change it was), the public marketing pages (already responsive — 120 of the
+project's 121 breakpoint usages live there), and the driver app (native, not
+affected by any of this).
+
+**Status: done.** 531 tests across 52 suites, `tsc -b --force` and eslint
+clean. Measured in Chrome at 360 / 390 / 768 / 1440, signed in as a
+dispatcher *and* as a corporate admin, not eyeballed.
+
+**Result against the five faults measured at the start:**
+
+1. **Sign-in on a phone works.** At 390px the document was 725px wide with the
+   Sign in button at x=388; it is now 390px wide with the button at x=20,
+   full width, 48px tall. Playwright signs in at 360px.
+2. **No table below 900px on any converted page** — `tableW` is `—` at 360,
+   390 and 768, and 1905/1231/1302px again at 1440. A Trips row is a card:
+   two badges, the route as a wrapping heading, then Vehicle / Driver /
+   Distance / Duration / Started as labelled pairs.
+3. **Tap targets: 51 undersized controls on `/drivers` → 0.** Fixed at the
+   token, not per page.
+4. **Card headers stack** — title above the filter and search, each full
+   width, instead of a 130px title column beside overflowing controls.
+5. **Form text is 16px under a finger**, so iOS Safari stops zooming into the
+   page on focus.
+
+**Two decisions worth recording, because they are not what the brief implied:**
+
+- **The touch fixes are keyed on `pointer: coarse`, not on width.** Control
+  heights and control font-size are about what is doing the pointing: a
+  1024px tablet driven by a finger needs the 44px floor, a narrow desktop
+  window driven by a mouse does not. Only the *layout* switch (drawer, cards,
+  sheet) uses `COMPACT_MAX_WIDTH`. Two questions, two queries, and neither can
+  drift into the other.
+- **`useSyncExternalStore`, not `useState` + `useEffect`.** The first version
+  wrote state from an effect body and `react-hooks/set-state-in-effect`
+  refused it — correctly; the subscribe/getSnapshot pair is the API for an
+  external source like `matchMedia`, reads the right value during the first
+  render, and has no state to write.
+
+**A latent bug found and fixed on the way:** `UserMenu` carried a
+`kr-user-menu-identity` class and the comment "Hidden on narrow chrome", but
+**no CSS rule for that class existed anywhere in the app**, so it never hid.
+That is why "Dispatch Desk / Dispatcher" wrapped over three lines at 360px and
+took the strip the page title needed. Now driven from the shared breakpoint.
+
+**The corporate client console needed no separate work, and that was the
+finding that shaped the plan** — it is the same `AppShell`, `Card` and
+`DataTable` with a role-filtered menu, so every fix above lands on both sides
+at once. Verified as `admin@centenarybank.test` at 360px: dashboard, trips,
+bookings and invoices all render as cards with zero horizontal overflow and
+no console errors.
+
+**Shared files touched, as claimed, plus two not foreseen:**
+`src/test/setup.ts` gained a `matchMedia` stub — jsdom has none, and once
+`Card` read the breakpoint every page test threw inside
+`useSyncExternalStore` (239 failures). It reports "not compact" so the suites
+keep asserting against tables. `src/styles/tokens/typography.css` and
+`spacing.css` gained the coarse-pointer blocks described above.
+
+**Not done, deliberately:** `RateCardsPage`, `ReportsPage`, `DashboardPage`
+and `SystemSettingsPage` were left on page scroll — the first three are
+stacked panels or mixed dashboards rather than lists, and Settings is a long
+form. They are *usable* on a phone (zero horizontal overflow, controls now
+meet the touch floor) but their content is not curated for it. Row
+virtualization remains the separate change it has been throughout.
+
+**Untouched, seen mid-write again:** `StaffPage.tsx` and `types/staff.ts`
+broke `tsc` for several minutes with a `routes` prop `StaffDialog` did not yet
+accept — the other agent's ADR-0045 work. Left alone; it compiles now, and
+their new tests are among the 531.
+
+**Follow-up, same day — four things the owner spotted on a phone that the
+first pass missed.** All four had the same shape, and it is worth naming
+because the audit did not catch any of them: **an inline `style` overriding a
+media query, or a fixed track in a grid that never collapsed.** None of them
+produced horizontal overflow, so the "hOverflow: 0 everywhere" result that
+closed the first pass was true and still hid all four. Content was being
+destroyed *inside* its track instead of pushing past the viewport.
+
+1. **KPI tiles stacked one per row.** `repeat(auto-fit, minmax(200px, 1fr))`
+   needs 416px for two columns and a phone has ~312px. Now `StatGrid` (new,
+   shared — both dashboards had their own row and the platform one was a hard
+   `repeat(3, 1fr)`, three 93px columns at 360px). Two up on a phone; a tile
+   whose value will not fit half a screen takes `<KPIStat wide>`. "UGX
+   12,761,700" is 30px Sora Bold and wants ~240px against the ~148px a half
+   column gives it, so the money tiles span. Distance spans too: it is the
+   third of three short tiles and pairing left it beside a visible gap.
+2. **The dashboard's lower panels kept two columns**, so the approvals table
+   got ~90px and set "Kololo → Entebbe International Airport" one character
+   per line down the screen.
+3. **The live map did not render at all.** The fleet panel is
+   `width: 384, flexShrink: 0` in a horizontal flex; at 360px it took the pane
+   and the map's `flex: 1` collapsed to **zero width**. Now stacked, map above
+   at 55% with a 240px floor — `flex: 1` in a column would have resolved to
+   nothing, since a map has no intrinsic height.
+4. **The route view's map was `min(72vh, 640px)` with dead space beneath.**
+   `routeBuilder.css` already meant to give it 320px below 1024px, but the
+   card's inline `height` overrode it, so that rule had never applied — and
+   the same file's `grid-template-columns: 1fr` was overridden the same way,
+   which is why the stop rail was rendering **2px wide** beside the map. The
+   map now fills the pane (`100dvh` minus chrome — `dvh` because `vh` on
+   mobile Safari measures the viewport with the browser chrome retracted) and
+   the rail sits full width below it.
+
+**A regression the tests caught, and it was an accessibility one.** Extracting
+`StatGrid` as a `div` dropped the `region` landmark that
+`<section aria-label="This month">` carried — four ClientDashboard tests query
+`role="region"` and failed. It renders a `section` now. That is the second
+time this session a test earned its place by failing for the right reason.
+
+**Verified at 360px as a corporate admin:** tiles per row `[2,1,1,1]` with
+widths `148+148 / 312 / 312 / 312`; live map section 312×378 with a live
+canvas; `/routes/1` map 312×688 (viewport less chrome) with the rail 312 wide
+below it. 531 tests across 52 suites, `tsc -b --force` and eslint clean.
+
+**Touched another agent's files, deliberately and minimally:**
+`src/pages/routes/RouteBuilderPage.tsx` and `routeBuilder.css` for item 4. Its
+author had been idle over an hour with their work green. The change is two
+compact branches and the removal of a CSS `height` that could never take
+effect; their layout intent — map first on a narrow screen — is unchanged and
+now actually happens.
+
+---
+
+### 2026-08-20 — Branches: the client's own structure, and the Organisation screen it hangs off
+
+**Status:** in progress. Claiming before code, per `docs/screen-rules.md`.
+
+**Source:** the owner — *"http://localhost:5173/companies should be
+http://localhost:5173/company … clean this screen we have lots words that are
+not required … after we need to manage Branches, and branches should be
+connected to the staff management where we can search and select the Branch,
+and also connected to booking in the search for destination and or pickups …
+and also in the search for the Pick up we need to add the ability to choose
+current location … the overall is to make sure the employee or teams can be
+assigned to specific or different Branches for easy tracking."*
+
+**What already exists, and it is most of the hard part.** `client_places`
+(ADR-0045) is already the client's register of pinned locations, and its own
+migration docblock calls it *"The ATM estate, **the branches**, the head
+office"* — branches were in scope when it was designed. `currentLocationPlace()`
+and `geolocationRefused()` already exist in `frontend/src/pages/public/places.ts`
+and are used by the public order page; the admin booking dialog simply never
+got them. What does **not** exist is structure beneath a tenant:
+`Modules/Clients/README.md:84-88` — *"No departments, employees, branches or
+cost centres. Users belong to a tenant flat … so a bank cannot yet split spend
+by branch."*
+
+**Decisions the owner ruled on:**
+
+1. **A Branch is a saved place with a type**, not a second register. One
+   register, one map layer, one picker; the type lets the staff picker show
+   only branches while a booking may offer everything.
+2. **Stamped on bookings and trips, and invoices split by branch.** The
+   largest of the three options offered, and taken knowingly — I flagged that
+   invoice splitting is the shape `Modules/Clients/README.md` says a bank
+   eventually wants and that plan item B2's cost centres do not exist.
+3. **Several branches per person**, like the existing Routes roster.
+
+**The consequence of 2 + 3 together, which neither answer implies alone:** a
+person's branch is no longer a single value, so a booking cannot inherit it.
+**The booking form must ask which branch it is for**, defaulting when the
+requester has exactly one. Attribution has to be unambiguous or the invoice
+split is a guess.
+
+**Staged, because this is far more than one sitting:**
+
+- **Part 1 (this entry):** `/company` for the client's own organisation,
+  `/companies` kept for the platform's register; the Organisation screen cut
+  back to the words it needs.
+- **Part 2:** backend — `client_places.kind`, a `user_branches` pivot,
+  `bookings.branch_id`, policies, requests, resources, tests.
+- **Part 3:** UI — the branch register on Organisation, the staff multi-select,
+  the booking branch picker, saved places + current location in the pickup and
+  destination fields.
+- **Part 4:** reports and invoicing grouped by branch.
+
+**Files I expect to own (part 1):** none new.
+
+**Shared files I must touch, with the exact edit:**
+
+- `frontend/src/routes/router.tsx` — a `/company` route for `OrganisationView`
+  and a redirect from `/companies` for corporate roles.
+- `frontend/src/components/layout/AppShell.tsx` — `NAV_PATHS` and
+  `PAGE_BY_PATH` entries for the new path.
+- `frontend/src/pages/companies/OrganisationView.tsx` — copy only.
+
+**Not built in part 1, deliberately:** everything in parts 2–4. Also flagged
+and not silently fixed: security-gate **F9** — a corporate admin can already
+`PATCH /companies/{id}` including `credit_limit_minor`. I confirmed it over
+HTTP (200, limit set to 900,000,000) and restored the value. **No editable
+organisation form may ship until that request is split**, which now matters
+because part 3 puts a client-facing form near that endpoint.
+
+**Part 1 done.** 533 tests across 53 suites, `tsc -b --force` and eslint clean.
+Verified in Chrome as a corporate admin: the Organisation menu entry now
+navigates to `/company`, the topbar reads "Organisation", and an old
+`/companies` bookmark still renders their own organisation rather than 404ing
+— both paths render `CompaniesPage`, which already branched on role.
+`navPath()` sits beside `navLabel()` in `lib/navigation.ts` so the label and
+the address for a role are decided in one place. At 360px the page is four
+cards with zero horizontal overflow.
+
+**Copy cut:** the two-sentence footnote became "Invoices go to the billing
+email." Its second half — "contact your account manager to change any of
+these details" — was removed because it is **false**: a corporate admin holds
+`companies.update` and can already change them over the API. The honest
+replacement for it is a form, which belongs with part 3, not another sentence.
+The allocations subtitle went from twenty-one words to four.
+
+Parts 2–4 unstarted. The F9 warning above still stands and now gates part 3.
+
+---
+
+### 2026-08-20 — The wrong route on the pickup screen, and an honest hand-over between the two legs
+
+**Status:** in progress. Claiming before the second half; the first half (the
+route defects) is already green and is described below as done.
+
+**Source:** the owner — *"i have noticed we might be geting a wrong map route
+on teh Pickup passenger screen, i should be seeing where the client is and
+where i am going following the route … for the driver i should get a route
+guiding me where i will fine the client who made the request and when i alive
+we then switch to his or her route by her order … we can even have a preloader
+to kep things smooth, saying different words, like connecting to the client,
+finding the best route etc."*
+
+**What already existed and is being built on.** ADR-0031's routing is live and
+correct on the server: `TripRouteController` already takes `to=pickup|dropoff`
+and `RouteService` already caches on a snapped origin. Routing is configured
+on this dev database (OSRM, `router.project-osrm.org`). The two-leg hand-over
+the owner describes is also already the intended shape — Pickup asks for the
+approach, Waiting asks for the fare, TripInProgress routes from the driver.
+**Every defect found was on the handset side of that seam.**
+
+**Three defects, all confirmed before changing anything:**
+
+1. **`TripMapScreen` drew the drop-off road on the way to a pickup.** The
+   header, the target pin, the by-road distance and "Open in Maps" all
+   respected `boarded`; the route request alone took the default leg. Measured
+   against order 40 through the real `RouteService`: **7.3 km of approach
+   rendered as the 71.0 km fare.**
+2. **`PickupScreen` routed from a frozen position.** `usePosition()` with
+   `watch: false` takes one fix on mount, and `useTripRoute` refetches only on
+   a changed position — so the approach was drawn from the kerb the driver set
+   off from and never redrawn, with the "You" pin stuck there. The single fix
+   was right when `here` fed only a distance figure; ADR-0031 made the same
+   reading the *origin of the drawn road* and nobody revisited it.
+3. **With no route and no fix, the map drew the passenger's journey.**
+   `legFeatures` fell through to the pickup→drop-off leg, which is the one
+   line it still had. That is the owner's complaint verbatim, and it is the
+   ordinary case for the first seconds of the screen or a driver who declined
+   location.
+
+**Decisions taken, with the rule behind each:**
+
+- **`PickupMap`'s `boarded` boolean became a `leg: 'approach' | 'fare'`.**
+  `boarded` said *the passenger is in the car* and the map *inferred* the leg
+  from it, which is how a screen fell through to the wrong one. Naming the leg
+  means a screen can no longer draw the other by accident. A leg with nothing
+  to draw now draws **nothing** — screen-rules §1: better an absent line than
+  one that answers a question the driver is not asking.
+- **`useTripRoute` gained an `enabled` flag.** `TripMapScreen` reads its leg
+  off the trip's status, so on a cold open the leg is undecided; firing anyway
+  is two billed requests, one of them a guess. Quality-control's
+  subscription-expense north star — Directions bills per request.
+- **The preloader is full-screen, and it appears only while work is real.**
+  Flagged to the owner that `docs/screen-rules.md` §5 forbids animating a
+  surface seen dozens of times a day, and that scripted stage text would
+  violate §1. The owner chose the honest version: each stage is bound to a
+  request genuinely in flight, and a warm cache skips the moment entirely.
+  A ~120 ms delay before it appears is what makes that true in practice; a
+  ~400 ms floor once shown is what keeps a fast resolve from flashing.
+
+**Files owned — do not edit:**
+
+- `mobile/src/ui/Handover.tsx` + `Handover.test.tsx` — new, the surface.
+- `mobile/src/trips/handover.ts` + `handover.test.ts` — new, the latching and
+  the timing. Separate from the surface because the timing is the part with
+  the bugs in it and it is testable without rendering anything.
+
+**Files shared — minimal diffs, listed exactly:**
+
+- `mobile/src/trips/PickupMap.tsx` — `boarded` → `leg`; `legFeatures` draws one
+  leg or none. **Done.**
+- `mobile/src/trips/queries.ts` — the `enabled` parameter on `useTripRoute`.
+  **Done.**
+- `mobile/src/location/usePosition.ts` — docblock only; the hook is unchanged.
+  **Done.**
+- `mobile/src/screens/TripMapScreen.tsx` + `.test.tsx` — the leg, hoisted
+  `boarded`, stale docblock. **Done.**
+- `mobile/src/screens/PickupScreen.tsx` + `.test.tsx` — watched position,
+  `leg="approach"`, then the hand-over. Route half **done**.
+- `mobile/src/screens/WaitingForPassengerScreen.tsx` — explicit `leg="fare"`
+  **done**; the arrival hand-over to follow.
+- `mobile/src/screens/TripInProgressScreen.tsx` — `boarded` → `leg="fare"`,
+  one line. **Done.**
+- `mobile/src/ui/Skeleton.tsx` — export `usePulse`, which is the pulse the
+  hand-over's active step needs and which AGENTS.md says becomes shared the
+  moment it has a second caller. No behaviour change.
+
+**Not built, deliberately:** no ETA anywhere, ADR-0020 §3 and ADR-0031 §6 —
+the hand-over says what it is doing, never how long it will take. No new
+dependency and no animation library; `Animated` and the existing `motion`
+tokens carry it.
+
+**Verified so far.** 855 mobile tests across 60 suites, `tsc --noEmit` and
+eslint clean. Both new guards proved by mutation and restored: reverting the
+leg argument turns `TripMapScreen.test.tsx` red on two tests, and reverting
+`usePosition({ watch: true })` turns `PickupScreen.test.tsx` red on one.
+
+**Done.** 883 mobile tests across 64 suites, `tsc --noEmit` and eslint clean.
+Backend untouched; its 24 CI contract tests still pass after the spec edit
+below.
+
+**What the hand-over became, and the decision that changed its shape.** The
+owner picked the full-screen option knowingly after the §5 conflict was put to
+them, and chose the honest form: every line bound to a live request, a warm
+cache skipping it entirely. Building it surfaced one thing neither of us had
+weighed — **the API client allows a request fifteen seconds, and the routing
+engine in front of it is a rate-limited public server.** A hand-over that
+waits for the road would put the passenger's phone number behind a loading
+screen for that long, on the one surface a driver opens because they need to
+ring somebody. So `useHandover` also has a **ceiling**: four seconds and it
+stands down, uncovering a screen that was never actually waiting on the road.
+That was decided here rather than asked, because there is no version of this
+worth shipping without it.
+
+`isLoading`, not `isPending`, at both call sites — React Query leaves a
+request *pending* while it is paused for want of a network, and a hand-over
+waiting on a paused request would sit there until the driver found signal.
+
+**Proved by mutation, all restored.** Each of the three timings turns exactly
+one test red when broken (`APPEAR_AFTER_MS` → the warm-cache test,
+`AT_LEAST_MS` → the floor, `GIVE_UP_AFTER_MS` → the ceiling), and making the
+terminal `over` phase re-openable turns the reappearance test red — that one
+matters most, since `useTripRoute` re-pends every ~100 m and the moment would
+otherwise come back over a map the driver is reading.
+
+**Rendered, not just tested.** A throwaway probe mounted the real
+`PickupScreen` through all three states and dumped the resolved tree, since
+these screens cannot render in a browser: *"Connecting to the passenger"* (rail
+1 of 2) → *"Finding the road to the pickup · Acacia Mall, 14-18 Cooper Rd"*
+(2 of 2) → the screen itself, with Sarah N., the call button, the route rail,
+"To pickup —" and "I've arrived". Probe deleted.
+
+**Two contract gaps found and fixed, neither of them mine.**
+
+- `docs/api/openapi.yaml` **never documented `to`** on `/trips/{trip}/route`,
+  although `TripRouteController` has validated it since ADR-0031. The census
+  test checks that every route has a row, not that every parameter is
+  described, so the drift was invisible. Added, with the `to=pickup` origin
+  rule.
+- `Modules/Trips/README.md` **had no section on routing at all**. Added one,
+  leading with the leg table and the 7.3-vs-71.0 km measurement, because a
+  default that quietly means "the other road" is the exact shape of the bug
+  this session started with.
+
+**Not built, deliberately:** no hand-over on `TripInProgressScreen` — the
+driver is mid-journey with a passenger aboard and a map already drawn, and
+covering that to announce a re-route is the thing §5 forbids outright. No
+hand-over on `TripMapScreen` either: it is opened *from* a screen that has
+already done its connecting, and its own map degrades to a dashed line
+without ceremony. No ETA, no percentage, no "almost there" — ADR-0020 §3 and
+ADR-0031 §6, and a bar that fills at a rate somebody chose is the same
+invented figure in a friendlier shape.
+
+**Left for whoever is next.** `TripMapScreen`'s docblock still describes a
+world with no routing engine in two other places I did not touch, and
+`PickupMap` still duplicates `TripMap`'s document scaffold — a debt its own
+docblock records and which this change did not make worse.
+
+---
+
+### 2026-08-20 — Staying reachable in a pocket: the background shift, the ringtone, and the push that had never worked (ADR-0046)
+
+**The owner's ask, in three sentences:** keep the app working in the background
+for as long as "You are online" is on; announce an order request the way a
+WhatsApp call does, when the phone is locked or the app is closed; play a
+ringtone while the countdown runs.
+
+**Status:** stages 0–4a complete. 900 mobile tests across 66 suites, `tsc
+--noEmit` and eslint clean; 180 backend tests across the Dispatch, Notifications,
+Trips and Customers filters. Two guards proved by mutation and restored
+byte-identical. **Not yet run on a handset** — see the honest half at the end.
+
+**Decisions the owner made before I built anything** (I asked four questions):
+both platforms with full parity including CallKit; the full-screen call UI
+staged rather than first; the offer window to 45 seconds; and yes to EAS
+development builds.
+
+## Three things were already broken, and tracing the ask is what found them
+
+**Push had never worked, on any handset, ever.** `getExpoPushTokenAsync` needs
+an EAS project id; `app.json` had none, so the call threw straight into
+`PushRegistrar`'s deliberately-quiet catch. The backend channel, the
+`device_tokens` table, the ADR-0022 allow-list entries and the notification
+class were all correct and all unreachable behind one missing key. Nothing
+failed. Nothing happened.
+
+**Nothing in the app handled a notification.** No `setNotificationHandler`, no
+response listener, no cold-start check. A push arriving with the app open was
+suppressed by Android; a tap opened the app wherever it already was.
+
+**A driver in their pocket silently left the dispatch pool.** This is the one I
+would have flagged even if the owner had asked for nothing:
+`PresenceController` is a `setInterval` in a React component, Android throttles
+those on backgrounding, and `presence_ttl_seconds` is 180. Three minutes after
+the screen went dark a driver stopped being dispatchable while their app still
+read **"You are online"** — precisely the failure `DutyBar`'s own docblock
+calls the worst this feature can have.
+
+## The keystone, and why it is location rather than a timer
+
+The Android **foreground service** — the ongoing "You are online" notification,
+started through `expo-location`'s background updates. It keeps the process
+alive, and the heartbeat, the push handler and the ringtone all depend on that.
+
+I went looking for the data-only-push-builds-the-call-screen design first,
+because it is what every article describes. It does not work: Android does not
+deliver data-only messages to a terminated process, and `expo-notifications`'
+background task does not fire there (expo/expo#38223, #13767). That approach
+becomes viable *because* of the service, not instead of it.
+
+Location is also the honest declaration. Google Play's approved foreground
+use-cases name "ride tracking for ride share"; a service invented as a pretext
+for a wake lock would not have been covered, and would not have deserved to be.
+
+**iOS has no equivalent and I have not pretended otherwise** — recorded in the
+ADR rather than smoothed over.
+
+## What the field work changed about the ringtone
+
+The way this feature fails is by **not stopping**, and that is worse than never
+ringing: the driver has accepted, the passenger is in the car, and the phone
+will not stop. Three routes reach it — a missed `stop`, a `stop` called on a
+different player after a remount (`OfferPresenter` remounts on `key={offer.id}`
+by design), and Expo SDK 57's open bug where a looping player outlives its
+owner (expo/expo#47569).
+
+So the rules live in `duty/ringtone.ts` as a state machine over ports, with a
+**hard deadline armed at `start`** from the offer's own window. Even if every
+caller forgets, the handset falls silent two seconds after the offer could no
+longer be live. **Proved by mutation:** deleting the `setTimer` block fails four
+tests.
+
+`duckOthers`, never `doNotMix` — a driver being offered a job is often
+mid-turn-instruction, and cutting Google Maps off is a road-safety problem
+rather than a UX one.
+
+## Files I own — do not edit
+
+- `mobile/src/duty/presence.ts`, `presence.test.ts`
+- `mobile/src/duty/PresenceTask.ts`, `OnlineService.ts`
+- `mobile/src/duty/dutyStore.ts`, `dutyStore.test.ts`
+- `mobile/src/duty/ringtone.ts`, `ringtone.test.ts`, `offerRingtone.ts`,
+  `ringtonePreference.ts`
+- `mobile/src/push/expoNotifications.ts`, `channels.ts`, `PushRouter.tsx`,
+  `routing.ts`, `routing.test.ts`
+- `mobile/assets/sounds/offer_ring.wav`, `mobile/eas.json`
+- `backend/Modules/Notifications/Notifications/TripOfferWithdrawnNotification.php`
+- `docs/adr/0046-staying-reachable-while-on-duty.md`
+
+## Shared files I touched, with the exact edit
+
+- `mobile/app.json` — background-location and notification permissions, iOS
+  background modes, the `sounds` array. **Also changed the `expo-notifications`
+  accent from `#2563EB` to the brand green**: that blue was a leftover default
+  and it is the tint a driver sees on a locked screen for an offer.
+- `mobile/index.ts` — imports `PresenceTask` for its side effect. **Do not
+  remove it as unused**; the comment there says why at length.
+- `mobile/App.tsx` — `loadRingtonePreference()` at module scope.
+- `mobile/src/api/endpoints.ts` — `DUTY_REQUEST_TIMEOUT_MS` was declared in
+  `config.ts`, argued for in its own docblock, and **never passed anywhere**.
+  Both duty writes now carry it.
+- `mobile/src/duty/PresenceController.tsx` — now calls the shared
+  `reportPresence`; mirrors duty state to `dutyStore` for the task.
+- `mobile/src/duty/useDutyToggle.ts` — background permission, and `goOnline` /
+  `goOffline` driven by **the server's answer, not the toggle's position**.
+- `mobile/src/duty/OfferPresenter.tsx` — starts and stops the ring.
+- `mobile/src/auth/AuthProvider.tsx` — `goOffline()` on both sign-out paths.
+- `mobile/src/navigation/RootNavigator.tsx`, `navigationRef.ts` (adds
+  `openTrip`), `jest.setup.ts` (AsyncStorage + `expo-audio` mocks).
+- `mobile/src/ui/components.tsx` — a `SwitchRow` primitive; the design system
+  had no switch.
+- `mobile/src/screens/ProfileScreen.tsx` — the "Job offer sound" row.
+- `backend/config/dispatch.php` — `offer_ttl_seconds` 15 → **45**, and
+  `offer_max_rounds` 5 → **3**.
+- `backend/Modules/Notifications/Notifications/KangaruNotification.php` —
+  `pushOptions()` and `pushIsSilent()`.
+- `backend/Modules/Notifications/Channels/ExpoPushChannel.php` — merges them.
+  `to` stays the channel's; **proved by mutation** that a notification cannot
+  redirect its own push to another handset.
+- `backend/Modules/Notifications/Enums/NotificationType.php` — the
+  `trip.offer_withdrawn` case, push-only.
+- `backend/Modules/Dispatch/Services/DispatchOfferService.php` — `withdraw()`.
+- `backend/Modules/Customers/Controllers/CustomerRideController.php` — withdraws
+  on cancellation, which is the case it was written for.
+
+## The rounds change, flagged rather than made quietly
+
+45 seconds and 5 rounds is **3m45s** of spinner before an order reaches the
+human queue, which is longer than most people wait before phoning the office —
+at which point the matcher has produced a worse outcome than not running. Cut
+to 3 rounds: 2m15s, close to the old pair's 1m15s. The rounds given up are the
+least valuable, where the matcher is offering to its fourth choice.
+
+## The honest half
+
+**None of this has run on a handset.** It cannot yet: it needs a development
+build, and the app has never had one — no `eas.json` existed until this entry.
+
+The owner supplied the project afterwards: `app.json` now carries
+`owner: realakram20s-team` and
+`extra.eas.projectId: 428e44a0-67ff-4336-a4eb-9cb5c0406258`, and
+`expo config` resolves both. The owner then logged the CLI in as `realakram20` /
+`realakram20s-team`, and `eas project:info` now resolves
+`@realakram20s-team/kangaru`.
+
+**The app's slug is now `kangaru`, and that is deliberate.** I first advised
+renaming the EAS project to `kangaruride-driver` and was wrong — the owner made
+a wasted trip to the dashboard for it. An EAS project id is permanently bound
+to one slug (*"A project ID is associated with a single slug, which cannot be
+changed"*, expo.fyi/eas-project-id); renaming on the dashboard changes the
+display name only. So the app moved to meet the project. **Nothing on a handset
+changed** — the package `ug.co.kangaruride.driver`, the `kangaruride-driver`
+deep-link scheme and the display name are all untouched; the slug is an
+Expo-side identifier. It is written up in `mobile/README.md` under a heading
+saying not to "fix" it back.
+
+Note for whoever does it: the EAS dashboard's onboarding snippet begins
+`npx create-expo-app kangaru`. **Do not run it** — it scaffolds a new app in a
+subdirectory. The existing `mobile/` project is already linked by the two
+`app.json` keys above.
+
+The tests prove the logic and the mutations prove two guards. They cannot prove
+a foreground service survives a Tecno's battery manager, that the ringtone
+pierces silent mode, or that the ring stops when a second driver wins. Those
+need the walk-through in the plan, on a real phone, with the screen locked.
+
+**The ringtone is a generated placeholder** — two rising chimes, loop-clean at
+both ends, verified as a valid 4s mono WAV with real content. It is not a
+designed brand asset and should be replaced by one. Note that swapping it means
+`offers.v2`: an Android channel is immutable once created, and
+`setNotificationChannelAsync` **succeeds and changes nothing** when called again
+with a different sound. That works on a fresh install and not on any handset in
+the field, which is the worst shape a bug can take.
+
+**Not built, deliberately:** the true full-screen `CallStyle` notification
+(staged behind Google Play's `USE_FULL_SCREEN_INTENT` declaration — only alarm
+and calling apps get it automatically, so the degraded path had to exist first
+and be good); CallKit on iOS; the OEM battery-optimisation prompt; and the
+call-style visual redesign of `OfferScreen`, which is a screen and wants
+`docs/screen-rules.md` and a mockup pass rather than being smuggled in here.
+
+**Notifee must not be added** when the full-screen step is taken — Invertase
+archived it in April 2026. `react-native-notify-kit` is the endorsed fork.
+
+**One thing I found and did not fix, because it is not mine:** the Android
+manifest carries `RECORD_AUDIO`, which `expo-image-picker` adds by default for
+video capture this app never does. It shows as "Microphone" on the Play
+listing. `microphonePermission: false` on that plugin removes it; whoever owns
+the odometer capture screen should make the call. I set `recordAudioAndroid:
+false` on `expo-audio` so my own addition did not become a second source of it.
+
+**Two foreground service types now need a Play Console declaration**, not one:
+`location` for the shift, and `mediaPlayback`, which `expo-audio`'s plugin adds
+so the ringtone can sound while the app is backgrounded.
+
+---
+
+### 2026-08-20 — Four things a handset screenshot exposed while the API was down
+
+**Status:** in progress. Claiming before code. Follows my own entry above
+("The wrong route on the pickup screen"); same owner, same session.
+
+**Source:** two screenshots from the owner's handset at 6:19 and 6:20 —
+*"Trip in progress / On the way"* with *"Sending 3 updates…"*, every figure an
+em dash, and a dashed line where a road should be. The owner asked whether the
+route fix had covered this.
+
+**It had not, and the honest first answer was that it had changed nothing on
+either screen.** Both were already drawing the correct leg; the bug fixed
+earlier was on `PickupScreen` and `TripMapScreen`. What those screenshots
+actually show is **the API being unreachable** — nothing listening on
+`192.168.1.138:8000`, no PHP process, and `trips` empty in the dev database, so
+the server never received any of it. Every em dash follows from that: no
+`driver_arrived` event, no `started_at`, no route. **Not a bug, and nothing
+here pretends otherwise.**
+
+What *is* worth fixing is how the app behaves while that is true. Four things,
+all of them found by reading a screenshot of a broken environment:
+
+1. **One failed route request kills the road for the life of the screen.**
+   `useTripRoute` sets `retry: false`, and on `WaitingForPassengerScreen` the
+   query key is deliberately stable (`here` is `null` — the driver is at the
+   pickup). So a single failure leaves that screen dashed **even after the API
+   comes back**, until it remounts. `refetchOnReconnect` does not save it:
+   the wifi never dropped, only the office went away.
+2. **"Sending 3 updates…" is the wrong word when nothing can send.**
+   `SyncBanner`'s `online` comes from NetInfo, which knows about the internet
+   and not about this API. A driver reading "Sending" concludes the office has
+   their work. The count climbed 1 → 3 across the two screenshots and nothing
+   was moving.
+3. **The stat card covers the Drop-off pin.** `position: absolute; right; bottom`
+   over a 220pt map that frames its pins to the edges. Visible in the 6:20
+   screenshot: the badge sits on top of the marker it is meant to sit beside.
+4. **The title contradicts the subtitle.** "Trip in progress" over "On the
+   way"; "Waiting for Passenger" over "On the way". The screen advanced
+   locally on a queued transition; the subtitle reads the *server's* stale
+   status. `PickupScreen` already solved this with a queued-state notice;
+   these two never got it.
+
+**Decisions, with the rule behind each:**
+
+- **Fix 1 is a bounded retry plus a poll that only runs while errored.** Not an
+  unbounded retry: Directions bills per request and the existing docblock
+  argues that cost at length. A poll gated on `status === 'error'` costs
+  nothing in the ordinary case and self-heals in the one case that matters.
+- **Fix 2 reports what the drain actually did**, rather than inventing a
+  reachability probe. `DrainOutcome` already carries `completed`; passes that
+  move nothing while items are pending are the honest signal, and two
+  consecutive ones is ~30s at the 15s tick. Screen-rules §1: the banner may
+  not claim progress it cannot observe.
+- **Fix 3 gives the map asymmetric padding rather than moving the badge.** The
+  floating badge is a deliberate design in two screens, and the real defect is
+  that the map frames into space an overlay occupies. One optional prop naming
+  which corner is covered; the map does the arithmetic.
+- **Fix 4 shows the status the driver asked for**, not the one the server last
+  confirmed. Honest because `SyncBanner` sits directly beneath saying it is
+  unsent, and `queued` is read off the outbox and cannot invent a status.
+
+**Files I own for this entry:** none new.
+
+**Shared files, with the exact edit:**
+
+- `mobile/src/trips/queries.ts` — retry and the errored-only refetch on
+  `useTripRoute`. Mine from the entry above.
+- `mobile/src/offline/SyncProvider.tsx` + `SyncBanner.tsx` — a `stalled` flag
+  off the drain outcome, and the wording that reads it. **Neither is claimed
+  by the ADR-0046 entry above; I checked its owned and shared lists.**
+- `mobile/src/trips/PickupMap.tsx` — the `overlay` prop. Mine from above.
+- `mobile/src/screens/TripInProgressScreen.tsx`,
+  `WaitingForPassengerScreen.tsx`, `PickupScreen.tsx` — the overlay prop and
+  the subtitle. Mine from above.
+
+**Checked for collision before claiming:** the ADR-0046 agent's last write was
+19:33 and the tree has been quiet since; their owned list is duty, push,
+ringtone, `eas.json` and the withdrawn-offer notification, and their shared
+list is `app.json`, `index.ts`, `App.tsx`, `endpoints.ts`, `PresenceController`,
+`useDutyToggle`, `OfferPresenter`, `AuthProvider`. **No overlap with any file
+above.** `node_modules` has not moved since 18:30, so their SDK bump is already
+in the tree my numbers will be measured against.
+
+**Not built, deliberately:** no reachability ping. A banner that says "can't
+reach the office" because a drain moved nothing is reporting an observation; a
+banner that says it because a health endpoint failed is a second network call
+per tick to tell a driver what the queue already knows.
+
+**Done.** 920 mobile tests across 69 suites, `tsc --noEmit` and eslint clean.
+Three suites are new — `offline/stall.test.ts`, `ui/SyncBanner.test.tsx`,
+`trips/queries.test.tsx` — and 20 tests. Measured on the tree the ADR-0046
+agent left; `node_modules` has not moved since 18:30, so their SDK bump is
+already underneath these numbers.
+
+**Two of the four grew a testable seam rather than staying where they were.**
+
+- **`offline/stall.ts` is new.** The fruitless-drain counting started life
+  inline in `SyncProvider`, where it cannot be tested at all — the provider
+  wants SQLite, NetInfo and a live API, and this is the only part of it with a
+  decision in it. It is now `fruitlessRun(previous, outcome)` and
+  `isStalled(run)`, both pure, with the argument in one docblock instead of
+  spread over three comments.
+- **`SyncBanner` had no test whatsoever.** Every screen mocks it away, which is
+  exactly how the wrong word survived: the one strip whose job is telling a
+  driver where their work is, and nothing anywhere asserted a sentence of it.
+  Seven tests now pin the wording matrix, including the two that would have
+  caught this — that "Sending" requires the queue to be moving, and that a
+  stalled queue never blames the phone for the office being away.
+
+**All eight mutations proved and restored byte-identical:**
+
+| Mutation | Turns red |
+| --- | --- |
+| `retry: 1` → `false` | tries again once |
+| poll on error → never | the road returns when the office does |
+| poll on error → always | never polls a road it already has |
+| stall never counts | 2 stall tests + 2 banner tests |
+| idle queue counts as stalled | does not call an idle queue stalled |
+| banner ignores `stalled` | 2 banner tests |
+| map ignores `OVERLAY` | frames the pins clear of a badge |
+| subtitle reads the server | says what the driver asked for |
+
+**Rendered, not just asserted.** A throwaway probe lifted the generated
+`OVERLAY` declaration and `pad()` out of the real map document and **executed
+them**, since asserting on HTML source proves only that a string is present:
+
+```
+overlay=null          pad(28) = 28
+overlay=bottom-left   pad(28) = {top:28, bottom:28, left:138, right:28}
+overlay=bottom-right  pad(28) = {top:28, bottom:28, left:28,  right:138}
+```
+
+Even padding when nothing is floated, and 110pt of extra room on exactly the
+covered side otherwise. The **side and never the bottom** is the part worth
+keeping: a corner-anchored badge is cleared whatever height it grows to, and
+padding the bottom as well would eat half of a 220pt map to solve the same
+problem twice. Probes deleted.
+
+**One thing I did not do, and it is the actual fix for the screenshots.** None
+of this makes the API reachable. `php artisan serve --host 0.0.0.0 --port 8000`
+is still not running on this machine, and until it is, the honest behaviour of
+all four of these is the behaviour the owner photographed — only now the words
+match it. Flagged to the owner rather than started: the dev stack is four
+processes and which of them to run is theirs to say.
+
+**Not built, deliberately:** no reachability ping, for the reason in the claim
+above. No retry-count display — a driver does not need to know it is attempt
+seven, only that the work is held and still being tried. No change to
+`TripMapScreen`'s badge, which sits in a footer below the map rather than over
+it and never had this collision.
+
+---
+
+### 2026-08-20 — Getting the driver app onto a device, and the two bugs that surfaced on the way
+
+**Status:** done for the code; a `preview` APK is building as this is written.
+Follows my two entries above; same owner, same session.
+
+**Source:** the owner, from the emulator — *"i can not see the expo go"*, then
+*"i can not see the app"*, then *"we are still geting the no connection
+thing"*. Every one of those turned out to be a different cause, and none of
+them was the one the words suggested.
+
+## What the owner actually hit, in order
+
+1. **Expo Go was gone** — correctly, and by this session's own ADR-0046 work.
+   `mobile/README.md` already said so; the emulator running was `Test_Android`
+   rather than `kadson_dev`, but that was moot.
+2. **The first EAS build died uploading.** `ECONNRESET` at 10.2 MB of **96.9
+   MB**. See `.easignore` below; this is the finding worth keeping.
+3. **"No connection. Signing in needs one"** was **not** NetInfo. It is
+   `AuthProvider`'s catch for a request that never completed. Windows Firewall
+   is enabled on all three profiles with no inbound rule for 8000, so the
+   emulator pinged `192.168.1.138` over ICMP and got nothing on TCP.
+   `mobile/.env` was pointing at that LAN address; commenting it out lets
+   `src/config.ts` fall back to `10.0.2.2`, which is what that default is for.
+4. **Two errors hiding behind a third.** A screenshot of the device plus
+   `logcat` — not the app's own words — showed a LogBox card with three
+   errors: the dev client still trying to reach Metro at the firewall-blocked
+   LAN address, and a released `expo-sqlite` handle from repeated hot reloads.
+   A force-stop and a deep link to `localhost:8082` cleared both.
+
+## The bug that was real, and would have hit a driver
+
+**`PresenceController`'s `getFix` let a rejection escape the heartbeat.**
+
+`presence.ts` declares the port as `getFix: () => Promise<PresenceFix | null>`
+and awaits it **outside any try/catch**, deliberately: it has a `no_fix`
+outcome, documented as *"a basement"*, and the controller's own comment calls a
+missing fix "ordinary and deliberately silent". But
+`getCurrentPositionAsync` does not return null when there is no position — it
+**throws**, and on Android that includes exactly the cases this heartbeat is
+built for: indoors, a tunnel, location switched off mid-shift.
+
+So the rejection travelled out of `reportPresence`, out of `report()`, and
+landed as an unhandled promise rejection — **a red error card in front of a
+driver, once every sixty seconds**, reading *"Current location is unavailable.
+Make sure that location services are enabled"*. The emulator made it obvious
+because it has no fix at all until one is injected; the handset case is the
+real one.
+
+The adapter now honours the type it was written against: catch, return `null`,
+let `reportPresence` take the `no_fix` path it already has. **`presence.ts`
+itself is untouched** — it was right.
+
+`PresenceTask.ts` was checked and does **not** have this hole: it receives
+already-delivered fixes from the background task rather than requesting one.
+Both are the ADR-0046 agent's files and neither was edited.
+
+## Files touched
+
+**Shared, minimal diffs:**
+
+- `mobile/src/duty/PresenceController.tsx` — the `getFix` callback only, plus
+  its comment. **This file is on the ADR-0046 entry's *shared* list**, and the
+  change does not touch their `reportPresence` wiring.
+- `mobile/src/duty/PresenceController.test.tsx` — two tests appended.
+
+**New, at the repository root:**
+
+- `.easignore` — and this is the one another agent will want to know about.
+  `mobile/` is not its own git root, and eas-cli takes its archive from
+  `git rev-parse --show-toplevel` (read out of its own source, not guessed),
+  so **every EAS build was uploading the entire platform**: 821 backend files,
+  243 frontend, 156 CI workflows, the design system and its 15 MB zip. 96.9 MB
+  to compile one Android app, over a connection that dropped at 10.2 MB.
+  Now 33.2 MB, uploaded in 46 seconds.
+
+  Verified with the same mechanism eas-cli uses —
+  `git ls-files --exclude-from=.easignore --ignored --cached` — which caught a
+  real mistake: a bare `README.md` pattern also matched `mobile/README.md`.
+  Every root entry is anchored with a leading `/` now, and **nothing under
+  `mobile/` is dropped**.
+
+**Not committed, machine-local:** `mobile/.env` (gitignored) has its LAN line
+commented out with the reasoning inline; **restore it for handset testing**.
+An EAS environment variable `EXPO_PUBLIC_API_BASE_URL` was created on the
+`preview` environment rather than editing `eas.json`, which the ADR-0046 entry
+lists as owned.
+
+**Why that env var is load-bearing:** `mobile/.env` is gitignored, so it never
+reaches EAS. A `preview` build compiles its JS *on Expo's servers*, where the
+file is absent — so without the variable it would have silently baked in the
+`10.0.2.2` emulator fallback and produced an APK that fails every request with
+nothing in the log to explain it.
+
+**Verified.** 922 mobile tests across 69 suites, `tsc --noEmit` clean. The new
+guard proved by mutation: putting the throw back turns *"treats a handset with
+no fix as a quiet no-op"* red, and restoring it green.
+
+**Not done, deliberately:** no firewall rule — it needs admin, so the command
+went to the owner rather than being attempted. No deployed backend: the
+standalone APK is pinned to this laptop's LAN address, which is a demo
+artifact and not something to hand a driver. `backend/.env.production.example`
+still carries `APP_URL=<<OWNER>>`.
+
+---
+
+### 2026-08-20 — A standalone APK for tomorrow's test, and the placeholder icon nobody had noticed
+
+**Status:** done; the APK build is running as this is written. Continues my
+three entries above. **Touches `mobile/app.json` and `mobile/package.json`,
+both on the ADR-0046 entry's shared list** — the exact edits are below.
+
+**Source:** the owner — *"i thought the apk you gave me was our pure app but
+it's expo thing"*, then *"we need the exact apk. because we want to get live
+tomorrow. for testing"*, and separately the brand mark with *"this should be
+our favicon and app icon"*.
+
+**The dev build was not the wrong artifact, it was the wrong *kind*.** A
+`development` profile APK carries no JS — it fetches from Metro — so on a
+handset it opens as a launcher. The `preview` profile is the standalone one:
+JS bundled, no dev client, no Metro. That distinction had been stated but not
+plainly enough, and it cost the owner a download.
+
+## expo doctor fails the build, and it caught something real
+
+The first `preview` build died on `expo doctor`, which EAS runs and whose exit
+code fails the build. Three findings, one of which mattered:
+
+1. **`expo-asset` was missing** — a peer dependency of `expo-audio`, which
+   ADR-0046 added for the offer ringtone. Doctor's own wording: *"Your app may
+   crash outside of Expo Go without this dependency."* A standalone APK is
+   exactly "outside Expo Go". **This would have crashed tomorrow's test**, and
+   nothing before it had said so, because the development build never
+   exercises it.
+2. **`androidNavigationBar` is not in the SDK 57 schema.** It held
+   `{barStyle: dark-content, backgroundColor: #FFFFFF}`. Removed; the bar now
+   takes the system default. Restoring the white bar means the
+   `expo-navigation-bar` plugin — a follow-up, not a blocker.
+3. **Seven packages a patch behind the SDK** — `expo`, `expo-location`,
+   `expo-notifications`, `expo-task-manager`, `expo-auth-session`,
+   `expo-file-system`, `expo-image-picker`. Aligned with `expo install --fix`.
+
+**Why the development build passed and this did not:** doctor is the same, but
+nothing about a dev client forces the peer dependency to resolve at runtime.
+The first build that bundles JS on EAS is the first build that has to be
+whole.
+
+## The icons were never set
+
+`mobile/assets/icon.png`, `android-icon-foreground.png` and `splash-icon.png`
+were **still Expo's template placeholders** — the blue "A" with construction
+guides, and the concentric-circle test pattern. Rendered and looked at before
+replacing anything, which is the only reason it was noticed. Had the build
+shipped, testers would have installed an app with Expo's default icon.
+
+Generated from `material/logo/Kangaruride (2).png` (727², transparent
+surround) with ImageMagick:
+
+| Asset | Size | Note |
+| --- | --- | --- |
+| `icon.png` | 1024² | flattened on white — iOS app icons cannot carry alpha |
+| `android-icon-foreground.png` | 512² | mark at 70% of canvas, clear of the circular mask |
+| `android-icon-background.png` | 512² | solid **white** |
+| `android-icon-monochrome.png` | 432² | white silhouette of the mark |
+| `splash-icon.png` | 1024² | mark, transparent |
+| `frontend/public/assets/favicon.png` | 1024² | master; `favicon-64` + `apple-touch-icon` regenerated by `tools/resize-brand-assets.mjs`, as `index.html` instructs |
+
+**Two judgement calls, both stated rather than silent:**
+
+- **The adaptive background is white, not the `#0F172A` `app.json` still names
+  as its fallback colour.** The mark is a navy ring around a white disc; on
+  navy the ring disappears and it reads as a kangaroo floating in a dark
+  square. `app.json`'s `backgroundColor` was left alone — the background
+  *image* wins, and changing the colour would be a wider edit to a shared file
+  for no gain.
+- **`android-icon-monochrome.png` does double duty**: `app.json` also uses it
+  as the `expo-notifications` icon, and Android flattens those to a
+  single-colour silhouette — anything else renders as a white blob. It is
+  derived from the mark's coloured elements so an offer notification still
+  looks like KangaruRide.
+
+## Files touched
+
+- `mobile/app.json` — removed `androidNavigationBar`; `expo install` appended
+  the `expo-asset` plugin. **Shared file.**
+- `mobile/package.json` + `package-lock.json` — `expo-asset` added, seven
+  patch bumps. **Shared file, and it changes native versions**: anyone with a
+  running dev client should expect to rebuild it.
+- `mobile/assets/*` — six icons replaced.
+- `frontend/public/assets/favicon.png` + the two generated sizes.
+
+**Verified.** `npx expo-doctor` **21/21 checks passed**, `tsc --noEmit` clean,
+922 mobile tests across 69 suites green after the dependency bump.
+
+**A build was cancelled deliberately.** `8eab4775` was ~5 minutes into
+compiling when the icons were ready. Letting it finish would have handed the
+owner an APK carrying Expo's placeholder icon on the eve of a public test, so
+it was cancelled and restarted with the assets in. Stated here because
+cancelling somebody's build is not a thing to do quietly.
+
+**Standing warning, repeated because it decides whether tomorrow works:** this
+APK is pinned to `http://192.168.1.138:8000/api/v1` — the owner's laptop, on
+one wifi, behind a firewall rule that still has to be added by hand, with an
+IP the router can reassign. It is a desk-side demo artifact. A test anywhere
+else needs the backend deployed; `backend/.env.production.example` still
+carries `APP_URL=<<OWNER>>`.

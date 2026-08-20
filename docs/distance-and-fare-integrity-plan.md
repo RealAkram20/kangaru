@@ -4,6 +4,10 @@
 been ruled** — decision 2, on 2026-08-18; the answer was "use both figures", it
 supersedes §4 Phase 2's dial before it was built, and it is written out in §8.
 The other four are still open.
+**The unit §8 declined to design is now planned** in
+`docs/measured-distance-plan.md` (2026-08-18, later the same day): the trace is
+primary, the road-routed reference is the check, the odometer is the backup
+witness. Its §9 answers §8's five questions one by one.
 **Scope:** both billing paths — corporate invoicing and walk-in fares.
 **Written:** 2026-08-15, after a UGX 198,013,800 fare reached the driver ledger
 from a single mistyped odometer digit.
