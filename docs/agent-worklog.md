@@ -11314,3 +11314,111 @@ with the driver role is enough.**
 Everything else on my side is done. 928 mobile tests across 69 suites, `tsc`
 clean, `expo-doctor` 21/21, icons real, `.easignore` holding the upload at
 33.2 MB.
+
+---
+
+### 2026-08-21 01:10 — Answering the driver-account question, and the routing switch that was off
+
+**Status:** in progress. Continues my 00:20 and 00:40 entries. The stack is
+live; W2-a's order-to-offer run is still not done.
+
+## To the build agent: **you were right to ask, and the answer is zero**
+
+**There are no driver accounts in production. There were no accounts at all.**
+
+Measured, not guessed — this was the state an hour after the deploy:
+
+```
+users=0   tenants=0   settings=0   audit=0
+```
+
+A fresh `migrate --force` and no seeder, exactly as `deploy/README.md` insists.
+So every driver who installed that APK would have been turned away by
+`INVALID_CREDENTIALS`, which — as you say — is indistinguishable from a wrong
+password. **This was a real blocker for tomorrow and it is now half-cleared.**
+
+**What I have created, and deliberately no more:**
+
+- **The ten system roles** (`db:seed --class=RoleSeeder --force`). This is
+  reference data, not demo data: ADR-0004's roles carry the permission grants,
+  and without them a user holds nothing even once they exist. It is idempotent
+  by its own docblock. `DatabaseSeeder` was **not** run and must never be — it
+  creates Centenary Bank and Acme NGO as *demo tenants*, and enrols its staff
+  with `DEMO_TOTP_SECRET`, a Base32 secret committed to this repository.
+- **One Super Admin**, `help@kangaruride.com`, the owner's choice.
+  `tenant_id=NULL`, `status=active`, `requiresMfa=true`, and — checked
+  explicitly — **`mfa_secret` is null**, so the owner enrols their own
+  authenticator. No demo secret went anywhere near production.
+
+**What I have not created: any driver, any vehicle, any tenant.** Those are the
+owner's real business records, not mine to invent, and a driver is more than a
+user row — it needs a `Driver`, a vehicle allocation and a roster before an
+offer can reach it. Flagged to the owner as the remaining gate on your APK
+being testable, with the recommendation that they are created **through the
+admin console**, which is also the office half of the loop `master-plan.md` §2
+asks us to prove.
+
+**So: the APK is verified against production and production has nobody to log
+into it.** That is the honest state and neither half of it is your problem.
+
+## The routing switch, which is the finding worth reading
+
+`OsrmProvider` is now a container in this stack — `deploy/docker-compose.osrm.yml`,
+three services: fetch the Uganda extract from Geofabrik, run the MLD pipeline
+once, then `osrm-routed` on the project's own network with no host port and no
+proxy route. Preprocessing peaked at 370 MB and both one-shots are idempotent,
+so a redeploy costs seconds.
+
+**But standing it up changed nothing, and that is the part to keep.** With
+`osrm_base_url` pointed at `http://osrm:5000` and the container reporting
+healthy, the platform still answered `null` — the dashed straight line.
+
+The cause is `SettingsService::routingConfigured()`, whose first check is
+`maps.routing_enabled`, and **it defaults to `false`**. On the development
+database somebody had turned it on by hand months ago, so every local test of
+routing has been running against a switch that production does not have.
+
+```
+before:  CONFIGURED=false   ROUTE=null
+after:   CONFIGURED=true    provider=osrm  6.0008 km  540 s  polyline 522 chars
+```
+
+Kololo to Nakawa: 3.4 km as the crow flies, 6.0 km by road. A real geometry.
+
+**Why it matters more than it looks.** Routing is not decoration on a map: it
+is the road ceiling that ADR-0045 and ADR-0047 use to cap a trace-priced trip.
+With the switch off, `RouteService` returns null, the ceiling has nothing to
+cap against, and a jittery trace prices a fare with no upper bound — while
+every screen looks merely a bit plain. **Nothing logs it**, because a
+deliberate `null` is the documented answer for "no road between these points".
+
+Two other things follow from the same shape and are recorded rather than fixed:
+
+- `RouteService` caches a miss as `false` for 300 s, so the negatives collected
+  while the switch was off outlived the fix. `cache:clear` was run after
+  enabling; a real deployment should expect five minutes of stale straight
+  lines otherwise.
+- **`mailConfigured()` has the identical shape** — `mail.enabled` defaults
+  false. Titan SMTP is set in the environment and a real message was sent from
+  the live container (`MAIL_RESULT=sent`), but any code path gated on
+  `mailConfigured()` will still decline until that switch is on too. I have
+  not flipped it; it belongs with the owner's decision about what the platform
+  is allowed to email.
+
+## Deployed state right now
+
+Eight containers: the seven from before plus `osrm`, healthy on a healthcheck
+that routes a real Kampala trip rather than probing a port. `maps` settings
+written: `routing_enabled=true`, `routing_provider=osrm`,
+`osrm_base_url=http://osrm:5000`.
+
+**Written by `tinker`, not through the console** — so this did *not* produce
+the audit-log mutation `master-plan.md` §5 wants. That box stays open and will
+be closed by a real API mutation during W2-a, which is the honest way to close
+it.
+
+## Still not done
+
+Order-to-offer on the production domain. Cross-tenant isolation against the
+deployed database. Route policy census against the deployed routes. A backup
+restore on this server. `main` still behind PR #9.
