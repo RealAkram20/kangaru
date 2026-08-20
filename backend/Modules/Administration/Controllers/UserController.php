@@ -2,6 +2,7 @@
 
 namespace Modules\Administration\Controllers;
 
+use App\Enums\ClientCapability;
 use App\Enums\UserStatus;
 use App\Http\Controllers\Controller;
 use App\Models\User;
@@ -16,6 +17,7 @@ use Modules\Administration\Requests\UpdateUserRequest;
 use Modules\Administration\Requests\UserIndexRequest;
 use Modules\Administration\Resources\UserResource;
 use Modules\Administration\Services\UserAdminService;
+use Modules\Clients\Models\ClientRoute;
 
 /**
  * Staff administration.
@@ -42,6 +44,9 @@ class UserController extends Controller
         $this->authorize('viewAny', User::class);
 
         $query = $this->scopedQuery()
+            // `UserResource` emits `tenant_name` and `route_ids`; two
+            // queries for the page, not two per row.
+            ->with(['tenant', 'clientRoutes'])
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
             ->when($request->filled('role'), fn ($q) => $q->where('role', $request->string('role')))
             ->when($request->filled('q'), function ($q) use ($request) {
@@ -64,6 +69,15 @@ class UserController extends Controller
                 // hold its own copy of the escalation rule. A Corporate
                 // Admin never sees Super Admin in the list.
                 'assignable_roles' => $this->assignableRoles(),
+                // The switches a client's administrator may set on their
+                // people, with labels — served, so the screen keeps no copy.
+                'capabilities' => ClientCapability::catalogue(),
+                // The circuits this administrator may put somebody on
+                // (ADR-0045 §8). Served with the list for the same reason
+                // the roles are: the screen offers what the server says
+                // exists, and never learns to build the list itself. Empty
+                // for a platform account, which has no routes of its own.
+                'routes' => $this->assignableRoutes(),
             ],
         );
     }
@@ -72,7 +86,7 @@ class UserController extends Controller
     {
         $this->authorize('view', $user);
 
-        return ApiResponse::success(new UserResource($user));
+        return ApiResponse::success(new UserResource($user->load(['tenant', 'clientRoutes'])));
     }
 
     public function store(StoreUserRequest $request): JsonResponse
@@ -84,7 +98,7 @@ class UserController extends Controller
 
         $created = $this->users->create($request->validated(), $actor);
 
-        return ApiResponse::success(new UserResource($created), 'Account created.', 201);
+        return ApiResponse::success(new UserResource($created->load(['tenant', 'clientRoutes'])), 'Account created.', 201);
     }
 
     public function update(UpdateUserRequest $request, User $user): JsonResponse
@@ -93,7 +107,10 @@ class UserController extends Controller
 
         $wasActive = $user->isActive();
 
-        $updated = $this->users->update($user, $request->validated());
+        /** @var User $actor */
+        $actor = $request->user();
+
+        $updated = $this->users->update($user, $request->validated(), $actor);
 
         // Suspension has to reach existing sessions. A Sanctum token issued
         // yesterday would otherwise keep working, so a dismissed employee
@@ -103,7 +120,7 @@ class UserController extends Controller
             $this->users->revokeTokens($updated);
         }
 
-        return ApiResponse::success(new UserResource($updated), 'Account updated.');
+        return ApiResponse::success(new UserResource($updated->load(['tenant', 'clientRoutes'])), 'Account updated.');
     }
 
     /**
@@ -122,6 +139,36 @@ class UserController extends Controller
         $actor = request()->user();
 
         return User::forActor($actor);
+    }
+
+    /**
+     * The client's routes this actor may put a colleague on (ADR-0045 §8).
+     *
+     * `forActor` rather than a hand-written `where`: it is ADR-0006's one
+     * named way past the tenant scope, and it is what makes this list a
+     * client's own routes for a client's administrator and nothing at all
+     * for a platform account — Shanitah's staff belong to no tenant, so
+     * there is no "their routes" to offer, and returning every client's
+     * would be a picker that leaks a customer list.
+     *
+     * @return array<int, array{id: int, name: string}>
+     */
+    private function assignableRoutes(): array
+    {
+        /** @var User $actor */
+        $actor = request()->user();
+
+        if ($actor->isPlatformLevel()) {
+            return [];
+        }
+
+        return ClientRoute::query()
+            ->forActor($actor)
+            ->active()
+            ->orderBy('name')
+            ->get(['id', 'name'])
+            ->map(fn (ClientRoute $route) => ['id' => $route->id, 'name' => $route->name])
+            ->all();
     }
 
     /**

@@ -76,6 +76,20 @@ class RoleSeeder extends Seeder
         $fleetManage = [P::VEHICLES_MANAGE, P::DRIVERS_MANAGE];
         // CompanyPolicy/VehiclePolicy/DriverPolicy viewAny all `return true`.
         $everyoneReads = [P::COMPANIES_VIEW, P::VEHICLES_VIEW, P::DRIVERS_VIEW, P::ZONES_VIEW];
+        // The two corporate roles read their own company and the zones
+        // that price their trips, and no more. The fleet register is
+        // Shanitah's (ADR-0005): `DriverResource` carries every driver's
+        // phone, licence number and account, and `vehicles.view` opens the
+        // VIN and every driver's leave. A bank's transport officer sees the
+        // driver and vehicle *on their trip*, nested in that trip — not the
+        // roster (docs/security-gate.md F2, the corporate half).
+        // ROUTES_VIEW joins the pair since ADR-0045: a client's saved
+        // places and circuits are the client's own operational data, and an
+        // employee who rides the Monday ATM run has to be able to see it.
+        // Building them is `routes.manage`, which only the Corporate Admin
+        // holds by role — or a colleague they switch
+        // `ClientCapability::MANAGES_ROUTES` on for.
+        $clientReads = [P::COMPANIES_VIEW, P::ZONES_VIEW, P::ROUTES_VIEW];
         $billingRead = [P::INVOICES_VIEW, P::RATECARDS_VIEW];
 
         return [
@@ -101,6 +115,11 @@ class RoleSeeder extends Seeder
                     // charged, so drawing one sits with operations rather
                     // than with dispatch.
                     P::ZONES_MANAGE,
+                    // ADR-0045 §9, read only. Named here rather than added
+                    // to `$everyoneReads`, which would hand a client's ATM
+                    // estate to every Driver as a side effect — the mirror
+                    // of the F2 leak, running the other way.
+                    P::ROUTES_VIEW,
                 ],
             ],
 
@@ -120,6 +139,10 @@ class RoleSeeder extends Seeder
                     // account is an act with a reason attached and belongs
                     // with the people who answer for it.
                     P::CUSTOMERS_VIEW,
+                    // ADR-0045 §9. A dispatcher watching a multi-stop trip
+                    // needs the circuit behind it; a stop list with no plan
+                    // to read it against is unreadable.
+                    P::ROUTES_VIEW,
                 ],
             ],
 
@@ -165,10 +188,16 @@ class RoleSeeder extends Seeder
                 'name' => 'Corporate Admin',
                 'description' => 'Manages their company\'s staff and bookings. Never dispatches the fleet.',
                 'permissions' => [
-                    ...$everyoneReads, ...$desk, ...$billingRead,
+                    ...$clientReads, ...$desk, ...$billingRead,
                     P::AUDIT_VIEW, P::STAFF_VIEW, P::STAFF_MANAGE,
                     P::BOOKINGS_CREATE, P::BOOKINGS_APPROVE, P::TRIPS_VIEW_ALL,
                     P::COMPANIES_UPDATE, P::REPORTS_VIEW,
+                    // ADR-0045 §9: building the circuit is the client's act,
+                    // not Shanitah's. This is also what makes
+                    // `ClientCapability::MANAGES_ROUTES` grantable — a
+                    // capability may only pass on a permission the granting
+                    // administrator holds themselves.
+                    P::ROUTES_MANAGE,
                     // A party to the contract may read it. Agreeing one is
                     // Shanitah's side of the deal, so no ALLOCATIONS_MANAGE
                     // here — that stays with the Super Admin.
@@ -180,7 +209,7 @@ class RoleSeeder extends Seeder
                 'name' => 'Corporate Employee',
                 'description' => 'Requests transport. Sees only their own bookings and trips.',
                 'permissions' => [
-                    ...$everyoneReads,
+                    ...$clientReads,
                     P::BOOKINGS_CREATE,
                 ],
             ],

@@ -275,6 +275,59 @@ This is a short-form notice. Ask the office for the full safety policy.",
          */
         'tracking' => [
             /*
+             * Whether drivers record opening and closing odometer readings
+             * at all (ADR-0047).
+             *
+             * **On by default, and turning it off has a contractual cost the
+             * settings screen states in words.** PROJECT.md lists "opening and
+             * closing odometer (mileage) readings" as the Bank's **acceptance
+             * criterion #4** for the Phase 1 MVP. A deployment that turns this
+             * off stops producing that figure for every trip, corporate ones
+             * included. The owner asked for a platform-wide switch knowing
+             * that, having been offered a walk-in-only version; the honest
+             * implementation is therefore to make it work and to make the
+             * consequence impossible to miss, not to quietly narrow it.
+             *
+             * **`public`, because the Driver's Application renders from it.**
+             * With the odometer off, Start Trip and Complete Trip are single
+             * taps and the odometer screens leave the flow entirely — a field
+             * that looks required and is not is worse than no field.
+             *
+             * When this is off the billable distance comes from the recorded
+             * GPS trace, bounded by what the road allows — see
+             * `TripDistanceResolver`, which is where the real design of this
+             * feature lives. Nothing invents a distance: a trip with no usable
+             * trace completes with a null distance and a flag, because a fare
+             * guessed from nothing is worse than a fare somebody has to look
+             * at.
+             */
+            'odometer_enabled' => [
+                'default' => true,
+                'rules' => ['required', 'boolean'],
+                'public' => true,
+            ],
+            /*
+             * How far past the road route a measured trace may run before it
+             * stops being believable, as a percentage (ADR-0047).
+             *
+             * Only consulted when `odometer_enabled` is off, and it is the
+             * ceiling that makes a GPS-priced fare safe to bill. Real drives
+             * genuinely run longer than the route: traffic diversions, a
+             * one-way system, a passenger asking for a stop. Thirty percent
+             * covers that comfortably while still catching the failure that
+             * matters — a jittery or spoofed trace inflating a fare with
+             * nothing to check it against.
+             *
+             * A trace over the ceiling is **billed at the ceiling and
+             * flagged**, never refused: the passenger is standing at the kerb
+             * and the driver did drive somewhere. The flag is what a human
+             * looks at.
+             */
+            'trace_route_ceiling_percent' => [
+                'default' => 30,
+                'rules' => ['required', 'numeric', 'min:0', 'max:200'],
+            ],
+            /*
              * PROJECT.md: "variances beyond a configurable threshold are
              * flagged for review." This is that threshold, as a percentage of
              * the odometer distance.

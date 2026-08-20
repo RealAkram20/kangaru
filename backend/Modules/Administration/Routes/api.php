@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use Modules\Administration\Controllers\AuditLogController;
 use Modules\Administration\Controllers\AuthController;
+use Modules\Administration\Controllers\ColleagueController;
 use Modules\Administration\Controllers\PasswordResetController;
 use Modules\Administration\Controllers\PublicLegalController;
 use Modules\Administration\Controllers\PublicSettingsController;
@@ -124,6 +125,13 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::post('/users', [UserController::class, 'store'])->name('users.store');
     Route::get('/users/{user}', [UserController::class, 'show'])->name('users.show');
     Route::patch('/users/{user}', [UserController::class, 'update'])->name('users.update');
+
+    // The passenger picker behind the booking dialog: your own
+    // organisation's people, by name, three fields each. Deliberately not a
+    // filter on `/users` — that one is gated on `staff.view` and answers
+    // with roles and MFA state, and the Corporate Employee raising a
+    // booking holds neither. See ColleagueController.
+    Route::get('/colleagues', [ColleagueController::class, 'index'])->name('colleagues.index');
 
     // Platform settings (ADR-0014), behind `settings.manage` via
     // SettingPolicy. PATCH takes the group name so each save is one
