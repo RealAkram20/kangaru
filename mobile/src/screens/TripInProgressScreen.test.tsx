@@ -31,6 +31,22 @@ const METRICS = {
 
 const STARTED_AT = '2026-08-14T09:18:00.000Z';
 
+// `mock` prefix required: Jest hoists mock factories above this line.
+const mockOdometerEnabled = jest.fn(() => true);
+
+/*
+  ADR-0047's odometer switch. Mocked at the hook rather than left real because
+  it reaches `AuthProvider` and the network, which this suite has neither of —
+  the same reason `../trips/queries` is mocked above.
+
+  **Defaults to on**, so every existing test in this file keeps asserting the
+  behaviour it was written for: the odometer is the platform's default and the
+  screens that ask for a reading should go on asking for one here.
+*/
+jest.mock('../trips/odometerSetting', () => ({
+  useOdometerEnabled: () => mockOdometerEnabled(),
+}));
+
 jest.mock('../ui/SyncBanner', () => ({ SyncBanner: () => null }));
 
 // `mock` prefix required: Jest hoists the factory below above this line.
@@ -151,6 +167,9 @@ async function renderProgress(
 }
 
 beforeEach(() => {
+  // On by default in every test. A suite that wants the switch off says so,
+  // and must not leak that into the next one (ADR-0047).
+  mockOdometerEnabled.mockReturnValue(true);
   navigate.mockClear();
   mockQueueTransition.mockClear();
   // Nothing in flight is the ordinary case; the tests about an unconfirmed

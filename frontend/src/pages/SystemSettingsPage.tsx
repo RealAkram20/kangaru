@@ -79,6 +79,8 @@ interface Settings {
   }
   /** ADR-0035: the two numbers that decide whether a reading is believed. */
   tracking: {
+    odometer_enabled: boolean
+    trace_route_ceiling_percent: number
     variance_threshold_percent: number
     odometer_max_km_per_trip: number
   }
@@ -1162,6 +1164,8 @@ function TrackingCard({
   tracking: Settings['tracking']
   onSaved: (s: Settings) => void
 }) {
+  const [odometer, setOdometer] = useState(tracking.odometer_enabled)
+  const [traceCeiling, setTraceCeiling] = useState(String(tracking.trace_route_ceiling_percent))
   const [threshold, setThreshold] = useState(String(tracking.variance_threshold_percent))
   const [ceiling, setCeiling] = useState(String(tracking.odometer_max_km_per_trip))
   const { state, errors, message, setMessage, save } = useSave('tracking', onSaved)
@@ -1175,6 +1179,8 @@ function TrackingCard({
         onSubmit={(e) => {
           e.preventDefault()
           void save({
+            odometer_enabled: odometer,
+            trace_route_ceiling_percent: Number(traceCeiling),
             variance_threshold_percent: Number(threshold),
             odometer_max_km_per_trip: Number(ceiling),
           })
@@ -1185,6 +1191,53 @@ function TrackingCard({
           <Alert tone="error" title="Distance checks" onDismiss={() => setMessage(null)}>
             {message}
           </Alert>
+        )}
+
+        <Checkbox
+          label="Drivers record odometer readings"
+          hint="On, every trip captures an opening and closing reading and the fare is priced from the difference. Off, drivers never see the field and the fare is priced from the recorded GPS trace instead — bounded by what the road allows."
+          checked={odometer}
+          onChange={(e) => setOdometer(e.target.checked)}
+        />
+
+        {/*
+          **Stated where the decision is made, not in a document nobody opens.**
+          PROJECT.md lists opening and closing odometer readings as the Bank's
+          acceptance criterion #4 for the Phase 1 MVP, and this switch is
+          platform-wide — corporate trips included. The owner chose that
+          scope knowingly, having been offered a walk-in-only version; the
+          honest implementation makes the consequence impossible to miss rather
+          than quietly narrowing what they asked for.
+
+          Shown only while it is about to be true, so it reads as a consequence
+          of the choice rather than as permanent scolding.
+        */}
+        {!odometer && (
+          <Alert tone="warning" title="This affects your contract with the Bank">
+            Opening and closing odometer readings are one of the six acceptance
+            criteria the Bank signed off. With this off, no trip produces them
+            — including trips for corporate clients. Trips are still measured
+            and still billed, from GPS.
+          </Alert>
+        )}
+
+        {!odometer && (
+          <FormField
+            label="Allowance over the road distance (%)"
+            htmlFor="settings-trace-ceiling"
+            hint="How far a measured trace may run past the road route before it stops being believed. Real drives run longer — diversions, one-way systems, a stop on the way — so this is generous. Over it, the trip is billed at the ceiling and flagged for review rather than refused."
+            error={errors.trace_route_ceiling_percent}
+            required
+          >
+            <Input
+              id="settings-trace-ceiling"
+              type="number"
+              min={0}
+              max={200}
+              value={traceCeiling}
+              onChange={(e) => setTraceCeiling(e.target.value)}
+            />
+          </FormField>
         )}
 
         <FormField

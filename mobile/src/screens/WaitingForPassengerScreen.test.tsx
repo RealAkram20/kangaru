@@ -37,6 +37,22 @@ const ARRIVED_AT = '2026-08-14T09:15:00.000Z';
 const mockQueueTransition = jest.fn(async () => undefined);
 let mockQueued = new Map<number, TripStatus>();
 
+// `mock` prefix required: Jest hoists mock factories above this line.
+const mockOdometerEnabled = jest.fn(() => true);
+
+/*
+  ADR-0047's odometer switch. Mocked at the hook rather than left real because
+  it reaches `AuthProvider` and the network, which this suite has neither of —
+  the same reason `../trips/queries` is mocked above.
+
+  **Defaults to on**, so every existing test in this file keeps asserting the
+  behaviour it was written for: the odometer is the platform's default and the
+  screens that ask for a reading should go on asking for one here.
+*/
+jest.mock('../trips/odometerSetting', () => ({
+  useOdometerEnabled: () => mockOdometerEnabled(),
+}));
+
 jest.mock('../offline/SyncProvider', () => ({
   // `queued` is the outbox's pending transitions, keyed by trip — the header
   // reads it so a queued arrival is not contradicted by the status the office
@@ -135,6 +151,9 @@ async function renderWaiting(
 }
 
 beforeEach(() => {
+  // On by default in every test. A suite that wants the switch off says so,
+  // and must not leak that into the next one (ADR-0047).
+  mockOdometerEnabled.mockReturnValue(true);
   mockNavigate.mockClear();
   mockReplace.mockClear();
   mockQueueTransition.mockClear();
@@ -339,4 +358,62 @@ it('falls back to the office when nothing is queued', async () => {
   const { getByText } = await renderWaiting(trip({ status: 'driver_arrived' }));
 
   expect(getByText('Arrived at pickup')).toBeTruthy();
+});
+
+// -- With the odometer switched off (ADR-0047) -----------------------------
+
+it('drops the opening reading entirely when the office has switched it off', async () => {
+  mockOdometerEnabled.mockReturnValue(false);
+
+  const { queryByText, queryByLabelText } = await renderWaiting();
+
+  // Gone, heading included. A disabled or optional field would be worse than
+  // either state: a driver reads a labelled input as something the office
+  // wants, and an empty one they were allowed to skip looks like it failed to
+  // save.
+  expect(queryByText('Opening odometer')).toBeNull();
+  expect(queryByLabelText('Kilometres')).toBeNull();
+});
+
+it('boards and starts in one press, sending no reading at all', async () => {
+  // **The failure this pins is `NaN`.** `Number.parseInt('', 10)` is `NaN`,
+  // which serialises to `null` and would reach a server willing to record it
+  // as a real opening of nothing — so the key must be absent, not empty.
+  mockOdometerEnabled.mockReturnValue(false);
+
+  const { getByText } = await renderWaiting();
+
+  await act(async () => {
+    void fireEvent.press(getByText('Passenger on board'));
+    await flushMicrotasks();
+  });
+
+  expect(mockQueueTransition).toHaveBeenCalledWith(
+    expect.objectContaining({ to: 'passenger_onboard' }),
+  );
+
+  expect(mockQueueTransition).toHaveBeenCalledWith(
+    expect.objectContaining({ to: 'trip_started' }),
+  );
+
+  // The key is absent, not present-and-empty. `expect.anything()` matches
+  // neither `undefined` nor `null`, so this fails the moment a reading of any
+  // kind is attached.
+  expect(mockQueueTransition).not.toHaveBeenCalledWith(
+    expect.objectContaining({ odometerStart: expect.anything() }),
+  );
+
+  expect(mockReplace).toHaveBeenCalled();
+});
+
+it('still refuses to commit without a reading while the odometer is on', async () => {
+  // The default path, pinned beside its opposite so a change to one cannot
+  // quietly alter the other.
+  mockOdometerEnabled.mockReturnValue(true);
+
+  const { getByText } = await renderWaiting();
+
+  void fireEvent.press(getByText('Passenger on board'));
+
+  expect(mockQueueTransition).not.toHaveBeenCalled();
 });

@@ -14,6 +14,7 @@ import type { Trip } from '../api/types';
 import type { TripsStackParams } from '../navigation/types';
 import { useSync } from '../offline/SyncProvider';
 import { dialPassenger } from '../trips/contact';
+import { useOdometerEnabled } from '../trips/odometerSetting';
 import { validateOdometerReading } from '../trips/odometer';
 import { OdometerCapture } from '../trips/OdometerCapture';
 import { PickupMap } from '../trips/PickupMap';
@@ -135,6 +136,7 @@ export function WaitingForPassengerScreen({ route, navigation }: Props) {
   const arrivedAt = arrivedAtFrom(events);
   const now = useTicker();
 
+  const odometerEnabled = useOdometerEnabled();
   const [reading, setReading] = useState('');
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

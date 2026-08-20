@@ -17,6 +17,7 @@ import {
   tripPaymentLabel,
   waitingSecondsFrom,
 } from '../trips/progress';
+import { useOdometerEnabled } from '../trips/odometerSetting';
 import { useTrip, useTripEvents, useTripRoute } from '../trips/queries';
 import { statusLabel } from '../trips/transitions';
 import { elapsedSeconds, NO_VALUE } from '../trips/waiting';
@@ -102,6 +103,9 @@ export function TripInProgressScreen({ route, navigation }: Props) {
   const { data: trip, isLoading } = useTrip(tripId);
   const { data: events } = useTripEvents(tripId);
   const { queueTransition, queued } = useSync();
+  // ADR-0047. Decides whether ending the trip opens the reading form or
+  // simply completes it.
+  const odometerEnabled = useOdometerEnabled();
 
   const [busy, setBusy] = useState(false);
 
@@ -241,6 +245,23 @@ export function TripInProgressScreen({ route, navigation }: Props) {
    * missing" from "the trip moved on without me".
    */
   const end = () => {
+    // **With the odometer off, ending is a transition again** (ADR-0047).
+    // The server no longer requires `odometer_end` — it prices the trip from
+    // the GPS trace instead — so the reading screen would be a form asking
+    // for a number nothing consumes, on the screen where the driver is most
+    // eager to be finished.
+    //
+    // Queued rather than posted, like every other transition on this screen:
+    // a drop-off happens wherever the passenger asked for, which is routinely
+    // somewhere with no signal (ADR-0023).
+    if (!odometerEnabled) {
+      setBusy(true);
+      void queueTransition({ tripId: trip.id, from: effective, to: 'trip_completed' })
+        .finally(() => setBusy(false));
+
+      return;
+    }
+
     navigation.navigate('Odometer', {
       tripId: trip.id,
       to: 'trip_completed',

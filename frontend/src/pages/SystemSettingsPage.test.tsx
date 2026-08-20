@@ -49,7 +49,12 @@ const SETTINGS = {
     referral_trip_target: 10,
     referral_reward_amount_minor: 10000,
   },
-  tracking: { variance_threshold_percent: 10, odometer_max_km_per_trip: 2000 },
+  tracking: {
+    odometer_enabled: true,
+    trace_route_ceiling_percent: 30,
+    variance_threshold_percent: 10,
+    odometer_max_km_per_trip: 2000,
+  },
   mail: {
     enabled: false,
     host: null,
@@ -291,6 +296,10 @@ describe('SystemSettingsPage', () => {
 
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith('/settings/tracking', {
+        // The whole group travels, so the two keys this card does not edit
+        // are still sent at their current values rather than being dropped.
+        odometer_enabled: true,
+        trace_route_ceiling_percent: 30,
         variance_threshold_percent: 10,
         odometer_max_km_per_trip: 300,
       }),
@@ -323,5 +332,32 @@ describe('SystemSettingsPage', () => {
     await user.click(screen.getAllByRole('button', { name: /save changes/i })[0])
 
     expect(await screen.findByText('This is not an email address.')).toBeInTheDocument()
+  })
+
+  it('warns about the Bank before the odometer can be switched off', async () => {
+    // **The safeguard the whole platform-wide scope rests on.** The owner
+    // chose a switch that reaches corporate trips too, having been offered a
+    // walk-in-only version; the honest implementation is to make the
+    // consequence impossible to miss at the moment of the decision, rather
+    // than to quietly narrow what they asked for or bury it in an ADR.
+    //
+    // ADR-0047, and PROJECT.md's acceptance criterion #4.
+    get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+
+    const user = userEvent.setup()
+    render(<SystemSettingsPage />)
+
+    const toggle = await screen.findByLabelText(/drivers record odometer readings/i)
+
+    // Nothing alarming while it is on — the default, and where almost every
+    // deployment stays.
+    expect(screen.queryByText(/acceptance criteria the Bank signed off/)).toBeNull()
+
+    await user.click(toggle)
+
+    expect(await screen.findByText(/acceptance criteria the Bank signed off/)).toBeTruthy()
+    // And it says the part that is easiest to assume otherwise: this is not
+    // walk-in only.
+    expect(screen.getByText(/including trips for corporate clients/)).toBeTruthy()
   })
 })
