@@ -1,5 +1,6 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { UserEvent } from '@testing-library/user-event'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { apiFailure } from '../test/harness'
 
@@ -85,6 +86,24 @@ const SETTINGS = {
   },
 }
 
+/**
+ * Open a section from the rail.
+ *
+ * Every pane stays mounted and only the active one is displayed, so a query
+ * that reads the DOM (`getByLabelText`) finds a hidden section's fields while
+ * one that reads the accessibility tree (`getByRole`) does not. Tests go
+ * through the rail rather than exploiting that difference, because that is
+ * what a person has to do.
+ */
+async function open(user: UserEvent, name: RegExp) {
+  await user.click(await screen.findByRole('button', { name }))
+}
+
+/** The section's own Save. Only the visible pane has one in the a11y tree. */
+function saveButton() {
+  return screen.getByRole('button', { name: /save changes/i })
+}
+
 beforeEach(() => {
   get.mockReset()
   patch.mockReset()
@@ -101,12 +120,73 @@ describe('SystemSettingsPage', () => {
     expect(screen.getByLabelText(/timezone/i)).toHaveValue('Africa/Kampala')
   })
 
+  it('shows one section at a time, and the rail moves between them', async () => {
+    // The whole point of the rebuild: twelve groups became somewhere to go
+    // rather than four thousand pixels to scroll. If every pane were on screen
+    // at once this would be the old page with a decorative sidebar.
+    const user = userEvent.setup()
+    get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+
+    render(<SystemSettingsPage />)
+
+    // `getByRole` skips what is hidden from the accessibility tree, which is
+    // the point being proved — so the hidden pane is found by its text and
+    // then asserted invisible.
+    expect(await screen.findByRole('heading', { name: 'Branding' })).toBeVisible()
+    expect(screen.getByText(/email \(smtp\)/i)).not.toBeVisible()
+
+    await open(user, /^email/i)
+
+    expect(screen.getByRole('heading', { name: /email \(smtp\)/i })).toBeVisible()
+    expect(screen.getByText('Branding', { selector: 'h2' })).not.toBeVisible()
+  })
+
+  it('keeps what was typed in a section the reader navigates away from', async () => {
+    // Panes are hidden, not unmounted. A half-typed SMTP host that vanished
+    // because somebody checked the commission rate is the kind of loss that
+    // teaches people not to trust a settings page.
+    const user = userEvent.setup()
+    get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+
+    render(<SystemSettingsPage />)
+
+    await open(user, /^email/i)
+    await user.type(screen.getByLabelText(/smtp host/i), 'smtp.example.com')
+
+    await open(user, /^branding/i)
+    await open(user, /^email/i)
+
+    expect(screen.getByLabelText(/smtp host/i)).toHaveValue('smtp.example.com')
+  })
+
+  it('marks an edited section in the rail and in its own bar, and Discard puts it back', async () => {
+    const user = userEvent.setup()
+    get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+
+    render(<SystemSettingsPage />)
+
+    const name = await screen.findByLabelText(/app name/i)
+    expect(screen.queryByText(/unsaved changes/i)).toBeNull()
+
+    await user.type(name, ' Ltd')
+
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
+    // And the rail says so too, in words rather than in colour alone, so it
+    // is still readable from another section.
+    expect(screen.getByRole('button', { name: /branding unsaved changes/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /discard/i }))
+
+    expect(name).toHaveValue('KangaruRide')
+    expect(screen.queryByText('Unsaved changes')).toBeNull()
+  })
+
   it('never renders the stored Google key, only whether one exists', async () => {
     // Directions bills per request, so a key that reaches the browser bundle
     // is somebody else's traffic on this operator's invoice — and unlike a
     // password there is nothing to reset that does not also break the feature.
     // The API answers `configured` and nothing more (ADR-0014 §3); this proves
-    // the card is built for that shape rather than expecting a value.
+    // the section is built for that shape rather than expecting a value.
     get.mockResolvedValue({
       data: {
         data: {
@@ -125,8 +205,6 @@ describe('SystemSettingsPage', () => {
 
     render(<SystemSettingsPage />)
 
-    // Scoped to this field rather than to the hint text, which the payments
-    // card also shows for its own configured secret.
     const field = await screen.findByLabelText(/google directions api key/i)
 
     expect(field).toHaveValue('')
@@ -168,9 +246,7 @@ describe('SystemSettingsPage', () => {
 
     render(<SystemSettingsPage />)
 
-    expect(
-      await screen.findByText(/not available to your role/i),
-    ).toBeInTheDocument()
+    expect(await screen.findByText(/not available to your role/i)).toBeInTheDocument()
     expect(screen.queryByLabelText(/app name/i)).not.toBeInTheDocument()
   })
 
@@ -193,17 +269,68 @@ describe('SystemSettingsPage', () => {
     const name = await screen.findByLabelText(/app name/i)
     await user.clear(name)
     await user.type(name, 'Shanitah Rides')
-    await user.click(screen.getAllByRole('button', { name: /save changes/i })[0])
+    await user.click(saveButton())
 
-    await waitFor(() => expect(patch).toHaveBeenCalledWith('/settings/branding', {
-      app_name: 'Shanitah Rides',
-      tagline: 'For Safety and Reliability',
-      meta_description: null,
-      contact_email: 'operations@kangaruride.com',
-      contact_phone: null,
-    }))
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith('/settings/branding', {
+        app_name: 'Shanitah Rides',
+        tagline: 'For Safety and Reliability',
+        meta_description: null,
+        contact_email: 'operations@kangaruride.com',
+        contact_phone: null,
+      }),
+    )
     // The save feedback: the button itself says so, quietly.
     expect(await screen.findByRole('button', { name: /saved/i })).toBeInTheDocument()
+  })
+
+  it('acknowledges the save before the server has answered', async () => {
+    // Optimistic, and it costs nothing in honesty: the form's source of truth
+    // is its own state, so the server's answer is never needed to keep showing
+    // what was typed. The next test is the other half of that bargain.
+    const user = userEvent.setup()
+    get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+
+    let answer: (value: unknown) => void = () => {}
+    patch.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve
+      }),
+    )
+
+    render(<SystemSettingsPage />)
+
+    await user.type(await screen.findByLabelText(/app name/i), '!')
+    await user.click(saveButton())
+
+    // Nothing has come back yet, and the interface has already agreed.
+    expect(screen.getByRole('button', { name: /saved/i })).toBeInTheDocument()
+    expect(screen.queryByText('Unsaved changes')).toBeNull()
+
+    answer({ data: { data: { settings: SETTINGS } } })
+  })
+
+  it('takes the acknowledgement back when the server refuses', async () => {
+    const user = userEvent.setup()
+    get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+    patch.mockRejectedValue(
+      apiFailure(422, 'VALIDATION_FAILED', 'The given data was invalid.', {
+        contact_email: ['This is not an email address.'],
+      }),
+    )
+
+    render(<SystemSettingsPage />)
+
+    await user.type(await screen.findByLabelText(/app name/i), '!')
+    await user.click(saveButton())
+
+    // The rollback, and the whole reason optimism is allowed here: the typed
+    // value is still on screen, the section is unsaved again, and the reason
+    // is against the field that caused it.
+    expect(await screen.findByText('This is not an email address.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument()
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
+    expect(screen.getByLabelText(/app name/i)).toHaveValue('KangaruRide!')
   })
 
   it('never sends an untouched secret, and never displays a stored one', async () => {
@@ -212,24 +339,25 @@ describe('SystemSettingsPage', () => {
     patch.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
 
     render(<SystemSettingsPage />)
-    await screen.findByLabelText(/app name/i)
+    await open(user, /payment gateways/i)
 
     // A stored credential shows only that it exists.
-    expect(screen.getByText(/configured\. stored values are never shown/i)).toBeInTheDocument()
+    expect(screen.getByText(/configured\. type to replace it\./i)).toBeInTheDocument()
 
-    // Saving the payments card with untouched secret boxes must omit the
-    // secret keys entirely — "leave it" is absence, not an empty write.
+    // Saving with untouched secret boxes must omit the secret keys entirely —
+    // "leave it" is absence, not an empty write.
     await user.type(screen.getByLabelText(/mtn momo api user/i), 'momo-user')
-    const paymentsSave = screen.getAllByRole('button', { name: /save changes/i }).at(-1)!
-    await user.click(paymentsSave)
+    await user.click(saveButton())
 
-    await waitFor(() => expect(patch).toHaveBeenCalledWith('/settings/payments', {
-      mtn_momo_api_user: 'momo-user',
-      airtel_money_client_id: null,
-    }))
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith('/settings/payments', {
+        mtn_momo_api_user: 'momo-user',
+        airtel_money_client_id: null,
+      }),
+    )
   })
 
-  it('gives the driver-pay group a card at last, and saves the whole group', async () => {
+  it('gives the driver-pay group a section at last, and saves the whole group', async () => {
     // `billing` has been in the catalogue since ADR-0029 and gained the bonus
     // keys in ADR-0034, with no UI either time — so the commission rate and
     // the bonus scheme were reachable only by an API client. An unreachable
@@ -239,20 +367,15 @@ describe('SystemSettingsPage', () => {
     patch.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
 
     render(<SystemSettingsPage />)
+    await open(user, /driver pay/i)
 
-    const commission = await screen.findByLabelText(/commission the platform keeps/i)
+    const commission = screen.getByLabelText(/commission the platform keeps/i)
     expect(commission).toHaveValue(20)
 
     await user.clear(commission)
     await user.type(commission, '25')
     await user.click(screen.getByLabelText(/award a weekly bonus/i))
-
-    // Scoped to the form this field lives in rather than a test id. Ten cards
-    // render a "Save changes" button, and adding an attribute to `Card` that
-    // exists only for tests would put test scaffolding in production markup.
-    await user.click(
-      within(commission.closest('form')!).getByRole('button', { name: /save changes/i }),
-    )
+    await user.click(saveButton())
 
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith('/settings/billing', {
@@ -260,7 +383,7 @@ describe('SystemSettingsPage', () => {
         bonus_enabled: true,
         bonus_weekly_trip_target: 40,
         bonus_weekly_amount_minor: 20000,
-        // ADR-0036 and ADR-0037 widened this card. The group is saved whole,
+        // ADR-0036 and ADR-0037 widened this group. The group is saved whole,
         // so the untouched schemes must travel back **unchanged** — a partial
         // PATCH here would silently switch off whatever the office had
         // running the moment somebody edited the commission rate.
@@ -284,19 +407,18 @@ describe('SystemSettingsPage', () => {
     patch.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
 
     render(<SystemSettingsPage />)
+    await open(user, /distance checks/i)
 
-    const ceiling = await screen.findByLabelText(/longest single trip/i)
+    const ceiling = screen.getByLabelText(/longest single trip/i)
     expect(ceiling).toHaveValue(2000)
 
     await user.clear(ceiling)
     await user.type(ceiling, '300')
-    await user.click(
-      within(ceiling.closest('form')!).getByRole('button', { name: /save changes/i }),
-    )
+    await user.click(saveButton())
 
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith('/settings/tracking', {
-        // The whole group travels, so the two keys this card does not edit
+        // The whole group travels, so the two keys this section does not edit
         // are still sent at their current values rather than being dropped.
         odometer_enabled: true,
         trace_route_ceiling_percent: 30,
@@ -307,31 +429,13 @@ describe('SystemSettingsPage', () => {
   })
 
   it('says plainly that a flagged trip is still billed', async () => {
-    // The card must not imply a control it does not have. Flagging is a review
-    // signal: the invoice still goes out and the driver is still paid, and the
-    // fare is priced from the odometer rather than the GPS trace.
+    // The section must not imply a control it does not have. Flagging is a
+    // review signal: the invoice still goes out and the driver is still paid.
     get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
 
     render(<SystemSettingsPage />)
 
     expect(await screen.findByText(/only flags — it does not stop anything/i)).toBeInTheDocument()
-  })
-
-  it('shows the server message against the failing field', async () => {
-    const user = userEvent.setup()
-    get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
-    patch.mockRejectedValue(
-      apiFailure(422, 'VALIDATION_FAILED', 'The given data was invalid.', {
-        contact_email: ['This is not an email address.'],
-      }),
-    )
-
-    render(<SystemSettingsPage />)
-
-    await screen.findByLabelText(/app name/i)
-    await user.click(screen.getAllByRole('button', { name: /save changes/i })[0])
-
-    expect(await screen.findByText('This is not an email address.')).toBeInTheDocument()
   })
 
   it('warns about the Bank before the odometer can be switched off', async () => {
@@ -342,12 +446,13 @@ describe('SystemSettingsPage', () => {
     // than to quietly narrow what they asked for or bury it in an ADR.
     //
     // ADR-0047, and PROJECT.md's acceptance criterion #4.
+    const user = userEvent.setup()
     get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
 
-    const user = userEvent.setup()
     render(<SystemSettingsPage />)
+    await open(user, /distance checks/i)
 
-    const toggle = await screen.findByLabelText(/drivers record odometer readings/i)
+    const toggle = screen.getByLabelText(/drivers record odometer readings/i)
 
     // Nothing alarming while it is on — the default, and where almost every
     // deployment stays.

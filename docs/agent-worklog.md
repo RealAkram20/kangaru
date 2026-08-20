@@ -11441,8 +11441,16 @@ restore on this server. `main` still behind PR #9.
    arrangement is the opposite and is worse in both directions at once: a
    four-character number field strands 300px of nothing while the sentence
    explaining it wraps three times.
-3. **The prose is cut by roughly two thirds.** Every section description is
-   one line; a hint survives only where it says something the label cannot.
+3. **The prose is cut by two thirds — 5,877 characters of hint and subtitle
+   down to 1,951, in two passes: the owner read the first pass and said there
+   was still too much, and they were right. The second pass was done by
+   dumping every visible string into one list and reading them **together
+   rather than one at a time** — each was defensible alone; as a column they
+   were a wall. Three tests of the rule: does the hint say something the label
+   cannot (else delete); does the field itself already demonstrate it (the
+   Google client-ID placeholder shows the comma, so "comma-separated" went);
+   does the section title already say it ("Email (SMTP)" needed no line
+   reading "How the platform sends email", so it now has none).
    **Four pieces of copy were deliberately not cut** — the Bank warning on the
    odometer switch, "this only flags, it does not stop anything", "costs money
    per trip" on Google, and "not meant for production" on the OSRM demo
@@ -11632,3 +11640,106 @@ owner's decision, not mine to invent. No corporate-client order, because there
 is no tenant. Cross-tenant isolation and the route policy census have not been
 run against the deployed database. `main` is still behind PR #9.
 
+
+---
+
+### 2026-08-21 — Driver creation: the console has never had a form, and the fleet is grown by hand
+
+**Owner's ask, in four parts:** admins and Super Admins create and edit
+drivers; a driver who owns their vehicle registers it on the driver form
+without visiting the vehicle screens; uploaded papers are previewable in
+place, images and PDFs alike; and a corporate client can name preferred
+drivers, order them directly, and have Dispatch queue those orders ahead of
+the rest.
+
+**The finding that reframes it:** the backend has had full driver CRUD since
+Phase 1 — `POST/PATCH/DELETE /api/v1/drivers`, `vehicle_id` and all — and
+**no screen has ever called `store` or `update`.** `DriversPage` is a
+read-only list with three dialogs hanging off it (documents, payout,
+sign-in). `VehiclesPage` is the same. So every driver in the dev database
+arrived from a seeder, which is why nothing noticed. This is a missing
+surface, not a missing feature, and the shape of the work follows from that.
+
+Four mockup-versus-ADR conflicts were raised with the owner before any code,
+per `docs/screen-rules.md`. All four were decided by the owner:
+
+| conflict | ADR | owner's decision |
+|---|---|---|
+| KYC mockup draws 6 slots; catalogue is a deliberately closed 4 | ADR-0033 §1 | **add both** — `identity_selfie`, `vehicle_photo`; amend the ADR |
+| "Submit for Review" implies KYC before approval; documents belong to the driver, not the application | ADR-0033 §4 | **both** — optional at application, carried at approval, re-uploadable forever after |
+| owning a vehicle is not representable — a depot car and a rider's own boda both just set `vehicle_id` | — | **stored `owns_vehicle` flag** + inline vehicle create in one transaction |
+| favourites | ADR-0020, ADR-0024 | **priority dispatch**, not a record — bigger than the option offered; gets its own ADR |
+
+## Files I own — do not edit
+
+**Decisions**
+
+- `docs/adr/0048-driver-onboarding-documents-and-owned-vehicles.md` — new.
+  Amends ADR-0027 (documents may accompany an application) and ADR-0033
+  (§1's closed catalogue gains two cases; §4's "approval requires no
+  documents" is preserved, not withdrawn — optional is the whole point).
+- `docs/adr/0049-preferred-drivers-and-client-priority-dispatch.md` — new.
+
+**Backend**
+
+- `backend/Modules/Drivers/Requests/StoreDriverVehicleRequest.php` — the
+  inline vehicle half of the driver form.
+- `backend/Modules/Clients/Models/CompanyPreferredDriver.php` and its
+  migration, policy, controller, resource.
+- migrations: `add_owns_vehicle_to_drivers_table`,
+  `add_application_to_driver_documents_table`,
+  `create_company_preferred_drivers_table`.
+
+**Web**
+
+- `frontend/src/pages/drivers/DriverFormDialog.tsx` + `.test.tsx` — **new;
+  there has never been one.** Create and edit in one dialog.
+- `frontend/src/components/media/MediaPreview.tsx` + `.test.tsx` +
+  `mediaPreview.css` — the shared previewer. Images and PDFs both, **on the
+  browser's own PDF viewer via an object URL — no new dependency**, which is
+  the `quality-control` north star answer here (pdf.js is 400 kB to render
+  what Chrome, Firefox and Safari already render).
+- `frontend/src/pages/companies/PreferredDriversPanel.tsx` + `.test.tsx`.
+
+## Shared files I touch, with the exact edit
+
+- `backend/Modules/Drivers/Enums/DriverDocumentType.php` — **two additive
+  cases** plus their `label()`, `hint()` and `requiresExpiry()` arms. The
+  existing four are untouched; the docblock's "a fifth type is one case here"
+  is answered rather than contradicted.
+- `backend/Modules/Drivers/Models/Driver.php` — `owns_vehicle` into
+  `$fillable` and a `boolean` cast. Nothing else.
+- `backend/Modules/Drivers/Requests/{Store,Update}DriverRequest.php` —
+  `owns_vehicle` and the nested `vehicle` object.
+- `backend/Modules/Drivers/Services/DriverService.php` — `create()` and
+  `update()` wrapped in a transaction that mints the vehicle first.
+- `backend/Modules/Drivers/Resources/DriverResource.php` — `owns_vehicle`,
+  and a **flat** vehicle summary (plate, make, model) in the style the
+  existing docblock argues for, not a nested object.
+- `frontend/src/pages/DriversPage.tsx` — a "New driver" action, a row edit
+  action, and the dialog wiring. The three existing dialogs are left alone.
+- `frontend/src/types/driver.ts`, `driverDocument.ts` — the new fields.
+- `docs/api/openapi.yaml` — contract for everything above. CI fails on drift.
+
+## Files I explicitly do NOT touch, and why
+
+- `mobile/src/screens/DocumentsScreen.tsx` — the KYC mockup is a restyle of
+  **an existing screen with an existing owner**. Rule 5: I say so and wait
+  rather than rewriting it. The two new document types reach it for free
+  through `slots`, because that screen already draws whatever the server
+  lists. The mockup's grouped layout (Personal / Driver / Vehicle) is a
+  separate claim.
+- `mobile/src/screens/SignUpScreen.tsx` — same. The optional-upload-at-
+  application half of ADR-0048 lands there and is claimed separately.
+- `frontend/src/components/forms/FormField.tsx`, `Switch.tsx`,
+  `formField.css`, `frontend/src/pages/settings/` — **uncommitted work by
+  the settings agent** (`### 2026-08-21 — Settings, rebuilt`). I consume
+  `Switch` and do not edit it.
+
+## Not built, deliberately
+
+- **Dispatch does not yet consult `owns_vehicle`.** The flag records whose
+  vehicle it is; it changes no offer. Same split ADR-0033 §6 made, for the
+  same reason.
+- **No document gates anything**, still. ADR-0033 §6 stands; two more types
+  do not change it.
