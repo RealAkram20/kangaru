@@ -13,6 +13,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
 use Modules\Administration\Models\Role;
 use Modules\Administration\Models\Setting;
@@ -137,6 +138,49 @@ class AppServiceProvider extends ServiceProvider
      * that has Redis says so once in `.env` and every caller follows —
      * nothing in the codebase asks whether Redis exists.
      */
+    /**
+     * Generate `https://` links when the platform's own address is https.
+     *
+     * ## The bug this fixes, because it is not obvious from the symptom
+     *
+     * A driver uploads their portrait; the app keeps showing an empty circle.
+     * The upload in fact worked — file on disk, `photo_path` recorded,
+     * `GET me/photo` answering 200 with the right bytes. What was wrong was
+     * the *link*: `DriverProfileService` builds `photo_url` with `route()`,
+     * `route()` takes its scheme from the current request, and the request
+     * looked like plain HTTP. So the API handed the app
+     * `http://api.kangaruride.com/...`, and **a release Android build refuses
+     * cleartext HTTP by default** — the image request never leaves the phone
+     * and an `<Image>` that fails draws nothing at all.
+     *
+     * ## Why the request looked insecure when it was not
+     *
+     * Two layers each did half the job and neither noticed the other:
+     *
+     * - Traefik terminates TLS and forwards `X-Forwarded-Proto: https`.
+     *   Verified on the wire: nginx logs `xfp="https"`.
+     * - The nginx image ships `set_real_ip_from` for the Docker networks and
+     *   Cloudflare, so by the time PHP is reached `REMOTE_ADDR` is already the
+     *   real visitor — 102.86.7.251, not the proxy.
+     *
+     * That is *good* for `request()->ip()`, and it is exactly what stops the
+     * scheme working: Symfony will not read `X-Forwarded-Proto` from a peer
+     * that is not a trusted proxy, and the real visitor is quite rightly not
+     * one. Widening `trustProxies` to include them would mean trusting a
+     * header the visitor writes, which is the forgery this codebase refuses
+     * elsewhere.
+     *
+     * So the scheme is declared rather than sniffed. `APP_URL` already states
+     * what this deployment is: if it says https, every generated link says
+     * https. Local development, where `APP_URL` is http, is untouched.
+     */
+    private function forceHttpsWhenConfigured(): void
+    {
+        if (str_starts_with((string) config('app.url'), 'https://')) {
+            URL::forceScheme('https');
+        }
+    }
+
     private function bindLivePositionStore(): void
     {
         $this->app->bind(LivePositionStore::class, fn () => match (config('tracking.live_positions_driver')) {
@@ -164,6 +208,7 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->forceHttpsWhenConfigured();
         $this->bindLivePositionStore();
         $this->bindDriverPresenceStore();
 
@@ -172,6 +217,10 @@ class AppServiceProvider extends ServiceProvider
         // config. Resolved per request through the settings cache, so a
         // saved change applies to the very next request — floored at 1 so
         // no stored value can accidentally disable the limiter outright.
+        //
+        // Note this keys on `$request->ip()`, which is why the scheme fix
+        // above and `trustProxies` in bootstrap/app.php both matter: an IP
+        // that is really the proxy makes this one bucket for everybody.
         RateLimiter::for('public-orders', function (Request $request) {
             $perMinute = (int) app(SettingsService::class)->get('ordering', 'rate_limit_per_minute');
 
