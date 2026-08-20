@@ -8,6 +8,7 @@ use Illuminate\Validation\Rule;
 use Modules\Administration\Services\SettingsService;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
+use Modules\Trips\Services\TripDistanceResolver;
 
 /**
  * One generic request for every transition — field-level (422) validation
@@ -49,13 +50,29 @@ class TransitionTripRequest extends FormRequest
             // answer and 403 would imply somebody could.
             'to' => ['required', Rule::enum(TripStatus::class)->except(TripStatus::INVOICE_GENERATED)],
             'notes' => [$reasonRequired ? 'required' : 'nullable', 'string', 'max:1000'],
+            // **Required only while the platform is reading odometers**
+            // (ADR-0047). With `tracking.odometer_enabled` off, the trace
+            // prices the trip and a driver never sees the field — a required
+            // rule would then 422 every Start Trip in the fleet, which is the
+            // whole app broken by one switch.
+            //
+            // Still `integer, min:0` when it *is* sent. A handset that has not
+            // picked up the new setting yet, or an operator who turned it off
+            // mid-shift, keeps working: the reading is accepted and stored,
+            // simply not demanded. Silently rejecting it would throw away the
+            // one number the Bank's acceptance criterion #4 asks for, from the
+            // drivers still recording it.
             'odometer_start' => [
-                Rule::requiredIf($to === TripStatus::TRIP_STARTED->value),
+                Rule::requiredIf(
+                    $to === TripStatus::TRIP_STARTED->value && $this->odometerEnabled(),
+                ),
                 'integer',
                 'min:0',
             ],
             'odometer_end' => [
-                Rule::requiredIf($to === TripStatus::TRIP_COMPLETED->value),
+                Rule::requiredIf(
+                    $to === TripStatus::TRIP_COMPLETED->value && $this->odometerEnabled(),
+                ),
                 'integer',
                 'min:0',
             ],
@@ -170,5 +187,20 @@ class TransitionTripRequest extends FormRequest
                 $validator->errors()->add('notes', 'Resolution notes are required to close a disputed trip.');
             }
         });
+    }
+
+    /**
+     * Whether the platform is reading odometers at all (ADR-0047).
+     *
+     * Asked through `TripDistanceResolver` rather than by reading the setting
+     * directly, because the state machine asks the same question when it
+     * decides where `distance_km` comes from — and a request that demanded a
+     * reading the state machine then ignored, or omitted one it then needed,
+     * is a pair of files disagreeing about the same switch. One answer, one
+     * owner.
+     */
+    private function odometerEnabled(): bool
+    {
+        return app(TripDistanceResolver::class)->odometerEnabled();
     }
 }

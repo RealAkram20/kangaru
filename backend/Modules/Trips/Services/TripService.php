@@ -5,6 +5,7 @@ namespace Modules\Trips\Services;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Modules\Trips\Enums\TripStatus;
+use Modules\Trips\Events\TripStatusChanged;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Models\TripEvent;
 
@@ -43,7 +44,13 @@ class TripService
 
             TripEvent::record($trip, null, TripStatus::ASSIGNED, $actor, null);
 
-            return $trip->load(['vehicle', 'driver']);
+            $trip->load(['vehicle', 'driver']);
+
+            // Creation is the first status; the requester learns a car and
+            // a driver now exist for their booking.
+            TripStatusChanged::dispatch($trip, null, TripStatus::ASSIGNED);
+
+            return $trip;
         });
     }
 

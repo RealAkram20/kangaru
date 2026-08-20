@@ -85,26 +85,20 @@ it('answers 404, never 403, when a customer rates another customer\'s trip', fun
         ->assertJsonPath('code', 'NOT_FOUND');
 });
 
-it('cannot yet let a customer rate even their own completed trip — pinned defect W1-c-F5, Trips module', function () {
+it('lets a customer rate their own completed trip — W1-c-F5, closed', function () {
     ['mine' => $mine, 'myTrip' => $myTrip] = twoCustomersWithOrdersAndTrips();
 
-    // Found by this package on 2026-08-18 and NOT fixed here, because W1-c
-    // edits no module source. `{trip}` on this route resolves through
-    // `BelongsToTenant::resolveRouteBinding`, which drops the tenant scope
-    // only for a platform *User*; the actor here is a Customer, no tenant is
-    // bound (customer routes carry no `IdentifyTenant`), so `TenantScope`
-    // fails closed and the binding 404s before `TripRatingController` runs.
-    // The message is the framework's, not the controller's "No such trip." —
-    // that is how you can tell it never got there. ADR-0030's rating loop is
-    // therefore open at the backend, and the sibling test's 404 for another
-    // customer's trip is a real refusal only once this one answers 201.
-    //
-    // Pinned rather than skipped: the day the Trips module fixes it, this
-    // fails and must be flipped to `assertStatus(201)`; until then a green
-    // suite does not quietly claim the endpoint works.
-    $response = $this->actingAs($mine, 'customer')
-        ->postJson("/api/v1/customer/trips/{$myTrip->id}/rating", ['stars' => 5]);
-
-    expect($response->getStatusCode())->toBe(404, 'The rating endpoint answered — flip this test to assertStatus(201) and close W1-c-F5.');
-    expect($response->json('message'))->toBe('The requested resource could not be found.');
+    // This test spent 2026-08-18 to 2026-08-20 pinned at 404: `{trip}`
+    // resolved through `BelongsToTenant::resolveRouteBinding`, which
+    // dropped the tenant scope only for a platform *User*; the actor here
+    // is a Customer, no tenant is bound, so `TenantScope` failed closed and
+    // the binding 404d before `TripRatingController` ever ran. Found by the
+    // census; felt by the owner ("gave this drive a rating but it was not
+    // given to the driver"). The resolver now treats a Customer like the
+    // other tenant-less actor, and the controller's own `customer_id`
+    // check keeps the sibling test's 404 a real refusal.
+    $this->actingAs($mine, 'customer')
+        ->postJson("/api/v1/customer/trips/{$myTrip->id}/rating", ['stars' => 5])
+        ->assertStatus(201)
+        ->assertJsonPath('data.stars', 5);
 });

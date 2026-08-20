@@ -45,21 +45,38 @@ class TripRouteController extends Controller
             // drop-off line, and a driver with location refused gets one too.
             'from_latitude' => ['nullable', 'numeric', 'between:-90,90', 'required_with:from_longitude'],
             'from_longitude' => ['nullable', 'numeric', 'between:-180,180', 'required_with:from_latitude'],
+            // Which end to route *to*. `dropoff` is the fare itself and the
+            // default; `pickup` is the approach — the road a driver is on
+            // between accepting and arriving, which ADR-0031's context names
+            // as the first of its three surfaces and which this endpoint
+            // could not draw: it only ever knew one destination, so the pickup
+            // screen kept its dashed guess while the trip screen got a road.
+            'to' => ['nullable', 'in:pickup,dropoff'],
         ]);
 
         $order = $trip->orderRequest;
+        $leg = $validated['to'] ?? 'dropoff';
 
         // Both ends have to be real. `TripResource::place` already refuses to
         // serve half a position, and the same rule applies here: a route from
         // a coordinate the platform guessed is worse than no route.
-        if ($order === null
-            || $order->dropoff_latitude === null
-            || $order->dropoff_longitude === null) {
+        if ($order === null) {
             return ApiResponse::success(['route' => null], 'No route available for this trip.');
         }
 
-        $fromLatitude = $validated['from_latitude'] ?? $order->pickup_latitude;
-        $fromLongitude = $validated['from_longitude'] ?? $order->pickup_longitude;
+        [$toLatitude, $toLongitude] = $leg === 'pickup'
+            ? [$order->pickup_latitude, $order->pickup_longitude]
+            : [$order->dropoff_latitude, $order->dropoff_longitude];
+
+        if ($toLatitude === null || $toLongitude === null) {
+            return ApiResponse::success(['route' => null], 'No route available for this trip.');
+        }
+
+        // The approach has no sensible origin but the driver: routing "from
+        // the pickup to the pickup" is a zero-length line, so without a fix
+        // the answer is honestly nothing rather than a dot.
+        $fromLatitude = $validated['from_latitude'] ?? ($leg === 'pickup' ? null : $order->pickup_latitude);
+        $fromLongitude = $validated['from_longitude'] ?? ($leg === 'pickup' ? null : $order->pickup_longitude);
 
         if ($fromLatitude === null || $fromLongitude === null) {
             return ApiResponse::success(['route' => null], 'No route available for this trip.');
@@ -68,8 +85,8 @@ class TripRouteController extends Controller
         $route = $this->routes->between(
             (float) $fromLatitude,
             (float) $fromLongitude,
-            (float) $order->dropoff_latitude,
-            (float) $order->dropoff_longitude,
+            (float) $toLatitude,
+            (float) $toLongitude,
         );
 
         return ApiResponse::success(

@@ -6,6 +6,7 @@ use App\Enums\Permission;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Support\Api\ApiResponse;
+use App\Support\Tenancy\ClientOptions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Modules\Trips\Enums\TripStatus;
@@ -69,23 +70,42 @@ class LivePositionController extends Controller
                 $request->filled('tenant_id') && $user->isPlatformLevel(),
                 fn ($q) => $q->where('tenant_id', $request->integer('tenant_id')),
             )
-            ->get(['id', 'vehicle_id']);
+            // The trip is loaded with what the map says about a marker —
+            // whose vehicle, which driver, where it is going, for which
+            // client — so the resource can name things instead of numbering
+            // them. Three small eager loads, not one per marker.
+            ->with([
+                'vehicle:id,registration_number,make,model,category',
+                'driver:id,name',
+                'tenant:id,name',
+            ])
+            ->get(['id', 'vehicle_id', 'driver_id', 'tenant_id', 'status', 'origin', 'destination']);
+
+        // Same contract as /trips and /bookings: whether this list spans
+        // clients, and the clients a platform reader may narrow to. A
+        // client's own user gets `tenant` and an empty list, and the page
+        // shows no picker.
+        $meta = [
+            'scope' => $user->isPlatformLevel() ? 'platform' : 'tenant',
+            'filters' => ['clients' => ClientOptions::forActor($user)],
+        ];
 
         if ($trips->isEmpty()) {
-            return ApiResponse::success([], 'Nothing is moving.');
+            return ApiResponse::success([], 'Nothing is moving.', meta: $meta);
         }
 
         $vehicleIds = $trips->pluck('vehicle_id')->map(fn ($id) => (int) $id)->all();
-        $tripIds = $trips->pluck('id')->map(fn ($id) => (int) $id)->flip();
+        $tripsById = $trips->keyBy('id');
 
         $positions = $this->positions->all($vehicleIds)
             // A vehicle reassigned to a new trip keeps one row, so its
             // stored `trip_id` is the authority on which trip the position
             // belongs to. Without this check a caller who may see the
             // vehicle's *previous* trip would read its current one.
-            ->filter(fn ($position) => $tripIds->has($position->tripId))
-            ->values();
+            ->filter(fn ($position) => $tripsById->has($position->tripId))
+            ->values()
+            ->map(fn ($position) => new LivePositionResource($position, $tripsById->get($position->tripId)));
 
-        return ApiResponse::success(LivePositionResource::collection($positions));
+        return ApiResponse::success($positions->all(), meta: $meta);
     }
 }

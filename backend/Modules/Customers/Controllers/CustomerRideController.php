@@ -9,12 +9,14 @@ use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Modules\Bookings\Enums\OrderRequestServiceType;
 use Modules\Bookings\Enums\OrderRequestStatus;
 use Modules\Bookings\Models\OrderRequest;
 use Modules\Customers\Requests\CancelRideRequest;
 use Modules\Customers\Resources\CustomerRideResource;
 use Modules\Dispatch\Enums\DispatchOfferStatus;
 use Modules\Dispatch\Models\DispatchOffer;
+use Modules\Dispatch\Services\DispatchOfferService;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Services\TripStateMachine;
@@ -49,6 +51,14 @@ use Modules\Trips\Services\TripStateMachine;
  */
 class CustomerRideController extends Controller
 {
+    public function __construct(
+        private readonly TripStateMachine $stateMachine,
+        // Only for the withdrawal push on cancellation (ADR-0046 §4). This
+        // controller deliberately does not reach the matcher for anything
+        // else — a cancelling passenger has no dispatch decision to make.
+        private readonly DispatchOfferService $offers,
+    ) {}
+
     /**
      * The customer's current ride, or null when they have none.
      *
@@ -57,8 +67,6 @@ class CustomerRideController extends Controller
      * a 404 is an error it would have to translate into that state — which
      * means a genuinely broken request would render as "no ride" too.
      */
-    public function __construct(private readonly TripStateMachine $stateMachine) {}
-
     public function active(Request $request): JsonResponse
     {
         /** @var Customer $customer */
@@ -88,7 +96,17 @@ class CustomerRideController extends Controller
         // even though Invoice Generated / Disputed / Closed still follow on
         // the billing side". A vehicle that is free is a journey that is
         // over, which is the question the ride screen is asking.
-        if ($trip !== null && ! $trip->status->occupiesVehicle()) {
+        //
+        // **Except for a short while after it ends.** The screen has to *see*
+        // the ending to render it — the fare and the rating after a drop-off,
+        // the notice after a cancellation — and a null the instant the trip
+        // stopped occupying the vehicle meant it never did: the poll ignores
+        // null on purpose (holding the last state rather than snapping back to
+        // "searching"), so the passenger sat on "on trip" after the driver had
+        // completed, and on "captain assigned" after they had cancelled. The
+        // owner watched both. `AFTERGLOW_MINUTES` is the window; after it, a
+        // reload shows the order form and yesterday's captain stays yesterday's.
+        if ($trip !== null && ! $trip->status->occupiesVehicle() && ! $this->justEnded($trip)) {
             return ApiResponse::success(null, 'No ride in progress.');
         }
 
@@ -186,13 +204,29 @@ class CustomerRideController extends Controller
             // Every offer still out on this order is dead. Only reachable
             // before a captain was assigned, and written for the case where
             // `offer_wave_size` is above one.
-            DispatchOffer::query()
+            //
+            // Read before the update, because `->live()` is what finds them
+            // and the update is what stops them being live.
+            $withdrawn = DispatchOffer::query()
                 ->where('order_request_id', $ride->id)
                 ->live()
+                ->with('driver.user')
+                ->get();
+
+            DispatchOffer::query()
+                ->whereKey($withdrawn->modelKeys())
                 ->update([
                     'status' => DispatchOfferStatus::SUPERSEDED,
                     'responded_at' => now(),
                 ]);
+
+            // **The case this was written for.** A passenger cancelling is the
+            // one path that kills an offer while a driver's phone is actively
+            // ringing for it, and with a forty-five second window that is the
+            // better part of a minute of noise over a ride nobody is taking.
+            // Best-effort — the handset's own deadline is the guarantee
+            // (ADR-0046 §4).
+            $this->offers->withdraw($withdrawn);
 
             // A converted order keeps its status — the trip carries the
             // cancellation and `converted` has nowhere legal to go. An order
@@ -223,10 +257,35 @@ class CustomerRideController extends Controller
      * disagree about which ride the customer means — the cancel button sits
      * on the screen the other one renders.
      */
+    /** How long a finished ride stays on the passenger's screen. */
+    private const AFTERGLOW_MINUTES = 30;
+
+    /**
+     * Whether the trip stopped occupying the vehicle recently enough that the
+     * passenger is still looking at it.
+     *
+     * `updated_at` rather than `completed_at`: a cancellation writes no
+     * `completed_at`, and the status write is the last thing that touches the
+     * row either way.
+     */
+    private function justEnded(Trip $trip): bool
+    {
+        return $trip->updated_at !== null
+            && $trip->updated_at->gt(now()->subMinutes(self::AFTERGLOW_MINUTES));
+    }
+
     private function activeRideFor(Customer $customer): ?OrderRequest
     {
         return OrderRequest::query()
             ->where('customer_id', $customer->id)
+            // Rides and deliveries only. This screen is a captain search and a
+            // live map, and a self-drive rental has neither — it was rendering
+            // "Finding you a captain" over a five-day hire and then, once the
+            // retry window closed, "no captain found" for something no captain
+            // was ever going to drive. The same distinction dispatch now makes
+            // (`OrderRequestServiceType::dispatchesToDriver`), so the screen
+            // and the matcher agree about what is being searched for.
+            ->whereIn('service_type', OrderRequestServiceType::dispatchableToDriver())
             // Immediate rides only. A booking for next Tuesday is not
             // something to show a live map for, and ADR-0024 does not offer
             // scheduled rides to drivers yet either — the two agree on

@@ -189,3 +189,51 @@ it('cannot reach into somebody else\'s ride', function () {
 it('refuses an unauthenticated caller', function () {
     $this->postJson('/api/v1/customer/rides/active/cancellation')->assertStatus(401);
 });
+
+it('still shows the passenger the ride for a while after they cancel it, so the screen can say so', function () {
+    // The web poll ignores null on purpose (it holds the last state rather
+    // than snapping back to "searching"), so a null the instant the trip
+    // stopped occupying the vehicle meant the passenger never saw the
+    // cancellation — or, after a drop-off, the fare. The owner watched both.
+    [$customer, $trip] = ridingCustomer(TripStatus::DRIVER_EN_ROUTE);
+
+    $this->actingAs($customer, 'customer')
+        ->postJson('/api/v1/customer/rides/active/cancellation', ['reason' => 'Changed my mind'])
+        ->assertOk();
+
+    $this->actingAs($customer, 'customer')
+        ->getJson('/api/v1/customer/rides/active')
+        ->assertOk()
+        ->assertJsonPath('data.phase', 'cancelled')
+        ->assertJsonPath('data.trip_id', $trip->id);
+});
+
+it('shows a completed ride with its fare, then lets it go', function () {
+    [$customer, $trip] = ridingCustomer(TripStatus::TRIP_COMPLETED);
+    $trip->forceFill([
+        'fare_minor' => 18_500,
+        'fare_currency' => 'UGX',
+        'distance_km' => '6.20',
+    ])->save();
+
+    $this->actingAs($customer, 'customer')
+        ->getJson('/api/v1/customer/rides/active')
+        ->assertOk()
+        ->assertJsonPath('data.phase', 'trip_completed')
+        ->assertJsonPath('data.fare.total_minor', 18500)
+        ->assertJsonPath('data.fare.currency', 'UGX')
+        ->assertJsonPath('data.fare.distance_km', 6.2)
+        ->assertJsonPath('data.fare.is_estimate', false)
+        // A settled fare is not also an estimate.
+        ->assertJsonPath('data.estimated_fare', null);
+
+    // Yesterday's captain stays yesterday's: past the afterglow the screen
+    // returns to the order form.
+    $this->travel(31)->minutes();
+    Trip::withoutGlobalScopes()->whereKey($trip->id)->update(['updated_at' => now()->subMinutes(31)]);
+
+    $this->actingAs($customer, 'customer')
+        ->getJson('/api/v1/customer/rides/active')
+        ->assertOk()
+        ->assertJsonPath('data', null);
+});

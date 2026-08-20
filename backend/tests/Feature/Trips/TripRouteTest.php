@@ -369,3 +369,48 @@ it('asks for no key on the free engine, so routing is never on but dead', functi
         ->assertOk()
         ->assertJsonPath('data.route.provider', 'osrm');
 });
+
+it('draws the approach to the pickup when asked for that leg', function () {
+    // The first of ADR-0031's three surfaces. The endpoint only ever routed
+    // to the drop-off, so the pickup screen kept a dashed guess while the
+    // trip screen got a road; the owner, from a handset: "we all know that
+    // the trip can not be a straight line".
+    [$driverUser, $trip] = routableTrip();
+    enableRouting();
+
+    Http::fake(['maps.googleapis.com/*' => Http::response(directionsBody())]);
+
+    $this->actingAs($driverUser, 'sanctum')
+        ->getJson("/api/v1/trips/{$trip->id}/route?to=pickup&from_latitude=0.35&from_longitude=32.59")
+        ->assertOk()
+        ->assertJsonPath('data.route.polyline', 'a~l~Fjk~uOwHJy@P');
+
+    // Routed to the *pickup* (0.3346, 32.5906), not the drop-off.
+    Http::assertSent(fn ($request) => str_contains($request->url(), 'destination=0.3346%2C32.5906')
+        || str_contains($request->url(), 'destination=0.3346,32.5906'));
+});
+
+it('answers null for the approach when the handset has no fix, rather than a dot', function () {
+    // "From the pickup to the pickup" is a zero-length line. Without an
+    // origin there is nothing honest to draw, and nothing is asked of Google.
+    [$driverUser, $trip] = routableTrip();
+    enableRouting();
+
+    Http::fake(['maps.googleapis.com/*' => Http::response(directionsBody())]);
+
+    $this->actingAs($driverUser, 'sanctum')
+        ->getJson("/api/v1/trips/{$trip->id}/route?to=pickup")
+        ->assertOk()
+        ->assertJsonPath('data.route', null);
+
+    Http::assertNothingSent();
+});
+
+it('refuses an end it does not know', function () {
+    [$driverUser, $trip] = routableTrip();
+    enableRouting();
+
+    $this->actingAs($driverUser, 'sanctum')
+        ->getJson("/api/v1/trips/{$trip->id}/route?to=moon")
+        ->assertStatus(422);
+});

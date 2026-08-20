@@ -163,6 +163,16 @@ Cancelled: reachable from any state before Trip Started, including Rejected
    that could fail a ping batch would duplicate route through the job's
    retry.
 
+   **Named, not numbered (20 August 2026).** Each entry also carries the
+   vehicle (plate, make, model), the driver (name) and the trip (status,
+   origin, destination, client) it was read through — allow-listed, so
+   no VIN, phone or licence number, and deliberately **no passenger**:
+   ADR-0024 §7 governs who sees a rider's name, and the trip record behind
+   "Open trip" is where it lives. The response gains `meta.scope` and
+   `meta.filters.clients` on the `/trips` contract. `GET /driver-presence`
+   (Fleet) is the other half of the live map — the drivers waiting for
+   work.
+
    `LivePositionStore` has a Redis driver (hash per vehicle + TTL + an index
    set, as ADR-0003 intended) and a database driver. **The database one is
    the default**, because this environment has no Redis server, extension or
@@ -253,6 +263,39 @@ record.
 API rather than exposing a storage URL. The photo shows a client's vehicle
 at a known place and time; a public object-storage link would be
 addressable by anyone who ever saw it, forever.
+
+## The road ahead, drawn (ADR-0031)
+
+`GET /api/v1/trips/{trip}/route` returns a road-following polyline, and the
+one thing a caller must get right is **which leg it is asking for**:
+
+| `?to=`    | The road from                | Which is                     |
+| --------- | ---------------------------- | ---------------------------- |
+| `pickup`  | the driver's sent position   | the approach — how they reach the passenger |
+| `dropoff` | the driver's position, or the pickup when none was sent | the fare itself |
+
+`dropoff` is the default, and that default is a trap worth naming: the driver
+app's full-screen map took it while every other element on that screen
+respected the trip's status, so a driver on their way to a pickup was shown
+the road to somewhere else. Measured on a real order, the two legs were
+**7.3 km and 71.0 km from the same origin**. If a screen distinguishes the two
+halves of a job anywhere, it must distinguish them here too.
+
+`to=pickup` with no origin answers `null` rather than a route: the approach
+has no sensible origin but the driver, and routing from the pickup to the
+pickup is a zero-length line.
+
+**`route: null` is a 200 and is the ordinary answer** — no key, routing off,
+no network, a quota rejection, no road between two points, or a trip taken
+over the phone with no pins. Clients draw a dashed direct line instead. A 4xx
+would turn a missing polyline into a screen a driver cannot use with a
+passenger in the car.
+
+The vendor sits behind `RouteProvider`, chosen per request from the `maps`
+settings group: OSRM by default (open source, no key, no meter) and Google
+Directions when an operator wants traffic. `RouteService` caches on an origin
+snapped to ~100 m, because a driver crawling through traffic asks the same
+question repeatedly and each answer is billed.
 
 ## GPS route capture (ADR-0003)
 

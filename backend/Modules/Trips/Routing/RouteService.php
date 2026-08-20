@@ -46,7 +46,26 @@ class RouteService
         float $toLatitude,
         float $toLongitude,
     ): ?Route {
-        $key = $this->cacheKey($fromLatitude, $fromLongitude, $toLatitude, $toLongitude);
+        return $this->via([[$fromLatitude, $fromLongitude], [$toLatitude, $toLongitude]]);
+    }
+
+    /**
+     * A road through an ordered list of points (ADR-0045 §7).
+     *
+     * The circuit a corporate client draws: origin, every ATM in the order
+     * the officer put them in, and the last stop. Two points is the case
+     * `between()` delegates here, so there is one cache, one failure path
+     * and one place the provider is asked.
+     *
+     * @param  array<int, array{float, float}>  $points
+     */
+    public function via(array $points): ?Route
+    {
+        if (count($points) < 2) {
+            return null;
+        }
+
+        $key = $this->cacheKey($points);
 
         // A miss that the provider also declines is cached as a miss for a
         // short while, deliberately: without it, a trip whose coordinates have
@@ -58,7 +77,7 @@ class RouteService
             return $cached === false ? null : $this->fromCache($cached);
         }
 
-        $route = $this->provider->route($fromLatitude, $fromLongitude, $toLatitude, $toLongitude);
+        $route = $this->provider->via($points);
 
         Cache::put($key, $route === null ? false : $route->toArray(), self::TTL_SECONDS);
 
@@ -80,10 +99,38 @@ class RouteService
         );
     }
 
-    private function cacheKey(float $fromLat, float $fromLng, float $toLat, float $toLng): string
+    /**
+     * The origin snapped, everything after it exact — see the class docblock
+     * for why those two halves differ.
+     *
+     * Hashed once there are waypoints, because a 25-stop circuit's key would
+     * otherwise be several hundred characters and some cache backends cap a
+     * key far below that. The hash is over the *ordered* list, so reordering
+     * a circuit is a different key — which it must be, since it is a
+     * different drive.
+     *
+     * @param  array<int, array{float, float}>  $points
+     */
+    private function cacheKey(array $points): string
     {
-        $from = round($fromLat, self::ORIGIN_PRECISION).','.round($fromLng, self::ORIGIN_PRECISION);
+        // See GoogleDirectionsProvider for why this is indexed rather than
+        // shifted.
+        $points = array_values($points);
+        $origin = $points[0];
+        $rest = array_slice($points, 1);
 
-        return "route:{$from}:{$toLat},{$toLng}";
+        $from = round($origin[0], self::ORIGIN_PRECISION).','.round($origin[1], self::ORIGIN_PRECISION);
+
+        $tail = implode(';', array_map(
+            static fn (array $point) => "{$point[0]},{$point[1]}",
+            $rest,
+        ));
+
+        // Two points keeps the original key shape verbatim, so a fleet's warm
+        // cache survives this change rather than being invalidated wholesale
+        // on deploy.
+        return count($rest) === 1
+            ? "route:{$from}:{$tail}"
+            : 'route:'.$from.':via:'.hash('xxh128', $tail);
     }
 }
