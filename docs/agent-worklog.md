@@ -11743,3 +11743,111 @@ per `docs/screen-rules.md`. All four were decided by the owner:
   same reason.
 - **No document gates anything**, still. ADR-0033 §6 stands; two more types
   do not change it.
+
+---
+
+### 2026-08-21 02:15 — Accounts, a provisional tariff, and the estimate that understates by half
+
+**Status:** in progress. Continues my deploy entries above.
+
+## Published
+
+`c119e7f` is live — the settings agent's section rail and split rows are on
+`https://kangaruride.com` as `kangaruride/web:c119e7f`. The SPA bakes
+`VITE_API_BASE_URL` at build time, so this was a rebuild rather than a
+restart. Apex 200, container healthy.
+
+## Accounts, because production had none
+
+The owner asked for a walk-in user and a driver. Both exist and **both were
+verified against production over the wire**, not assumed:
+
+- **Driver** — `driver@kangaruride.com`. Created through
+  `DriverAccountService::open()`, the app's own path, so it went through the
+  same `lockForUpdate` and conflict check an administrator would. Vehicle
+  `UAX 123T` (Toyota Premio, sedan) and licence `TEST-DL-0001` attached, so
+  `vehicle_id` is set — which the `Driver` model's own comment calls "what
+  makes them offerable at all". `POST /auth/login` → **200**, `role: driver`,
+  `must_enrol_mfa: false`.
+- **Customer** — `passenger@kangaruride.com`. Registered through the real
+  public endpoint `POST /customer/auth/register` → **201**, then
+  `POST /customer/auth/login` → **200**. Nothing hand-written.
+
+Both are marked as test data on purpose — `Test Driver`, `Test Passenger`,
+`TEST-DL-0001`, `UAX 123T` — so they can be found and deleted and can never be
+mistaken for a real driver or customer.
+
+**A finding from the owner using them:** signing in as the customer at
+`/login` fails, correctly — that page authenticates `User` records and a
+`Customer` is a different guard. But the message is the generic "email or
+password is incorrect" (right, no enumeration) with **no route back to
+`/order`, where a customer actually signs in**. Two audiences, one door, and
+the only clue is the hint text "Use your organisation email". Reported, not
+changed: it is a UI file another agent owns and a design decision rather than
+a defect.
+
+## The tariff, and the fact that it is invented
+
+`rate_cards=0`, so `RateCardResolver::walkInTariff()` threw
+`noWalkInTariff()` and `PublicFareQuoteController` turned that into `null` for
+all five classes — **200 with no prices**, which is why the owner saw a live
+order flow with no pricing. The refusal is correct: it declines rather than
+falling back to a client's negotiated rate, which would bill a stranger at a
+bank's prices.
+
+**The owner was offered the three options and chose a marked placeholder**, so
+that is what exists, and it is written down here because it is the kind of
+thing that gets forgotten:
+
+`RateCard` id 1 is named **"PROVISIONAL public tariff - REPLACE BEFORE REAL
+CUSTOMERS"**, and its description says the figures are invented round numbers
+rather than researched Kampala rates. Version 1, UGX, half-up, 5 free waiting
+minutes, no night multiplier. Four categories:
+
+| category | base | per km | per waiting min | minimum |
+| --- | --- | --- | --- | --- |
+| boda | 2,000 | 1,000 | 100 | 3,000 |
+| sedan | 5,000 | 2,000 | 200 | 10,000 |
+| suv | 7,000 | 2,500 | 250 | 15,000 |
+| van | 10,000 | 3,000 | 300 | 20,000 |
+
+Live quotes returned and **the arithmetic checked by hand**, not just eyeballed:
+boda `2000 + 3.38×1000 = 5,380`; sedan `11,760`; suv `15,450`; van `20,140`.
+All four correct.
+
+**`kangaruride.com` is publicly reachable, so these numbers are quoted to any
+member of the public who finds the site.** That is the standing risk the owner
+accepted knowingly.
+
+## The finding worth acting on: the estimate uses the straight line
+
+`WalkInFareService::quote()` prices from `GreatCircle::kilometres` — the
+straight line — while `settle()` charges the distance actually travelled.
+ADR-0026 §2 decided that deliberately, and it was right **when there was no
+routing engine**. There is one now, self-hosted, on this project's own
+network.
+
+The gap is not small. Same journey, same tariff:
+
+| | distance | boda fare |
+| --- | --- | --- |
+| quoted (great-circle) | 3.38 km | 5,380 |
+| charged (road, via OSRM) | 6.00 km | ~8,380 |
+
+**A passenger is quoted 5,380 and pays about 8,380 — 56% more.** The `basis`
+string does say "Straight-line distance. The final fare follows the distance
+actually travelled", so nobody is being deceived; but a quote that
+under-reads by half on an ordinary Kampala trip is a complaint queue, and
+`OsrmProvider`'s own docblock already makes this exact argument about
+great-circle distance being "a shape that follows no street".
+
+**Not changed by me.** It is `Modules/Billing` code, it is a pricing decision
+rather than a defect, and now that routing exists the choice deserves an ADR
+amendment rather than an edit in passing. Handed to the owner.
+
+## Still open
+
+Order-to-**offer** has not been driven end to end. No corporate tenant exists,
+so the corporate half of W2-a is untestable. Cross-tenant isolation and the
+route policy census have not been run against the deployed database. `main` is
+still behind PR #9.
