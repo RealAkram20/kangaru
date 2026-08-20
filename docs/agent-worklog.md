@@ -11118,7 +11118,11 @@ I will re-verify from here and confirm to the owner when it is.
 
 ### 2026-08-21 — Settings, rebuilt: a section rail, split rows, and 60% less prose
 
-**Status:** in progress. **Claimed at the time of this entry.** I searched the
+**Status:** done. 16 settings tests, 538 frontend tests, `tsc -b --force` and
+`eslint .` clean (0 errors, **0 warnings** — the repo had none and still has
+none). Six guards proved by mutation, every mutation restored. Driven in a real
+browser as the Super Admin, through the real MFA challenge, in both themes.
+**Claimed at the time of this entry.** I searched the
 log first: the last entry to touch `SystemSettingsPage` is the ADR-0047 agent's,
 and the deploy agent has since committed that work and posted *"finished and
 green"*. Nobody holds this file now. The one agent currently in the tree is on
@@ -11422,3 +11426,209 @@ it.
 Order-to-offer on the production domain. Cross-tenant isolation against the
 deployed database. Route policy census against the deployed routes. A backup
 restore on this server. `main` still behind PR #9.
+
+## What changed, in the order the owner will see it
+
+1. **A section rail replaces the stack.** Twelve groups under five headings —
+   Platform, Operations, Money, Connections, Access and legal — each with its
+   Lucide icon. The rail is sticky; the pane beside it is the only one shown.
+   The pair is bounded at 1180px and centred, which is the actual answer to
+   "there is a lot of space on the right": the fix for a column hugging the
+   left edge is a balanced composition, not a 1,400px-wide text input.
+2. **Rows, not stacks.** A new `layout="split"` on `FormField` puts label and
+   hint in a left column and the control in a right one. **The control column
+   is the fixed one and the label column takes the slack** — the obvious
+   arrangement is the opposite and is worse in both directions at once: a
+   four-character number field strands 300px of nothing while the sentence
+   explaining it wraps three times.
+3. **The prose is cut by roughly two thirds.** Every section description is
+   one line; a hint survives only where it says something the label cannot.
+   **Four pieces of copy were deliberately not cut** — the Bank warning on the
+   odometer switch, "this only flags, it does not stop anything", "costs money
+   per trip" on Google, and "not meant for production" on the OSRM demo
+   server. Each is a consequence somebody has to know before they act, and
+   each has a test.
+4. **Saving is optimistic**, at the owner's request mid-build. The button
+   acknowledges immediately and the round trip happens behind it. This is
+   honest here rather than a white lie because the form's source of truth is
+   its own state: nothing is overwritten on the way out, so a refusal simply
+   withdraws the acknowledgement, marks the section unsaved again, and puts
+   the reason against the field. Proved in the browser — "Saved" is on the
+   button in the log **before** the `PATCH 200` line.
+5. **Unsaved work is visible and recoverable.** An edited section says
+   "Unsaved changes" in its bar, offers Discard, and carries a marker in the
+   rail so it is still visible from another section. Panes are hidden, not
+   unmounted, so navigating away keeps what was typed.
+6. **A `Switch`** (`components/forms/Switch.tsx`) — a real
+   `<input type="checkbox" role="switch">`, built like `Checkbox`. Its off
+   track is `--text-secondary` rather than a pale grey because
+   `--border-strong` measures 1.9:1 on white and WCAG 2.2 asks 3:1 of a
+   control against its surface.
+
+## Verified by running, not by reading
+
+Super Admin sign-in went through the **real MFA challenge** — the TOTP was
+computed from the stored secret rather than the database being edited to get
+past it. Screenshots of Branding, Driver pay, Distance checks, Email, Terms
+and privacy, Sign-in methods, the dirty state, the 820px layout and dark mode.
+No console or page errors. The save round trip was made **net-zero by
+construction**: the Branding group was saved back exactly as it was read, so
+nothing in the hand-made dev state moved.
+
+## Guards proved by mutation, and what each broke
+
+| mutation | tests that failed |
+| --- | --- |
+| acknowledge only after the answer | 2 |
+| do not withdraw the acknowledgement on refusal | 1 |
+| unmount hidden panes instead of hiding them | 7 |
+| drop the rail marker's clipped "unsaved changes" | 1 |
+| send an untouched secret | 1 |
+| show the Bank warning unconditionally | 1 |
+
+## One thing I found and did not fix
+
+`billing.bonus_weekly_amount_minor` and `referral_reward_amount_minor` are
+named for minor units, and the old UI called them "whole shillings". For UGX
+those are the same thing, so the label was never wrong — but it is wrong for
+any currency with cents, and `regional.currency` is editable. I replaced the
+word with the **configured currency code as a suffix**, which is honest for
+UGX and stops the copy hardwiring Uganda. **Deciding which unit the column
+actually means is a backend question**, and inventing an answer in a form
+label is the exact failure this project cares about. Flagged to the owner,
+not resolved here.
+
+## Not done, deliberately
+
+- **No API change.** Every group, key and endpoint is exactly as
+  `SettingsService` defines them, so `docs/api/openapi.yaml` is untouched by
+  design and CI's contract check has nothing to say.
+- **No deep link per section.** `?section=email` would be worth having and
+  costs the page a router dependency it does not have today plus a
+  `MemoryRouter` in its test. Small, separable, and nobody asked.
+- **`frontend/README.md` left alone.** Its component list is a historical
+  porting note ("9 components ported") that already omits Checkbox, Select,
+  Textarea and Alert; adding Switch to it would make a stale list look
+  current.
+
+---
+
+### 2026-08-21 01:35 — Cloudflare went in front, and it exposed two defects that were already there
+
+**Status:** in progress. Continues my 00:20 / 00:40 / 01:10 entries.
+
+The owner put `kangaruride.com` behind Cloudflare's free plan mid-session. All
+three names are proxied now (`104.21.74.222`, `172.67.164.10`) and all three
+answer 200; an early apex TLS handshake failure was Universal SSL still
+issuing and cleared itself.
+
+Neither of the two defects below was *caused* by Cloudflare. Both were already
+true behind Traefik and Cloudflare made them visible.
+
+## 1 · Nothing was trusted, so nobody had an IP
+
+**Measured on the live server, not reasoned about.** A tagged request through
+the production domain, then the access log:
+
+```
+10.0.3.9 - - [20/Aug/2026:22:05:39] "GET /up?probe=trustproxy-check" 200 "-" "102.86.7.251"
+```
+
+The real client was in `X-Forwarded-For` the whole time. Laravel had no
+`trustProxies` configured at all, so `request()->ip()` returned `10.0.3.9` —
+Traefik — for every request ever made. Two consumers, both wrong:
+
+- **`AuditLog::record()` stamps `ip_address` on every mutation.** A trail that
+  records the proxy's container address for every action by every user cannot
+  answer the question an auditor asks. `PRODUCT.md` sells audit-grade
+  correctness to a bank; this was the opposite.
+- **`AppServiceProvider` rate-limits `->by($request->ip())`.** One bucket for
+  the entire internet. An attacker on the OTP path exhausts the limit for every
+  legitimate user simultaneously — and AGENTS.md names SMS pumping fraud as a
+  real East African cost, a bill rather than a hypothesis.
+
+**Fixed in `3bae119`,** trusting the private Docker ranges plus Cloudflare's
+published edge ranges. **Not `'*'`** — trusting every hop means believing an
+`X-Forwarded-For` a stranger wrote, which forges the audit trail and evades the
+rate limiter. Symfony walks the chain right-to-left and stops at the first
+untrusted hop, so naming the hops is precisely what makes a forged prefix
+inert. Three tests, **all proved by mutation**: narrowing the trusted range so
+the proxy is no longer trusted turns all three red; restoring it green, and the
+file's diff is 76 insertions with no deletions.
+
+**Verified in production, on the same table, before and after:**
+
+```
+ROW id=17  order_request  created   ip='102.86.7.251'   <- after
+ROW id=16  user           updated   ip='10.0.3.9'       <- before
+ROW id=15  user           updated   ip='10.0.3.9'       <- before
+ROW id=14  setting        created   ip=NULL             <- console, correctly null
+```
+
+**This closed the audit-log box in `master-plan.md` §5 as a side effect**, by a
+real walk-in order placed on the production domain — `KR-WT9P23`, HTTP 201 —
+rather than by a contrived write.
+
+**Owner-side settings named and handed over, not done by me:** SSL/TLS must be
+**Full (strict)**, or Cloudflare speaks HTTP to an origin that redirects to
+HTTPS and the browser loops. **Always Use HTTPS should stay off** until the
+certificate story changes: it rewrites `/.well-known/acme-challenge/`, which is
+how Traefik renews — the current certificate expires 18 November and would fail
+silently around 20 October. A cache-bypass rule for `api.kangaruride.com/*` is
+recommended.
+
+## 2 · The emergency procedure was not executable
+
+`docker compose exec backup /opt/kangaruride/backup.sh --once` — the exact
+command in `deploy/README.md` §4 and `docs/runbook.md` — answered
+**`permission denied`**.
+
+All four scripts in `deploy/` were committed **`100644`**. On Windows
+`core.filemode` is off, so `ls` showed them as `-rwxr-xr-x` to the author and
+they looked fine. **CI never caught it either, because every CI step invokes
+them as `bash deploy/rollback.sh`** — the one form that does not need the bit.
+
+So the rollback rehearsal has been passing for days against an invocation
+nobody will use at 2am. The documented one — the one a person reaches for when
+the database is wrong and they are frightened — did not run.
+
+Fixed in `bc03cef` with `git update-index --chmod=+x`. The docs were right; the
+files were wrong.
+
+## 3 · The restore rehearsal, performed on the live server
+
+`master-plan.md` §5 asks for a backup **and one restore performed**, and
+`deploy/README.md` is explicit that on production this is a deliberate outage
+to be done before clients are on. That was now.
+
+Done the way CI does it — back up, **mutate**, restore, prove the mutation is
+gone — because a restore that silently no-ops looks identical to one that
+works:
+
+| step | result |
+| --- | --- |
+| backup | 18,383 bytes in 2s, 3 kept |
+| mutate | second order `KR-6UTJEE` placed after the dump |
+| restore | **59 tables in 10s** |
+| `KR-6UTJEE` | **gone** — the restore genuinely replaced data |
+| `KR-WT9P23` | survived |
+| roles / users / audit | 10 / 1 / 17, intact |
+| API after | 200 |
+
+**Box closed, and timed.**
+
+## Deployed state
+
+`bc03cef`. Eight containers, all healthy. CI green on `3bae119` for gitleaks,
+frontend, deploy-stack and rollback; Pest was still running when this was
+written, and **`bc03cef` has not had a CI run of its own yet** — it is a file
+mode change with no content diff, but that is a reason to expect it to pass,
+not a claim that it has.
+
+## Still open, unchanged
+
+Order-to-**offer** cannot be driven: there are no drivers, and that is the
+owner's decision, not mine to invent. No corporate-client order, because there
+is no tenant. Cross-tenant isolation and the route policy census have not been
+run against the deployed database. `main` is still behind PR #9.
+
