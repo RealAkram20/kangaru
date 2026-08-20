@@ -9,6 +9,11 @@ import { TripsPage } from './TripsPage'
 const STARTED_AT = '2026-07-21T08:14:22.000000Z'
 const COMPLETED_AT = '2026-07-21T09:20:22.000000Z'
 
+// The panel's "Full record" button navigates to /trips/:id; the page is
+// rendered without a router here, like every other page test.
+const navigate = vi.fn()
+vi.mock('react-router-dom', () => ({ useNavigate: () => navigate }))
+
 vi.mock('../lib/apiClient', () => ({
   apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn() },
 }))
@@ -94,6 +99,25 @@ describe('TripsPage', () => {
    * every trip, and PROJECT.md makes them the Phase 1 acceptance criteria.
    * This is the test that says they reach the screen.
    */
+  it("shows the platform's verdict on each finished record, and opens the full record", async () => {
+    const user = userEvent.setup()
+    board([
+      trip({ id: 7 }),
+      trip({ id: 8, vehicle: { ...trip().vehicle!, registration_number: 'UBB 456B' }, distance_variance_flagged: true }),
+      trip({ id: 9, vehicle: { ...trip().vehicle!, registration_number: 'UCC 789C' }, status: 'trip_started', odometer_end: null }),
+    ])
+    renderAs(<TripsPage />, makeUser({ role: 'corporate_admin' }))
+
+    // Verified, flagged, and not yet judged — the column names what the
+    // server stored, so a client sees a flagged reading before they ask.
+    expect(await screen.findByText('Verified')).toBeInTheDocument()
+    expect(screen.getByText('Check')).toBeInTheDocument()
+
+    const panel = await openTrip(user, 'UBB 456B')
+    await user.click(within(panel).getByRole('button', { name: /full record/i }))
+    expect(navigate).toHaveBeenCalledWith('/trips/8')
+  })
+
   it('shows all six of the Bank-required data points', async () => {
     const user = userEvent.setup()
     renderAs(<TripsPage />, makeUser({ role: 'finance' }))

@@ -1,6 +1,13 @@
 export interface User {
   id: number
   tenant_id: number | null
+  /**
+   * The tenant's display name — "Centenary Bank" — or null for platform
+   * staff, who have none (ADR-0006). The chrome names whose console this is
+   * from here rather than by fetching `/companies`. Optional so a response
+   * from an API older than the field still types.
+   */
+  tenant_name?: string | null
   name: string
   email: string
   role: string
@@ -13,6 +20,14 @@ export interface User {
    * closed), and callers fall back to `role`.
    */
   role_label?: string
+  /**
+   * The switches a client's administrator set on this account
+   * (App\Enums\ClientCapability), unioned onto the role's permissions
+   * server-side. The menu reads them so a Corporate Employee who may see
+   * invoices is offered the door. Optional: an older API sends none.
+   */
+  capabilities?: string[]
+  books_without_approval?: boolean
   created_at: string
   /**
    * Whether this account has a second factor set up (ADR-0008).

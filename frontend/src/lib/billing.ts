@@ -31,7 +31,10 @@ export function canViewInvoices(user: User | null): boolean {
     user?.role === 'super_admin' ||
     user?.role === 'finance' ||
     user?.role === 'operations_manager' ||
-    user?.role === 'corporate_admin'
+    user?.role === 'corporate_admin' ||
+    // A client's person switched on to see finance (App\Enums\ClientCapability
+    // — `invoices.view` + `reports.view` unioned onto their role).
+    (user?.role === 'corporate_employee' && (user.capabilities ?? []).includes('sees_finance'))
   )
 }
 

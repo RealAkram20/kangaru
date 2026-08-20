@@ -12,6 +12,7 @@ import { Dialog } from '../components/feedback/Dialog'
 import { FormField } from '../components/forms/FormField'
 import { Select } from '../components/forms/Select'
 import { Textarea } from '../components/forms/Textarea'
+import { PageFill } from '../components/layout/PageFill'
 
 /**
  * The queue ADR-0044 created — and the half that decides whether any of it was
@@ -80,6 +81,7 @@ export function SupportRequestsPage() {
     () => [
       {
         key: 'driver_name',
+        card: 'title',
         header: 'Driver',
         sortable: true,
         // A driver with no name on the row would make this a queue of
@@ -88,11 +90,13 @@ export function SupportRequestsPage() {
       },
       {
         key: 'topic_label',
+        card: 'meta',
         header: 'About',
         sortable: true,
       },
       {
         key: 'body',
+        card: 'meta',
         header: 'What they said',
         /*
           Clipped **here and only here**. The full account is in the dialog,
@@ -117,17 +121,20 @@ export function SupportRequestsPage() {
       },
       {
         key: 'created_at',
+        card: 'meta',
         header: 'Sent',
         sortable: true,
         render: (row) => formatTimestamp(row.created_at),
       },
       {
         key: 'status',
+        card: 'status',
         header: 'Status',
         render: (row) => <Badge tone={STATUS_TONE[row.status]}>{row.status_label}</Badge>,
       },
       {
         key: 'id',
+        card: 'meta',
         header: '',
         render: (row) =>
           row.status === 'open' ? (
@@ -148,8 +155,10 @@ export function SupportRequestsPage() {
   )
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+    <PageFill>
+      <PageFill.Flex>
       <Card
+        fill
         title="Driver reports"
         subtitle={
           reports === null
@@ -193,6 +202,7 @@ export function SupportRequestsPage() {
           <DataTable<SupportRequest>
             columns={columns}
             rows={reports ?? []}
+            fill
             emptyMessage={
               reports === null
                 ? 'Loading…'
@@ -203,6 +213,7 @@ export function SupportRequestsPage() {
           />
         )}
       </Card>
+      </PageFill.Flex>
 
       {answering && (
         <AnswerDialog
@@ -214,7 +225,7 @@ export function SupportRequestsPage() {
           }}
         />
       )}
-    </div>
+    </PageFill>
   )
 }
 

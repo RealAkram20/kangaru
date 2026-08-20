@@ -27,7 +27,7 @@ import { canUseNavItem } from '../lib/navigation'
 export function RequireNavAccess({ id, children }: { id: string; children: ReactNode }) {
   const { user } = useAuth()
 
-  if (canUseNavItem(user?.role, id)) {
+  if (canUseNavItem(user?.role, id, user?.capabilities ?? [])) {
     return <>{children}</>
   }
 

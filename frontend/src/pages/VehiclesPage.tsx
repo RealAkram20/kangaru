@@ -6,6 +6,7 @@ import { Badge } from '../components/core/Badge'
 import { Card } from '../components/core/Card'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
 import { Input } from '../components/forms/Input'
+import { PageFill } from '../components/layout/PageFill'
 
 const STATUS_TONE: Record<Vehicle['status'], 'success' | 'warning' | 'neutral'> = {
   active: 'success',
@@ -14,14 +15,15 @@ const STATUS_TONE: Record<Vehicle['status'], 'success' | 'warning' | 'neutral'> 
 }
 
 const COLUMNS: DataColumn<Vehicle>[] = [
-  { key: 'registration_number', header: 'Reg. number', sortable: true },
-  { key: 'make', header: 'Make' },
-  { key: 'model', header: 'Model' },
-  { key: 'year', header: 'Year', numeric: true, sortable: true },
-  { key: 'category', header: 'Category' },
-  { key: 'seating_capacity', header: 'Seats', numeric: true },
+  { key: 'registration_number', card: 'title', header: 'Reg. number', sortable: true },
+  { key: 'make', card: 'meta', header: 'Make' },
+  { key: 'model', card: 'meta', header: 'Model' },
+  { key: 'year', card: 'meta', header: 'Year', numeric: true, sortable: true },
+  { key: 'category', card: 'meta', header: 'Category' },
+  { key: 'seating_capacity', card: 'meta', header: 'Seats', numeric: true },
   {
     key: 'status',
+    card: 'status',
     header: 'Status',
     render: (row) => <Badge tone={STATUS_TONE[row.status]}>{row.status}</Badge>,
   },
@@ -52,8 +54,10 @@ export function VehiclesPage() {
   }, [vehicles, query])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+    <PageFill>
+      <PageFill.Flex>
       <Card
+        fill
         title="Vehicles"
         subtitle={vehicles ? `${vehicles.length} total` : undefined}
         actions={
@@ -73,12 +77,14 @@ export function VehiclesPage() {
           <DataTable<Vehicle>
             columns={COLUMNS}
             rows={filtered}
+            fill
             emptyMessage={
               vehicles === null ? 'Loading…' : query ? 'No vehicles match your filter' : 'No vehicles yet'
             }
           />
         )}
       </Card>
-    </div>
+      </PageFill.Flex>
+    </PageFill>
   )
 }

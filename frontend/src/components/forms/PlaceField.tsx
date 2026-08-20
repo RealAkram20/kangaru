@@ -112,10 +112,10 @@ export function PlaceField({
               overflowY: 'auto',
               listStyle: 'none',
               padding: 'var(--space-1)',
-              background: 'var(--surface-raised)',
+              background: 'var(--surface-card)',
               border: '1px solid var(--border-default)',
               borderRadius: 'var(--radius-lg)',
-              boxShadow: 'var(--elevation-overlay)',
+              boxShadow: 'var(--shadow-lg)',
             }}
           >
             {hits.map((hit) => (

@@ -67,7 +67,7 @@ export function Textarea({
             outline: 'none',
             background: 'transparent',
             resize: 'vertical',
-            font: 'var(--type-body-dense)',
+            font: 'var(--type-control)',
             lineHeight: 1.6,
             color: 'var(--text-body)',
           } as CSSProperties

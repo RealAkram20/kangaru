@@ -1,13 +1,23 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildUnits,
+  categoryLabel,
+  nearbyToUnits,
+  spriteKindFor,
   byAttention,
   fleetBounds,
   freshnessLabel,
+  matchesFilter,
+  matchesQuery,
   planMarkers,
   speedLabel,
+  statusLabel,
+  summarise,
   toneFor,
+  unitTitle,
+  type FleetUnit,
 } from './livePositions'
-import type { LivePosition } from '../types/livePosition'
+import type { LivePosition, NearbyVehicle, OnDutyDriver } from '../types/livePosition'
 
 function position(overrides: Partial<LivePosition> = {}): LivePosition {
   return {
@@ -21,152 +31,335 @@ function position(overrides: Partial<LivePosition> = {}): LivePosition {
     recorded_at: '2026-08-07T12:00:00Z',
     age_seconds: 3,
     stale: false,
+    vehicle: { id: 1, registration_number: 'UBK 421H', make: 'Toyota', model: 'Noah' },
+    driver: { id: 5, name: 'Grace Nakato' },
+    trip: {
+      id: 10,
+      status: 'trip_started',
+      origin: 'Kampala Road',
+      destination: 'Entebbe Airport',
+      client: { id: 3, name: 'Centenary Bank' },
+    },
     ...overrides,
   }
 }
 
-describe('fleetBounds', () => {
-  it('has nothing to fit when nothing is moving', () => {
-    expect(fleetBounds([])).toBeNull()
+function driver(overrides: Partial<OnDutyDriver> = {}): OnDutyDriver {
+  return {
+    driver_id: 15,
+    driver: { id: 15, name: 'Okello Denis' },
+    vehicle_id: 19,
+    vehicle: { id: 19, registration_number: 'UAX 900Q', make: 'Bajaj', model: 'Boxer', category: 'boda' },
+    latitude: 0.395,
+    longitude: 32.703,
+    accuracy_metres: 12,
+    recorded_at: '2026-08-07T12:00:00Z',
+    age_seconds: 20,
+    stale: false,
+    trip: null,
+    ...overrides,
+  }
+}
+
+function unit(overrides: Partial<FleetUnit> = {}): FleetUnit {
+  return buildUnits([position()], []).map((u) => ({ ...u, ...overrides }))[0]
+}
+
+describe('buildUnits', () => {
+  it('merges the two lists: vehicles on trips, then the pool', () => {
+    const units = buildUnits([position()], [driver()])
+
+    expect(units).toHaveLength(2)
+    expect(units[0]).toMatchObject({
+      key: 'v:1',
+      kind: 'on_trip',
+      source: 'vehicle',
+      plate: 'UBK 421H',
+      vehicleName: 'Toyota Noah',
+      driverName: 'Grace Nakato',
+      clientName: 'Centenary Bank',
+      tripId: 10,
+    })
+    expect(units[1]).toMatchObject({
+      key: 'd:15',
+      kind: 'waiting',
+      source: 'handset',
+      plate: 'UAX 900Q',
+      driverName: 'Okello Denis',
+      tripId: null,
+    })
   })
 
-  it('boxes every vehicle, corners in MapLibre order', () => {
+  it('does not draw a driver twice when their trip already has a vehicle position', () => {
+    const units = buildUnits([position({ trip_id: 10 })], [driver({ trip: { id: 10, status: 'trip_started' } })])
+
+    // One marker for the trip — the vehicle's, which is the billing-grade
+    // stream. Drawing the handset too would put two dots on one van.
+    expect(units).toHaveLength(1)
+    expect(units[0].key).toBe('v:1')
+  })
+
+  it('draws a driver on a trip from their handset while the vehicle is dark, and says so', () => {
+    const units = buildUnits([], [driver({ trip: { id: 77, status: 'passenger_onboard' } })])
+
+    expect(units).toHaveLength(1)
+    expect(units[0]).toMatchObject({ kind: 'on_trip', source: 'handset', tripId: 77 })
+  })
+
+  it('carries the silhouette for the map, from the vehicle category', () => {
+    // The named position fixture is a Toyota Noah, category 'van'.
+    const [onTrip] = buildUnits(
+      [position({ vehicle: { id: 1, registration_number: 'UBK 421H', make: 'Toyota', model: 'Noah', category: 'van' } })],
+      [],
+    )
+    expect(onTrip.spriteKind).toBe('suv')
+
+    const [waiting] = buildUnits([], [driver()])
+    expect(waiting.spriteKind).toBe('boda')
+
+    const [anonymous] = nearbyToUnits([
+      { key: 'k', category: 'pickup', kind: 'pickup', latitude: 0.3, longitude: 32.5, age_seconds: 5 },
+    ])
+    expect(anonymous.spriteKind).toBe('pickup')
+  })
+
+  it('draws the generic car for a category the sprite set does not know', () => {
+    expect(spriteKindFor('hovercraft')).toBe('sedan')
+    expect(spriteKindFor(null)).toBe('sedan')
+    expect(spriteKindFor(undefined)).toBe('sedan')
+    expect(spriteKindFor('tricycle')).toBe('boda')
+  })
+
+  it('falls back to ids when the API predates the named fields', () => {
+    const units = buildUnits([position({ vehicle: undefined, driver: undefined, trip: undefined })], [])
+
+    expect(units[0].plate).toBeNull()
+    expect(unitTitle(units[0])).toBe('Vehicle #1')
+  })
+})
+
+describe('nearbyToUnits', () => {
+  const nearbyVehicle: NearbyVehicle = {
+    key: 'abc123def456',
+    category: 'boda',
+    kind: 'boda',
+    latitude: 0.3476,
+    longitude: 32.5825,
+    age_seconds: 20,
+  }
+
+  it('turns the anonymized pool into waiting units named by category', () => {
+    const [u] = nearbyToUnits([nearbyVehicle])
+
+    expect(u).toMatchObject({
+      key: 'n:abc123def456',
+      kind: 'waiting',
+      vehicleName: 'Boda',
+      latitude: 0.3476,
+      longitude: 32.5825,
+      ageSeconds: 20,
+      stale: false,
+    })
+    expect(toneFor(u)).toBe('waiting')
+    expect(statusLabel(u)).toBe('Waiting for work')
+    // Its category is its whole name — this surface knows nothing else.
+    expect(unitTitle(u)).toBe('Boda')
+  })
+
+  it('carries no identity of any kind — that is the contract, not a gap', () => {
+    const [u] = nearbyToUnits([nearbyVehicle])
+
+    expect(u.driverId).toBeNull()
+    expect(u.driverName).toBeNull()
+    expect(u.vehicleId).toBeNull()
+    expect(u.plate).toBeNull()
+    expect(u.tripId).toBeNull()
+  })
+
+  it('names the honest generic when no category is on record', () => {
+    const [u] = nearbyToUnits([{ ...nearbyVehicle, category: null }])
+
+    expect(unitTitle(u)).toBe('Vehicle')
+    expect(categoryLabel(null)).toBe('Vehicle')
+  })
+})
+
+describe('fleetBounds', () => {
+  it('has nothing to fit when nothing has a position', () => {
+    expect(fleetBounds([])).toBeNull()
+    expect(fleetBounds([unit({ latitude: null, longitude: null })])).toBeNull()
+  })
+
+  it('boxes every placed unit, corners in MapLibre order', () => {
     const bounds = fleetBounds([
-      position({ vehicle_id: 1, longitude: 32.5, latitude: 0.3 }),
-      position({ vehicle_id: 2, longitude: 32.7, latitude: 0.4 }),
-      position({ vehicle_id: 3, longitude: 32.6, latitude: 0.1 }),
+      unit({ key: 'v:1', latitude: 0.3, longitude: 32.5 }),
+      unit({ key: 'v:2', latitude: 0.4, longitude: 32.7 }),
+      unit({ key: 'd:3', latitude: null, longitude: null }),
     ])
 
-    // [[west, south], [east, north]] — longitude first, both corners.
     expect(bounds).toEqual([
-      [32.5, 0.1],
+      [32.5, 0.3],
       [32.7, 0.4],
     ])
   })
 
   it('keeps longitude in the longitude slot for a single Kampala vehicle', () => {
-    // The swap this platform has been bitten by twice: 32.58 and 0.34 are
-    // both valid numbers, so only their *position* can catch it. If the
-    // corners ever came back [[0.3476, 32.5825], ...] the map would centre
-    // in the Gulf of Guinea and nothing would throw.
-    const bounds = fleetBounds([position({ longitude: 32.5825, latitude: 0.3476 })])
+    const bounds = fleetBounds([unit({ latitude: 0.3476, longitude: 32.5825 })])
 
-    expect(bounds?.[0][0]).toBe(32.5825)
-    expect(bounds?.[0][1]).toBe(0.3476)
+    // Swapped, this is a point in the Gulf of Guinea — see KAMPALA.
+    expect(bounds).toEqual([
+      [32.5825, 0.3476],
+      [32.5825, 0.3476],
+    ])
   })
 })
 
-describe('toneFor', () => {
+describe('toneFor and statusLabel', () => {
   it('calls a stale vehicle stale even when its last report had it speeding', () => {
-    // Unknown outranks fast. A dispatcher deciding whether to phone a driver
-    // needs "we have not heard from this" to survive the fact that the last
-    // thing we heard was 80km/h.
-    expect(toneFor(position({ stale: true, speed_kph: 80 }))).toBe('stale')
+    const u = unit({ stale: true, speedKph: 80 })
+    expect(toneFor(u)).toBe('stale')
+    expect(statusLabel(u)).toBe('Not reporting')
   })
 
-  it('separates moving from stopped', () => {
-    expect(toneFor(position({ speed_kph: 40 }))).toBe('moving')
-    expect(toneFor(position({ speed_kph: 0 }))).toBe('stopped')
+  it('says "No position" for a driver who has never reported', () => {
+    const u = unit({ stale: true, ageSeconds: null, latitude: null, longitude: null })
+    expect(statusLabel(u)).toBe('No position')
   })
 
-  it('treats GPS jitter on a parked vehicle as stopped', () => {
-    // A van in a yard reports 1–2 km/h all day. Without the floor the marker
-    // alternates between two states while nothing happens.
-    expect(toneFor(position({ speed_kph: 2 }))).toBe('stopped')
-    expect(toneFor(position({ speed_kph: 2.9 }))).toBe('stopped')
-    expect(toneFor(position({ speed_kph: 3 }))).toBe('moving')
+  it('calls the pool waiting, and names the trip phase for a unit on one', () => {
+    const pool = buildUnits([], [driver()])[0]
+    expect(toneFor(pool)).toBe('waiting')
+    expect(statusLabel(pool)).toBe('Waiting for work')
+
+    const onTrip = unit({ tripStatus: 'driver_en_route' })
+    expect(statusLabel(onTrip)).toBe('Driver en route')
   })
 
-  it('treats a device that reported no speed as stopped, not as moving', () => {
-    // Null is "we do not know", and claiming movement we cannot see would
-    // put a vehicle on the board as available-and-working.
-    expect(toneFor(position({ speed_kph: null }))).toBe('stopped')
+  it('separates moving from stopped and treats GPS jitter as stopped', () => {
+    expect(toneFor(unit({ speedKph: 40 }))).toBe('moving')
+    expect(toneFor(unit({ speedKph: 0 }))).toBe('stopped')
+    expect(toneFor(unit({ speedKph: 2 }))).toBe('stopped')
+    expect(toneFor(unit({ speedKph: null }))).toBe('stopped')
   })
 })
 
 describe('freshnessLabel', () => {
   it('reads the way a dispatcher would say it', () => {
-    expect(freshnessLabel(2)).toBe('just now')
-    expect(freshnessLabel(30)).toBe('30s ago')
-    expect(freshnessLabel(90)).toBe('1m ago')
-    expect(freshnessLabel(3600)).toBe('1h ago')
+    expect(freshnessLabel(3)).toBe('just now')
+    expect(freshnessLabel(42)).toBe('42s ago')
+    expect(freshnessLabel(240)).toBe('4m ago')
+    expect(freshnessLabel(7300)).toBe('2h ago')
+  })
+
+  it('says never for a driver who has not reported, not a dash', () => {
+    expect(freshnessLabel(null)).toBe('never')
   })
 
   it('does not render a clock-skewed device as a negative age', () => {
-    // A phone running two seconds ahead of the server yields age -2. "-2s
-    // ago" looks like a bug in the map rather than in a handset's clock.
-    expect(freshnessLabel(-2)).toBe('just now')
+    expect(freshnessLabel(-4)).toBe('just now')
   })
 
   it('does not round 59 seconds up into a minute it has not reached', () => {
     expect(freshnessLabel(59)).toBe('59s ago')
-    expect(freshnessLabel(60)).toBe('1m ago')
   })
 })
 
 describe('speedLabel', () => {
   it('omits a speed the device never reported rather than printing zero', () => {
-    // "0 km/h" is a claim that the vehicle is stationary. Null is the
-    // absence of a claim, and the two must not render the same.
-    expect(speedLabel(position({ speed_kph: null }))).toBeNull()
-    expect(speedLabel(position({ speed_kph: 0 }))).toBe('0 km/h')
+    expect(speedLabel(unit({ speedKph: null }))).toBeNull()
   })
 
   it('rounds to whole km/h', () => {
-    expect(speedLabel(position({ speed_kph: 42.6 }))).toBe('43 km/h')
+    expect(speedLabel(unit({ speedKph: 37.6 }))).toBe('38 km/h')
   })
 })
 
 describe('planMarkers', () => {
   it('adds what is new, updates what is already there, removes what has gone', () => {
     const plan = planMarkers(
-      [1, 2, 3],
-      [position({ vehicle_id: 2 }), position({ vehicle_id: 4 })],
+      ['v:1', 'v:2'],
+      [unit({ key: 'v:2' }), unit({ key: 'd:3' })],
     )
 
-    expect(plan.add.map((p) => p.vehicle_id)).toEqual([4])
-    expect(plan.update.map((p) => p.vehicle_id)).toEqual([2])
-    // 1 and 3 finished their trips, or left this caller's scope.
-    expect(plan.remove).toEqual([1, 3])
+    expect(plan.add.map((u) => u.key)).toEqual(['d:3'])
+    expect(plan.update.map((u) => u.key)).toEqual(['v:2'])
+    expect(plan.remove).toEqual(['v:1'])
   })
 
-  it('moves an existing marker rather than replacing it', () => {
-    // The property the whole function exists for. If a vehicle already on
-    // the map came back as an `add`, the component would destroy and rebuild
-    // its marker every ten seconds: every vehicle blinks on every poll, and
-    // an open popup closes under the dispatcher.
-    const plan = planMarkers([7], [position({ vehicle_id: 7, latitude: 0.4 })])
+  it('never plans a marker for a unit without a position', () => {
+    const plan = planMarkers([], [unit({ key: 'd:9', latitude: null, longitude: null })])
 
-    expect(plan.add).toHaveLength(0)
-    expect(plan.remove).toHaveLength(0)
-    expect(plan.update).toHaveLength(1)
+    expect(plan.add).toEqual([])
+  })
+
+  it('removes the marker of a unit that lost its position', () => {
+    // The server answering null coordinates has already said the last place
+    // is not to be trusted; keeping the dot would contradict it.
+    const plan = planMarkers(['d:9'], [unit({ key: 'd:9', latitude: null, longitude: null })])
+
+    expect(plan.remove).toEqual(['d:9'])
   })
 
   it('clears the map when the last trip ends', () => {
-    const plan = planMarkers([1, 2], [])
+    const plan = planMarkers(['v:1'], [])
 
-    expect(plan.remove).toEqual([1, 2])
-    expect(plan.add).toHaveLength(0)
+    expect(plan).toEqual({ add: [], update: [], remove: ['v:1'] })
   })
 })
 
 describe('byAttention', () => {
-  it('puts the vehicle nobody has heard from above the twelve that are fine', () => {
-    const sorted = [
-      position({ vehicle_id: 1, speed_kph: 0, age_seconds: 2 }),
-      position({ vehicle_id: 2, speed_kph: 50, age_seconds: 2 }),
-      position({ vehicle_id: 3, stale: true, age_seconds: 400 }),
-    ].sort(byAttention)
+  it('puts the unit nobody has heard from above the ones that are fine, and the pool last', () => {
+    const stale = unit({ key: 'v:1', stale: true, ageSeconds: 900 })
+    const moving = unit({ key: 'v:2', speedKph: 40 })
+    const waiting = buildUnits([], [driver()])[0]
 
-    expect(sorted.map((p) => p.vehicle_id)).toEqual([3, 2, 1])
+    const sorted = [waiting, moving, stale].sort(byAttention)
+
+    expect(sorted.map((u) => u.key)).toEqual(['v:1', 'v:2', 'd:15'])
   })
 
-  it('breaks a tie with the oldest report first', () => {
-    const sorted = [
-      position({ vehicle_id: 1, stale: true, age_seconds: 90 }),
-      position({ vehicle_id: 2, stale: true, age_seconds: 600 }),
-    ].sort(byAttention)
+  it('sorts never-reported above merely old inside the stale group', () => {
+    const old = unit({ key: 'v:1', stale: true, ageSeconds: 900 })
+    const never = unit({ key: 'd:2', stale: true, ageSeconds: null })
 
-    expect(sorted.map((p) => p.vehicle_id)).toEqual([2, 1])
+    expect([old, never].sort(byAttention).map((u) => u.key)).toEqual(['d:2', 'v:1'])
+  })
+})
+
+describe('matchesFilter and matchesQuery', () => {
+  it('filters by what a unit is doing', () => {
+    const onTrip = unit()
+    const waiting = buildUnits([], [driver()])[0]
+    const dark = unit({ stale: true })
+
+    expect(matchesFilter(onTrip, 'all')).toBe(true)
+    expect(matchesFilter(onTrip, 'on_trip')).toBe(true)
+    expect(matchesFilter(onTrip, 'waiting')).toBe(false)
+    expect(matchesFilter(waiting, 'waiting')).toBe(true)
+    expect(matchesFilter(dark, 'stale')).toBe(true)
+  })
+
+  it('finds a plate typed in a hurry, a name, a client and a trip number', () => {
+    const u = unit()
+
+    expect(matchesQuery(u, 'ubk421h')).toBe(true)
+    expect(matchesQuery(u, 'grace')).toBe(true)
+    expect(matchesQuery(u, 'centenary')).toBe(true)
+    expect(matchesQuery(u, '#10')).toBe(true)
+    expect(matchesQuery(u, 'noah')).toBe(true)
+    expect(matchesQuery(u, 'zzz')).toBe(false)
+    expect(matchesQuery(u, '')).toBe(true)
+  })
+})
+
+describe('summarise', () => {
+  it('counts what the header says', () => {
+    const counts = summarise([
+      unit({ key: 'v:1' }),
+      unit({ key: 'v:2', stale: true }),
+      buildUnits([], [driver()])[0],
+    ])
+
+    expect(counts).toEqual({ onTrip: 2, waiting: 1, stale: 1 })
   })
 })

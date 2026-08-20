@@ -278,7 +278,7 @@ export function DispatchPage() {
           <Card>
             <EmptyState
               compact
-              icon="hand-pointer"
+              icon="pointer"
               title="Select a booking"
               description="Pick a request from the queue to choose its vehicle and driver."
             />

@@ -10,6 +10,7 @@ import { EmptyState } from '../components/feedback/EmptyState'
 import { Checkbox } from '../components/forms/Checkbox'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { PageFill } from '../components/layout/PageFill'
 import { apiClient } from '../lib/apiClient'
 import { apiError, fieldErrors } from '../lib/apiError'
 import type { ApiSuccess } from '../types/api'
@@ -95,6 +96,7 @@ export function RolesPage() {
     () => [
       {
         key: 'name',
+        card: 'title',
         header: 'Role',
         wrap: true,
         render: (row) => (
@@ -117,6 +119,7 @@ export function RolesPage() {
       },
       {
         key: 'slug',
+        card: 'meta',
         header: 'Key',
         // The slug is what `users.role` stores and what the staff endpoints
         // accept, so it is an identifier a person may have to quote.
@@ -124,6 +127,7 @@ export function RolesPage() {
       },
       {
         key: 'is_system',
+        card: 'status',
         header: 'Type',
         render: (row) =>
           row.is_system ? (
@@ -138,18 +142,21 @@ export function RolesPage() {
       },
       {
         key: 'permissions',
+        card: 'hide',
         header: 'Permissions',
         numeric: true,
         render: (row) => row.permissions.length,
       },
       {
         key: 'users_count',
+        card: 'meta',
         header: 'Accounts',
         numeric: true,
         render: (row) => row.users_count ?? 0,
       },
       {
         key: 'id',
+        card: 'meta',
         header: 'Actions',
         render: (row) => (
           <span style={{ display: 'inline-flex', gap: 6 }}>
@@ -185,7 +192,7 @@ export function RolesPage() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+    <PageFill>
       {error && (
         <Alert tone="error" title="Role catalogue" onDismiss={() => setError(null)}>
           {error}
@@ -199,7 +206,9 @@ export function RolesPage() {
         </Alert>
       )}
 
+      <PageFill.Flex>
       <Card
+        fill
         title="Roles"
         subtitle={
           roles
@@ -219,9 +228,11 @@ export function RolesPage() {
           columns={columns}
           rows={rows}
           dense
+          fill
           emptyMessage={roles === null ? 'Loading…' : 'No roles'}
         />
       </Card>
+      </PageFill.Flex>
 
       {editing && meta && (
         <RoleDialog
@@ -246,7 +257,7 @@ export function RolesPage() {
           }}
         />
       )}
-    </div>
+    </PageFill>
   )
 }
 

@@ -11,6 +11,7 @@ import { Alert } from '../components/feedback/Alert'
 import { Dialog } from '../components/feedback/Dialog'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { PageFill } from '../components/layout/PageFill'
 import { DriverDocumentsDialog } from './drivers/DriverDocumentsDialog'
 import { DriverPayoutDialog } from './drivers/DriverPayoutDialog'
 
@@ -63,12 +64,13 @@ export function DriversPage() {
 
   const columns: DataColumn<Driver>[] = useMemo(
     () => [
-      { key: 'name', header: 'Name', sortable: true },
-      { key: 'phone', header: 'Phone' },
-      { key: 'license_number', header: 'License number' },
-      { key: 'license_expiry', header: 'License expiry', sortable: true },
+      { key: 'name', card: 'title', header: 'Name', sortable: true },
+      { key: 'phone', card: 'meta', header: 'Phone' },
+      { key: 'license_number', card: 'meta', header: 'License number' },
+      { key: 'license_expiry', card: 'meta', header: 'License expiry', sortable: true },
       {
         key: 'status',
+        card: 'status',
         header: 'Status',
         render: (row) => <Badge tone={STATUS_TONE[row.status]}>{row.status}</Badge>,
       },
@@ -77,6 +79,7 @@ export function DriversPage() {
         // gap survived so long: nothing on any screen said whether a driver
         // could sign in, so nobody noticed that none of them could.
         key: 'account',
+        card: 'meta',
         header: 'Sign-in',
         render: (row) =>
           row.account === null ? (
@@ -99,6 +102,7 @@ export function DriversPage() {
       },
       {
         key: 'id',
+        card: 'meta',
         header: '',
         render: (row) => (
           <span style={{ display: 'inline-flex', gap: 'var(--space-2)' }}>
@@ -130,8 +134,10 @@ export function DriversPage() {
   )
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+    <PageFill>
+      <PageFill.Flex>
       <Card
+        fill
         title="Drivers"
         subtitle={drivers ? `${drivers.length} total` : undefined}
         actions={
@@ -151,6 +157,7 @@ export function DriversPage() {
           <DataTable<Driver>
             columns={columns}
             rows={filtered}
+            fill
             emptyMessage={
               drivers === null
                 ? 'Loading…'
@@ -161,6 +168,7 @@ export function DriversPage() {
           />
         )}
       </Card>
+      </PageFill.Flex>
 
       {reviewing && (
         <DriverDocumentsDialog driver={reviewing} onClose={() => setReviewing(null)} />
@@ -178,7 +186,7 @@ export function DriversPage() {
           }}
         />
       )}
-    </div>
+    </PageFill>
   )
 }
 

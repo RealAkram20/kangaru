@@ -1,5 +1,11 @@
 /** Mirrors Modules/Notifications/Enums/NotificationType.php. */
-export type NotificationType = 'booking.approved' | 'booking.rejected' | 'report.export.ready'
+export type NotificationType =
+  | 'booking.approved'
+  | 'booking.rejected'
+  | 'report.export.ready'
+  | 'trip.assigned'
+  | 'trip.driver_arrived'
+  | 'trip.completed'
 
 /**
  * One delivered notification.

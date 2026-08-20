@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
+import { COMPACT_QUERY } from '../../lib/useMediaQuery'
 
 /** Survives reloads, so the rail preference sticks per browser. */
 const STORAGE_KEY = 'kangaru.sidebar.collapsed'
 
-/** Below this the 64px rail leaves too little room, so the sidebar goes off-canvas instead. */
-const MOBILE_QUERY = '(max-width: 900px)'
+/**
+ * Below this the 64px rail leaves too little room, so the sidebar goes
+ * off-canvas instead.
+ *
+ * Now shared with the table/card switch and the detail sheet rather than
+ * being this file's private constant — three components deciding
+ * independently what "small" means is how a phone ends up with a drawer and
+ * a ten-column table at the same time.
+ */
+const MOBILE_QUERY = COMPACT_QUERY
 
 function readCollapsed(): boolean {
   try {

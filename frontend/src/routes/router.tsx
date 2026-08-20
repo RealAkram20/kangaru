@@ -2,32 +2,54 @@ import { Navigate, createBrowserRouter } from 'react-router-dom'
 import { ProtectedRoute } from '../auth/ProtectedRoute'
 import { RequireNavAccess } from './RequireNavAccess'
 import { AppShell } from '../components/layout/AppShell'
-import { AuditLogPage } from '../pages/AuditLogPage'
-import { BookingsPage } from '../pages/BookingsPage'
-import { CompaniesPage } from '../pages/CompaniesPage'
-import { CustomersPage } from '../pages/CustomersPage'
-import { DashboardPage } from '../pages/DashboardPage'
-import { DispatchPage } from '../pages/DispatchPage'
-import { DriverApplicationsPage } from '../pages/DriverApplicationsPage'
-import { DriversPage } from '../pages/DriversPage'
-import { InvoicesPage } from '../pages/InvoicesPage'
-import { LoginPage } from '../pages/LoginPage'
-import { MfaEnrolmentPage } from '../pages/MfaEnrolmentPage'
-import { NotificationsPage } from '../pages/NotificationsPage'
-import { OrderRequestsPage } from '../pages/OrderRequestsPage'
-import { RateCardsPage } from '../pages/RateCardsPage'
-import { ReportsPage } from '../pages/ReportsPage'
-import { RolesPage } from '../pages/RolesPage'
-import { ProfilePage } from '../pages/ProfilePage'
-import { SystemSettingsPage } from '../pages/SystemSettingsPage'
-import { StaffPage } from '../pages/StaffPage'
-import { SupportRequestsPage } from '../pages/SupportRequestsPage'
-import { LiveMapPage } from '../pages/LiveMapPage'
-import { TripsPage } from '../pages/TripsPage'
-import { VehiclesPage } from '../pages/VehiclesPage'
-import { LandingPage } from '../pages/public/LandingPage'
-import { OrderPage } from '../pages/public/OrderPage'
-import { PrivacyNoticePage } from '../pages/public/PrivacyNoticePage'
+import { Standalone } from './lazyRoute'
+import { RouteBuilderPage } from '../pages/routes/RouteBuilderPage'
+import { RoutesPage } from '../pages/routes/RoutesPage'
+import { page } from './page'
+
+/**
+ * Every page below is code-split.
+ *
+ * These were 27 static imports, which meant one 1.37 MB chunk containing the
+ * whole console: an anonymous visitor reading the landing page downloaded and
+ * parsed SystemSettingsPage (1,713 lines) and OrderPage (2,659 lines) before
+ * anything rendered. Splitting them means a route costs its own JavaScript and
+ * nobody else's.
+ */
+
+const AuditLogPage = page(() => import('../pages/AuditLogPage'), 'AuditLogPage')
+const BookingsPage = page(() => import('../pages/BookingsPage'), 'BookingsPage')
+const CompaniesPage = page(() => import('../pages/CompaniesPage'), 'CompaniesPage')
+const CustomersPage = page(() => import('../pages/CustomersPage'), 'CustomersPage')
+const DashboardPage = page(() => import('../pages/DashboardPage'), 'DashboardPage')
+const DispatchPage = page(() => import('../pages/DispatchPage'), 'DispatchPage')
+const DriverApplicationsPage = page(
+  () => import('../pages/DriverApplicationsPage'),
+  'DriverApplicationsPage',
+)
+const DriversPage = page(() => import('../pages/DriversPage'), 'DriversPage')
+const InvoicesPage = page(() => import('../pages/InvoicesPage'), 'InvoicesPage')
+const LoginPage = page(() => import('../pages/LoginPage'), 'LoginPage')
+const MfaEnrolmentPage = page(() => import('../pages/MfaEnrolmentPage'), 'MfaEnrolmentPage')
+const NotificationsPage = page(() => import('../pages/NotificationsPage'), 'NotificationsPage')
+const OrderRequestsPage = page(() => import('../pages/OrderRequestsPage'), 'OrderRequestsPage')
+const RateCardsPage = page(() => import('../pages/RateCardsPage'), 'RateCardsPage')
+const ReportsPage = page(() => import('../pages/ReportsPage'), 'ReportsPage')
+const RolesPage = page(() => import('../pages/RolesPage'), 'RolesPage')
+const ProfilePage = page(() => import('../pages/ProfilePage'), 'ProfilePage')
+const SystemSettingsPage = page(() => import('../pages/SystemSettingsPage'), 'SystemSettingsPage')
+const StaffPage = page(() => import('../pages/StaffPage'), 'StaffPage')
+const SupportRequestsPage = page(() => import('../pages/SupportRequestsPage'), 'SupportRequestsPage')
+const LiveMapPage = page(() => import('../pages/LiveMapPage'), 'LiveMapPage')
+const TripsPage = page(() => import('../pages/TripsPage'), 'TripsPage')
+const TripRecordPage = page(() => import('../pages/trips/TripRecordPage'), 'TripRecordPage')
+const VehiclesPage = page(() => import('../pages/VehiclesPage'), 'VehiclesPage')
+const LandingPage = page(() => import('../pages/public/LandingPage'), 'LandingPage')
+const OrderPage = page(() => import('../pages/public/OrderPage'), 'OrderPage')
+const PrivacyNoticePage = page(
+  () => import('../pages/public/PrivacyNoticePage'),
+  'PrivacyNoticePage',
+)
 
 export const router = createBrowserRouter([
   // Public, unauthenticated (ADR-0012 §5). `/` is the landing page for
@@ -38,11 +60,19 @@ export const router = createBrowserRouter([
   // from the nav, which says "Dashboard" once they are signed in.
   {
     path: '/',
-    element: <LandingPage />,
+    element: (
+      <Standalone>
+        <LandingPage />
+      </Standalone>
+    ),
   },
   {
     path: '/order',
-    element: <OrderPage />,
+    element: (
+      <Standalone>
+        <OrderPage />
+      </Standalone>
+    ),
   },
   // Unauthenticated by necessity, not by oversight: this is what somebody
   // reads to decide whether to hand over their data, so it cannot sit behind
@@ -50,11 +80,19 @@ export const router = createBrowserRouter([
   // on it being readable before submission.
   {
     path: '/privacy',
-    element: <PrivacyNoticePage />,
+    element: (
+      <Standalone>
+        <PrivacyNoticePage />
+      </Standalone>
+    ),
   },
   {
     path: '/login',
-    element: <LoginPage />,
+    element: (
+      <Standalone>
+        <LoginPage />
+      </Standalone>
+    ),
   },
   // Outside the AppShell branch on purpose (ADR-0008 decision 3). A user
   // who must enrol can reach nothing else — the shell's navigation would be
@@ -67,7 +105,9 @@ export const router = createBrowserRouter([
     path: '/mfa/setup',
     element: (
       <ProtectedRoute allowUnenrolled>
-        <MfaEnrolmentPage />
+        <Standalone>
+          <MfaEnrolmentPage />
+        </Standalone>
       </ProtectedRoute>
     ),
   },
@@ -97,11 +137,21 @@ export const router = createBrowserRouter([
         ),
       },
       { path: 'trips', element: <TripsPage /> },
+      // One trip in full — the six facts, the photos, the trace, the
+      // timeline, the invoice. Unguarded like /trips: `TripPolicy::view`
+      // decides, and a client's user reads their own trips here.
+      { path: 'trips/:id', element: <TripRecordPage /> },
       // Not behind RequireNavAccess, deliberately: /live-positions is scoped
       // server-side through the trips the caller may see, so every role gets
       // a correct answer here — a corporate employee sees their own ride,
       // and a role holding trips.view.all sees the fleet.
       { path: 'live-map', element: <LiveMapPage /> },
+      // ADR-0045. Two entries for one feature: the register of circuits and
+      // the builder that makes one. `/routes/new` is a literal segment ahead
+      // of `:id`, so React Router matches it before treating "new" as an id.
+      { path: 'routes', element: <RoutesPage /> },
+      { path: 'routes/new', element: <RouteBuilderPage /> },
+      { path: 'routes/:id', element: <RouteBuilderPage /> },
       {
         path: 'invoices',
         element: (
@@ -175,8 +225,23 @@ export const router = createBrowserRouter([
       // RequireNavAccess's slug list. The page gates on whether the API
       // answers.
       { path: 'audit-log', element: <AuditLogPage /> },
+      // Two paths, because they are two different things. `/companies` is the
+      // platform's register of many; `/company` is one client's own
+      // organisation, and a bank reading its own profile at a plural URL that
+      // means "everybody's clients" was always the wrong address.
+      //
+      // `CompaniesPage` still branches on role, so both paths stay correct for
+      // whoever opens them and an old bookmark keeps working.
       {
         path: 'companies',
+        element: (
+          <RequireNavAccess id="companies">
+            <CompaniesPage />
+          </RequireNavAccess>
+        ),
+      },
+      {
+        path: 'company',
         element: (
           <RequireNavAccess id="companies">
             <CompaniesPage />

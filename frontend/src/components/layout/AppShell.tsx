@@ -1,7 +1,9 @@
+import { Suspense } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../auth/useAuth'
 import { IconButton } from '../core/IconButton'
-import { filterSections } from '../../lib/navigation'
+import { RouteFallback } from '../feedback/RouteFallback'
+import { filterSections, navLabel, navPath } from '../../lib/navigation'
 import { SidebarNav, type SidebarSection } from '../navigation/SidebarNav'
 import { useSidebarState } from '../navigation/useSidebarState'
 import { Topbar } from '../navigation/Topbar'
@@ -22,6 +24,10 @@ const SECTIONS: SidebarSection[] = [
       // ADR-0019. Beside Trips rather than under Fleet: the question it
       // answers is "where is this job", not "what do we own".
       { id: 'live-map', label: 'Live map', icon: 'map' },
+      // ADR-0045. Beside the live map rather than under Administration: a
+      // circuit is operational work — where the team goes today — not a
+      // setting somebody configures once.
+      { id: 'routes', label: 'Routes', icon: 'route' },
       { id: 'companies', label: 'Companies', icon: 'building-2' },
       // ADR-0018. "Customers", not "Clients": Companies already means the
       // corporate clients, and one word for two populations is how a
@@ -85,6 +91,7 @@ const NAV_PATHS: Partial<Record<string, string>> = {
   'walk-ins': '/order-requests',
   trips: '/trips',
   'live-map': '/live-map',
+  routes: '/routes',
   companies: '/companies',
   customers: '/customers',
   vehicles: '/vehicles',
@@ -108,7 +115,11 @@ const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
   '/order-requests': { id: 'walk-ins', title: 'Walk-in orders' },
   '/trips': { id: 'trips', title: 'Trips' },
   '/live-map': { id: 'live-map', title: 'Live map' },
+  '/routes': { id: 'routes', title: 'Routes' },
+  '/routes/new': { id: 'routes', title: 'New route' },
   '/companies': { id: 'companies', title: 'Companies' },
+  // `navLabel` renames this to "Organisation" for a client's own people.
+  '/company': { id: 'companies', title: 'Companies' },
   '/customers': { id: 'customers', title: 'Customers' },
   '/vehicles': { id: 'vehicles', title: 'Vehicles' },
   '/drivers': { id: 'drivers', title: 'Drivers' },
@@ -141,7 +152,15 @@ export function AppShell() {
   const sidebar = useSidebarState()
   const theme = useTheme()
 
-  const page = PAGE_BY_PATH[location.pathname] ?? { id: '', title: '' }
+  // Exact match first; `/trips/29` is the record page and lights the Trips
+  // entry the way any trip does.
+  const found =
+    PAGE_BY_PATH[location.pathname] ??
+    (location.pathname.startsWith('/trips/') ? { id: 'trips', title: 'Trip record' } : undefined) ??
+    // `/routes/12` is the builder editing an existing circuit, and lights
+    // the Routes entry the way `/routes/new` does.
+    (location.pathname.startsWith('/routes/') ? { id: 'routes', title: 'Route' } : undefined)
+  const page = found ? { id: found.id, title: navLabel(user?.role, found.id, found.title) } : { id: '', title: '' }
 
   // Convenience, not authorization — every endpoint behind these entries
   // answers 403 on its own (AGENTS.md). It exists because a menu offering
@@ -188,7 +207,8 @@ export function AppShell() {
             return
           }
           const path = NAV_PATHS[id]
-          if (path) navigate(path)
+          // Role-aware: a client's own organisation lives at /company.
+          if (path) navigate(navPath(user?.role, id, path))
           // The drawer sits over the page it just navigated to.
           sidebar.closeMobile()
         }}
@@ -198,7 +218,10 @@ export function AppShell() {
           title={page.title}
           onOpenProfile={() => navigate('/profile')}
           onSignOut={() => void logout()}
-          tenant={user ? `Tenant ${user.tenant_id ?? '—'}` : undefined}
+          // Whose console this is. A client's user sees their tenant's
+          // name; platform staff, who have no tenant (ADR-0006), see the
+          // platform. An API older than `tenant_name` still gets a chip.
+          tenant={user ? (user.tenant_name ?? (user.tenant_id === null ? 'Platform' : `Tenant ${user.tenant_id}`)) : undefined}
           user={
             user
               ? { name: user.name, role: user.role_label ?? user.role, email: user.email }
@@ -242,7 +265,15 @@ export function AppShell() {
             padding: 'var(--space-6)',
           }}
         >
-          <Outlet />
+          {/*
+            Every routed page is lazily loaded (routes/router.tsx), so the
+            boundary belongs here rather than around the whole shell: the
+            sidebar and topbar stay on screen and keep working while the next
+            page's chunk arrives, and only this pane shows the placeholder.
+          */}
+          <Suspense fallback={<RouteFallback />}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
     </div>

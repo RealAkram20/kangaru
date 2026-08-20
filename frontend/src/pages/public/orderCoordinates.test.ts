@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { coordinatesFor, withCoordinateErrorsOnTheirFields } from './orderCoordinates'
+import {
+  coordinatesFor,
+  withCoordinateErrorsOnTheirFields,
+  withGeocodedEnds,
+} from './orderCoordinates'
 import type { PlaceHit } from './places'
+import type { PublicOrderPayload } from './publicOrder'
 
 /**
  * ADR-0020 §2 — the rule deciding whether a picked place's coordinates
@@ -100,5 +105,61 @@ describe('withCoordinateErrorsOnTheirFields', () => {
     })
 
     expect(mapped).toEqual({ contact_phone: 'That phone number is not valid.' })
+  })
+})
+
+/**
+ * The typed-address hole. Order KR-7J4XT8 went up with a drop-off of
+ * "Kamwokya Kisalosalo Road" and no coordinates, and the driver's screen
+ * priced, measured and drew nothing from it.
+ */
+describe('withGeocodedEnds', () => {
+  const order = (ends: Partial<PublicOrderPayload>): PublicOrderPayload => ({
+    service_type: 'ride',
+    contact_name: 'Aki',
+    contact_phone: '0782911239',
+    ...ends,
+  })
+  const geocode = async (query: string): Promise<PlaceHit[]> =>
+    query === 'Kamwokya' ? [{ name: 'Kamwokya', detail: 'Kampala', lngLat: [32.59, 0.34] }] : []
+
+  it('places a typed drop-off before the order goes', async () => {
+    const sent = await withGeocodedEnds(
+      order({
+        pickup_location: 'Seeta',
+        pickup_latitude: 0.39,
+        pickup_longitude: 32.7,
+        dropoff_location: 'Kamwokya',
+      }),
+      geocode,
+    )
+
+    expect(sent.dropoff_latitude).toBe(0.34)
+    expect(sent.dropoff_longitude).toBe(32.59)
+    // The already-placed end is not looked up again.
+    expect(sent.pickup_latitude).toBe(0.39)
+  })
+
+  it('leaves an end unplaced when the geocoder finds nothing or fails', async () => {
+    const quiet = await withGeocodedEnds(
+      order({ dropoff_location: 'Nowhere in particular' }),
+      geocode,
+    )
+    expect(quiet).not.toHaveProperty('dropoff_latitude')
+
+    const broken = await withGeocodedEnds(order({ dropoff_location: 'Kamwokya' }), async () => {
+      throw new Error('geocoder down')
+    })
+    expect(broken).not.toHaveProperty('dropoff_latitude')
+    expect(broken.dropoff_location).toBe('Kamwokya')
+  })
+
+  it('does not look up an end that has no text', async () => {
+    const calls: string[] = []
+    await withGeocodedEnds(order({ pickup_location: '' }), async (q) => {
+      calls.push(q)
+      return []
+    })
+    expect(calls).toEqual([])
   })
 })

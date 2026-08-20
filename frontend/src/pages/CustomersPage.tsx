@@ -13,6 +13,7 @@ import { Dialog } from '../components/feedback/Dialog'
 import { EmptyState } from '../components/feedback/EmptyState'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { PageFill } from '../components/layout/PageFill'
 import { Select } from '../components/forms/Select'
 
 /**
@@ -90,11 +91,12 @@ export function CustomersPage() {
 
   const columns: DataColumn<CustomerProfile>[] = useMemo(
     () => [
-      { key: 'name', header: 'Name', sortable: true },
-      { key: 'phone', header: 'Phone' },
-      { key: 'email', header: 'Email', render: (row) => row.email ?? '—' },
+      { key: 'name', card: 'title', header: 'Name', sortable: true },
+      { key: 'phone', card: 'meta', header: 'Phone' },
+      { key: 'email', card: 'meta', header: 'Email', render: (row) => row.email ?? '—' },
       {
         key: 'status',
+        card: 'status',
         header: 'Status',
         render: (row) =>
           row.status === 'active' ? (
@@ -107,6 +109,7 @@ export function CustomersPage() {
       },
       {
         key: 'id',
+        card: 'meta',
         header: '',
         render: (row) => (
           <Button size="sm" variant="secondary" onClick={() => setOpen(row)}>
@@ -121,14 +124,16 @@ export function CustomersPage() {
   const tally = register?.tally
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+    <PageFill>
       {error && (
         <Alert tone="error" title="Customer register unavailable">
           {error}
         </Alert>
       )}
 
+      <PageFill.Flex>
       <Card
+        fill
         title="Customers"
         subtitle={
           tally
@@ -164,6 +169,7 @@ export function CustomersPage() {
         <DataTable<CustomerProfile>
           columns={columns}
           rows={register?.customers ?? []}
+          fill
           emptyMessage={
             register === null
               ? 'Loading…'
@@ -173,6 +179,7 @@ export function CustomersPage() {
           }
         />
       </Card>
+      </PageFill.Flex>
 
       {open && (
         <CustomerDrawer
@@ -184,7 +191,7 @@ export function CustomersPage() {
           }}
         />
       )}
-    </div>
+    </PageFill>
   )
 }
 

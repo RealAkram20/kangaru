@@ -23,6 +23,7 @@ function booking(overrides: Partial<Booking> = {}): Booking {
     tenant_id: 1,
     requested_by_user_id: 9,
     requested_by: { id: 9, name: 'Moses Kato', email: 'moses@x.test', role: 'corporate_admin' },
+    passenger_user_id: null,
     passenger_name: 'Grace Amongin',
     passenger_phone: '+256700000000',
     passenger_count: 2,

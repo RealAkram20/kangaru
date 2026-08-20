@@ -10,6 +10,7 @@ import { Alert } from '../components/feedback/Alert'
 import { EmptyState } from '../components/feedback/EmptyState'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { PageFill } from '../components/layout/PageFill'
 import { apiClient } from '../lib/apiClient'
 import { apiError } from '../lib/apiError'
 import { canManageBilling } from '../lib/billing'
@@ -26,23 +27,27 @@ type InvoiceRow = Invoice & { id: string }
 const COLUMNS: DataColumn<InvoiceRow>[] = [
   {
     key: 'invoice_number',
+    card: 'title',
     header: 'Invoice',
     render: (row) => <Identifier size="xs">{row.invoice_number}</Identifier>,
   },
   {
     key: 'trip_id',
+    card: 'meta',
     header: 'Trip',
     render: (row) => <Identifier size="xs">#{row.trip_id}</Identifier>,
   },
   { key: 'issued_at', header: 'Issued', render: (row) => formatTimestamp(row.issued_at) },
   {
     key: 'total_minor',
+    card: 'meta',
     header: 'Invoiced',
     numeric: true,
     render: (row) => formatUgx(row.total_minor),
   },
   {
     key: 'credited_minor',
+    card: 'meta',
     header: 'Credited',
     numeric: true,
     render: (row) =>
@@ -54,6 +59,7 @@ const COLUMNS: DataColumn<InvoiceRow>[] = [
   },
   {
     key: 'balance_minor',
+    card: 'meta',
     header: 'Balance',
     numeric: true,
     render: (row) => (
@@ -62,6 +68,7 @@ const COLUMNS: DataColumn<InvoiceRow>[] = [
   },
   {
     key: 'uuid',
+    card: 'status',
     header: 'State',
     render: (row) => {
       // There is no invoice status column and no payments module, so the
@@ -208,7 +215,7 @@ export function InvoicesPage() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+    <PageFill>
       {error && (
         <Alert tone="error" title="Invoices" onDismiss={() => setError(null)}>
           {error}
@@ -255,7 +262,7 @@ export function InvoicesPage() {
             />
           </FormField>
           <div style={{ display: 'flex', gap: 'var(--gap-inline)' }}>
-            <Button iconLeft="filter" onClick={apply}>
+            <Button iconLeft="funnel" onClick={apply}>
               Apply filters
             </Button>
           </div>
@@ -284,7 +291,20 @@ export function InvoicesPage() {
         </div>
       )}
 
-      <Card padding="none">
+      <PageFill.Flex>
+      <Card
+        fill
+        padding="none"
+        footer={
+          nextCursor ? (
+            <div style={{ padding: 'var(--space-3) var(--space-4)', borderTop: '1px solid var(--border-default)' }}>
+              <Button size="sm" variant="secondary" loading={loadingMore} onClick={() => void loadMore()}>
+                Load more
+              </Button>
+            </div>
+          ) : undefined
+        }
+      >
         {invoices !== null && invoices.length === 0 ? (
           <EmptyState
             icon="receipt"
@@ -296,28 +316,27 @@ export function InvoicesPage() {
             columns={COLUMNS}
             rows={(invoices ?? []).map((invoice) => ({ ...invoice, id: invoice.uuid }))}
             dense
+            fill
             onRowClick={(row) => setSelected((current) => (current === row.uuid ? null : row.uuid))}
             emptyMessage={invoices === null ? 'Loading…' : 'No invoices match these filters'}
           />
         )}
-        {nextCursor && (
-          <div style={{ padding: 'var(--space-3) var(--space-4)', borderTop: '1px solid var(--border-default)' }}>
-            <Button size="sm" variant="secondary" loading={loadingMore} onClick={() => void loadMore()}>
-              Load more
-            </Button>
-          </div>
-        )}
       </Card>
+      </PageFill.Flex>
 
+      {/* Docked, as on Trips: choosing an invoice used to append its detail
+          below a growing page, so the thing you asked for opened off-screen. */}
       {selected && (
-        <InvoiceDetail
-          key={selected}
-          uuid={selected}
-          refreshToken={refreshToken}
-          canCredit={canManageBilling(user)}
-          onClose={() => setSelected(null)}
-          onCreditNote={setCrediting}
-        />
+        <PageFill.Docked>
+          <InvoiceDetail
+            key={selected}
+            uuid={selected}
+            refreshToken={refreshToken}
+            canCredit={canManageBilling(user)}
+            onClose={() => setSelected(null)}
+            onCreditNote={setCrediting}
+          />
+        </PageFill.Docked>
       )}
 
       {crediting && (
@@ -334,6 +353,6 @@ export function InvoicesPage() {
           }}
         />
       )}
-    </div>
+    </PageFill>
   )
 }

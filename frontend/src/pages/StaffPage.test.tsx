@@ -20,8 +20,11 @@ function person(overrides: Partial<StaffUser> = {}): StaffUser {
     tenant_id: 1,
     name: 'Brian Okello',
     email: 'brian@centenary-bank.test',
+    phone: '+256700111222',
     role: 'corporate_employee',
     role_label: 'Corporate Employee',
+    capabilities: [],
+    books_without_approval: false,
     status: 'active',
     status_label: 'Active',
     is_active: true,
@@ -43,6 +46,27 @@ const ASSIGNABLE: AssignableRole[] = [
 
 function staffList(people: StaffUser[], roles: AssignableRole[] = ASSIGNABLE) {
   get.mockResolvedValue(apiOk(people, { assignable_roles: roles }))
+}
+
+/** The switch catalogue as the server serves it (App\Enums\ClientCapability). */
+const CAPABILITIES = [
+  { slug: 'approves_bookings', label: 'Approves bookings', description: 'Can approve or reject transport requests.' },
+  { slug: 'sees_finance', label: 'Sees invoices and reports', description: 'Can open invoices and run reports.' },
+  { slug: 'manages_staff', label: 'Manages staff', description: 'Can add and suspend colleagues.' },
+] as const
+
+function staffListWithSwitches(people: StaffUser[]) {
+  get.mockResolvedValue(apiOk(people, { assignable_roles: ASSIGNABLE, capabilities: CAPABILITIES }))
+}
+
+/** The client's own circuits, as `meta.routes` serves them (ADR-0045 §8). */
+const ROUTES = [
+  { id: 7, name: 'Monday ATM run' },
+  { id: 9, name: 'Friday cash run' },
+]
+
+function staffListWithRoutes(people: StaffUser[]) {
+  get.mockResolvedValue(apiOk(people, { assignable_roles: ASSIGNABLE, routes: ROUTES }))
 }
 
 beforeEach(() => {
@@ -110,6 +134,10 @@ describe('StaffPage', () => {
 
     await user.type(within(dialog).getByLabelText(/^Full name/), 'Peter Ochieng')
     await user.type(within(dialog).getByLabelText(/^Work email/), 'peter@centenary-bank.test')
+    // The work number a booking raised for this person is dispatched
+    // against. Collected here so it is checked once, rather than retyped
+    // from memory on every booking.
+    await user.type(within(dialog).getByLabelText(/^Phone/), '+256700333444')
     await user.type(within(dialog).getByLabelText(/^Initial password/), 'correct-horse-battery')
     await user.click(within(dialog).getByRole('button', { name: /create account/i }))
 
@@ -117,6 +145,7 @@ describe('StaffPage', () => {
       expect(post).toHaveBeenCalledWith('/users', {
         name: 'Peter Ochieng',
         email: 'peter@centenary-bank.test',
+        phone: '+256700333444',
         role: 'corporate_employee',
         password: 'correct-horse-battery',
       }),
@@ -136,9 +165,120 @@ describe('StaffPage', () => {
       expect(patch).toHaveBeenCalledWith('/users/2', {
         name: 'Brian Okello',
         email: 'brian@centenary-bank.test',
+        phone: '+256700111222',
         role: 'corporate_employee',
       }),
     )
+  })
+
+  /**
+   * The client's own access control (App\Enums\ClientCapability): switches a
+   * Corporate Admin sets per person, offered from the server's catalogue and
+   * saved whole, so a switch turned off reaches the server as absent from
+   * the list rather than as an absent field.
+   */
+  it("shows what each colleague can also do, from the server's own words", async () => {
+    staffListWithSwitches([
+      person({ capabilities: ['sees_finance'], books_without_approval: true }),
+      person({ id: 3, name: 'Grace Amongin', email: 'grace@centenary-bank.test' }),
+    ])
+    renderAs(<StaffPage />)
+
+    expect(await screen.findByText('Sees invoices and reports')).toBeInTheDocument()
+    expect(screen.getByText('No approval')).toBeInTheDocument()
+    // Grace has no switches: a dash in that cell (the Routes column has
+    // one too, she rides none), and none of the switch names.
+    const grace = screen.getByText('Grace Amongin').closest('tr') as HTMLElement
+    expect(within(grace).getAllByText('—').length).toBeGreaterThan(1)
+    expect(within(grace).queryByText(/Sees invoices|Approves|Manages|No approval/)).toBeNull()
+  })
+
+  it("offers the switches for a client's person and saves the whole panel", async () => {
+    const user = userEvent.setup()
+    staffListWithSwitches([person({ capabilities: ['sees_finance'] })])
+    renderAs(<StaffPage />)
+
+    await user.click(await screen.findByRole('button', { name: /^edit$/i }))
+    const dialog = screen.getByRole('dialog')
+
+    // Pre-ticked from the record; the hint is the server's description.
+    expect(within(dialog).getByLabelText(/Sees invoices and reports/)).toBeChecked()
+    expect(within(dialog).getByText('Can open invoices and run reports.')).toBeInTheDocument()
+
+    await user.click(within(dialog).getByLabelText(/Approves bookings/))
+    await user.click(within(dialog).getByLabelText(/Sees invoices and reports/))
+    await user.click(within(dialog).getByLabelText(/Book without approval/))
+    await user.click(within(dialog).getByRole('button', { name: /save changes/i }))
+
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith('/users/2', {
+        name: 'Brian Okello',
+        email: 'brian@centenary-bank.test',
+        phone: '+256700111222',
+        role: 'corporate_employee',
+        capabilities: ['approves_bookings'],
+        books_without_approval: true,
+      }),
+    )
+  })
+
+  /**
+   * The roster (ADR-0045 §8), set where the colleague is set.
+   *
+   * It is a roster and not a permission — nothing authorises off it — but it
+   * belongs here for a plain reason: adding a new starter to four circuits
+   * meant opening four routes, so nobody did, and the feature went unused.
+   */
+  it('assigns the routes a colleague rides, and saves the roster whole', async () => {
+    const user = userEvent.setup()
+    staffListWithRoutes([person({ route_ids: [7] })])
+    renderAs(<StaffPage />)
+
+    await user.click(await screen.findByRole('button', { name: /^edit$/i }))
+    const dialog = screen.getByRole('dialog')
+
+    // Pre-ticked from the record, and named from the server's own list.
+    expect(within(dialog).getByLabelText('Monday ATM run')).toBeChecked()
+    expect(within(dialog).getByLabelText('Friday cash run')).not.toBeChecked()
+
+    await user.click(within(dialog).getByLabelText('Friday cash run'))
+    await user.click(within(dialog).getByLabelText('Monday ATM run'))
+    await user.click(within(dialog).getByRole('button', { name: /save changes/i }))
+
+    // Taken off Monday, put on Friday — and sent as the full list, because
+    // an absent field would read as "leave them where they were".
+    await waitFor(() => expect(patch).toHaveBeenCalled())
+    expect(patch.mock.calls[0][1]).toMatchObject({ route_ids: [9] })
+  })
+
+  it('offers no routes to put a platform account on, having none', async () => {
+    const user = userEvent.setup()
+    // `meta.routes` is empty for an actor with no tenant: routes belong to
+    // a client, and Shanitah's own staff belong to none.
+    staffList([person()])
+    renderAs(<StaffPage />)
+
+    await user.click(await screen.findByRole('button', { name: /^edit$/i }))
+    const dialog = screen.getByRole('dialog')
+
+    expect(within(dialog).queryByText('Routes')).toBeNull()
+    await user.click(within(dialog).getByRole('button', { name: /save changes/i }))
+    await waitFor(() => expect(patch).toHaveBeenCalled())
+    expect(patch.mock.calls[0][1]).not.toHaveProperty('route_ids')
+  })
+
+  it('offers no switches when the server served no catalogue', async () => {
+    const user = userEvent.setup()
+    staffList([person()])
+    renderAs(<StaffPage />)
+
+    await user.click(await screen.findByRole('button', { name: /^edit$/i }))
+    const dialog = screen.getByRole('dialog')
+
+    expect(within(dialog).queryByText('Can also')).toBeNull()
+    await user.click(within(dialog).getByRole('button', { name: /save changes/i }))
+    await waitFor(() => expect(patch).toHaveBeenCalled())
+    expect(patch.mock.calls[0][1]).not.toHaveProperty('capabilities')
   })
 
   /**

@@ -56,7 +56,7 @@ export function NotificationsPage() {
             <Button
               size="sm"
               variant={unreadOnly ? 'primary' : 'secondary'}
-              iconLeft="filter"
+              iconLeft="funnel"
               // aria-pressed, not just a colour change: a toggle whose only
               // state cue is its fill is invisible to a screen reader.
               aria-pressed={unreadOnly}

@@ -12,6 +12,8 @@ import {
 } from '../lib/bookingStatus'
 import type { ApiSuccess, FilterOption, ScopedCursorMeta, TenancyScope } from '../types/api'
 import type { Booking } from '../types/booking'
+import type { Colleague } from '../types/staff'
+import { isCorporateRole } from '../lib/navigation'
 import { Badge } from '../components/core/Badge'
 import { Button } from '../components/core/Button'
 import { Card } from '../components/core/Card'
@@ -19,11 +21,13 @@ import { Alert } from '../components/feedback/Alert'
 import { Dialog } from '../components/feedback/Dialog'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
 import { LoadMore } from '../components/data/LoadMore'
+import { ColleagueField } from '../components/forms/ColleagueField'
 import { FormField } from '../components/forms/FormField'
 import { PlaceField } from '../components/forms/PlaceField'
 import type { PlaceHit } from './public/places'
 import { coordinatesFor, withCoordinateErrorsOnFields } from './public/orderCoordinates'
 import { Input } from '../components/forms/Input'
+import { PageFill } from '../components/layout/PageFill'
 
 /**
  * Roles the backend's BookingPolicy lets approve or reject. Mirrored here
@@ -201,6 +205,7 @@ export function BookingsPage() {
         ? [
             {
               key: 'tenant_id',
+              card: 'hide',
               header: 'Client',
               render: (row: Booking) => row.client?.name ?? '—',
             } satisfies DataColumn<Booking>,
@@ -208,6 +213,7 @@ export function BookingsPage() {
         : []),
       {
         key: 'status',
+        card: 'status',
         header: 'Status',
         render: (row) => (
           <Badge tone={bookingStatusTone(row.status)} icon={bookingStatusIcon(row.status)}>
@@ -215,27 +221,31 @@ export function BookingsPage() {
           </Badge>
         ),
       },
-      { key: 'scheduled_for', header: 'Pickup', render: (row) => pickupLabel(row) },
+      { key: 'scheduled_for', card: 'meta', header: 'Pickup', render: (row) => pickupLabel(row) },
       {
         key: 'origin',
+        card: 'title',
         header: 'Route',
         render: (row) => `${row.origin} → ${row.destination}`,
       },
-      { key: 'passenger_name', header: 'Passenger' },
-      { key: 'passenger_count', header: 'Pax', numeric: true },
+      { key: 'passenger_name', card: 'meta', header: 'Passenger' },
+      { key: 'passenger_count', card: 'meta', header: 'Pax', numeric: true },
       {
         key: 'requested_by_user_id',
+        card: 'meta',
         header: 'Requested by',
         render: (row) => row.requested_by?.name ?? '—',
       },
       {
         key: 'decision_reason',
+        card: 'hide',
         header: 'Reason',
         wrap: true,
         render: (row) => row.decision_reason ?? '—',
       },
       {
         key: 'id',
+        card: 'meta',
         header: 'Actions',
         render: (row) => {
           // Only a pending booking can still be approved or rejected; the
@@ -279,7 +289,7 @@ export function BookingsPage() {
   const rows = bookings ?? []
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+    <PageFill>
       {loadError && (
         <Alert tone="error" title="Bookings unavailable">
           {loadError}
@@ -291,7 +301,9 @@ export function BookingsPage() {
         </Alert>
       )}
 
+      <PageFill.Flex>
       <Card
+        fill
         title="Bookings"
         subtitle={bookings ? `${bookings.length} total` : undefined}
         padding="none"
@@ -326,11 +338,29 @@ export function BookingsPage() {
             </Button>
           </>
         }
+        /*
+          The cursor now belongs to the *searched* query, so "load more"
+          continues the search rather than escaping it — which is why the
+          in-browser filter had to go first. Paging a client-side filter
+          would have loaded the next 25 unfiltered rows into a filtered
+          list.
+
+          In the card's footer rather than after the table, so it stays put
+          while the rows scroll.
+        */
+        footer={
+          <LoadMore
+            hasMore={next !== null}
+            loading={loadingMore}
+            onLoadMore={() => void loadMore()}
+          />
+        }
       >
         <DataTable<Booking>
           columns={columns}
           rows={rows}
           dense
+          fill
           emptyMessage={
             bookings === null
               ? 'Loading…'
@@ -339,20 +369,8 @@ export function BookingsPage() {
                 : 'No bookings yet'
           }
         />
-
-        {/*
-          The cursor now belongs to the *searched* query, so "load more"
-          continues the search rather than escaping it — which is why the
-          in-browser filter had to go first. Paging a client-side filter
-          would have loaded the next 25 unfiltered rows into a filtered
-          list.
-        */}
-        <LoadMore
-          hasMore={next !== null}
-          loading={loadingMore}
-          onLoadMore={() => void loadMore()}
-        />
       </Card>
+      </PageFill.Flex>
 
       {creating && (
         <NewBookingDialog
@@ -375,7 +393,7 @@ export function BookingsPage() {
           }}
         />
       )}
-    </div>
+    </PageFill>
   )
 }
 
@@ -386,6 +404,20 @@ function NewBookingDialog({
   onClose: () => void
   onCreated: () => Promise<void>
 }) {
+  const { user: me } = useAuth()
+  /**
+   * A client's booking is for one of the client's own people, and the
+   * server enforces exactly that — a Corporate Admin or Employee who names
+   * nobody gets a 422 on `passenger_user_id`. Shanitah's own desk still
+   * types a name, because the walk-ins and callers they book for have no
+   * account anywhere (ADR-0012).
+   *
+   * `isCorporateRole` decides which form is shown; it does not decide the
+   * rule. Getting it wrong here shows the wrong field, never the wrong
+   * permission.
+   */
+  const picksColleague = isCorporateRole(me?.role)
+  const [colleague, setColleague] = useState<Colleague | null>(null)
   const [form, setForm] = useState({
     passenger_name: '',
     passenger_phone: '',
@@ -415,6 +447,10 @@ function NewBookingDialog({
 
     try {
       await apiClient.post('/bookings', {
+        // Sent only where there is one. The server takes the passenger's
+        // *name* off this account and ignores the one below, so the two
+        // can never drift into being two passengers.
+        ...(colleague === null ? {} : { passenger_user_id: colleague.id }),
         passenger_name: form.passenger_name,
         passenger_phone: form.passenger_phone,
         passenger_count: Number(form.passenger_count) || 1,
@@ -469,9 +505,30 @@ function NewBookingDialog({
         )}
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)' }}>
-          <FormField label="Passenger" htmlFor="b-name" required error={errors.passenger_name}>
-            <Input id="b-name" value={form.passenger_name} onChange={set('passenger_name')} />
-          </FormField>
+          {picksColleague ? (
+            <ColleagueField
+              value={form.passenger_name}
+              chosen={colleague}
+              // The server rejects a missing colleague on this field; the
+              // typed name is only ever a search term here.
+              error={errors.passenger_user_id ?? errors.passenger_name}
+              onChange={(value, picked) => {
+                setColleague(picked)
+                setForm((current) => ({
+                  ...current,
+                  passenger_name: value,
+                  // Prefilled from the account, and still editable: the
+                  // person raising it may know a better number for today.
+                  // Only on picking, so a correction survives typing on.
+                  passenger_phone: picked?.phone ?? (picked === null ? current.passenger_phone : ''),
+                }))
+              }}
+            />
+          ) : (
+            <FormField label="Passenger" htmlFor="b-name" required error={errors.passenger_name}>
+              <Input id="b-name" value={form.passenger_name} onChange={set('passenger_name')} />
+            </FormField>
+          )}
           <FormField
             label="Contact number"
             htmlFor="b-phone"

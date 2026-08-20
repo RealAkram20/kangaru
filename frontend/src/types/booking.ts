@@ -24,6 +24,13 @@ export interface Booking {
   client?: ClientSummary
   requested_by_user_id: number
   requested_by?: BookingUser
+  /**
+   * The colleague this was raised for, when a client raised it; null for
+   * the walk-ins and callers Shanitah's own desk books. The link, not the
+   * source — the name and number below are the snapshot the driver was
+   * dispatched against, and stay authoritative.
+   */
+  passenger_user_id: number | null
   passenger_name: string
   passenger_phone: string
   passenger_count: number
