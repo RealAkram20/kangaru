@@ -44,6 +44,82 @@ return Application::configure(basePath: dirname(__DIR__))
         CloseStaleDutySessions::class,
     ])
     ->withMiddleware(function (Middleware $middleware): void {
+        // ---------------------------------------------------------------------
+        // Who is allowed to tell us where a request came from.
+        //
+        // Without this, `request()->ip()` is the immediate peer — which behind
+        // a reverse proxy is the proxy. Measured on the live server before it
+        // was set, every single request looked like this:
+        //
+        //   10.0.3.9 - - "GET /up" 200 "-" "102.86.7.251"
+        //
+        // The real client was there all along, in `X-Forwarded-For`; Laravel
+        // simply was not permitted to believe it. Two things read that value
+        // and both were wrong:
+        //
+        //   - `AuditLog` writes `ip_address` on every mutation. A trail that
+        //     records the proxy's container address for every action by every
+        //     user cannot answer "where did this come from", which is most of
+        //     what PRODUCT.md sells to a bank.
+        //   - `AppServiceProvider` rate-limits `->by($request->ip())`. One
+        //     bucket for the entire internet: an attacker on the OTP path
+        //     exhausts the limit for every legitimate user at once, and
+        //     AGENTS.md names SMS pumping fraud as a real cost here.
+        //
+        // **Why a list and not `'*'`.** Trusting every hop means believing an
+        // `X-Forwarded-For` a stranger wrote. Anyone who finds the origin
+        // address could then forge the audit trail and walk past the rate
+        // limiter wearing a different IP each time. Symfony walks the chain
+        // right-to-left and stops at the first hop it does not trust, so
+        // naming the hops is what makes a forged prefix inert.
+        //
+        // Two groups, and both are needed:
+        //
+        //   - The private ranges: Traefik, which is the only thing that can
+        //     reach these containers — no service publishes a host port.
+        //   - Cloudflare's edge, since the domains are proxied. Without it the
+        //     chain stops at Cloudflare and every user is recorded as
+        //     Cloudflare.
+        //
+        // **The Cloudflare list changes a few times a year.** It is pinned
+        // here rather than fetched at boot, because a request-path dependency
+        // on an external URL is a worse failure than a stale range. Re-check
+        // https://www.cloudflare.com/ips/ — docs/runbook.md carries this as a
+        // standing item. Last refreshed from that endpoint 2026-08-21.
+        // ---------------------------------------------------------------------
+        $middleware->trustProxies(at: [
+            // Docker's own networks: Traefik, and nothing else, can reach us.
+            '10.0.0.0/8',
+            '172.16.0.0/12',
+            '192.168.0.0/16',
+
+            // Cloudflare IPv4 — https://www.cloudflare.com/ips-v4
+            '173.245.48.0/20',
+            '103.21.244.0/22',
+            '103.22.200.0/22',
+            '103.31.4.0/22',
+            '141.101.64.0/18',
+            '108.162.192.0/18',
+            '190.93.240.0/20',
+            '188.114.96.0/20',
+            '197.234.240.0/22',
+            '198.41.128.0/17',
+            '162.158.0.0/15',
+            '104.16.0.0/13',
+            '104.24.0.0/14',
+            '172.64.0.0/13',
+            '131.0.72.0/22',
+
+            // Cloudflare IPv6 — https://www.cloudflare.com/ips-v6
+            '2400:cb00::/32',
+            '2606:4700::/32',
+            '2803:f800::/32',
+            '2405:b500::/32',
+            '2405:8100::/32',
+            '2a06:98c0::/29',
+            '2c0f:f248::/32',
+        ]);
+
         $middleware->api(prepend: [
             AssignRequestId::class,
         ]);
