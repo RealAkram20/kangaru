@@ -57,31 +57,55 @@ class ExpoPushChannel
             return;
         }
 
+        // How this message wants to be *delivered*, as opposed to what it
+        // says. Empty for almost everything; a job offer asks for a ringtone
+        // channel, an expiry and a collapse key. See
+        // `KangaruNotification::pushOptions` for why that knowledge lives on
+        // the notification and not in this class.
+        //
+        // Applied over the defaults, so a notification that has thought about
+        // its own delivery wins — but under the envelope below, because `to`,
+        // `title`, `body` and `data` are this channel's to decide and a
+        // subclass silently redirecting a push to another handset is not a
+        // capability worth leaving open.
+        $options = $notification->pushOptions();
+
+        // **A silent push carries no title and no body**, because that — not a
+        // flag — is how Expo and the platforms below it decide whether to
+        // show anything. Adding an empty string would render an empty
+        // notification, which is worse than either outcome.
+        $shown = $notification->pushIsSilent()
+            ? []
+            : [
+                'title' => $notification->subject(),
+                'body' => $notification->body(),
+            ];
+
+        $message = $shown + [
+            // The ids behind the sentence, so the app can open
+            // the right screen on a tap without parsing prose —
+            // the same reason `context()` exists for the in-app
+            // row, and the same reason AGENTS.md has clients
+            // branch on an error `code`.
+            //
+            // Never the passenger's name or number: ADR-0025 §5.
+            // A lock screen is readable by whoever is holding the
+            // phone, and those are released only after an accept.
+            'data' => $notification->context(),
+        ] + $options + [
+            // Rings and vibrates. Reserved for the types
+            // ADR-0025 §5 argues for — a job offer with a
+            // countdown on it is the only reason this app is
+            // installed.
+            'priority' => 'high',
+            'sound' => 'default',
+        ];
+
         try {
             $response = Http::timeout(5)
                 ->acceptJson()
                 ->post(self::ENDPOINT, array_map(
-                    fn (string $token) => [
-                        'to' => $token,
-                        'title' => $notification->subject(),
-                        'body' => $notification->body(),
-                        // The ids behind the sentence, so the app can open
-                        // the right screen on a tap without parsing prose —
-                        // the same reason `context()` exists for the in-app
-                        // row, and the same reason AGENTS.md has clients
-                        // branch on an error `code`.
-                        //
-                        // Never the passenger's name or number: ADR-0025 §5.
-                        // A lock screen is readable by whoever is holding the
-                        // phone, and those are released only after an accept.
-                        'data' => $notification->context(),
-                        // Rings and vibrates. Reserved for the types
-                        // ADR-0025 §5 argues for — a job offer with a
-                        // countdown on it is the only reason this app is
-                        // installed.
-                        'priority' => 'high',
-                        'sound' => 'default',
-                    ],
+                    fn (string $token) => ['to' => $token] + $message,
                     $tokens,
                 ));
 

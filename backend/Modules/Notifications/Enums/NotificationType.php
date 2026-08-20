@@ -25,6 +25,16 @@ enum NotificationType: string
     case BOOKING_APPROVED = 'booking.approved';
     case BOOKING_REJECTED = 'booking.rejected';
     case REPORT_EXPORT_READY = 'report.export.ready';
+
+    /**
+     * The three moments after approval that the requester of a corporate
+     * booking is told about (TripProgressNotification): a car and driver
+     * exist, the driver is at the kerb, the trip is done — the last with
+     * the six data points the client is billed by.
+     */
+    case TRIP_ASSIGNED = 'trip.assigned';
+    case TRIP_DRIVER_ARRIVED = 'trip.driver_arrived';
+    case TRIP_COMPLETED = 'trip.completed';
     case ORDER_REQUEST_RECEIVED = 'order_request.received';
 
     /**
@@ -36,6 +46,30 @@ enum NotificationType: string
      * here reaches somebody already sitting at a screen.
      */
     case TRIP_OFFERED = 'trip.offered';
+
+    /**
+     * That job is gone — stop ringing (ADR-0046 §4).
+     *
+     * **The only silent notification in this platform**, and the only one
+     * whose entire purpose is to *undo* an interruption rather than cause
+     * one. It shows nothing and says nothing; the app reads `offer_id` and
+     * stops the ringtone.
+     *
+     * ## Why it is needed at all
+     *
+     * The handset already stops on its own: `Ringtone` arms a deadline from
+     * the offer's own window, so the worst case without this is silence a
+     * couple of seconds after the offer would have expired anyway. That is
+     * correct but slow. With a forty-five second window it means a phone
+     * ringing in a driver's pocket for the better part of a minute over a
+     * ride the passenger has already cancelled — and a driver who pulls over
+     * for that twice stops trusting the sound.
+     *
+     * So this is an **accelerator, not the mechanism** — the same shape
+     * ADR-0024 §5 gives the expiry command it sits beside. The guarantee is
+     * the clock on the device; this makes the common case immediate.
+     */
+    case TRIP_OFFER_WITHDRAWN = 'trip.offer_withdrawn';
 
     /**
      * What the office decided about closing a driver's account (ADR-0043 §4).
@@ -65,6 +99,9 @@ enum NotificationType: string
             self::BOOKING_APPROVED => 'Booking approved',
             self::BOOKING_REJECTED => 'Booking rejected',
             self::REPORT_EXPORT_READY => 'Export ready',
+            self::TRIP_ASSIGNED => 'Vehicle assigned',
+            self::TRIP_DRIVER_ARRIVED => 'Driver arrived',
+            self::TRIP_COMPLETED => 'Trip completed',
             self::ORDER_REQUEST_RECEIVED => 'Walk-in order received',
             self::TRIP_OFFERED => 'New job',
             self::DRIVER_CLOSURE_ANSWERED => 'Account closure',
@@ -92,6 +129,12 @@ enum NotificationType: string
                 NotificationChannel::MAIL,
             ],
             self::REPORT_EXPORT_READY => [NotificationChannel::DATABASE],
+            // In-app and mail, like a booking decision: the requester may
+            // not have the console open when their car arrives.
+            self::TRIP_ASSIGNED, self::TRIP_DRIVER_ARRIVED, self::TRIP_COMPLETED => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::MAIL,
+            ],
             // In-app only: the desk lives in the dashboard, and a walk-in
             // request emailed to every dispatcher is inbox noise, not
             // dispatch. Config can widen it per deployment.
@@ -101,12 +144,27 @@ enum NotificationType: string
             // ADR-0025 §3 makes push best-effort, and a driver who declined
             // the OS permission must still be told something.
             //
-            // Never mail: an offer expires in fifteen seconds, and an email
-            // about one would arrive as an apology.
+            // Never mail: an offer expires in under a minute
+            // (`dispatch.offer_ttl_seconds`), and an email about one would
+            // arrive as an apology.
             self::TRIP_OFFERED => [
                 NotificationChannel::PUSH,
                 NotificationChannel::DATABASE,
             ],
+            /*
+             * **Push alone, and the absence of `DATABASE` is the point.**
+             *
+             * Every other type here writes an in-app row because a driver
+             * should be able to find out what happened after the fact. This
+             * one has nothing to tell them: it exists to stop a sound, and a
+             * row saying "a job you never answered was withdrawn" is an inbox
+             * entry for a non-event — the notification fatigue AGENTS.md
+             * warns about, generated automatically, once per cancelled ride.
+             *
+             * Never mail, for the reason `TRIP_OFFERED` is never mailed, only
+             * more so.
+             */
+            self::TRIP_OFFER_WITHDRAWN => [NotificationChannel::PUSH],
             /*
              * **Mail only, and the omissions are the point.** A confirmed
              * closure has just detached this driver's sign-in, so a `DATABASE`

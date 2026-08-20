@@ -39,6 +39,41 @@ list is unbuilt and named below.
 | `booking.approved` | `Modules\Bookings\Events\BookingApproved` | the requester | in-app + mail |
 | `booking.rejected` | `Modules\Bookings\Events\BookingRejected` | the requester | in-app + mail |
 | `report.export.ready` | `Modules\Reports\Events\ReportExportCompleted` | the requester | in-app |
+| `trip.assigned` | `Modules\Trips\Events\TripStatusChanged` (creation, `from` null) | the booking's requester | in-app + mail |
+| `trip.driver_arrived` | `TripStatusChanged` → `driver_arrived` | the booking's requester | in-app + mail |
+| `trip.completed` | `TripStatusChanged` → `trip_completed` — the body carries the six data points (Centenary letter) | the booking's requester | in-app + mail |
+| `trip.offered` | `DispatchOfferService::ring()` | the offered driver | push + in-app |
+| `trip.offer_withdrawn` | `DispatchOfferService::withdraw()` — an accept superseding a wave, or a passenger cancelling | the losing drivers | push, silently |
+
+### The two `trip.offer*` rows are the only ones that reach a handset
+
+`trip.offered` is the one message in the platform that earns an interruption
+(ADR-0025 §5): it has a countdown on it and it is the only reason the Driver's
+Application is installed. It says how it wants to be delivered through
+`pushOptions()` — a MAX-importance Android channel with a ringtone, a `ttl`
+equal to the offer's own remaining seconds, and a collapse key.
+
+**The `ttl` is the part worth knowing about.** Expo keeps a message deliverable
+long after its subject is gone, so without it a push held while a handset was
+in a dead zone arrives later and rings for a job somebody else has been driving
+for ten minutes. That is worse than never ringing.
+
+`trip.offer_withdrawn` is **the only silent notification here** and the only one
+whose purpose is to *undo* an interruption rather than cause one. It shows
+nothing and writes no in-app row: "a job you never answered was withdrawn" is an
+inbox entry for a non-event, generated once per cancelled ride. It is also
+**allowed to fail** — the guarantee is a deadline the handset arms when it
+starts ringing (ADR-0046 §4), and Android will not deliver a data-only push to
+an app it has killed at all. This is an accelerator, in the same sense
+`dispatch:advance-offers` is an accelerator for an expiry that is really a clock.
+
+The three `trip.*` rows are one class, `TripProgressNotification`, sent by
+`SendTripProgressNotification` off `TripStatusChanged` — every other move
+(`accepted`, `driver_en_route`, `passenger_onboard`, `waiting`…) is
+deliberately silent, because an inbox that narrates every step is an inbox
+that gets muted. A walk-in trip has no booking and its rider is told by the
+customer flow, so nothing is sent for it. The driver is named by **first name
+only**; the plate and make/model identify the car.
 
 Three things each of these deliberately does **not** do:
 

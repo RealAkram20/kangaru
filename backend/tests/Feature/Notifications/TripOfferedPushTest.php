@@ -10,9 +10,10 @@ use Modules\Notifications\Enums\NotificationChannel;
 use Modules\Notifications\Enums\NotificationType;
 use Modules\Notifications\Models\DeviceToken;
 use Modules\Notifications\Notifications\TripOfferedNotification;
+use Modules\Notifications\Notifications\TripOfferWithdrawnNotification;
 
 /**
- * The push that makes an offer's fifteen-second window usable (ADR-0025).
+ * The push that makes an offer's window usable at all (ADR-0025, ADR-0046).
  *
  * Two things are being protected here, and only one of them is delivery.
  *
@@ -149,13 +150,208 @@ it('drops a token the push service says is dead', function () {
 });
 
 it('sends an offer by push and in-app, and never by mail', function () {
-    // An offer expires in fifteen seconds. An email about one would arrive as
-    // an apology. The in-app row is what a driver who refused the push
-    // permission still sees.
+    // An offer expires in well under a minute. An email about one would
+    // arrive as an apology. The in-app row is what a driver who refused the
+    // push permission still sees.
     expect(NotificationType::TRIP_OFFERED->defaultChannels())
         ->toContain(NotificationChannel::PUSH)
         ->toContain(NotificationChannel::DATABASE)
         ->not->toContain(NotificationChannel::MAIL);
+});
+
+// -- How it is delivered, as opposed to what it says (ADR-0046 §2) ---------
+
+it('expires the push with the offer, so a late ring is never delivered', function () {
+    // **The bug this closes.** Expo keeps a message deliverable long after
+    // the thing it describes has gone. A push held while a handset was in a
+    // dead zone would arrive minutes later and ring for a job somebody else
+    // has been driving — the driver reaches for the phone, reads a pickup,
+    // taps, and is told they were too late for something they were never
+    // offered in time. Worse than never ringing.
+    Http::fake(['exp.host/*' => Http::response(['data' => []])]);
+
+    [$user] = driverWithDevice();
+    $offer = DispatchOffer::factory()->create(['expires_at' => now()->addSeconds(45)]);
+    $offer->load('orderRequest');
+
+    $user->notify(TripOfferedNotification::for($offer));
+
+    Http::assertSent(function ($request) {
+        // Within a second of the window rather than exactly on it: the
+        // notification computes the remaining seconds from `now()`, and a
+        // slow test machine can cross a second boundary between the factory
+        // and the send. Pinning it exactly makes this flake for a reason
+        // that has nothing to do with the guarantee.
+        expect($request['0']['ttl'])->toBeGreaterThan(40)->toBeLessThanOrEqual(45);
+
+        return true;
+    });
+});
+
+it('names the ringtone channel the app created, not a default one', function () {
+    // Android puts the sound, the importance and the vibration on the
+    // *channel*, not the message, so a push without this rings with whatever
+    // the fallback channel was set to — which is silence on many handsets.
+    // The other half of this pair is `mobile/src/push/channels.ts`, and the
+    // string has to match it exactly; nothing at either end can check that,
+    // so it is written down in both places and asserted here.
+    Http::fake(['exp.host/*' => Http::response(['data' => []])]);
+
+    [$user] = driverWithDevice();
+    $offer = DispatchOffer::factory()->create();
+    $offer->load('orderRequest');
+
+    $user->notify(TripOfferedNotification::for($offer));
+
+    Http::assertSent(function ($request) use ($offer) {
+        expect($request['0']['channelId'])->toBe('offers.v1');
+        // One live offer per handset, replacing rather than stacking: a
+        // driver back from a dead zone should not find a column of dead jobs.
+        expect($request['0']['collapseId'])->toBe('offer-'.$offer->id);
+
+        return true;
+    });
+});
+
+it('will not let a notification redirect its own push to another handset', function () {
+    // `pushOptions()` is merged over the channel's defaults so a message can
+    // ask for a ringtone — but `to` is the channel's to decide, and a
+    // subclass that could set it would be able to deliver one driver's job
+    // offer, pickup address and all, to a device of its choosing.
+    //
+    // Mutation check: move `['to' => $token]` to the right of `$message` in
+    // ExpoPushChannel::send and this fails.
+    Http::fake(['exp.host/*' => Http::response(['data' => []])]);
+
+    [$user] = driverWithDevice();
+
+    $hostile = new class extends \Modules\Notifications\Notifications\KangaruNotification
+    {
+        public function type(): NotificationType
+        {
+            return NotificationType::TRIP_OFFERED;
+        }
+
+        public function subject(): string
+        {
+            return 'New job';
+        }
+
+        public function body(): string
+        {
+            return 'A passenger is waiting.';
+        }
+
+        public function url(): ?string
+        {
+            return null;
+        }
+
+        public function context(): array
+        {
+            return [];
+        }
+
+        public function pushOptions(): array
+        {
+            return ['to' => 'ExponentPushToken[somebody-else]'];
+        }
+    };
+
+    app(ExpoPushChannel::class)->send($user, $hostile);
+
+    Http::assertSent(fn ($request) => $request['0']['to'] === 'ExponentPushToken[test-handset]');
+});
+
+// -- Stopping a ring that is already going (ADR-0046 §4) -------------------
+
+it('withdraws an offer silently, carrying nothing to display', function () {
+    // The only notification in the platform that shows nothing. Expo decides
+    // on the *presence* of title and body, not on a flag, so both must be
+    // absent — an empty string would render an empty notification, which is
+    // worse than either outcome.
+    Http::fake(['exp.host/*' => Http::response(['data' => []])]);
+
+    [$user] = driverWithDevice();
+    $offer = DispatchOffer::factory()->create();
+
+    $user->notify(TripOfferWithdrawnNotification::for($offer));
+
+    Http::assertSent(function ($request) use ($offer) {
+        expect($request['0'])->not->toHaveKey('title');
+        expect($request['0'])->not->toHaveKey('body');
+
+        // Silent means silent. The channel defaults every push to
+        // `'default'`, which would have this one make a noise to announce
+        // that a noise should stop.
+        expect($request['0']['sound'])->toBeNull();
+
+        // The same collapse key as the offer it cancels, so it replaces the
+        // ring on the shade rather than landing beside it.
+        expect($request['0']['collapseId'])->toBe('offer-'.$offer->id);
+        expect($request['0']['data'])->toMatchArray([
+            'offer_id' => $offer->id,
+            'withdrawn' => true,
+        ]);
+
+        return true;
+    });
+});
+
+it('writes no inbox row for a withdrawal, because there is nothing to read', function () {
+    // "A job you never answered was withdrawn" is an inbox entry for a
+    // non-event, generated once per cancelled ride. The driver finds out the
+    // useful way: the ringing stops.
+    expect(NotificationType::TRIP_OFFER_WITHDRAWN->defaultChannels())
+        ->toBe([NotificationChannel::PUSH]);
+});
+
+it('tells the losing drivers of a wave that the job is gone', function () {
+    // Only reachable with `offer_wave_size` above one, and written for that
+    // case rather than against today's default — a wave size raised in config
+    // that silently leaves handsets ringing is a trap set for an operator.
+    Http::fake(['exp.host/*' => Http::response(['data' => []])]);
+
+    $winner = DispatchOffer::factory()->create();
+    $loser = DispatchOffer::factory()->create([
+        'order_request_id' => $winner->order_request_id,
+    ]);
+
+    $loserUser = User::factory()->create(['tenant_id' => null, 'role' => UserRole::DRIVER]);
+    $loser->driver->update(['user_id' => $loserUser->id]);
+    DeviceToken::create([
+        'user_id' => $loserUser->id,
+        'provider' => 'expo',
+        'token' => 'ExponentPushToken[loser]',
+        'platform' => 'android',
+        'last_seen_at' => now(),
+    ]);
+
+    app(\Modules\Dispatch\Services\DispatchOfferService::class)->withdraw([$loser->fresh()]);
+
+    Http::assertSent(fn ($request) => $request['0']['to'] === 'ExponentPushToken[loser]'
+        && $request['0']['data']['withdrawn'] === true);
+});
+
+it('never lets a failing withdrawal break the accept that raised it', function () {
+    // Runs inside the transaction that accepted a ride. The guarantee is the
+    // handset's own deadline, not this — so a push service outage must cost
+    // a few seconds of ringing, never a passenger's trip.
+    Http::fake(fn () => throw new RuntimeException('exp.host is down'));
+
+    [$user] = driverWithDevice();
+    $offer = DispatchOffer::factory()->create();
+    $offer->driver->update(['user_id' => $user->id]);
+
+    $escaped = null;
+
+    try {
+        app(\Modules\Dispatch\Services\DispatchOfferService::class)->withdraw([$offer->fresh()]);
+    } catch (Throwable $e) {
+        $escaped = $e;
+    }
+
+    expect($escaped)->toBeNull();
 });
 
 it('lets a driver-scoped token register and unregister its handset', function () {
