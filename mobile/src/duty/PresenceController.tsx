@@ -1,9 +1,12 @@
+import { useQueryClient } from '@tanstack/react-query';
 import * as Location from 'expo-location';
 import { useEffect, useRef } from 'react';
 
 import { sendPresence } from '../api/endpoints';
 import { useAuth } from '../auth/AuthProvider';
 import { isApiError } from '../api/errors';
+import { forgetShift, rememberShift } from './dutyStore';
+import { reportPresence } from './presence';
 import { useDuty } from './queries';
 
 /**
@@ -35,10 +38,29 @@ import { useDuty } from './queries';
  *
  * So this fetches one fresh point on a timer and posts it, and drops it on the
  * floor if that fails. The next tick is a better answer than a retry.
+ *
+ * ## This is now the *foreground* half only (ADR-0046)
+ *
+ * A `setInterval` in a React component is throttled by Android within minutes
+ * of the app leaving the screen and stops altogether when the process is
+ * trimmed. Against a 180-second `presence_ttl_seconds` that meant **a driver
+ * whose phone went into their pocket left the dispatch pool three minutes
+ * later, with their screen still reading "You are online"** — the failure
+ * `DutyBar`'s docblock calls the worst this feature can have, and it was live
+ * until `PresenceTask` was added.
+ *
+ * That task, driven by the OS behind a foreground service, is the half that
+ * carries a shift. This one still earns its place: it fires the *first* ping
+ * immediately on signing on, at a finer cadence than the OS will honour in the
+ * background, and — the part the task cannot do — it writes the server's
+ * answer into the query cache so the duty bar stops lying about a stale fix.
+ *
+ * Both run `reportPresence`, and neither owns a second copy of it.
  */
 export function PresenceController() {
   const { api } = useAuth();
   const { data: duty } = useDuty();
+  const queryClient = useQueryClient();
 
   const onDuty = duty?.on_duty ?? false;
   const vehicleId = duty?.vehicle_id ?? null;
@@ -58,6 +80,31 @@ export function PresenceController() {
     vehicleRef.current = vehicleId;
   }, [vehicleId]);
 
+  // **Mirrors the server's duty record to storage for the background task.**
+  //
+  // `useDutyToggle` writes it at the moment of signing on, which covers the
+  // ordinary case, but not the ones that change a live shift without anybody
+  // touching the toggle: a dispatcher moving the driver to another vehicle,
+  // an operator retuning `presence_heartbeat_seconds`, or a shift the server
+  // ended on its own. The task cannot read a query cache, so without this it
+  // would keep naming a vehicle the driver handed back hours ago.
+  //
+  // Separate from the heartbeat effect below because it must also run when
+  // `onDuty` is false — that is precisely the transition worth recording.
+  useEffect(() => {
+    if (duty === undefined) {
+      return;
+    }
+
+    void (duty.on_duty
+      ? rememberShift({
+          onDuty: true,
+          vehicleId: duty.vehicle_id,
+          heartbeatSeconds: duty.heartbeat_seconds,
+        })
+      : forgetShift());
+  }, [duty]);
+
   useEffect(() => {
     if (!onDuty) {
       return;
@@ -66,55 +113,82 @@ export function PresenceController() {
     let cancelled = false;
 
     const report = async () => {
-      try {
-        const permission = await Location.getForegroundPermissionsAsync();
+      // **The same `reportPresence` the background task runs**, over ports
+      // that reach `expo-location` and the API client. The two paths answer
+      // the same question and must not answer it differently — see `presence.ts`
+      // for why that was extracted, and note that the half which would have
+      // drifted first is the one nobody can watch.
+      const outcome = await reportPresence(
+        {
+          // Never prompts from here. A permission dialog appearing out of a
+          // timer, minutes after the driver last touched the app, is a dialog
+          // nobody can connect to anything they did. `useDutyToggle` asks
+          // when they sign on, which is the moment it makes sense.
+          hasPermission: async () => (await Location.getForegroundPermissionsAsync()).granted,
+          getFix: async () => {
+            /*
+              **Null, never a rejection.** The port's type is
+              `Promise<PresenceFix | null>` and `reportPresence` awaits it
+              outside any `try`, because "no fix" is not an error there — it
+              has a `no_fix` outcome for it, documented as "a basement".
 
-        // Never prompts from here. A permission dialog appearing out of a
-        // background timer, minutes after the driver last touched the app, is
-        // a dialog nobody can connect to anything they did. The duty screen
-        // asks when they sign on, which is the moment it makes sense.
-        //
-        // Refused permission is not an error and not a reason to sign the
-        // driver off: the server keeps them dispatchable without coordinates
-        // and simply ranks them without distance (ADR-0024 §2). Dropping them
-        // here would be a silent per-driver outage.
-        if (!permission.granted) {
-          return;
-        }
+              `getCurrentPositionAsync` does not share that view: it *throws*
+              when there is no position, and on Android that includes the
+              ordinary cases this heartbeat is built for — indoors, a tunnel,
+              location switched off mid-shift. The rejection travelled out of
+              `reportPresence`, out of `report()`, and landed as an unhandled
+              promise rejection: a red error card in front of a driver, every
+              sixty seconds, saying "Current location is unavailable".
 
-        const position = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
+              Seen on the emulator, which has no fix until one is injected —
+              but the handset case is the real one, and it is the case the
+              surrounding comment already calls ordinary and silent.
+            */
+            try {
+              const position = await Location.getCurrentPositionAsync({
+                accuracy: Location.Accuracy.Balanced,
+              });
 
-        if (cancelled) {
-          return;
-        }
+              return {
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                accuracyMetres: position.coords.accuracy ?? null,
+                timestamp: position.timestamp,
+              };
+            } catch {
+              return null;
+            }
+          },
+          send: (input) => sendPresence(api, input),
+          isNotOnDuty: (error) => isApiError(error) && error.code === 'NOT_ON_DUTY',
+        },
+        vehicleRef.current,
+      );
 
-        await sendPresence(api, {
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          accuracyMetres: position.coords.accuracy ?? null,
-          // The device's clock, matching the field's contract. The server
-          // judges staleness against this, so sending a server-side "now"
-          // would make every ping look fresh at the moment it arrived —
-          // exactly the lie the field exists to prevent.
-          recordedAt: new Date(position.timestamp).toISOString(),
-          vehicleId: vehicleRef.current,
-        });
-      } catch (error) {
-        // Swallowed on purpose, and the two interesting cases are the same
-        // one: 409 NOT_ON_DUTY means the server and this app disagree about
-        // whether a shift is running, and the `useDuty` poll is what settles
-        // that — retrying here would just argue with it. Anything else is a
-        // dead zone, where the next tick is a better answer than a retry of a
-        // position that is already out of date.
-        if (isApiError(error) && error.code !== 'NOT_ON_DUTY') {
-          // Deliberately quiet. A driver cannot act on this, and a visible
-          // error every sixty seconds in poor coverage is an app they stop
-          // trusting. Duty state itself is shown on the Work screen, from the
-          // server's own `dispatchable`.
-        }
+      if (cancelled || outcome.kind !== 'sent') {
+        // Every other ending is ordinary and deliberately silent: a refused
+        // permission is not an error (ADR-0024 §2 ranks the driver without
+        // distance), a missing fix is a basement, and a 409 is the server
+        // correcting this app — which `useDuty` settles, so retrying here
+        // would only argue with it. A visible error every sixty seconds in
+        // poor coverage is an app a driver stops trusting.
+        return;
       }
+
+      // The heartbeat's answer *is* the duty record — the same resource
+      // `useDuty` reads, with `dispatchable` recomputed against the
+      // position just sent. Write it into the cache, as `useSetDuty` does
+      // with its own answer, rather than leaving the Work screen on
+      // whatever `useDuty` last fetched.
+      //
+      // Without this the "Waiting for a location fix" warning outlives the
+      // condition it describes: `useDuty` has no poll, so a driver whose
+      // position went stale — app backgrounded, slow fix indoors, a dead
+      // zone, or simply left on duty overnight — sees the warning until an
+      // unrelated refetch, while the server has been offering them work
+      // since the first ping after coverage returned. Seen 19 Aug 2026:
+      // three minutes of the warning against a position nine seconds old.
+      queryClient.setQueryData(['duty'], outcome.presence);
     };
 
     // Immediately, then on the server's cadence. Without the first call a
@@ -129,7 +203,7 @@ export function PresenceController() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [api, onDuty, heartbeatSeconds]);
+  }, [api, onDuty, heartbeatSeconds, queryClient]);
 
   return null;
 }

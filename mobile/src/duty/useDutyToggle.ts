@@ -2,6 +2,7 @@ import * as Location from 'expo-location';
 import { useState } from 'react';
 
 import { isApiError } from '../api/errors';
+import { goOffline, goOnline } from './OnlineService';
 import { useDuty, useSetDuty } from './queries';
 
 /**
@@ -30,6 +31,14 @@ import { useDuty, useSetDuty } from './queries';
  * for approved leave, a roster and a suspension in one place precisely so a
  * driver is not told two different things by two different screens — which is
  * exactly what a second copy of this would have produced.
+ *
+ * **The background service starts and stops here** (ADR-0046). This is the one
+ * place in the app that knows a shift has just begun or ended, which makes it
+ * the only honest place to acquire and release something as heavy as a
+ * foreground service and a wake lock. Hanging it off a screen's mount instead
+ * would tie a driver's availability to which tab they happen to be standing
+ * on — the same mistake `PresenceController`'s docblock argues against, one
+ * level up.
  */
 export function useDutyToggle() {
   const { data: duty, isLoading } = useDuty();
@@ -45,11 +54,50 @@ export function useDutyToggle() {
     setRefusal(null);
 
     if (!onDuty) {
-      await Location.requestForegroundPermissionsAsync().catch(() => null);
+      const foreground = await Location.requestForegroundPermissionsAsync().catch(() => null);
+
+      // **Background location, asked only after foreground was granted.**
+      // Android refuses the background prompt outright if foreground has not
+      // been granted first, and asking anyway produces an instant denial the
+      // driver never sees — after which the OS will not ask again, and the
+      // only way back is the app's settings page.
+      //
+      // This is what lets the shift survive the screen going off: without it
+      // the foreground service still starts, but the OS stops delivering
+      // positions once the app leaves the screen, and the driver goes stale
+      // in three minutes (`dispatch.presence_ttl_seconds`).
+      //
+      // A refusal is **not** a reason to refuse the shift. ADR-0024 §2 keeps a
+      // driver dispatchable without coordinates and ranks them without
+      // distance; blocking here would be this app inventing a rule the
+      // platform does not have. They work, ranked by everything except how
+      // near they are.
+      if (foreground?.granted === true) {
+        await Location.requestBackgroundPermissionsAsync().catch(() => null);
+      }
     }
 
     try {
-      await setDuty.mutateAsync({ onDuty: !onDuty, vehicleId: duty?.vehicle_id ?? null });
+      const presence = await setDuty.mutateAsync({
+        onDuty: !onDuty,
+        vehicleId: duty?.vehicle_id ?? null,
+      });
+
+      // **The server's answer drives the service, not the toggle's position.**
+      // `setDuty` can succeed with the shift refused for a reason ADR-0017
+      // owns — approved leave, a roster, a suspension — and starting a
+      // foreground service off the tap rather than the answer would leave a
+      // driver with an ongoing "You are online" notification for a shift the
+      // platform declined to start.
+      if (presence.on_duty) {
+        await goOnline({
+          onDuty: true,
+          vehicleId: presence.vehicle_id,
+          heartbeatSeconds: presence.heartbeat_seconds,
+        });
+      } else {
+        await goOffline();
+      }
     } catch (error) {
       setRefusal(
         isApiError(error)

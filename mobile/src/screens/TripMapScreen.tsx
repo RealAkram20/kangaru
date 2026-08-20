@@ -41,15 +41,18 @@ type Props = NativeStackScreenProps<TripsStackParams, 'TripMap'>;
  * answers *how*. What changes is that answering "where" no longer costs the
  * driver their place in the app.
  *
- * ## No route line yet
+ * ## One leg, and the driver's own
  *
- * The two pins still have nothing drawn between them, for the reason
- * `PickupMap` gives: a straight line is not a road. A real one needs a
- * routing engine, the owner has chosen Google Directions for it, and that
- * needs an API key and an ADR — it is a new paid dependency, and a real road
- * duration would also overturn ADR-0020 §3's refusal to show an ETA, which
- * was a refusal to *invent* one rather than a refusal to have one. Neither is
- * a change to make on the way past.
+ * There *is* a route line now (ADR-0031), and the only thing this screen has
+ * to get right about it is which leg it asks for. Before boarding that is the
+ * road to the passenger; after it, the road to the drop-off. The header, the
+ * target pin, the "Open in Maps" hand-off, the by-road distance and the drawn
+ * line all read from one `boarded` flag so they cannot disagree — which they
+ * did, for as long as the route request ignored it.
+ *
+ * The honest division still stands where routing cannot reach: no key, no
+ * signal, no pins, and the map falls back to `PickupMap`'s dashed direct line
+ * with the footer saying in words that it is not a road distance.
  */
 export function TripMapScreen({ route, navigation }: Props) {
   const { tripId } = route.params;
@@ -59,10 +62,39 @@ export function TripMapScreen({ route, navigation }: Props) {
   // single fix taken on open would freeze them at the door they came in by.
   const here = usePosition({ watch: true });
 
-  // Refetched when the driver has moved ~100 m, not on a clock — see
-  // `useTripRoute`. Null whenever routing is off, unconfigured or unreachable,
-  // which the map draws as its dashed direct line.
-  const { data: roadRoute } = useTripRoute(tripId, here);
+  // Where the driver is *going*, which depends on where they are in the job:
+  // the passenger is in the car from `trip_started` onward, so the useful
+  // destination is the drop-off; before that it is the pickup. Sending a
+  // driver to a pickup they have already made is the kind of small wrongness
+  // that makes an app feel like it is not paying attention.
+  //
+  // Read off `trip?.status` up here, above the hooks and above the early
+  // return, because **the route request needs it too** — see below.
+  const boarded =
+    trip?.status === 'trip_started' ||
+    trip?.status === 'waiting' ||
+    trip?.status === 'trip_resumed' ||
+    trip?.status === 'passenger_onboard';
+
+  /*
+    The road for the leg the driver is actually on, refetched when they have
+    moved ~100 m rather than on a clock — see `useTripRoute`. Null whenever
+    routing is off, unconfigured or unreachable, which the map draws as its
+    dashed direct line.
+
+    **The leg is the fix here.** This asked for the drop-off unconditionally,
+    while the header, the target pin and the "Open in Maps" button all
+    respected `boarded` — so a driver on the way to a pickup read "Pickup" at
+    the top, a road to somewhere else in the middle, and a by-road distance
+    for a journey they had not started. On order 40 that is 7.3 km of approach
+    drawn as 71.0 km of fare.
+  */
+  const { data: roadRoute } = useTripRoute(
+    tripId,
+    here,
+    boarded ? 'dropoff' : 'pickup',
+    trip !== undefined,
+  );
 
   if (trip === undefined) {
     return (
@@ -75,17 +107,6 @@ export function TripMapScreen({ route, navigation }: Props) {
 
   const pickup = located(trip.pickup) ? toCoordinates(trip.pickup) : null;
   const dropoff = located(trip.dropoff) ? toCoordinates(trip.dropoff) : null;
-
-  // Where the driver is *going*, which depends on where they are in the job:
-  // the passenger is in the car from `trip_started` onward, so the useful
-  // destination is the drop-off; before that it is the pickup. Sending a
-  // driver to a pickup they have already made is the kind of small wrongness
-  // that makes an app feel like it is not paying attention.
-  const boarded =
-    trip.status === 'trip_started' ||
-    trip.status === 'waiting' ||
-    trip.status === 'trip_resumed' ||
-    trip.status === 'passenger_onboard';
 
   const target = boarded ? dropoff : pickup;
   const targetLabel = boarded ? trip.dropoff.label : trip.pickup.label;
@@ -106,7 +127,7 @@ export function TripMapScreen({ route, navigation }: Props) {
           dropoff={dropoff}
           here={here}
           fill
-          boarded={boarded}
+          leg={boarded ? 'fare' : 'approach'}
           routePolyline={roadRoute?.polyline ?? null}
         />
       </View>

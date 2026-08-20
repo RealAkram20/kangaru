@@ -1,13 +1,16 @@
+import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { StatusBar } from 'expo-status-bar';
-import { View } from 'react-native';
+import { AppState, View } from 'react-native';
+import type { AppStateStatus } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AuthProvider } from './src/auth/AuthProvider';
+import { loadRingtonePreference } from './src/duty/ringtonePreference';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { SyncProvider } from './src/offline/SyncProvider';
 import { useBrandFonts } from './src/ui/fonts';
@@ -40,6 +43,56 @@ const persister = createAsyncStoragePersister({
   storage: AsyncStorage,
   key: 'kangaruride.driver.queries',
 });
+
+/*
+ * React Query's `refetchOnReconnect` and `refetchOnWindowFocus` both default to
+ * true, and on React Native both are dead letters until wired up here.
+ *
+ * The library's default managers listen for the browser's `online` and
+ * `visibilitychange` events. There is no `window` on a handset, so neither
+ * manager ever fires and every query behaves as if the app were permanently
+ * online and permanently focused.
+ *
+ * What that cost a driver: `SyncProvider` already subscribes to NetInfo and
+ * AppState, but it only invalidates queries when the *outbox* drained
+ * something. A driver who was purely reading — checking earnings, looking at
+ * the ledger — backgrounds the app in a dead zone and reopens it in town, and
+ * nothing refetches. The screens stay on yesterday's numbers until their
+ * staleTime lapses *and* something happens to re-render them.
+ *
+ * Set once at module load, deliberately: these are process-wide singletons, so
+ * doing it in a component would re-subscribe on every mount.
+ */
+onlineManager.setEventListener((setOnline) =>
+  NetInfo.addEventListener((state) => {
+    // `isInternetReachable` is null while the probe is still outstanding.
+    // Treating null as offline would make the app pause requests every time
+    // the radio changes; only a definite false means no route out.
+    setOnline(state.isConnected === true && state.isInternetReachable !== false);
+  }),
+);
+
+focusManager.setEventListener((setFocused) => {
+  const subscription = AppState.addEventListener('change', (status: AppStateStatus) => {
+    setFocused(status === 'active');
+  });
+  return () => subscription.remove();
+});
+
+/*
+ * Whether an offer is allowed to make a noise, read from disk into memory.
+ *
+ * Started here, at module load, rather than from an effect, because the ports
+ * that consult it are synchronous by design — an `await` on the ring path
+ * would let the first second of a job offer pass in silence. Starting it as
+ * early as possible is what keeps the window in which the default applies
+ * down to the app's own launch.
+ *
+ * Not awaited, and it does not need to be: the default until it lands is
+ * *on*, which is the side that costs a driver nothing. See
+ * `duty/ringtonePreference`.
+ */
+void loadRingtonePreference();
 
 export default function App() {
   const fontsReady = useBrandFonts();

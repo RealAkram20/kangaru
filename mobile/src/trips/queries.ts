@@ -90,11 +90,53 @@ export function useTripEvents(tripId: number) {
  * while a driver waits at a light. The snap is the same precision the server
  * caches on, so the two agree about what "moved" means.
  *
- * `retry: false`: a route is decoration over a map that already works. Failing
- * three times to draw a line costs three billed requests and buys nothing, and
- * `null` is the answer the map is built for anyway.
+ * ## Failing is cheap; staying failed is not
+ *
+ * This used to be `retry: false`, on the argument that a route is decoration
+ * over a map that already works and three billed attempts buy nothing. Half of
+ * that still holds — but the other half was a trap, found on the owner's
+ * handset while the API happened to be down.
+ *
+ * **`WaitingForPassengerScreen` asks with no position on purpose**: the driver
+ * is standing at the pickup, so the server routes from it. That makes the
+ * query key *constant for the life of the screen*. One failed attempt, and
+ * there is nothing left to change the key, nothing to retry, and no reconnect
+ * event either — the phone never lost signal, only the office went away. The
+ * map stayed on its dashed line until the screen was remounted, **however long
+ * the API had been back**.
+ *
+ * So: one retry for a blip, and a poll that exists **only while the last
+ * attempt failed**. `refetchInterval` is a function precisely so it can return
+ * `false` in the ordinary case — a route that succeeded is never re-asked on a
+ * timer, which is the whole cost argument above, intact. A route that failed
+ * costs two requests a minute on one screen a driver is actively looking at,
+ * and heals itself the moment the office answers.
  */
-export function useTripRoute(tripId: number, here: Coordinates | null) {
+/**
+ * How often a *failed* route is asked for again.
+ *
+ * Thirty seconds, matched against the thing being waited for: an office coming
+ * back, a mast returning, a rate-limited routing server letting go. Faster
+ * would bill for impatience; slower would leave a driver looking at a dashed
+ * line long after the road was available.
+ */
+const ROUTE_RETRY_MS = 30_000;
+
+export function useTripRoute(
+  tripId: number,
+  here: Coordinates | null,
+  to: 'pickup' | 'dropoff' = 'dropoff',
+  /**
+   * Whether the leg above is known yet.
+   *
+   * `TripMapScreen` picks its leg off the trip's status, so on a cold open —
+   * no cached trip — the leg is not decided at the moment this hook first
+   * runs. Firing anyway would ask for the approach, then ask again for the
+   * fare a tick later: two billed requests, one of which was a guess. So the
+   * caller withholds the question until it knows which one it is asking.
+   */
+  enabled = true,
+) {
   const { api } = useAuth();
 
   // Rounded *outside* the key so the value sent matches the value keyed on —
@@ -106,14 +148,20 @@ export function useTripRoute(tripId: number, here: Coordinates | null) {
       : { lat: Number(here.lat.toFixed(3)), lng: Number(here.lng.toFixed(3)) };
 
   return useQuery({
-    queryKey: ['trips', tripId, 'route', snapped?.lat ?? null, snapped?.lng ?? null],
-    queryFn: () => fetchTripRoute(api, tripId, snapped),
+    queryKey: ['trips', tripId, 'route', to, snapped?.lat ?? null, snapped?.lng ?? null],
+    queryFn: () => fetchTripRoute(api, tripId, snapped, to),
+    enabled,
     networkMode: 'offlineFirst',
     // The road does not move; the traffic on it does, and the duration is the
     // half that goes stale. Matches the server's own TTL.
     staleTime: 5 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
-    retry: false,
+    // One, not three. A blip deserves a second try; a route the server cannot
+    // draw deserves the dashed line the map is built for.
+    retry: 1,
+    // Only while the last attempt failed — see the docblock. A succeeded route
+    // returns `false` here and is never polled.
+    refetchInterval: (query) => (query.state.status === 'error' ? ROUTE_RETRY_MS : false),
   });
 }
 

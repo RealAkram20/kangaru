@@ -6,10 +6,12 @@ import { DrawerContent } from './DrawerContent';
 /**
  * The drawer, rendered.
  *
- * `drawer.test.ts` covers the row list as data; this covers the three things
- * only a render can see — that the identity block reads as one sentence, that
- * the duty control posts through the shared toggle rather than a second copy,
- * and that a row navigates into the right nesting.
+ * `drawer.test.ts` covers the row list as data; this covers what only a render
+ * can see — that the identity block reads as one sentence, that a row navigates
+ * into the right nesting, and **that three things the owner removed stay
+ * removed**: the live-trip row, the duty button, and the version string. Those
+ * three are absence assertions, which are the easy ones to write badly, so each
+ * names every form the removed thing could come back in.
  */
 
 const METRICS = {
@@ -20,21 +22,21 @@ const METRICS = {
 // `mock` prefix required: Jest hoists the factories above this line.
 const mockProfile = jest.fn();
 const mockStats = jest.fn();
-const mockTrips = jest.fn();
 const mockDuty = jest.fn();
 const mockInbox = jest.fn();
 
 jest.mock('../profile/queries', () => ({ useDriverProfile: () => mockProfile() }));
 jest.mock('../trips/queries', () => ({
   useDriverStats: () => mockStats(),
-  useTrips: () => mockTrips(),
 }));
-jest.mock('../duty/useDutyToggle', () => ({ useDutyToggle: () => mockDuty() }));
+// The read-only duty query, not `useDutyToggle`: this panel reports duty state
+// and no longer offers the action. Mocked at the query rather than left real
+// because `duty/queries` reaches `AuthProvider` and AsyncStorage.
+jest.mock('../duty/queries', () => ({ useDuty: () => mockDuty() }));
 jest.mock('../notifications/queries', () => ({ useNotifications: () => mockInbox() }));
 
 const closeDrawer = jest.fn();
 const navigate = jest.fn();
-const toggle = jest.fn();
 
 function drawerProps(
   tab = 'Home',
@@ -72,14 +74,12 @@ async function renderDrawer(
 beforeEach(() => {
   closeDrawer.mockClear();
   navigate.mockClear();
-  toggle.mockClear();
 
   mockProfile.mockReturnValue({
     data: { name: 'John Kamau', photo_url: null, trips_total: 428 },
   });
   mockStats.mockReturnValue({ data: { rating: 4.8, rating_count: 40 } });
-  mockTrips.mockReturnValue({ data: { trips: [] } });
-  mockDuty.mockReturnValue({ onDuty: true, busy: false, refusal: null, toggle });
+  mockDuty.mockReturnValue({ data: { on_duty: true } });
   mockInbox.mockReturnValue({ data: { notifications: [], unread: 0 } });
 });
 
@@ -110,7 +110,7 @@ it('says the duty state in a word, never with the green dot alone', async () => 
   // and does not know it.
   expect(screen.getByText('Online')).toBeTruthy();
 
-  mockDuty.mockReturnValue({ onDuty: false, busy: false, refusal: null, toggle });
+  mockDuty.mockReturnValue({ data: { on_duty: false } });
   const offline = await renderDrawer();
 
   expect(offline.getByText('Offline')).toBeTruthy();
@@ -147,12 +147,21 @@ it('shows no trip row when nothing is running', async () => {
   expect(screen.queryByText('Trip Details')).toBeNull();
 });
 
-it('names the live trip by what it is doing, and only while it is live', async () => {
-  mockTrips.mockReturnValue({ data: { trips: [{ id: 41, status: 'driver_en_route' }] } });
-
+it('names no live trip, whatever the driver is in the middle of', async () => {
+  // The row this replaces was labelled `statusLabel(live.status)`, so a driver
+  // part-way through the opening odometer read **"Passenger on board"** in
+  // their menu — a lifecycle state offered as a destination. The owner asked
+  // what it was for; `HomeScreen`'s `ActiveTripCard` already opens the live
+  // trip in one tap, from the screen this panel slides over.
+  //
+  // The drawer no longer reads the trip list at all, which is why there is no
+  // trips mock to set up: asserted through the rendered panel rather than
+  // through `drawer.ts` alone, because the two could disagree.
   const screen = await renderDrawer();
 
-  expect(screen.getByText('On the way')).toBeTruthy();
+  expect(screen.queryByText('Passenger on board')).toBeNull();
+  expect(screen.queryByText('On the way')).toBeNull();
+  expect(screen.queryByText('Trip in progress')).toBeNull();
 });
 
 it('navigates into the tab nesting and closes behind itself', async () => {
@@ -228,49 +237,49 @@ it('does not announce a count it has not loaded', async () => {
 
 // -- Duty ------------------------------------------------------------------
 
-it('posts duty through the shared toggle rather than a second copy', async () => {
-  const screen = await renderDrawer();
+it('offers no way to change duty, in either direction', async () => {
+  // The owner removed the red full-width **Go Offline** at the foot of the
+  // panel: *"it sounds like we are forcing people to go offline."* A menu that
+  // ends every opening with one loud action is suggesting it, and this menu is
+  // opened to get somewhere else. `HomeScreen` carries the same toggle through
+  // the same `useSetDuty`, so nothing is lost.
+  //
+  // Both directions are named, because the button rendered "Go Online" when
+  // off duty — a test that only looked for "Go Offline" would pass against a
+  // panel that still showed the control to every off-duty driver.
+  const online = await renderDrawer();
 
-  await fireEvent.press(screen.getByLabelText('Go Offline'));
+  expect(online.queryByLabelText('Go Offline')).toBeNull();
+  expect(online.queryByLabelText('Go Online')).toBeNull();
 
-  // `DutyBar` on the home screen calls the same hook. Two copies would have
-  // been two answers to one question, and the half a copy drops is the
-  // location permission — invisible until a driver signs on and gets no work.
-  expect(toggle).toHaveBeenCalled();
+  mockDuty.mockReturnValue({ data: { on_duty: false } });
+  const offline = await renderDrawer();
+
+  expect(offline.queryByLabelText('Go Offline')).toBeNull();
+  expect(offline.queryByLabelText('Go Online')).toBeNull();
 });
 
-it('offers to go online when off duty, and does not call that destructive', async () => {
-  mockDuty.mockReturnValue({ onDuty: false, busy: false, refusal: null, toggle });
-
+it('still says whether the driver is online, because that is not the action', async () => {
+  // The state stays and the control goes. `docs/screen-rules.md` §6 makes this
+  // the most consequential fact on the panel: a driver who believes they are
+  // online and is not is being offered no work and does not know it. Removing
+  // the button must not take the word with it.
   const screen = await renderDrawer();
 
-  expect(screen.getByLabelText('Go Online')).toBeTruthy();
-});
-
-it('shows the office refusal in the server own words', async () => {
-  // ADR-0017 put the wording for approved leave, a roster and a suspension in
-  // one place precisely so a driver is not told two different things by two
-  // different screens — and this is the second screen.
-  mockDuty.mockReturnValue({
-    onDuty: false,
-    busy: false,
-    refusal: 'You are on approved leave until 20 August.',
-    toggle,
-  });
-
-  const screen = await renderDrawer();
-
-  expect(screen.getByText('You are on approved leave until 20 August.')).toBeTruthy();
+  expect(screen.getByText('Online')).toBeTruthy();
 });
 
 // -- Chrome ----------------------------------------------------------------
 
-it('reads the version from the manifest rather than a typed string', async () => {
+it('carries no version string, which lives on Profile and Support instead', async () => {
+  // The owner's *"the version can be also removed from this menu pannel"*. It
+  // was the third copy — `ProfileScreen` renders "KangaruRide 1.0.0" and
+  // `SupportScreen` an "App version" row, and Support is the screen a driver is
+  // on when they ring the office, which is the job this copy was defended for.
   const screen = await renderDrawer();
 
-  // The mockup says v2.3.0. That is somebody's placeholder, and this is the
-  // number a driver reads out when they ring the office about a bug.
-  expect(screen.getByText('v1.0.0')).toBeTruthy();
+  expect(screen.queryByText('v1.0.0')).toBeNull();
+  expect(screen.queryByText(/^v\d+\.\d+\.\d+$/)).toBeNull();
 });
 
 it('lights the row the driver is actually on, not merely its tab', async () => {

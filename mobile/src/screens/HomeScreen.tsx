@@ -14,11 +14,13 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { authorizedImageSource } from '../api/imageSource';
 import type { DriverPresence, Trip } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
-import { useDuty, useSetDuty } from '../duty/queries';
+import { useDutyToggle } from '../duty/useDutyToggle';
 import type { TripsStackParams } from '../navigation/types';
 import { useNotifications } from '../notifications/queries';
+import { useDriverProfile } from '../profile/queries';
 import { useSync } from '../offline/SyncProvider';
 import { isLiveLeg, statusLabel, tripDestination } from '../trips/transitions';
 import { useDriverStats, useTrips } from '../trips/queries';
@@ -72,14 +74,29 @@ type Props = NativeStackScreenProps<TripsStackParams, 'TripsHome'>;
 export function HomeScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+
+  // The same query the drawer reads, so the header and the drawer cannot show
+  // one driver two faces. Cached by whichever opened first.
+  const { data: driverProfile } = useDriverProfile();
+  const photoUrl = driverProfile?.photo_url ?? null;
   const { trips, isRefetching, refetch } = useTrips();
   const { data: stats, refetch: refetchStats } = useDriverStats();
   const { sync } = useSync();
 
-  const { data: duty } = useDuty();
-  const setDuty = useSetDuty();
-
-  const onDuty = duty?.on_duty ?? false;
+  /*
+    The shared act, not a bare `useSetDuty().mutate`. This screen used to call
+    the mutation directly and drop its result on the floor, which lost the
+    three things `useDutyToggle` exists to keep together: the location
+    permission asked at sign-on, the shift's vehicle travelling with the
+    request, and — the one that was found on a handset — the server's refusal.
+    A driver off their roster tapped "Go online", the office answered
+    `409 DRIVER_UNAVAILABLE "This driver is not rostered for that time."`,
+    and this screen showed nothing at all: the switch stayed where it was, the
+    driver assumed the button was broken, and sat waiting for offers that could
+    never come. ADR-0017 put that sentence on the server precisely so the app
+    can show it verbatim, and now it does — under the switch it answers.
+  */
+  const { duty, onDuty, dispatchable, busy: dutyBusy, refusal, toggle } = useDutyToggle();
 
   /*
     What the office has said, for the bell in the top bar.
@@ -130,8 +147,6 @@ export function HomeScreen({ navigation }: Props) {
 
   return (
     <View style={styles.screen}>
-      <SyncBanner />
-
       <View style={[styles.topBar, { paddingTop: insets.top + spacing.sm }]}>
         <Pressable
           accessibilityRole="button"
@@ -196,19 +211,68 @@ export function HomeScreen({ navigation }: Props) {
             )}
           </Pressable>
 
-          <View>
-            {/* The driver's initial, not a photo: the platform holds no avatar,
-                and one letter of their own name says more than a silhouette. */}
+          {/*
+            **The avatar is a control, and it was not one.** It sat here as a
+            bare `View`: the most person-shaped thing on the screen, in the
+            corner every app puts an account button in, doing nothing. The
+            owner's *"most time people will click on it"* is simply what a
+            driver does with it.
+
+            **And it shows the photograph now.** The comment this replaces said
+            "the platform holds no avatar" — true when it was written and wrong
+            since ADR-0041. `DrawerContent` has been rendering `photo_url` all
+            along, so a driver who set a photo saw their face in the drawer and
+            their initial here. Same source, same fallback, from a query the
+            drawer has already warmed — and the same **authorized** source, for
+            the reason spelled out on the `Image` below.
+          */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Your profile"
+            hitSlop={8}
+            // `getParent()`, like the bell above it: Profile is a sibling tab,
+            // not a screen on this stack, and navigating locally would throw.
+            onPress={() => navigation.getParent()?.navigate('Profile', { screen: 'ProfileHome' })}
+          >
             <View style={styles.avatar}>
-              <Text style={styles.avatarLetter}>
-                {(user?.name ?? '?').trim().charAt(0).toUpperCase()}
-              </Text>
+              {photoUrl === null ? (
+                // Initials are the ordinary case, not a failure: a driver who
+                // has not sent the office a photograph has one permanently.
+                <Text style={styles.avatarLetter}>
+                  {(user?.name ?? '?').trim().charAt(0).toUpperCase()}
+                </Text>
+              ) : (
+                <Image
+                  // **Authorized, not bare.** ADR-0041 streams the portrait
+                  // from an endpoint behind `auth:sanctum`, so a source without
+                  // the bearer token is answered with a 401 and draws an empty
+                  // circle — with nothing on screen to say why. This read as
+                  // working during development only because `expo-image`
+                  // caches by URL and the drawer, which did send the header,
+                  // had already fetched the same picture; on a handset that
+                  // opened this screen first there was never anything to hit.
+                  source={authorizedImageSource(photoUrl)}
+                  style={styles.avatarPhoto}
+                  contentFit="cover"
+                  transition={120}
+                  // Decorative: the pressable above carries the label.
+                  accessibilityElementsHidden
+                />
+              )}
             </View>
 
             {onDuty && <View style={styles.avatarOnline} />}
-          </View>
+          </Pressable>
         </View>
       </View>
+
+      {/*
+        Under the top bar, not above it. It sat first in this view, above the
+        bar that carries the status-bar inset, so its first line was drawn
+        under the clock and the battery — the owner's screenshot. Every other
+        screen mounts it below its header; this one now does too.
+      */}
+      <SyncBanner />
 
       <ScrollView
         contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + spacing.xl }]}
@@ -223,8 +287,10 @@ export function HomeScreen({ navigation }: Props) {
       >
         <DutyRow
           onDuty={onDuty}
-          busy={setDuty.isPending}
-          onToggle={() => setDuty.mutate({ onDuty: !onDuty })}
+          dispatchable={dispatchable}
+          busy={dutyBusy}
+          refusal={refusal}
+          onToggle={() => void toggle()}
         />
 
         {/* Earnings takes the width because it is the number a driver opens the
@@ -363,8 +429,8 @@ export function HomeScreen({ navigation }: Props) {
 
         <GoDutyButton
           onDuty={onDuty}
-          busy={setDuty.isPending}
-          onPress={() => setDuty.mutate({ onDuty: !onDuty })}
+          busy={dutyBusy}
+          onPress={() => void toggle()}
         />
 
         <CompletedToday
@@ -385,32 +451,65 @@ export function HomeScreen({ navigation }: Props) {
  */
 function DutyRow({
   onDuty,
+  dispatchable,
   busy,
+  refusal,
   onToggle,
 }: {
   onDuty: boolean;
+  /** The server's verdict, not the toggle's position — see `DutyBar`. */
+  dispatchable: boolean;
   busy: boolean;
+  /** The office's answer when a sign-on was refused, in its own words. */
+  refusal: string | null;
   onToggle: () => void;
 }) {
   return (
-    <View style={styles.dutyRow}>
-      <GaugeIcon color={onDuty ? colors.primary : colors.placeholder} size={22} strokeWidth={1.9} />
-      <Text style={styles.dutyLabel}>{onDuty ? 'You are online' : 'You are offline'}</Text>
+    <View style={styles.dutyCard}>
+      <View style={styles.dutyRow}>
+        <GaugeIcon color={onDuty ? colors.primary : colors.placeholder} size={22} strokeWidth={1.9} />
+        <Text style={styles.dutyLabel}>{onDuty ? 'You are online' : 'You are offline'}</Text>
 
-      <Pressable
-        accessibilityRole="switch"
-        accessibilityState={{ checked: onDuty, busy }}
-        accessibilityLabel={onDuty ? 'Go offline' : 'Go online'}
-        disabled={busy}
-        onPress={onToggle}
-        // The track is 29pt tall for the look; the tap target is not. This
-        // slop takes it past the 52pt floor in both axes — going on duty is
-        // the most consequential tap on the screen.
-        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-        style={[styles.switchTrack, onDuty && styles.switchTrackOn]}
-      >
-        <View style={[styles.switchKnob, onDuty && styles.switchKnobOn]} />
-      </Pressable>
+        <Pressable
+          accessibilityRole="switch"
+          accessibilityState={{ checked: onDuty, busy }}
+          accessibilityLabel={onDuty ? 'Go offline' : 'Go online'}
+          disabled={busy}
+          onPress={onToggle}
+          // The track is 29pt tall for the look; the tap target is not. This
+          // slop takes it past the 52pt floor in both axes — going on duty is
+          // the most consequential tap on the screen.
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          style={[styles.switchTrack, onDuty && styles.switchTrackOn]}
+        >
+          <View style={[styles.switchKnob, onDuty && styles.switchKnobOn]} />
+        </Pressable>
+      </View>
+
+      {/*
+        Directly under the switch that was refused, so cause and answer sit
+        together — a toast would be gone before a driver looked up from the
+        knob that did not move. `alert` so a screen reader announces it
+        without the driver hunting for why nothing changed.
+      */}
+      {refusal !== null && (
+        <Text accessibilityRole="alert" style={styles.dutyRefusal}>
+          {refusal}
+        </Text>
+      )}
+
+      {/*
+        On duty is not the same as findable, and the gap between the two is
+        where "I'm online but get nothing" lives — the owner sat in it for an
+        hour. `DutyBar`'s sentence, verbatim, so the drawer and this card
+        never describe one state in two ways. Quiet while a refusal is up:
+        the refusal already explains why nothing is coming.
+      */}
+      {refusal === null && onDuty && !dispatchable && (
+        <Text style={styles.dutyRefusal}>
+          Waiting for a location fix — you may not get jobs yet
+        </Text>
+      )}
     </View>
   );
 }
@@ -755,9 +854,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.xs,
   },
+  /**
+   * 30 to 40. The owner's *"logo is too small in the Home page"*.
+   *
+   * It sits between two 44pt controls and was drawn a third shorter than
+   * either, which is what made it read as small rather than as the thing the
+   * bar is named after. 40 matches the controls it sits between without
+   * growing the bar: `topBar` has no fixed height and the row is centred, so
+   * the extra ten points come out of the padding either side of the mark
+   * rather than pushing the content down.
+   *
+   * `contentFit` on the image keeps the aspect ratio, so this is a ceiling on
+   * the height rather than a stretch.
+   */
   wordmark: {
     flex: 1,
-    height: 30,
+    height: 40,
   },
   avatar: {
     width: 36,
@@ -766,6 +878,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primaryTint,
     alignItems: 'center',
     justifyContent: 'center',
+    // Clips the photograph to the circle; without it a square image spills out
+    // of the pill on Android.
+    overflow: 'hidden',
+  },
+  avatarPhoto: {
+    width: '100%',
+    height: '100%',
   },
   avatarLetter: {
     ...typography.captionStrong,
@@ -806,14 +925,25 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     gap: spacing.sm + 4,
   },
-  dutyRow: {
+  dutyCard: {
     ...CARD,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm + 2,
     backgroundColor: colors.surfaceSunken,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm + 4,
+  },
+  dutyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm + 2,
+  },
+  // Amber, the same voice as `DutyBar`'s refusal: a refusal is the office
+  // saying "not now", not a fault. Indented past the gauge icon so it reads as
+  // belonging to the label beside it.
+  dutyRefusal: {
+    ...typography.caption,
+    color: colors.warning,
+    marginTop: spacing.xs,
+    marginLeft: 22 + spacing.sm + 2,
   },
   dutyLabel: {
     ...typography.body,

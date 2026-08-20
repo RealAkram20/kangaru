@@ -17,17 +17,36 @@ import { colors, spacing, typography } from './theme';
  * red.
  */
 export function SyncBanner() {
-  const { online, pending, parked, bufferedPings } = useSync();
+  const { online, pending, parked, bufferedPings, stalled } = useSync();
 
   if (online && pending === 0 && parked.length === 0 && bufferedPings === 0) {
     return null;
   }
 
-  const tone = parked.length > 0 ? colors.danger : online ? colors.surfaceSunken : colors.offline;
+  // A stalled queue takes the amber band, not the quiet grey one. The grey is
+  // for "this is in hand"; a queue that has not moved in half a minute is the
+  // same practical situation as no coverage, and it earns the same colour —
+  // the words below are what tell the two apart.
+  const tone =
+    parked.length > 0
+      ? colors.danger
+      : online && !stalled
+        ? colors.surfaceSunken
+        : colors.offline;
+
+  // The ink follows the ground. This was `primaryText` — dark green — on
+  // every tone, which on the red "needs your attention" band and the amber
+  // "no connection" band was green on red: the one banner that exists to be
+  // read, unreadable exactly when it had something to say. Seen on a handset
+  // over the home screen. `docs/screen-rules.md` §6: never carry meaning by
+  // colour alone, and never make the words themselves the casualty of it.
+  const ink = tone === colors.surfaceSunken ? colors.primaryText : colors.onPrimary;
 
   return (
     <View accessibilityRole="alert" style={[styles.banner, { backgroundColor: tone }]}>
-      <Text style={styles.text}>{summarise({ online, pending, parked: parked.length, bufferedPings })}</Text>
+      <Text style={[styles.text, { color: ink }]}>
+        {summarise({ online, pending, parked: parked.length, bufferedPings, stalled })}
+      </Text>
     </View>
   );
 }
@@ -37,14 +56,19 @@ function summarise({
   pending,
   parked,
   bufferedPings,
+  stalled,
 }: {
   online: boolean;
   pending: number;
   parked: number;
   bufferedPings: number;
+  stalled: boolean;
 }): string {
   if (parked > 0) {
-    return `${parked} ${parked === 1 ? 'item needs' : 'items need'} your attention — open Account to see ${parked === 1 ? 'it' : 'them'}.`;
+    // Named for where they actually are: Profile → Updates & sync. "Open
+    // Account" was the row's old home, and a banner that sends a driver to a
+    // place that no longer holds the thing is a banner they stop reading.
+    return `${parked} ${parked === 1 ? 'item needs' : 'items need'} your attention — see Updates & sync in your Profile.`;
   }
 
   const held: string[] = [];
@@ -63,6 +87,24 @@ function summarise({
       : `No connection. ${held.join(' and ')} saved on this phone, waiting to send.`;
   }
 
+  /*
+    Online, and getting nowhere.
+
+    "Sending 3 updates…" is a claim of progress, and a driver who reads it
+    concludes the office has their work — which is the one thing this banner
+    exists to stop them believing wrongly. The owner's screenshot showed that
+    sentence over a count that climbed from 1 to 3 while the API was down and
+    nothing had moved in either direction.
+
+    The phone is deliberately not blamed. It *has* signal, which the driver can
+    see, and telling them otherwise sends them looking for a mast. What has
+    gone is the office, and the sentence says so and then says the thing that
+    actually matters: the work is not lost.
+  */
+  if (stalled && held.length > 0) {
+    return `Can't reach the office. ${held.join(' and ')} saved on this phone, still trying.`;
+  }
+
   return held.length === 0 ? 'Connected.' : `Sending ${held.join(' and ')}…`;
 }
 
@@ -74,6 +116,5 @@ const styles = StyleSheet.create({
   text: {
     ...typography.caption,
     fontWeight: '600',
-    color: colors.primaryText,
   },
 });

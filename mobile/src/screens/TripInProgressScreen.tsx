@@ -117,6 +117,13 @@ export function TripInProgressScreen({ route, navigation }: Props) {
   if (isLoading && trip === undefined) {
     return (
       <Screen>
+        {/*
+          The header even while loading: it is what carries the status-bar
+          inset, and without it the banner — or the skeleton — paints under the
+          clock. The back arrow also works during the wait, which matters when
+          the office is unreachable and this screen cannot finish arriving.
+        */}
+        <ScreenHeader title="Trip in progress" subtitle={null} onBack={() => navigation.goBack()} />
         <SyncBanner />
         <SkeletonCards count={1} style={styles.loading} />
       </Screen>
@@ -126,6 +133,13 @@ export function TripInProgressScreen({ route, navigation }: Props) {
   if (trip === undefined) {
     return (
       <Screen>
+        {/*
+          The header even while loading: it is what carries the status-bar
+          inset, and without it the banner — or the skeleton — paints under the
+          clock. The back arrow also works during the wait, which matters when
+          the office is unreachable and this screen cannot finish arriving.
+        */}
+        <ScreenHeader title="Trip in progress" subtitle={null} onBack={() => navigation.goBack()} />
         <SyncBanner />
         <Notice message="This trip is not on this phone, and the office is unreachable." />
       </Screen>
@@ -236,17 +250,30 @@ export function TripInProgressScreen({ route, navigation }: Props) {
 
   return (
     <Screen>
-      <SyncBanner />
-
       <ScreenHeader
         title={TITLE}
         // Only when it adds something. `statusLabel` renders both
         // `trip_started` and `trip_resumed` as "Trip in progress", which is
         // the title verbatim; `waiting` renders "Waiting", and a paused trip
         // is exactly the state somebody glancing at this screen needs told.
-        subtitle={statusLabel(trip.status) === TITLE ? null : statusLabel(trip.status)}
+        //
+        // Read off `effective`, not `trip.status`. On the owner's handset this
+        // said **"Trip in progress" over "On the way"** — the screen had moved
+        // on a queued transition while the subtitle still reported the status
+        // the office last confirmed, which in a dead zone is the one from
+        // several presses ago. Honest because `SyncBanner` sits directly
+        // beneath saying the work is unsent, and `queued` is the outbox's own
+        // contents, so this cannot show a status the driver did not ask for.
+        subtitle={statusLabel(effective) === TITLE ? null : statusLabel(effective)}
         onBack={() => navigation.goBack()}
       />
+
+      {/*
+        Below the header, which carries the status-bar inset: mounted first,
+        the banner's text paints under the clock and the battery — the owner's
+        screenshot, and the same bug HomeScreen's own comment records.
+      */}
+      <SyncBanner />
 
       <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
         <MapPanel trip={trip} here={here} driving={driving} route={roadRoute ?? null} />
@@ -399,7 +426,11 @@ function MapPanel({
         pickup={pickup}
         dropoff={dropoff}
         here={here}
-        boarded
+        leg="fare"
+        // The stat badge below floats over the map's bottom-right. Without
+        // this the map framed the drop-off marker underneath the card
+        // describing it — the owner's handset, mid-trip.
+        overlay="bottom-right"
         routePolyline={route?.polyline ?? null}
       />
 

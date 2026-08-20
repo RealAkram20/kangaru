@@ -123,3 +123,39 @@ export function isRetryable(error: unknown): boolean {
 
   return error.status >= 500 || error.status === 429;
 }
+
+/**
+ * The sentence to put in front of a driver when a request failed.
+ *
+ * **Written because the honest answer was being thrown away.** Every screen
+ * that wrote its own `catch` rendered one connection sentence for every
+ * outcome, so a server that had answered — *"That photo is too large"*, *"The
+ * file failed to upload"* — was reported as a phone with no signal. That
+ * wording sent the owner and two agents hunting a network fault for an upload
+ * the office had refused in 80 milliseconds.
+ *
+ * The three outcomes are genuinely different and are kept apart:
+ *
+ * - **The office answered.** Its own words, because it knows what was wrong.
+ *   A 422's field message is preferred over the envelope's, which is the
+ *   framework's *"The given data was invalid."* and tells a driver nothing.
+ * - **Nothing arrived.** `offline` — the caller's sentence, because what a
+ *   driver should do about it differs by screen (a queued transition is not a
+ *   payout detail).
+ * - **Neither.** A fault on the handset, said plainly rather than blamed on
+ *   the network. It is rare and it is a bug, and mislabelling it as signal is
+ *   how it stays one.
+ */
+export function refusalMessage(error: unknown, offline: string): string {
+  if (isApiError(error)) {
+    const field = Object.values(error.errors).find((messages) => messages.length > 0);
+
+    return field?.[0] ?? error.message;
+  }
+
+  if (error instanceof NetworkError) {
+    return offline;
+  }
+
+  return 'Something went wrong on this phone. Try again.';
+}

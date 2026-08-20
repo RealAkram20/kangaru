@@ -24,7 +24,11 @@ const mockOpenDirections = jest.fn();
 
 jest.mock('../trips/queries', () => ({
   useTrip: (id: number) => mockUseTrip(id),
-  useTripRoute: () => mockUseTripRoute(),
+  // The arguments are forwarded, not swallowed. Which *leg* this screen asks
+  // for is the assertion two tests below exist to make, and a mock that drops
+  // its arguments is how the wrong leg shipped: every visible thing on the
+  // screen respected `boarded` except the request that drew the road.
+  useTripRoute: (...args: unknown[]) => mockUseTripRoute(...args),
 }));
 jest.mock('../location/usePosition', () => ({ usePosition: () => mockPosition() }));
 jest.mock('../trips/directions', () => ({
@@ -87,6 +91,11 @@ async function renderMap(value: Trip = trip()) {
 
 beforeEach(() => {
   mockOpenDirections.mockClear();
+  // Cleared, not merely re-stubbed. `mockReturnValue` leaves the call log
+  // alone, and the leg assertions below read that log — without this they
+  // pass on a call some earlier test made.
+  mockUseTripRoute.mockClear();
+  mockUseTrip.mockClear();
   // No route by default — the state this app ships in, with no key
   // configured. Set here rather than inside the render helper, which would
   // overwrite whatever a test had just asked for.
@@ -169,9 +178,9 @@ it('names every marker, rather than leaving three coloured dots', async () => {
   const view = await renderMap();
   const html = mapHtml(view.toJSON());
 
-  expect(html).toContain('"Pickup"');
-  expect(html).toContain('"Drop-off"');
-  expect(html).toContain('"You"');
+  expect(html).toContain("'Pickup'");
+  expect(html).toContain("'Drop-off'");
+  expect(html).toContain("'You'");
 
   // The words reaching the document is not the same as the document drawing
   // them, and Jest does not execute the WebView — so the mechanism is pinned
@@ -229,9 +238,78 @@ it('draws the road and drops the direct line when a route exists', async () => {
   expect(html).toContain(ROAD.polyline);
 
   // The dash *styling* is always in the document — it is a paint block in a
-  // function definition. What changes is whether any direct-line features are
-  // handed to it, so that is what this asserts.
-  expect(html).toContain('addLegs([])');
+  // function definition. The legs themselves are now derived inside the page
+  // (`legFeatures`), because position ticks are injected rather than
+  // rebuilding the document — so what is pinned is the guard that derivation
+  // hangs every leg on. Deleting this one early return puts a dashed guess
+  // under a measured road.
+  expect(html).toContain('if (state.route !== null) { return []; }');
+});
+
+// ── Which leg, which is the whole question ────────────────────────────────
+
+it('asks for the road to the passenger before they are aboard', async () => {
+  // The bug this pins. The header said "Pickup", the target pin was the
+  // pickup and "Open in Maps" opened the pickup — while the drawn road and
+  // the by-road distance were the *fare*, because the route request took the
+  // default leg. On a real order that was 7.3 km of approach rendered as
+  // 71.0 km of somebody else's journey.
+  await renderMap(trip({ status: 'driver_en_route' }));
+
+  expect(mockUseTripRoute).toHaveBeenCalledWith(42, expect.anything(), 'pickup', true);
+});
+
+it('switches to the road the passenger paid for once they are aboard', async () => {
+  await renderMap();
+
+  expect(mockUseTripRoute).toHaveBeenCalledWith(42, expect.anything(), 'dropoff', true);
+});
+
+it('asks nothing at all until it knows which leg it is asking about', async () => {
+  // The leg is read off the trip's status, and on a cold open there is no
+  // cached trip to read. Firing anyway would ask for the approach and then
+  // ask again for the fare a tick later: two requests, one of them a guess,
+  // and Directions bills per request.
+  mockUseTrip.mockReturnValue({ data: undefined, isLoading: true });
+  mockPosition.mockReturnValue({ lat: 0.3532, lng: 32.5825 });
+
+  await render(
+    <SafeAreaProvider initialMetrics={METRICS}>
+      <TripMapScreen
+        route={{ key: 'm', name: 'TripMap', params: { tripId: 42 } }}
+        navigation={{ navigate: jest.fn(), goBack: jest.fn() } as never}
+      />
+    </SafeAreaProvider>,
+  );
+
+  expect(mockUseTripRoute).toHaveBeenCalledWith(42, expect.anything(), 'pickup', false);
+});
+
+it('never draws the passenger journey on the way to the passenger', async () => {
+  // With no route and no fix there is nothing honest to draw for the
+  // approach, and the map draws nothing — rather than falling through to the
+  // one line it does have, which answers a question this screen is not
+  // asking. The owner: "i should be seeing where the client is and where i am
+  // going".
+  mockPosition.mockReturnValue(null);
+  mockUseTrip.mockReturnValue({ data: trip({ status: 'driver_en_route' }), isLoading: false });
+
+  const view = await render(
+    <SafeAreaProvider initialMetrics={METRICS}>
+      <TripMapScreen
+        route={{ key: 'm', name: 'TripMap', params: { tripId: 42 } }}
+        navigation={{ navigate: jest.fn(), goBack: jest.fn() } as never}
+      />
+    </SafeAreaProvider>,
+  );
+
+  const html = mapHtml(view.toJSON());
+
+  // The seed state the document opens with, and the branch it takes: an
+  // approach map with no fix produces no legs at all.
+  expect(html).toContain('"leg":"approach"');
+  expect(html).toContain("if (state.leg === 'approach')");
+  expect(html).toContain('if (state.here !== null)');
 });
 
 it('states the road distance, not the straight line, once routed', async () => {
@@ -260,4 +338,25 @@ it('shows no minutes at all when the provider sent none', async () => {
 
   expect(getByText('by road')).toBeTruthy();
   expect(queryByText(/min/)).toBeNull();
+});
+
+it('frames the pins clear of a badge floated over the map', async () => {
+  // The owner's handset, mid-trip: the stat card sat on top of the drop-off
+  // marker it was describing. The badge is a deliberate design and does not
+  // move — what was wrong is that the map framed its pins into space the badge
+  // occupies. Padding one *side* rather than the bottom clears a
+  // corner-anchored card whatever height it happens to be, without eating half
+  // of a 220pt map to do it.
+  const view = await renderMap();
+  const html = mapHtml(view.toJSON());
+
+  // Every camera move goes through it — the route fit, the first-fix widen,
+  // and the opening frame. A `padding: 28` left behind anywhere is a corner
+  // that still collides.
+  expect(html).toContain('function pad(base)');
+  expect(html).not.toMatch(/padding: \d+,/);
+
+  // The full-screen map floats nothing, so it pads evenly and pays nothing.
+  expect(html).toContain('var OVERLAY = null;');
+  expect(html).toContain('if (OVERLAY === null) { return base; }');
 });

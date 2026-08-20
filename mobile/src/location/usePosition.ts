@@ -30,17 +30,21 @@ export function usePosition({
   /**
    * Whether to keep following the driver, or take a single fix.
    *
-   * **`false` is the right default and the interesting case.** `PickupScreen`
-   * takes one reading deliberately: its figure is "how far to the pickup",
-   * glanced at to judge *am I close*, and a number that ticks down while the
-   * driver is looking at the road is motion on a surface that has no business
-   * moving.
+   * **`false` is for a reading, `true` is for a drive**, and the question to
+   * ask is whether the screen is watched while the handset is moving.
    *
-   * `true` exists for the trip in progress, where the same argument inverts.
-   * The driver is definitionally moving for the whole life of that screen, so
-   * a single fix taken at the drop-off's start is wrong within a minute and
-   * stays wrong — and "how far still to go" is the one figure on it that is
-   * supposed to change.
+   * `true` is what every map screen wants. The driver is definitionally moving
+   * for the whole life of `TripInProgressScreen`, `TripMapScreen` and
+   * `PickupScreen` — a single fix taken when the screen opened is wrong within
+   * a minute and stays wrong, and since ADR-0031 the reading is also the
+   * *origin of the drawn route*, so a frozen fix freezes the road too.
+   *
+   * `PickupScreen` used to take a single reading, on the argument that a
+   * distance ticking down beside a driver's eyes is motion for its own sake.
+   * That argument lost when the same reading started feeding a route: the
+   * approach was drawn from the kerb the driver set off from and never
+   * redrawn. `distanceInterval` is what actually settles the original worry —
+   * the figure moves 0.1 km at a time, which is progress, not jitter.
    */
   watch = false,
   /**

@@ -1,4 +1,6 @@
+import { DUTY_REQUEST_TIMEOUT_MS } from '../config';
 import type { ApiClient } from './client';
+import { formFile } from './formFile';
 import type {
   AvailabilityBlock,
   AvailabilityKind,
@@ -119,15 +121,26 @@ export async function fetchTrip(api: ApiClient, tripId: number): Promise<Trip> {
  *
  * `from` is optional: without a fix the server routes from the pickup, which
  * is still the right line for a driver who has not moved yet.
+ *
+ * `to` picks the leg. `dropoff` is the fare and the default; `pickup` is the
+ * approach, the road between accepting and arriving — which is a route *from*
+ * the driver, so without a fix the server answers null rather than a dot.
  */
 export async function fetchTripRoute(
   api: ApiClient,
   tripId: number,
   from: Coordinates | null,
+  to: 'pickup' | 'dropoff' = 'dropoff',
 ): Promise<TripRoute | null> {
-  const query = from === null ? '' : `?from_latitude=${from.lat}&from_longitude=${from.lng}`;
-
-  const response = await api.request<{ route: TripRoute | null }>(`/trips/${tripId}/route${query}`);
+  const response = await api.request<{ route: TripRoute | null }>(`/trips/${tripId}/route`, {
+    query: {
+      from_latitude: from?.lat,
+      from_longitude: from?.lng,
+      // Only said when it differs from the default, so the cached answer
+      // for a plain drop-off request keeps its URL.
+      to: to === 'dropoff' ? undefined : to,
+    },
+  });
 
   return response.data.route;
 }
@@ -198,6 +211,7 @@ export async function setDuty(
   const response = await api.request<DriverPresence>('/me/duty', {
     method: 'PUT',
     body: { on_duty: input.onDuty, vehicle_id: input.vehicleId ?? null },
+    timeoutMs: DUTY_REQUEST_TIMEOUT_MS,
   });
 
   return response.data;
@@ -214,6 +228,15 @@ export async function setDuty(
  *
  * 409 NOT_ON_DUTY when the shift has ended. The caller treats that as the
  * server correcting it, not as an error to retry.
+ *
+ * **Both duty writes carry `DUTY_REQUEST_TIMEOUT_MS` rather than the client's
+ * default fifteen seconds.** `config.ts` wrote that constant and argued for
+ * it — these are statements about *now*, and a presence ping that lands after
+ * thirty seconds of retrying describes somewhere the driver no longer is —
+ * but nothing ever passed it, so both ran on the default. It matters most on
+ * the path that has no screen: `PresenceTask` runs while the phone is asleep,
+ * where a request left hanging holds the wake lock the OS granted for a fix
+ * that has already gone stale.
  */
 export async function sendPresence(
   api: ApiClient,
@@ -234,6 +257,7 @@ export async function sendPresence(
       recorded_at: input.recordedAt,
       vehicle_id: input.vehicleId ?? null,
     },
+    timeoutMs: DUTY_REQUEST_TIMEOUT_MS,
   });
 
   return response.data;
@@ -414,6 +438,43 @@ export async function fetchAuthMethods(api: ApiClient): Promise<AuthMethods> {
   const response = await api.request<{ settings: { auth: AuthMethods } }>('/public/settings');
 
   return response.data.settings.auth;
+}
+
+/**
+ * Whether the office wants odometer readings at all (ADR-0047).
+ *
+ * The same `/public/settings` document `fetchAuthMethods` reads, for the one
+ * key that changes the shape of the trip flow: with the odometer off, Start
+ * Trip and Complete Trip become single taps and the reading forms leave the
+ * app entirely.
+ *
+ * **Fails to `true`, which is the opposite of `fetchAuthMethods`'s
+ * fail-closed rule and is deliberate.** There, an unreachable server must not
+ * resurrect a sign-in method the owner switched off — the safe answer is
+ * "off". Here the two failure directions are not symmetrical:
+ *
+ * - Wrongly *off*: the driver is never asked for a reading, the server (which
+ *   has the real setting) then refuses the transition with a 422 for a
+ *   missing `odometer_start`, and through the offline outbox that refusal
+ *   surfaces on the sync queue long after they left the vehicle. The trip is
+ *   stuck and the dashboard is gone.
+ * - Wrongly *on*: the driver is asked for a reading nobody needed. The server
+ *   accepts it anyway — `TransitionTripRequest` still stores a reading it no
+ *   longer demands — so the trip completes normally and the cost is one
+ *   screen and a few seconds.
+ *
+ * One of those strands a trip in the field; the other wastes a tap. The
+ * default follows the cheaper mistake.
+ */
+export async function fetchOdometerEnabled(api: ApiClient): Promise<boolean> {
+  const response = await api.request<{
+    settings: { tracking?: { odometer_enabled?: boolean } };
+  }>('/public/settings');
+
+  // Explicit `=== false`, not truthiness: a deployment whose server predates
+  // this key sends no `tracking` group at all, and that must read as "keep
+  // asking" rather than as "off".
+  return response.data.settings.tracking?.odometer_enabled !== false;
 }
 
 /**
@@ -1361,15 +1422,10 @@ export async function uploadDriverDocument(
     form.append('expires_at', input.expiresAt);
   }
 
-  // React Native's FormData takes a file descriptor object rather than a Blob.
-  // The cast is the documented way to express that to TypeScript, whose
-  // FormData types describe the browser's — same as `httpTransport` does for
-  // the odometer photo.
-  form.append('file', {
-    uri: input.uri,
-    name: documentFileName(input.uri),
-    type: documentMimeType(input.uri),
-  } as unknown as Blob);
+  // `formFile` rather than a `{ uri, name, type }` descriptor — Expo's fetch
+  // refuses that shape outright, and did so here for as long as this endpoint
+  // has existed. The whole argument is in `api/formFile.ts`.
+  form.append('file', formFile(input.uri));
 
   const response = await api.request<DriverDocument>('/me/documents', {
     method: 'POST',
@@ -1382,32 +1438,6 @@ export async function uploadDriverDocument(
   });
 
   return response.data;
-}
-
-/**
- * Exported for a test, as `buildTransitionForm` is: React Native's `FormData`
- * polyfill does not hand a file part back intact, so the only way to assert
- * what a document is *labelled* as is to ask these directly.
- */
-export function documentFileName(uri: string): string {
-  const last = uri.split('/').pop();
-
-  return last === undefined || last === '' ? 'document.jpg' : last;
-}
-
-/**
- * The server accepts jpg, jpeg, png, webp and pdf. An iPhone hands back
- * `.heic` from the library, which `expo-image-picker` transcodes to jpeg —
- * so anything unrecognised is labelled jpeg, exactly as `httpTransport` does.
- */
-export function documentMimeType(uri: string): string {
-  const extension = uri.split('.').pop()?.toLowerCase();
-
-  if (extension === 'png') return 'image/png';
-  if (extension === 'webp') return 'image/webp';
-  if (extension === 'pdf') return 'application/pdf';
-
-  return 'image/jpeg';
 }
 
 /**
@@ -1616,11 +1646,10 @@ export async function updateDriverProfile(
  * is rendered at 64 points and never read, and the driver is paying for the
  * data.
  *
- * **The two file helpers are shared with the document upload rather than
- * copied.** `documentMimeType`'s PDF branch is unreachable from here — the
- * picker is image-only and the server's `mimes` rule refuses one anyway — but
- * a second spelling of "what is this file called" is a second place for an
- * iPhone's `.heic` to be labelled wrongly.
+ * **The file part is built by `formFile`, shared with the document upload and
+ * the odometer photo.** Naming and typing the file is the file's own job now
+ * rather than three guesses made from the end of a uri — see that module for
+ * why the guesses had to go.
  */
 export async function uploadDriverPhoto(
   api: ApiClient,
@@ -1628,11 +1657,7 @@ export async function uploadDriverPhoto(
 ): Promise<{ photo_url: string | null }> {
   const form = new FormData();
 
-  form.append('file', {
-    uri,
-    name: documentFileName(uri),
-    type: documentMimeType(uri),
-  } as unknown as Blob);
+  form.append('file', formFile(uri));
 
   const response = await api.request<{ photo_url: string | null }>('/me/photo', {
     method: 'POST',

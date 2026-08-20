@@ -1,0 +1,68 @@
+# What EAS Build does not need from this repository.
+#
+# ## Why this file is at the repository root and not in mobile/
+#
+# `eas build` runs from `mobile/`, but the archive it uploads is **not** taken
+# from there. eas-cli's git client resolves its root with
+# `git rev-parse --show-toplevel` and reads `.easignore` from that path, so for
+# this monorepo the root is `D:/xampp/htdocs/Kangaru` and the archive is the
+# *whole platform* — backend, frontend, design system, docs — shipped to build
+# one Android app.
+#
+# Measured: **96.9 MB**, and the upload died at 10.2 MB with an ECONNRESET.
+# A build that has to move ninety-seven megabytes over a Kampala connection
+# before it can start is a build that fails for reasons that have nothing to do
+# with the app.
+#
+# ## What this does and does not change
+#
+# `.easignore` is applied *on top of* the git clone, which already excludes
+# everything `.gitignore` covers — so `node_modules/` stays out either way and
+# nothing here can accidentally pull it back in.
+#
+# Every entry is anchored with a leading `/` so it matches at the repository
+# root only. Unanchored, `README.md` also matches `mobile/README.md` — which it
+# did, and which is the kind of quiet over-reach that removes a file the build
+# turns out to want. `*.zip` and `node_modules/` are deliberately left
+# unanchored: neither belongs in the archive at any depth.
+#
+# It is deliberately an explicit list rather than the `/*` + `!/mobile`
+# whitelist. A directory added to this repo tomorrow will therefore be
+# *included* until someone adds it here: the failure direction is a slightly
+# larger upload, not a build that cannot find a file it needed.
+#
+# **`mobile/` is self-contained** — there is no root `package.json` and no npm
+# workspace — so nothing below is a dependency of the app.
+
+# The rest of the platform
+/backend/
+/frontend/
+/deploy/
+/tools/
+/docs/
+/material/
+
+# The design system, and the 15 MB zip beside it — the single largest thing in
+# the archive, and of no use to a compiler.
+/KangaruRide Design System/
+/KangaruRide Design System.zip
+*.zip
+
+# Agent and CI plumbing
+/.agents/
+/.claude/
+/.github/
+
+# Root-level documentation
+/AGENTS.md
+/DESIGN.md
+/PRODUCT.md
+/PROJECT.md
+/README.md
+/docker-compose.yml
+/commitlint.config.cjs
+/skills-lock.json
+/.gitleaks.toml
+
+# Belt and braces: the clone already drops these via .gitignore.
+node_modules/

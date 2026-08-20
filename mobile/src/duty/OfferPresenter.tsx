@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BackHandler } from 'react-native';
 
 import { isApiError } from '../api/errors';
+import { openPickup } from '../navigation/navigationRef';
 import { OfferScreen } from '../screens/OfferScreen';
+import { offerRingtone } from './offerRingtone';
 import { useAcceptOffer, useDeclineOffer, useDuty, useOffers } from './queries';
 
 /**
@@ -72,6 +74,48 @@ export function OfferPresenter() {
     }
   }, [offer?.id]);
 
+  // **The ring, tied to the offer on screen and to nothing else.**
+  //
+  // Started here rather than inside `OfferScreen` because this component is
+  // what knows an offer has arrived and what knows it has gone — the screen is
+  // remounted on `key={offer.id}` and would restart the sound on every second
+  // job while never being told about the first one ending.
+  //
+  // The cleanup uses `stopFor`, not `stop`: React runs the teardown for the
+  // old offer *after* the new one has mounted, so an unconditional stop here
+  // would silence the job now on screen. `ringtone.ts` documents that at
+  // length, and it is covered there.
+  // **Keyed on the id alone, and the window is read through a ref.**
+  //
+  // `expires_in_seconds` is a *different number on every poll* — it counts
+  // down. Listing it as a dependency re-runs this effect every five seconds,
+  // and because the cleanup and the restart both name the same offer, the
+  // ring is stopped and started from the top over and over: audible as a
+  // sound that never gets past its first chime. Exactly the failure
+  // `useCountdown` documents for the countdown itself, one layer along.
+  // Written in an effect rather than during render, for the reason
+  // `PresenceController` gives: a ref assigned in the render body is invisible
+  // to the React Compiler, which then cannot memoise this component at all.
+  // Declared *before* the ring effect so it has the current window on the
+  // mount that starts a sound — effects run in declaration order.
+  const windowRef = useRef(0);
+
+  useEffect(() => {
+    windowRef.current = offer?.expires_in_seconds ?? 0;
+  }, [offer?.expires_in_seconds]);
+
+  const offerId = offer?.id ?? null;
+
+  useEffect(() => {
+    if (offerId === null) {
+      return;
+    }
+
+    offerRingtone.start(offerId, windowRef.current);
+
+    return () => offerRingtone.stopFor(offerId);
+  }, [offerId]);
+
   // Android's back gesture dismisses rather than leaving the app. Registered
   // only while an offer is up, so it does not shadow the navigator's own
   // handling the rest of the time.
@@ -92,6 +136,19 @@ export function OfferPresenter() {
   const answer = useCallback(
     async (act: Promise<unknown>) => {
       setError(null);
+
+      // **Silence first, before the request goes anywhere.**
+      //
+      // The driver has answered; the ring has done its job and every further
+      // second of it is noise over a decision already made. Waiting for the
+      // server would leave it ringing through the round trip — which on a bad
+      // connection is the fifteen seconds the API client allows — and a driver
+      // who tapped Accept and is still being rung at reasonably concludes the
+      // tap did not register.
+      //
+      // `stop`, not `stopFor`: this runs for whichever offer was answered, and
+      // there is only ever one on screen.
+      offerRingtone.stop();
 
       try {
         await act;
@@ -127,13 +184,29 @@ export function OfferPresenter() {
       // Which answer, not merely that one is in flight — see `OfferScreen`.
       pending={accept.isPending ? 'accept' : decline.isPending ? 'decline' : null}
       error={error}
-      onAccept={() => void answer(accept.mutateAsync(offer.id))}
+      // Straight to the pickup once the office says yes. The server has
+      // already put the trip on the road (`DispatchOfferService::accept`
+      // moves it to `driver_en_route`), so the screen that opens is the one
+      // for the leg the driver is now on — not the home card with the job
+      // behind it, waiting for a second tap.
+      onAccept={() =>
+        void answer(accept.mutateAsync(offer.id).then((trip) => openPickup(trip.id)))
+      }
       onDecline={() => void answer(decline.mutateAsync({ offerId: offer.id }))}
       // Dismissing leaves the clock running rather than declining. A driver
       // who wants a moment to look at the map has not said no, and turning
       // "not now" into a decline would cost them a fare they never refused —
       // the job still sits on the Today screen until it expires.
-      onDismiss={() => setDismissed(offer.id)}
+      //
+      // The ring stops even though the offer does not. "Not now" is at least
+      // a statement that the driver has heard it, and a phone that keeps
+      // ringing after being told so is one whose sound gets switched off for
+      // good. The effect's cleanup would catch this anyway once the overlay
+      // unmounts; stopping here makes it immediate rather than a frame later.
+      onDismiss={() => {
+        offerRingtone.stop();
+        setDismissed(offer.id);
+      }}
     />
   );
 }

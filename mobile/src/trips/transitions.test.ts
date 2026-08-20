@@ -129,6 +129,51 @@ describe('driverActions', () => {
 
     expect(accepted[0]?.requires).toBeNull();
   });
+
+  /**
+   * ADR-0047: with `tracking.odometer_enabled` off, the server prices the
+   * trip from its GPS trace and never asks for a reading. Continuing to
+   * demand one would put a form in front of a driver for a number nobody
+   * wants — and, worse, the action stays behind that form.
+   */
+  it('drops the reading requirement when the office has switched the odometer off', () => {
+    const onboard = driverActions(tripWith('passenger_onboard', ['trip_started']), {
+      odometerEnabled: false,
+    });
+
+    expect(onboard[0]?.requires).toBeNull();
+    // The *action* survives — this is the difference between "no reading" and
+    // "no way to start the trip".
+    expect(onboard[0]?.to).toBe('trip_started');
+
+    const resumed = driverActions(tripWith('trip_resumed', ['waiting', 'trip_completed']), {
+      odometerEnabled: false,
+    });
+
+    expect(resumed.find((action) => action.to === 'trip_completed')?.requires).toBeNull();
+  });
+
+  it('still demands a reason to decline when the odometer is off', () => {
+    // The two requirements are unrelated and the switch must not conflate
+    // them: a rejection needs a reason because the office has to read it,
+    // which has nothing to do with mileage.
+    const assigned = driverActions(tripWith('assigned', ['accepted', 'rejected']), {
+      odometerEnabled: false,
+    });
+
+    expect(assigned.find((action) => action.to === 'rejected')?.requires).toBe('notes');
+  });
+
+  it('keeps asking for a reading when the caller says nothing about the setting', () => {
+    // The default matters more than it looks. A screen that has not been
+    // taught about the setting must keep the behaviour the app has always
+    // had — defaulting the other way would silently drop the reading from
+    // any surface somebody forgot to update, and the symptom is a 422 the
+    // driver reads on the sync queue hours after leaving the vehicle.
+    const onboard = driverActions(tripWith('passenger_onboard', ['trip_started']), {});
+
+    expect(onboard[0]?.requires).toBe('odometer_start');
+  });
 });
 
 describe('shouldStreamGps', () => {

@@ -1,5 +1,4 @@
-import type { Trip, TripStatus } from '../api/types';
-import { drawerSections, liveTripRow, selectedRowKey } from './drawer';
+import { drawerSections, selectedRowKey } from './drawer';
 
 /**
  * The drawer's row list, as data.
@@ -10,64 +9,33 @@ import { drawerSections, liveTripRow, selectedRowKey } from './drawer';
  * goes nowhere useful.
  */
 
-function trip(status: TripStatus, id = 41): Trip {
-  // Only the two fields these functions read. The full fixture lives in the
-  // suites that render a trip; widening it here would mean this file needed
-  // patching every time somebody adds a required column.
-  return { id, status } as Trip;
-}
+const rows = (unread: number | null = null) =>
+  drawerSections(unread).flatMap((section) => section.rows);
 
-const rows = (liveTrip = null as ReturnType<typeof liveTripRow>, unread: number | null = null) =>
-  drawerSections(liveTrip, unread).flatMap((section) => section.rows);
-
-// -- The live trip row -----------------------------------------------------
+// -- The live trip row, which is deliberately gone -------------------------
 
 describe('the live trip row', () => {
-  it('is absent when no trip is running', () => {
-    // The mockup's "Trip Details" as a permanent row could not work: a trip
-    // screen needs an id, and opening whichever journey happened to be most
-    // recent is a guess presented as navigation.
-    expect(liveTripRow([])).toBeNull();
-    expect(liveTripRow(undefined)).toBeNull();
+  it('does not exist, in any trip state', () => {
+    // It was labelled `statusLabel(live.status)`, so a driver mid-capture read
+    // **"Passenger on board"** in their menu — a lifecycle state name offered
+    // as a destination. The owner asked what it was for and removed it:
+    // `HomeScreen`'s `ActiveTripCard` already opens the live trip in one tap,
+    // from the very screen this drawer is opened over.
+    //
+    // Asserted as an absence over the whole list rather than trusted to the
+    // deleted export, because the failure this guards is a *row reappearing* —
+    // which a test that only checks `liveTripRow` is gone would not see.
     expect(rows().some((row) => row.key === 'live-trip')).toBe(false);
+    expect(rows().some((row) => row.label === 'Passenger on board')).toBe(false);
   });
 
-  it('is absent for a trip that has finished', () => {
-    expect(liveTripRow([trip('trip_completed')])).toBeNull();
-  });
-
-  it('names what the trip is doing rather than saying "Trip Details"', () => {
-    // `statusLabel` is the one place a status is put into words for a driver,
-    // so the drawer and the screen it opens agree.
-    expect(liveTripRow([trip('driver_en_route')])?.label).toBe('On the way');
-  });
-
-  it('routes through tripDestination, so a live trip never opens the record view', () => {
-    // Hardcoding `TripDetail` here would reopen the bug the worklog records
-    // somebody already fixing once: the record view appearing mid-trip.
-    const row = liveTripRow([trip('trip_started', 77)]);
-
-    expect(row?.destination.tab).toBe('Home');
-    expect(row?.destination.screen).toBe('TripInProgress');
-    expect(row?.destination.params).toEqual({ tripId: 77 });
-  });
-
-  it('sends a passenger-onboard trip to the odometer, with the transition it needs', () => {
-    const row = liveTripRow([trip('passenger_onboard', 12)]);
-
-    expect(row?.destination.screen).toBe('Odometer');
-    expect(row?.destination.params).toEqual({
-      tripId: 12,
-      to: 'trip_started',
-      from: 'passenger_onboard',
-    });
-  });
-
-  it('sits directly under Home, where a driver mid-shift looks first', () => {
-    const list = rows(liveTripRow([trip('trip_started')]));
+  it('leaves Trips History directly under Home', () => {
+    // The row sat between them. Its removal must close the gap rather than
+    // leave the work list starting with a hole.
+    const list = rows();
 
     expect(list[0]?.key).toBe('home');
-    expect(list[1]?.key).toBe('live-trip');
+    expect(list[1]?.key).toBe('trips-history');
   });
 });
 
@@ -78,7 +46,7 @@ describe('the two lists', () => {
     // Ordering by frequency is what makes a thirteen-row menu scannable from
     // a cradle. Above: what a driver opens during a shift. Below: what they
     // open once a month.
-    const [work, account] = drawerSections(null, null);
+    const [work, account] = drawerSections(null);
 
     expect(work?.rows.map((row) => row.key)).toEqual([
       'home',
@@ -151,14 +119,14 @@ describe('the two lists', () => {
 
 describe('the notifications badge', () => {
   it('carries the count when there is one', () => {
-    expect(rows(null, 3).find((row) => row.key === 'notifications')?.badge).toBe(3);
+    expect(rows(3).find((row) => row.key === 'notifications')?.badge).toBe(3);
   });
 
   it('carries null while the count is unknown, which draws no dot', () => {
     // Null and zero must not look the same: a drawer drawing no dot because
     // the count had not loaded is indistinguishable from one drawing none
     // because there is nothing to read, and only the first is temporary.
-    expect(rows(null, null).find((row) => row.key === 'notifications')?.badge).toBeNull();
+    expect(rows(null).find((row) => row.key === 'notifications')?.badge).toBeNull();
   });
 });
 
@@ -166,7 +134,7 @@ describe('the notifications badge', () => {
 
 describe('the selected row', () => {
   it('lights the tab root a driver is on', () => {
-    expect(selectedRowKey(drawerSections(null, null), 'Wallet', 'WalletHome')).toBe('wallet');
+    expect(selectedRowKey(drawerSections(null), 'Wallet', 'WalletHome')).toBe('wallet');
   });
 
   it('lights the nested screen rather than its tab', () => {
@@ -174,8 +142,8 @@ describe('the selected row', () => {
     // "Profile" while a driver reads Documents would tell them they are
     // somewhere they are not, on the one control whose whole job is saying
     // where they are.
-    expect(selectedRowKey(drawerSections(null, null), 'Profile', 'Documents')).toBe('documents');
-    expect(selectedRowKey(drawerSections(null, null), 'Profile', 'ProfileHome')).toBe('profile');
+    expect(selectedRowKey(drawerSections(null), 'Profile', 'Documents')).toBe('documents');
+    expect(selectedRowKey(drawerSections(null), 'Profile', 'ProfileHome')).toBe('profile');
   });
 
   /**
@@ -185,7 +153,7 @@ describe('the selected row', () => {
    * the other side.
    */
   it('lights nothing for a screen the drawer no longer lists', () => {
-    expect(selectedRowKey(drawerSections(null, null), 'Profile', 'ChangePassword')).toBeNull();
+    expect(selectedRowKey(drawerSections(null), 'Profile', 'ChangePassword')).toBeNull();
   });
 
   it('lights nothing rather than defaulting to Home', () => {
@@ -193,7 +161,7 @@ describe('the selected row', () => {
     // and lighting Home would be a claim rather than a default. (Before the
     // tab rows named their roots, 'Home'/'Odometer' lit Home through the
     // tab-only fallback; the stricter answer is the honest one.)
-    expect(selectedRowKey(drawerSections(null, null), 'Home', 'Odometer')).toBeNull();
-    expect(selectedRowKey(drawerSections(null, null), undefined, undefined)).toBeNull();
+    expect(selectedRowKey(drawerSections(null), 'Home', 'Odometer')).toBeNull();
+    expect(selectedRowKey(drawerSections(null), undefined, undefined)).toBeNull();
   });
 });

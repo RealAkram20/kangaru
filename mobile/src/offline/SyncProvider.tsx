@@ -17,12 +17,28 @@ import { OutboxProcessor } from './outbox';
 import type { OutboxItem, OutboxStore } from './outboxTypes';
 import { queuedStatuses } from './queued';
 import { SqliteOutboxStore } from './sqliteOutboxStore';
+import { fruitlessRun, isStalled } from './stall';
 
 export type SyncState = {
   ready: boolean;
   online: boolean;
   /** Items still to go out. The number the driver watches drop. */
   pending: number;
+  /**
+   * Whether the queue is trying and getting nowhere.
+   *
+   * **The distinction `online` cannot make.** `online` is NetInfo's answer,
+   * and NetInfo knows about the internet — not about this API. A phone on
+   * depot wifi with the office unreachable is `online: true` with a queue that
+   * never moves, and the banner read "Sending 3 updates…" over it while the
+   * count climbed. The owner's screenshot; the API was down.
+   *
+   * Set when consecutive drains move nothing while there is something to move,
+   * cleared by any item completing. It is an **observation of the queue**, not
+   * a reachability probe — see this entry in `docs/agent-worklog.md` for why
+   * there is deliberately no health ping.
+   */
+  stalled: boolean;
   /** Items that need a person. Surfaced, never hidden. */
   parked: OutboxItem[];
   /**
@@ -94,11 +110,22 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     ready: false,
     online: true,
     pending: 0,
+    stalled: false,
     parked: [],
     queued: new Map(),
     bufferedPings: 0,
     lastSyncedAt: null,
   });
+
+  /**
+   * Drains in a row that moved nothing while there was something to move.
+   *
+   * A ref, not state: it changes on every tick and only its *crossing of the
+   * threshold* is worth a render. Counting in state would re-render every
+   * screen mounted under this provider four times a minute for a number
+   * nothing displays.
+   */
+  const fruitlessDrains = useRef(0);
 
   const refreshState = useCallback(async () => {
     const store = storeRef.current;
@@ -161,6 +188,16 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     // event either of them is waiting for, and leaving GPS to its own 30-second
     // timer would hold a long offline batch back for no reason.
     const [outcome] = await Promise.all([processor.drain(), gpsRef.current?.flush()]);
+
+    // What the pass actually achieved, which is the only thing the banner may
+    // claim. `stall.ts` owns the decision and the argument behind it.
+    fruitlessDrains.current = fruitlessRun(fruitlessDrains.current, outcome);
+
+    const stalled = isStalled(fruitlessDrains.current);
+
+    // Only when it changes. This runs every fifteen seconds under every screen
+    // in the app.
+    setState((previous) => (previous.stalled === stalled ? previous : { ...previous, stalled }));
 
     if (outcome.completed > 0) {
       // Something the server now knows about that this app's cache does not.

@@ -5,6 +5,7 @@ import {
   fetchTrip,
   withdrawAvailabilityRequest,
 } from '../api/endpoints';
+import { formFile } from '../api/formFile';
 import type { AvailabilityBlock, Trip } from '../api/types';
 import type { OutboxTransport } from './outbox';
 import type { AvailabilityRequestPayload, OutboxItem, TransitionPayload } from './outboxTypes';
@@ -96,35 +97,11 @@ export function buildTransitionForm(payload: TransitionPayload, photoUri: string
     form.append('odometer_end', String(payload.odometer_end));
   }
 
-  // React Native's FormData takes a file descriptor object here rather than a
-  // Blob. The cast is the documented way to express that to TypeScript, whose
-  // FormData types describe the browser's.
-  form.append('odometer_photo', {
-    uri: photoUri,
-    name: fileNameFor(photoUri),
-    type: mimeTypeFor(photoUri),
-  } as unknown as Blob);
+  // `formFile`, not a `{ uri, name, type }` descriptor — Expo's fetch throws on
+  // that shape, and this is the path where the throw costs most: it happens
+  // inside the outbox, long after the driver has left the vehicle. The whole
+  // argument is in `api/formFile.ts`.
+  form.append('odometer_photo', formFile(photoUri));
 
   return form;
-}
-
-function fileNameFor(uri: string): string {
-  const last = uri.split('/').pop();
-
-  return last === undefined || last === '' ? 'odometer.jpg' : last;
-}
-
-/**
- * The server accepts jpeg, jpg, png, webp and heic. An iPhone hands back
- * `.heic` and Android `.jpg`; anything else is labelled jpeg, which is what
- * `expo-image-picker` produces when it transcodes.
- */
-function mimeTypeFor(uri: string): string {
-  const extension = uri.split('.').pop()?.toLowerCase();
-
-  if (extension === 'png') return 'image/png';
-  if (extension === 'webp') return 'image/webp';
-  if (extension === 'heic') return 'image/heic';
-
-  return 'image/jpeg';
 }

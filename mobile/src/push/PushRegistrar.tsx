@@ -1,10 +1,12 @@
-import Constants, { ExecutionEnvironment } from 'expo-constants';
+import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
 
 import { registerDevice } from '../api/endpoints';
 import { useAuth } from '../auth/AuthProvider';
+import { ensureNotificationChannels } from './channels';
+import { loadNotifications } from './expoNotifications';
 import { rememberPushToken } from './tokenStore';
 
 /**
@@ -49,21 +51,23 @@ export function PushRegistrar() {
 
     const register = async () => {
       try {
-        // Expo Go, checked before anything touches the module. `storeClient`
-        // is the Expo Go app itself; a development build reports `bare` or
-        // `standalone` and can push normally.
-        if (Constants.executionEnvironment === ExecutionEnvironment.StoreClient) {
+        // Expo Go and simulators are excluded inside `loadNotifications`,
+        // before anything touches the module — see the note above and the
+        // reasoning in `expoNotifications.ts`. Null means this handset does
+        // not do notifications, which is not a failure to report.
+        const Notifications = await loadNotifications();
+
+        if (Notifications === null) {
           return;
         }
 
-        // A simulator has no push token to give, and asking produces an
-        // error rather than a refusal.
-        if (!Device.isDevice) {
-          return;
-        }
-
-        // Imported here, not at the top of the file. See the note above.
-        const Notifications = await import('expo-notifications');
+        // **Before the permission prompt, not after.** The channel is what
+        // carries the ringtone and the heads-up behaviour, and on Android the
+        // settings screen a driver lands on from the permission dialog lists
+        // channels — one that does not exist yet cannot be found there, and a
+        // driver who goes looking for "Job offers" and sees nothing concludes
+        // the app has none. Creating it costs nothing when it already exists.
+        await ensureNotificationChannels();
 
         const existing = await Notifications.getPermissionsAsync();
         const granted =
@@ -76,7 +80,24 @@ export function PushRegistrar() {
           return;
         }
 
-        const { data: token } = await Notifications.getExpoPushTokenAsync();
+        // **The project id is passed explicitly, and it is the reason push
+        // has never once worked on this app.**
+        //
+        // `getExpoPushTokenAsync` needs an EAS project id. It reads one from
+        // `expoConfig.extra.eas.projectId` when none is given — and `app.json`
+        // had no such key, so this call threw `No "projectId" found`, the
+        // catch below swallowed it, and the app reported nothing. Every other
+        // part of the push path was correct and untestable behind it.
+        //
+        // Naming it here does not fix a missing id; it makes the dependency
+        // visible at the call site instead of buried in a library's fallback,
+        // so the next person reads it in the code rather than deducing it
+        // from silence. `eas init` writes the key.
+        const projectId = Constants.expoConfig?.extra?.eas?.projectId as string | undefined;
+
+        const { data: token } = await Notifications.getExpoPushTokenAsync(
+          projectId === undefined ? undefined : { projectId },
+        );
 
         if (cancelled) {
           return;

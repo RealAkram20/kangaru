@@ -21,6 +21,7 @@ import {
   waitingMinutesFrom,
   type RecordRow,
 } from '../trips/record';
+import { useOdometerEnabled } from '../trips/odometerSetting';
 import { driverActions, statusLabel, type TripAction } from '../trips/transitions';
 import { Button, Card, Field, Notice, Screen, ScreenHeader, usePressScale } from '../ui/components';
 import { SkeletonCards } from '../ui/Skeleton';
@@ -95,6 +96,8 @@ export function TripDetailScreen({ route, navigation }: Props) {
   const { data: trip, isLoading } = useTrip(tripId);
   const { data: events } = useTripEvents(tripId);
   const { queueTransition } = useSync();
+  // ADR-0047, as on the pickup screen.
+  const odometerEnabled = useOdometerEnabled();
 
   const [declining, setDeclining] = useState(false);
   const [notes, setNotes] = useState('');
@@ -152,7 +155,7 @@ export function TripDetailScreen({ route, navigation }: Props) {
     );
   }
 
-  const actions = driverActions(trip);
+  const actions = driverActions(trip, { odometerEnabled });
   // Bound to a local so the null check narrows inside the press handler —
   // TypeScript cannot prove a property is still non-null by the time a callback
   // runs, and it is right not to.

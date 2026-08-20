@@ -1,13 +1,25 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import type { Trip } from '../api/types';
 import type { TripsStackParams } from '../navigation/types';
+import { useSync } from '../offline/SyncProvider';
 import { dialPassenger } from '../trips/contact';
+import { validateOdometerReading } from '../trips/odometer';
+import { OdometerCapture } from '../trips/OdometerCapture';
 import { PickupMap } from '../trips/PickupMap';
 import { located, toCoordinates } from '../trips/places';
-import { useTrip, useTripEvents } from '../trips/queries';
+import { useHandover } from '../trips/handover';
+import { useTrip, useTripEvents, useTripRoute } from '../trips/queries';
 import { statusLabel } from '../trips/transitions';
 import {
   arrivedAtFrom,
@@ -19,6 +31,7 @@ import {
 } from '../trips/waiting';
 import { WaitingRing } from '../trips/WaitingRing';
 import { Button, Notice, Screen, ScreenHeader } from '../ui/components';
+import { Handover } from '../ui/Handover';
 import { SkeletonCards } from '../ui/Skeleton';
 import { DetailRow, GLYPH } from '../ui/facts';
 import { MapPinIcon, NavigationIcon, PhoneIcon, UserIcon } from '../ui/icons';
@@ -85,18 +98,108 @@ const PASSENGER_LABEL = 'Passenger';
  * as having no consequence, and drawn so that it cannot read as a deadline:
  * it completes and holds while the figure keeps counting. See
  * `trips/waiting.ts`.
+ *
+ * ## The opening reading is taken here, and one press starts the trip
+ *
+ * The owner's ruling, from a handset at 02:00 with a passenger beside them:
+ * *"we want to limit the clicks … when we onboard the client it automatically
+ * starts the trip"*. Before this the kerb was: press "Start Trip", land on a
+ * separate odometer form, type, press "Record and start trip" — two screens
+ * and two presses for one act, on the one moment a driver's hands are busiest.
+ *
+ * Now the reading is typed *while waiting* — the driver has time here and
+ * nothing else to do with it — and the single button below, "Passenger on
+ * board", queues boarding and the start together, in one per-trip stream and
+ * in order (ADR-0023 §5). The server sees exactly the sequence it always saw;
+ * the driver commits once. Nothing is committed until that press, so backing
+ * out leaves the trip here, at `driver_arrived`, not stranded at
+ * `passenger_onboard` with no screen but a form.
+ *
+ * The reading is still **required** before the button enables — the server
+ * demands it for `trip_started` (`TransitionTripRequest`), and the owner's
+ * ruling on the billing algorithm makes the odometer a *backup witness*, not a
+ * gate to remove: it enters the arithmetic only when the GPS trace cannot be
+ * trusted (`docs/measured-distance-plan.md`). What was removed is the second
+ * screen, not the number.
  */
 export function WaitingForPassengerScreen({ route, navigation }: Props) {
   const { tripId } = route.params;
   const { data: trip, isLoading } = useTrip(tripId);
   const { data: events } = useTripEvents(tripId);
+  const { queueTransition, queued } = useSync();
+  // The fare itself, pickup to drop-off, as a road (ADR-0031) — the same line
+  // the passenger is looking at on their own screen. No `here`: the driver is
+  // at the pickup, and the server routes from it when given no fix.
+  const { data: fareRoute, isLoading: routing } = useTripRoute(tripId, null);
 
   const arrivedAt = arrivedAtFrom(events);
   const now = useTicker();
 
+  const [reading, setReading] = useState('');
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
+
+  // No opening reading to compare against — this *is* the opening reading —
+  // so only the "is it a number" rule applies here; the ceiling bites at the
+  // closing one.
+  const readingError = validateOdometerReading(reading, null, null);
+
+  /*
+    The other seam, and the one the owner described as the switch: *"when i
+    alive we then switch to his or her route by her order"*. Arriving is
+    exactly where the map stops answering "how do I reach them" and starts
+    answering "where are we going" — a different road, from a different
+    endpoint — and this says so while that road is being fetched.
+
+    One step, not two. The trip is already on this phone by the time a driver
+    arrives at a kerb, so the connecting line would be a sentence about work
+    that is not happening; `Handover` draws a single bar and it reads as *this
+    is the only thing left*, which is true.
+
+    Same `isLoading` reasoning as `PickupScreen`, and the same ceiling: this
+    screen carries the waiting clock the passenger is being charged against
+    (ADR-0026), and nothing may hold that behind a road.
+  */
+  const handover = useHandover([{ label: "Switching to the passenger's route", pending: routing }]);
+
+  if (handover.visible && handover.label !== null) {
+    return (
+      <Screen>
+        {/*
+          The header even here: it carries the status-bar inset, and without it
+          the words paint under the clock. The back arrow keeps working too.
+        */}
+        <ScreenHeader
+          title="Waiting for Passenger"
+          subtitle={null}
+          onBack={() => navigation.goBack()}
+        />
+        <SyncBanner />
+        <Handover
+          label={handover.label}
+          caption={trip?.dropoff.label ?? null}
+          step={handover.step}
+          total={handover.total}
+        />
+      </Screen>
+    );
+  }
+
   if (isLoading && trip === undefined) {
     return (
       <Screen>
+        {/*
+          The header even while loading: it is what carries the status-bar
+          inset, and without it the banner — or the skeleton — paints under the
+          clock. The back arrow also works during the wait, which matters when
+          the office is unreachable and this screen cannot finish arriving.
+        */}
+        <ScreenHeader
+          title="Waiting for Passenger"
+          subtitle={null}
+          onBack={() => navigation.goBack()}
+        />
         <SyncBanner />
         <SkeletonCards count={1} style={styles.loading} />
       </Screen>
@@ -106,6 +209,17 @@ export function WaitingForPassengerScreen({ route, navigation }: Props) {
   if (trip === undefined) {
     return (
       <Screen>
+        {/*
+          The header even while loading: it is what carries the status-bar
+          inset, and without it the banner — or the skeleton — paints under the
+          clock. The back arrow also works during the wait, which matters when
+          the office is unreachable and this screen cannot finish arriving.
+        */}
+        <ScreenHeader
+          title="Waiting for Passenger"
+          subtitle={null}
+          onBack={() => navigation.goBack()}
+        />
         <SyncBanner />
         <Notice message="This trip is not on this phone, and the office is unreachable." />
       </Screen>
@@ -124,121 +238,230 @@ export function WaitingForPassengerScreen({ route, navigation }: Props) {
   const fraction = waited === null ? 0 : fillFraction(waited, trip.pickup_wait_target_seconds);
 
   /**
-   * The one move the driver has from here: open the opening reading.
+   * The one move the driver has from here: the passenger gets in, the trip
+   * starts.
    *
-   * **This press commits nothing, and that is a change.** It used to queue
-   * `passenger_onboard` first, on the reasoning that boarding and starting are
-   * one act in the car. The act is one; the *commit* was two, and the split
-   * cost more than it bought:
+   * **Boarding and the start are queued together, from this press.**
+   * `driver_arrived -> trip_started` is not a legal edge (`TripStatus::
+   * allowedTransitions`), so `passenger_onboard` is posted in between — but
+   * from the same press as the start, never before it. Posting it on its own
+   * used to commit the trip to a state whose only screen was the odometer
+   * form, with no way back here; and since the server requires the reading
+   * for `trip_started`, the first transition could be queued and the second
+   * abandoned, leaving a boarded trip that never started. Both land in the
+   * same per-trip stream and drain strictly in order (ADR-0023 §5).
    *
-   * - A driver who opened the form and backed out — wrong passenger, a
-   *   dashboard they could not read yet — left the trip committed at
-   *   `passenger_onboard`, a state whose only screen is that same form
-   *   (`activeTripRoute`). There was no way back to here.
-   * - The reading is required by the server for `trip_started`
-   *   (`TransitionTripRequest`), so the first transition could be queued and
-   *   the second abandoned, leaving a boarded trip that never started.
-   *
-   * `OdometerScreen` now queues both from its single submit, in the same
-   * per-trip stream and the same order (ADR-0023 §5), so the server sees no
-   * difference and the driver commits once. `from` is this trip's real status
-   * rather than the one that used to be queued ahead of it — the odometer
-   * reads it to decide whether boarding still needs posting.
+   * `replace`, not `navigate`: this screen must not sit in the stack behind
+   * the trip in progress, or the back gesture reopens a kerb the driver has
+   * already left — and, in a dead zone, a screen byte-identical to this one
+   * whose only button would queue a second boarding the server refuses.
    */
-  const start = () => {
-    navigation.navigate('Odometer', {
-      tripId: trip.id,
-      to: 'trip_started',
-      from: trip.status,
-    });
+  const board = async () => {
+    // Only meaningful while a reading is being asked for. With the odometer
+    // off `reading` is the empty string it was initialised to, and
+    // `validateOdometerReading` rightly objects to that — so leaving this
+    // guard unconditional would make the button dead on exactly the
+    // deployments that removed the field (ADR-0047).
+    if (odometerEnabled && readingError !== undefined) {
+      return;
+    }
+
+    setBusy(true);
+    setSaveFailed(false);
+
+    try {
+      await queueTransition({ tripId, from: 'driver_arrived', to: 'passenger_onboard' });
+      await queueTransition({
+        tripId,
+        from: 'passenger_onboard',
+        to: 'trip_started',
+        // **Omitted, not sent as null or zero, when no reading was taken.**
+        // `Number.parseInt('', 10)` is `NaN`, which serialises to `null` and
+        // reaches a server that would accept it as a real reading of nothing.
+        // The trip would then start with an opening of 0 and, if the setting
+        // were ever switched back on mid-journey, complete with a distance
+        // equal to the whole vehicle's lifetime mileage.
+        ...(odometerEnabled
+          ? { odometerStart: Number.parseInt(reading, 10), photoUri }
+          : {}),
+      });
+    } catch {
+      // The queue could not accept it — the database is not open yet, or the
+      // write failed. The one thing that must not happen is navigating away as
+      // though it were saved: the reading stays on screen so the driver can
+      // try again or write it down.
+      setBusy(false);
+      setSaveFailed(true);
+
+      return;
+    }
+
+    setBusy(false);
+    navigation.replace('TripInProgress', { tripId });
   };
 
   return (
     <Screen>
-      <SyncBanner />
-
       <ScreenHeader
         title="Waiting for Passenger"
-        subtitle={statusLabel(trip.status)}
+        /*
+          The status the driver asked for, falling back to the one the office
+          confirmed — never the confirmed one alone. This screen is reached by
+          queueing `driver_arrived` and replacing the pickup screen, so in a
+          dead zone the header read **"Waiting for Passenger" over "On the
+          way"**: a title and a subtitle contradicting each other, on the
+          owner's handset, with "Sending 1 update…" between them.
+
+          `queued` is the outbox's own contents rather than an optimistic
+          guess — the argument `SyncState.queued` makes at length — so this
+          shows what the driver actually pressed, and falls back the moment an
+          item is refused.
+        */
+        subtitle={statusLabel(queued.get(trip.id) ?? trip.status)}
         onBack={() => navigation.goBack()}
       />
 
-      <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
-        {/*
+      {/*
+        Below the header, which carries the status-bar inset: mounted first,
+        the banner's text paints under the clock and the battery — the owner's
+        screenshot, and the same bug HomeScreen's own comment records.
+      */}
+      <SyncBanner />
+
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.flex}
+      >
+        <ScrollView
+          contentContainerStyle={styles.body}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/*
           One announcement for the whole waiting state, composed rather than
           left to linearise. The ring hides its own subtree from the screen
           reader so this is not interrupted by a bare number every second.
         */}
-        <View style={styles.clock} accessible accessibilityLabel={waitingAnnouncement(waited)}>
-          <WaitingRing seconds={waited} fraction={fraction} label={figure} />
+          <View style={styles.clock} accessible accessibilityLabel={waitingAnnouncement(waited)}>
+            <WaitingRing seconds={waited} fraction={fraction} label={figure} />
 
-          <Text style={styles.blurb}>
-            {waited === null
-              ? 'Waiting time shows once your arrival reaches the office.'
-              // **The "if" is not padding.** Nothing notifies the passenger
-              // (see the module docblock); their ride screen shows this only
-              // while it is open. Dropping the qualifier turns the one honest
-              // line on this screen into a promise the platform cannot keep.
-              : "Shown on the passenger's screen, if it is open."}
-          </Text>
-        </View>
+            <Text style={styles.blurb}>
+              {waited === null
+                ? 'Waiting time shows once your arrival reaches the office.'
+                : // **The "if" is not padding.** Nothing notifies the passenger
+                  // (see the module docblock); their ride screen shows this only
+                  // while it is open. Dropping the qualifier turns the one honest
+                  // line on this screen into a promise the platform cannot keep.
+                  "Shown on the passenger's screen, if it is open."}
+            </Text>
+          </View>
 
-        <MapPanel trip={trip} />
+          <MapPanel trip={trip} routePolyline={fareRoute?.polyline ?? null} />
 
-        {passenger !== null && (
+          {passenger !== null && (
+            <DetailRow
+              icon={<UserIcon {...GLYPH} />}
+              label={PASSENGER_LABEL}
+              value={passenger.name}
+              // Only when the channel says something the label does not.
+              // `DirectContactChannel` returns "Passenger" today, which would
+              // print the word twice; under the masking provider ADR-0024 §7
+              // designs for it becomes "Passenger (via KangaruRide)", and that a
+              // driver must see — or they save a proxy number to their contacts
+              // and ring it next week. Same rule as `PickupScreen`.
+              caption={passenger.label === PASSENGER_LABEL ? null : passenger.label}
+              trailing={
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Call ${passenger.name}`}
+                  onPress={() => void dialPassenger(passenger)}
+                  style={styles.call}
+                >
+                  <PhoneIcon color={colors.onPrimary} size={20} strokeWidth={2} />
+                </Pressable>
+              }
+            />
+          )}
+
           <DetailRow
-            icon={<UserIcon {...GLYPH} />}
-            label={PASSENGER_LABEL}
-            value={passenger.name}
-            // Only when the channel says something the label does not.
-            // `DirectContactChannel` returns "Passenger" today, which would
-            // print the word twice; under the masking provider ADR-0024 §7
-            // designs for it becomes "Passenger (via KangaruRide)", and that a
-            // driver must see — or they save a proxy number to their contacts
-            // and ring it next week. Same rule as `PickupScreen`.
-            caption={passenger.label === PASSENGER_LABEL ? null : passenger.label}
+            icon={<MapPinIcon {...GLYPH} />}
+            label="Pickup"
+            value={trip.pickup.label}
+            caption={null}
+            // Present only when there are coordinates to hand over, which is the
+            // same rule the call button follows: a trip keyed in at the desk has
+            // none, and every corporate trip has none. A Navigate button that
+            // opened a maps app on nothing — or worse, on 0°,0° in the Atlantic
+            // — is the failure `located()` exists to prevent.
             trailing={
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Call ${passenger.name}`}
-                onPress={() => void dialPassenger(passenger)}
-                style={styles.call}
-              >
-                <PhoneIcon color={colors.onPrimary} size={20} strokeWidth={2} />
-              </Pressable>
+              pickupPoint !== null ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Navigate to ${trip.pickup.label}`}
+                  onPress={() => navigation.navigate('TripMap', { tripId: trip.id })}
+                  style={styles.navigate}
+                >
+                  <NavigationIcon color={colors.primaryText} size={18} strokeWidth={2} />
+                  <Text style={styles.navigateLabel}>Navigate</Text>
+                </Pressable>
+              ) : null
             }
           />
-        )}
 
-        <DetailRow
-          icon={<MapPinIcon {...GLYPH} />}
-          label="Pickup"
-          value={trip.pickup.label}
-          caption={null}
-          // Present only when there are coordinates to hand over, which is the
-          // same rule the call button follows: a trip keyed in at the desk has
-          // none, and every corporate trip has none. A Navigate button that
-          // opened a maps app on nothing — or worse, on 0°,0° in the Atlantic
-          // — is the failure `located()` exists to prevent.
-          trailing={
-            pickupPoint !== null ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Navigate to ${trip.pickup.label}`}
-                onPress={() => navigation.navigate('TripMap', { tripId: trip.id })}
-                style={styles.navigate}
-              >
-                <NavigationIcon color={colors.primaryText} size={18} strokeWidth={2} />
-                <Text style={styles.navigateLabel}>Navigate</Text>
-              </Pressable>
-            ) : null
-          }
-        />
+          {/*
+          The opening reading, typed while there is time to type it. See the
+          module docblock — this is what took the second screen out of the
+          kerb. The heading names the reading for what it is, so a driver does
+          not mistake it for the closing one.
+        */}
+          {saveFailed && (
+            <Notice tone="danger" message="Could not save. Try again, and write the number down." />
+          )}
 
-        <View style={styles.actions}>
-          <Button label="Start Trip" tone="primary" onPress={start} />
-        </View>
-      </ScrollView>
+          {/*
+            **Gone entirely when the office has switched the odometer off**
+            (ADR-0047), heading included. Leaving a disabled or optional field
+            here would be worse than either state: the driver reads a labelled
+            input as something the office wants, and an empty one they were
+            allowed to skip is a field that looks like it failed to save.
+          */}
+          {odometerEnabled && (
+            <>
+              <Text style={styles.sectionTitle}>Opening odometer</Text>
+
+              <OdometerCapture
+                reading={reading}
+                onChangeReading={setReading}
+                error={readingError}
+                photoUri={photoUri}
+                onChangePhoto={setPhotoUri}
+              />
+            </>
+          )}
+
+          <View style={styles.actions}>
+            <Button
+              // One label for one act. "Start Trip" opened a form whose own
+              // button said "Record and start trip" — the same words twice, a
+              // press apart, which read as one press that did not work.
+              label="Passenger on board"
+              tone="primary"
+              busy={busy}
+              // With no reading asked for there is nothing to withhold the
+              // press on — gating on an empty field the driver was never
+              // shown would be a button that never enables.
+              disabled={odometerEnabled && (reading === '' || readingError !== undefined)}
+              onPress={() => void board()}
+            />
+            {/*
+            ADR-0023 queues this rather than sending it. A driver who does not
+            know that will sit in a dead zone waiting for a confirmation that
+            is not coming.
+          */}
+            <Text style={styles.footnote}>Saved on this phone, sent when you have signal.</Text>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </Screen>
   );
 }
@@ -254,12 +477,24 @@ export function WaitingForPassengerScreen({ route, navigation }: Props) {
  *
  * The dropoff is passed so the map can frame both. A driver waiting at a kerb
  * glancing at where the job goes is orienting themselves for the drive out.
+ *
+ * `leg="fare"` and stated rather than left to the default: this is the screen
+ * where the map hands over from the drive to the passenger to the passenger's
+ * own journey, and that handover should be legible in the call, not inherited.
  */
-function MapPanel({ trip }: { trip: Trip }) {
+function MapPanel({ trip, routePolyline }: { trip: Trip; routePolyline: string | null }) {
   const pickup = located(trip.pickup) ? toCoordinates(trip.pickup) : null;
   const dropoff = located(trip.dropoff) ? toCoordinates(trip.dropoff) : null;
 
-  return <PickupMap pickup={pickup} dropoff={dropoff} here={null} />;
+  return (
+    <PickupMap
+      pickup={pickup}
+      dropoff={dropoff}
+      here={null}
+      leg="fare"
+      routePolyline={routePolyline}
+    />
+  );
 }
 
 /**
@@ -370,5 +605,16 @@ const styles = StyleSheet.create({
   },
   actions: {
     gap: spacing.sm,
+  },
+  flex: { flex: 1 },
+  sectionTitle: {
+    ...typography.label,
+    color: colors.text,
+    marginTop: spacing.xs,
+  },
+  footnote: {
+    ...typography.caption,
+    color: colors.textMuted,
+    lineHeight: 20,
   },
 });

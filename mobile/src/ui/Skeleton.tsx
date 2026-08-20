@@ -128,8 +128,14 @@ export function SkeletonCards({ count = 2, style }: { count?: number; style?: Vi
  * `useNativeDriver` because opacity is one of the two properties the native
  * driver takes, and this runs while the JS thread is busy parsing the response
  * it is standing in for — the one moment a JS-driven animation would stutter.
+ *
+ * Exported for `Handover`, whose active step is the same statement in a
+ * different shape: *this one is happening, the app is not stuck*. AGENTS.md
+ * makes a thing shared the moment it has a second caller, and a second copy of
+ * a loop with its own duration would be two answers to "how fast does waiting
+ * look in this app".
  */
-function usePulse(): Animated.Value | number {
+export function usePulse(): Animated.Value | number {
   const reduced = useReducedMotion();
   const [value] = useState(() => new Animated.Value(REST));
 

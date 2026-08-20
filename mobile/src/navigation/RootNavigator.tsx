@@ -4,11 +4,14 @@ import { DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, BackHandler, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '../auth/AuthProvider';
 import { OfferPresenter } from '../duty/OfferPresenter';
+import { navigationRef } from './navigationRef';
 import { PresenceController } from '../duty/PresenceController';
 import { PushRegistrar } from '../push/PushRegistrar';
+import { PushRouter } from '../push/PushRouter';
 import { GpsController } from '../location/GpsController';
 import { DrawerContent } from './DrawerContent';
 import { DocumentsScreen } from '../screens/DocumentsScreen';
@@ -220,7 +223,15 @@ function TripsNavigator() {
         // A modal, because a half-entered odometer reading is not a state
         // worth keeping: the form is completed or abandoned as a unit, and
         // backing out leaves the trip exactly as it was.
-        options={{ presentation: 'modal', title: 'Odometer' }}
+        //
+        // **`headerShown: false` like every other screen in this app.** This
+        // was the one route that kept React Navigation's stock header, so the
+        // screen wore a system title bar reading "Odometer" while the content
+        // below it said "Opening odometer" — the app's chrome nowhere, the
+        // same word twice, and a back arrow that matched nothing else a driver
+        // had seen. The owner's *"it looks nothing like our design"* was that.
+        // `OdometerScreen` draws its own `ScreenHeader`.
+        options={{ presentation: 'modal', headerShown: false }}
       />
     </TripsStack.Navigator>
   );
@@ -402,21 +413,28 @@ export function RootNavigator() {
   }
 
   return (
-    <NavigationContainer theme={theme}>
+    <NavigationContainer ref={navigationRef} theme={theme}>
       {user === null ? (
         <AuthScreens />
       ) : (
         <>
-          {/* Both render nothing, and both are mounted here rather than on a
-            screen for the same reason: a driver who switches tabs must not
-            silently stop being tracked or stop being findable. */}
+          {/* All four render nothing, and all four are mounted here rather
+            than on a screen for the same reason: a driver who switches tabs
+            must not silently stop being tracked, stop being findable, or
+            stop being reachable.
+
+            `PushRouter` in particular has to be mounted before the driver
+            can touch anything — a tap on a notification that launched the
+            app from a killed process is waiting to be read at start-up, and
+            nothing else in the app will ever ask for it. */}
           <GpsController />
           <PresenceController />
           <PushRegistrar />
+          <PushRouter />
           <MainNavigator />
 
           {/* Last, and outside the navigator on purpose. A job has a
-            fifteen-second clock and has to appear over whatever the driver
+            countdown on it and has to appear over whatever the driver
             is doing — including a modal — so it is painted above the tabs
             rather than pushed into one of them. See `OfferPresenter`. */}
           <OfferPresenter />
@@ -459,15 +477,47 @@ function MainNavigator() {
   );
 }
 
+/**
+ * The tab row's own height, before the system's navigation bar is added to it.
+ *
+ * React Navigation's Android default, stated here rather than inherited so the
+ * arithmetic below is visible: the bar must be this tall *plus* whatever the
+ * system takes at the bottom, or the two overlap and the labels lose their
+ * descenders — *Earnings* and *Profile* are the two that show it first.
+ */
+const TAB_BAR_HEIGHT = 56;
+
 function TabsNavigator() {
+  /**
+   * **The bottom inset is applied here, and leaving it to the navigator was
+   * wrong on three-button Android.**
+   *
+   * The comment this replaces said the navigator adds the safe-area inset
+   * itself — true under gesture navigation, where the inset is a few points and
+   * nothing visibly collided. Reproduced on the emulator with
+   * `com.android.internal.systemui.navbar.threebutton` enabled, which is what
+   * the owner's handset uses: the system navigation bar draws **over** the
+   * bottom of the tab bar and clips the descenders off *Earnings* and
+   * *Profile*. The app is edge-to-edge, so the window extends under that bar
+   * and something has to pay for it.
+   *
+   * `height` and `paddingBottom` move together deliberately: padding alone
+   * shrinks the row into the same fixed height and pushes the labels up into
+   * the icons, which is the failure the old comment was warning about. The
+   * base is the navigator's own default rather than a number chosen by eye.
+   */
+  const insets = useSafeAreaInsets();
+
   return (
     <Tabs.Navigator
       screenOptions={{
         headerShown: false,
-        // No explicit height or bottom padding: the navigator adds the
-        // safe-area inset itself, and overriding the height made the
-        // labels sit underneath Android's gesture bar.
-        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
+        tabBarStyle: {
+          backgroundColor: colors.surface,
+          borderTopColor: colors.border,
+          height: TAB_BAR_HEIGHT + insets.bottom,
+          paddingBottom: insets.bottom,
+        },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textMuted,
         tabBarLabelStyle: { fontSize: 13, fontWeight: '600' },

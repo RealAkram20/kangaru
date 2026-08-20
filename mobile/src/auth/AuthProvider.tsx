@@ -7,6 +7,7 @@ import {
   logout as logoutRequest,
   unregisterDevice,
 } from '../api/endpoints';
+import { goOffline } from '../duty/OnlineService';
 import { forgetPushToken, readPushToken } from '../push/tokenStore';
 import { isApiError } from '../api/errors';
 import type { User } from '../api/types';
@@ -196,6 +197,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // next (ADR-0025 §4).
     await releasePushRegistration(api);
 
+    // The foreground service and the shift record go with it, for the same
+    // reason and with a sharper edge: left running, a depot handset would keep
+    // an ongoing "You are online" notification on screen and keep reporting
+    // the previous driver's position to the matcher — which would offer them
+    // work, from a phone now in somebody else's hands (ADR-0046).
+    //
+    // Before the token is discarded is not required here, unlike the push
+    // registration, but it is where it belongs: everything that makes this
+    // handset *this driver's* is released in one place.
+    await goOffline();
+
     try {
       await logoutRequest(api);
     } catch {
@@ -220,6 +232,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     //
     // The local copy is dropped so the next sign-in registers afresh.
     await forgetPushToken();
+
+    // The service is stopped here too, and this path is the one that needs it
+    // most: an expired token means the heartbeat is now answering 401 on every
+    // tick, so the notification would say "You are online" over a shift the
+    // platform stopped recognising hours ago.
+    await goOffline();
 
     setCurrentToken(null);
     setUser(null);

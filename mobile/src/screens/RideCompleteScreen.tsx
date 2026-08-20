@@ -117,9 +117,14 @@ export function RideCompleteScreen({ route, navigation }: Props) {
 
   return (
     <Screen>
-      <SyncBanner />
-
       <ScreenHeader title="Ride complete" subtitle={null} onBack={goHome} />
+
+      {/*
+        Below the header, which carries the status-bar inset: mounted first,
+        the banner's text paints under the clock and the battery — the owner's
+        screenshot, and the same bug HomeScreen's own comment records.
+      */}
+      <SyncBanner />
 
       <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
         <Celebration />

@@ -57,7 +57,13 @@ const ACTION_LABELS: Record<string, string> = {
   driver_arrived: "I've arrived",
   passenger_onboard: 'Passenger on board',
   trip_started: 'Start trip',
-  waiting: 'Start waiting',
+  // "Pause trip", the same words `TripInProgressScreen`'s own button uses —
+  // not "Start waiting". `waiting` is the billable mid-journey hold, and a
+  // driver at a kerb reads "Start waiting" as "record that I am waiting for
+  // the passenger": trip #77 was parked in `waiting` by exactly that tap,
+  // and `waiting` occupies the vehicle, so the driver got no offers until it
+  // was resumed and completed. One act, one name, on every surface.
+  waiting: 'Pause trip',
   trip_resumed: 'Resume trip',
   trip_completed: 'Complete trip',
 };
@@ -82,15 +88,37 @@ const ACTION_REQUIREMENTS: Record<string, TransitionRequirement> = {
  * ordering already carries an opinion and second-guessing it here would be one
  * more thing to drift.
  */
-export function driverActions(trip: Trip): TripAction[] {
+export function driverActions(
+  trip: Trip,
+  options: { odometerEnabled?: boolean } = {},
+): TripAction[] {
+  // Defaulted here rather than at the call sites, and defaulted to *true*,
+  // so a caller that has not been taught about the setting keeps the
+  // behaviour the app has always had (ADR-0047). The alternative — defaulting
+  // to false — would silently drop the reading from any screen somebody
+  // forgot to update, and the symptom is a 422 the driver reads on the sync
+  // queue hours after leaving the vehicle.
+  const { odometerEnabled = true } = options;
+
   return trip.allowed_transitions
     .filter((to) => DRIVER_ACTIONABLE_STATUSES.includes(to))
-    .map((to) => ({
-      to,
-      label: ACTION_LABELS[to] ?? humanise(to),
-      tone: ACTION_TONES[to] ?? 'primary',
-      requires: ACTION_REQUIREMENTS[to] ?? null,
-    }));
+    .map((to) => {
+      const requires = ACTION_REQUIREMENTS[to] ?? null;
+
+      return {
+        to,
+        label: ACTION_LABELS[to] ?? humanise(to),
+        tone: ACTION_TONES[to] ?? 'primary',
+        // With the odometer off the *action* survives and only its
+        // requirement drops, which is what turns "Start trip" from a screen
+        // into a tap. `notes` is untouched: a rejection still needs a reason,
+        // and that has nothing to do with mileage.
+        requires:
+          odometerEnabled || (requires !== 'odometer_start' && requires !== 'odometer_end')
+            ? requires
+            : null,
+      };
+    });
 }
 
 /**

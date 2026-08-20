@@ -1,11 +1,11 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Animated,
-  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -14,7 +14,10 @@ import {
   View,
 } from 'react-native';
 
+import { refusalMessage } from '../api/errors';
+import { authorizedImageSource } from '../api/imageSource';
 import { useAuth } from '../auth/AuthProvider';
+import { ringtoneEnabled, setRingtoneEnabled } from '../duty/ringtonePreference';
 import type { ProfileStackParams } from '../navigation/types';
 import { useSync } from '../offline/SyncProvider';
 import {
@@ -43,10 +46,20 @@ import {
 import { useDriverStats } from '../trips/queries';
 import { usePayoutAccount } from '../wallet/payoutQueries';
 import { ratingNote, ratingValue } from '../trips/statsPresentation';
-import { Button, Card, MenuRow, Notice, Screen, ScreenHeader, usePressScale } from '../ui/components';
+import {
+  Button,
+  Card,
+  MenuRow,
+  Notice,
+  Screen,
+  ScreenHeader,
+  SwitchRow,
+  usePressScale,
+} from '../ui/components';
 import {
   AlertTriangleIcon,
   BanknoteIcon,
+  BellIcon,
   CalendarIcon,
   CameraIcon,
   FileTextIcon,
@@ -143,6 +156,13 @@ export function ProfileScreen({ navigation }: Props) {
   const [draft, setDraft] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
 
+  // Seeded from the in-memory value rather than read from storage here.
+  // `App.tsx` loads it once at start-up, precisely so the ring path can be
+  // synchronous, and asking AsyncStorage again would render the row in the
+  // wrong position for a frame before correcting itself — on a switch, that
+  // reads as the app having changed the setting on its own.
+  const [ringtone, setRingtone] = useState(() => ringtoneEnabled());
+
   // A driver whose profile has not loaded still knows their own name — the
   // account carries one. Falling back to it beats an em dash where a person's
   // name goes.
@@ -183,9 +203,15 @@ export function ProfileScreen({ navigation }: Props) {
     try {
       await updateProfile.mutateAsync({ [field]: draft.trim() });
       cancelEdit();
-    } catch {
+    } catch (error) {
+      // The office's own words where it answered — it is the thing that knows
+      // a phone number was already somebody else's. The connection sentence is
+      // kept for the case it describes and no other.
       setProblem(
-        'That did not reach the office. Your details need a connection — unlike your trip work, they are not queued.',
+        refusalMessage(
+          error,
+          'That did not reach the office. Your details need a connection — unlike your trip work, they are not queued.',
+        ),
       );
     }
   };
@@ -233,8 +259,13 @@ export function ProfileScreen({ navigation }: Props) {
 
     try {
       await uploadPhoto.mutateAsync(result.assets[0].uri);
-    } catch {
-      setProblem('That photo did not reach the office. It needs a connection — try again.');
+    } catch (error) {
+      setProblem(
+        refusalMessage(
+          error,
+          'That photo did not reach the office. It needs a connection — try again.',
+        ),
+      );
     }
   };
 
@@ -256,8 +287,13 @@ export function ProfileScreen({ navigation }: Props) {
           void (async () => {
             try {
               await deletePhoto.mutateAsync();
-            } catch {
-              setProblem('That did not reach the office. Try again when you have a connection.');
+            } catch (error) {
+              setProblem(
+                refusalMessage(
+                  error,
+                  'That did not reach the office. Try again when you have a connection.',
+                ),
+              );
             }
           })();
         },
@@ -305,9 +341,24 @@ export function ProfileScreen({ navigation }: Props) {
                   <Text style={styles.monogramText}>{initials(name)}</Text>
                 </View>
               ) : (
+                /*
+                  **`expo-image`, not React Native's `Image`, and the
+                  difference is load-bearing.** This portrait is fetched from
+                  an authenticated endpoint (ADR-0041 streams it rather than
+                  publishing a URL), so the source carries an Authorization
+                  header — and React Native's own `Image` silently drops it on
+                  Android, answering every request with a 401 and drawing an
+                  empty circle with nothing on screen to say why. The drawer
+                  has always used this component and its avatar always worked;
+                  that difference is how this was found. `contentFit` and the
+                  fade match `DrawerContent`'s, so one face does not appear
+                  two ways in two places.
+                */
                 <Image
-                  source={{ uri: photo }}
+                  source={authorizedImageSource(photo)}
                   style={styles.photo}
+                  contentFit="cover"
+                  transition={120}
                   accessibilityIgnoresInvertColors
                 />
               )}
@@ -471,6 +522,30 @@ export function ProfileScreen({ navigation }: Props) {
             value={payoutSummary(payout)}
             announcement={`Bank details. ${payoutSummary(payout) ?? 'Not set'}.`}
             onPress={() => navigation.navigate('BankDetails')}
+          />
+          <View style={styles.separator} />
+          {/*
+            **The smaller answer to a phone that rings at the wrong moment**
+            (ADR-0046 §3). Without this the only control a driver has is
+            Android's own, which switches the whole `offers.v1` channel off —
+            and with it the banner, the heads-up and any chance of noticing a
+            job. That choice is silent, permanent and invisible to the office;
+            a driver who makes it once appears to the fleet as somebody who
+            stopped accepting work.
+
+            So the row offers the part they actually want to change. The
+            notification, the countdown and the vibration all stay.
+          */}
+          <SwitchRow
+            icon={<BellIcon color={colors.primary} size={22} strokeWidth={2} />}
+            label="Job offer sound"
+            subtitle="Plays a ringtone when a job arrives. The alert still shows if you turn this off."
+            value={ringtone}
+            announcement={`Job offer sound. ${ringtone ? 'On' : 'Off'}. Plays a ringtone when a job arrives.`}
+            onToggle={(next) => {
+              setRingtone(next);
+              void setRingtoneEnabled(next);
+            }}
           />
           <View style={styles.separator} />
           <MenuRow

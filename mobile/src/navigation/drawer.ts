@@ -1,6 +1,3 @@
-import type { Trip } from '../api/types';
-import { isInProgress, statusLabel, tripDestination } from '../trips/transitions';
-
 /**
  * What the drawer lists, as data rather than as JSX.
  *
@@ -59,42 +56,30 @@ export type DrawerSection = {
   rows: DrawerRow[];
 };
 
-/**
- * The row a live trip gets, or null when there is none.
+/*
+ * **There is deliberately no live-trip row, and there was one until the owner
+ * removed it.**
  *
- * **The mockup's "Trip Details" is not a global row**, and could not be: a
- * trip screen needs a trip id, and a menu entry that opens whichever journey
- * happened to be most recent is not a menu entry — it is a guess presented as
- * navigation. A driver mid-journey wants *this* trip; a driver between jobs
- * has no trip to want.
+ * It existed only while a trip was running and was labelled
+ * `statusLabel(live.status)`, so a driver mid-capture read **"Passenger on
+ * board"** in their menu — a lifecycle state name offered as a destination. The
+ * owner asked what it was for, and the honest answer was: a second door to a
+ * place the app already opens in one tap.
  *
- * So the row exists only while one is live, and it is **labelled with what the
- * trip is doing** rather than "Trip Details" — `statusLabel()` is the one
- * place a status is put into words for a driver, and reusing it means the
- * drawer and the screen it opens agree.
+ * `HomeScreen`'s `ActiveTripCard` is that one tap, it routes through the same
+ * `tripDestination()`, and it sits on the screen the drawer is *opened from* —
+ * so the row cost a driver a swipe and a read to reach something already in
+ * front of them. The rule this drawer was built on is the owner's own *"we
+ * don't need to repeat the menus"*, and this was the last repeat in it.
  *
- * The destination comes from **`tripDestination()`**, which is the one place
- * on this platform that maps a status to a screen — the worklog's rule 4, that
- * a status belongs to exactly one screen. Hardcoding `TripDetail` here would
- * have opened the record view on a trip that is still running, which is the
- * exact bug the `TripDetail no longer appears mid-trip` entry above records
- * somebody already fixing once.
+ * The reasoning that kept it honest still applies to whatever replaces it, and
+ * is kept here rather than deleted with the code: **a menu row that opens
+ * "whichever trip was most recent" is a guess presented as navigation**, which
+ * is why the mockup's global "Trip Details" row was refused in the first place.
+ * Any future live-trip entry must name a specific trip and must route through
+ * `tripDestination()` — never a hardcoded `TripDetail`, which would open the
+ * record view on a running journey (a bug this repo has already fixed once).
  */
-export function liveTripRow(trips: Trip[] | undefined): DrawerRow | null {
-  const live = (trips ?? []).find((trip) => isInProgress(trip.status));
-
-  if (live === undefined) {
-    return null;
-  }
-
-  const { screen, params } = tripDestination(live.status, live.id);
-
-  return {
-    key: 'live-trip',
-    label: statusLabel(live.status),
-    destination: { tab: 'Home', screen, params },
-  };
-}
 
 /**
  * The two lists the mockup draws, with the rule between them.
@@ -107,10 +92,7 @@ export function liveTripRow(trips: Trip[] | undefined): DrawerRow | null {
  * @param unreadNotifications null while unknown, which draws no badge at all —
  *   a zero and an unloaded count must not look the same.
  */
-export function drawerSections(
-  liveTrip: DrawerRow | null,
-  unreadNotifications: number | null,
-): DrawerSection[] {
+export function drawerSections(unreadNotifications: number | null): DrawerSection[] {
   /*
    * **Every row names its screen, the tab rows included.** The first version
    * sent a tab row to the tab alone, on the theory that a tab should resume
@@ -127,13 +109,6 @@ export function drawerSections(
    */
   const work: DrawerRow[] = [
     { key: 'home', label: 'Home', destination: { tab: 'Home', screen: 'TripsHome' } },
-  ];
-
-  if (liveTrip !== null) {
-    work.push(liveTrip);
-  }
-
-  work.push(
     { key: 'trips-history', label: 'Trips History', destination: { tab: 'Home', screen: 'TripsHistory' } },
     { key: 'earnings', label: 'Earnings', destination: { tab: 'Earnings', screen: 'EarningsHome' } },
     { key: 'wallet', label: 'Wallet', destination: { tab: 'Wallet', screen: 'WalletHome' } },
@@ -145,7 +120,7 @@ export function drawerSections(
       destination: { tab: 'Profile', screen: 'Notifications' },
       badge: unreadNotifications,
     },
-  );
+  ];
 
   const account: DrawerRow[] = [
     { key: 'profile', label: 'Profile', destination: { tab: 'Profile', screen: 'ProfileHome' } },

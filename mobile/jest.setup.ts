@@ -67,10 +67,76 @@ jest.mock('expo-task-manager', () => ({
   isTaskRegisteredAsync: jest.fn(async () => false),
 }));
 
+/*
+  The ringtone's native half.
+
+  Nothing asserts against these: the rules that matter live in
+  `duty/ringtone.ts` and are covered there over fake ports, which is the whole
+  reason that file was separated from `duty/offerRingtone.ts`. This mock exists
+  so that a screen test which happens to mount `OfferPresenter` does not reach
+  a native module — and so `seekTo` returns a promise, since the real one does
+  and the code `void`s it.
+*/
+jest.mock('expo-audio', () => ({
+  createAudioPlayer: jest.fn(() => ({
+    loop: false,
+    play: jest.fn(),
+    pause: jest.fn(),
+    seekTo: jest.fn(async () => undefined),
+    remove: jest.fn(),
+  })),
+  setAudioModeAsync: jest.fn(async () => undefined),
+}));
+
+/*
+  The library's own mock, not a hand-written stand-in.
+
+  It is a real in-memory store rather than a set of stubs that resolve `null`,
+  which is what `duty/dutyStore` needs to be worth testing at all: the thing
+  that can go wrong there is a record written in one shape and read back in
+  another, and stubs that never return what was put in cannot catch it.
+
+  Unmocked, the native module throws on import — and it throws from whichever
+  file happened to import it first, which is why the failure surfaced in
+  `PresenceController.test.tsx` rather than anywhere near the storage code.
+*/
+jest.mock('@react-native-async-storage/async-storage', () =>
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
+
 jest.mock('expo-image-picker', () => ({
   requestCameraPermissionsAsync: jest.fn(async () => ({ granted: true })),
   launchCameraAsync: jest.fn(async () => ({ canceled: true })),
   MediaTypeOptions: { Images: 'Images' },
+}));
+
+/*
+  `expo-file-system`'s `File` is a native class, and every upload builds one
+  (`api/formFile.ts`). The stand-in keeps the three members the code and the
+  assertions actually use — a name, a mime type and the promise of bytes — so a
+  test can read back what a form part was labelled as, which is the thing the
+  real `FormData` will not hand over.
+*/
+jest.mock('expo-file-system', () => ({
+  File: class {
+    readonly uri: string;
+
+    constructor(uri: string) {
+      this.uri = uri;
+    }
+
+    get name(): string {
+      return this.uri.split('/').pop() ?? '';
+    }
+
+    get type(): string {
+      return this.uri.endsWith('.png') ? 'image/png' : 'image/jpeg';
+    }
+
+    async bytes(): Promise<Uint8Array> {
+      return new Uint8Array();
+    }
+  },
 }));
 
 jest.mock('expo-crypto', () => ({
@@ -241,3 +307,27 @@ jest.mock('expo-image', () => {
 
   return { Image, __esModule: true };
 });
+
+/*
+ * `requestIdleCallback` / `cancelIdleCallback` are React Native runtime globals
+ * that this environment does not provide.
+ *
+ * `OdometerScreen` uses them to raise the keypad once the modal's entry
+ * animation is done — `autoFocus` fires mid-transition on Android and the
+ * keyboard never comes up, which is a defect a driver reported as being unable
+ * to enter the reading at all. React Native deprecated `InteractionManager`
+ * and names these as the replacement.
+ *
+ * Polyfilled as a macrotask, which is the closest honest analogue under fake
+ * timers: "after the work already queued". Deliberately *not* synchronous — a
+ * focus that lands during render would be a different behaviour from the one
+ * that ships, and the test would then be asserting something the device never
+ * does.
+ */
+type IdleHandle = ReturnType<typeof setTimeout>;
+
+globalThis.requestIdleCallback ??= ((callback: (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void): IdleHandle =>
+  setTimeout(() => callback({ didTimeout: false, timeRemaining: () => 0 }), 0)) as typeof globalThis.requestIdleCallback;
+
+globalThis.cancelIdleCallback ??= ((handle: IdleHandle) =>
+  clearTimeout(handle)) as typeof globalThis.cancelIdleCallback;

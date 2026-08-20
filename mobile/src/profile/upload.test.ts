@@ -1,9 +1,6 @@
 import type { ApiClient } from '../api/client';
-import {
-  documentFileName,
-  documentMimeType,
-  uploadDriverDocument,
-} from '../api/endpoints';
+import { uploadDriverDocument } from '../api/endpoints';
+import { formFile } from '../api/formFile';
 
 /**
  * That a document upload actually goes up as a file.
@@ -86,24 +83,33 @@ it('gives the upload longer than the client default', async () => {
   expect(calls[0]?.options.timeoutMs).toBe(60_000);
 });
 
-it('labels a PDF as a PDF and anything unrecognised as a photo', () => {
-  // Asserted on the helpers rather than through the form, because React
-  // Native's `FormData` polyfill does not hand a file part back intact — the
-  // same limitation `httpTransport.test.ts` works around by exporting its
-  // builder.
+it('sends a part the runtime can actually serialise, not a uri descriptor', () => {
+  // **The regression this file now exists for above all others.** Every upload
+  // in this app used to append `{ uri, name, type }`, React Native's own file
+  // descriptor. Expo SDK 54 replaced the global `fetch` with a WinterCG one
+  // that converts the `FormData` itself and throws `Unsupported FormDataPart
+  // implementation` on that shape — so the photograph, the documents and the
+  // odometer photo all failed inside `fetch`, were classified as
+  // `NetworkError`, and were reported to drivers as "no connection" for as
+  // long as those endpoints had existed.
+  //
+  // Asserted on `formFile` rather than through the form, because the `FormData`
+  // under jest is not the one Expo patches at runtime: it stringifies anything
+  // that is not a `Blob`, so a part read back here says nothing about what the
+  // device would send. What can be checked is the contract Expo's converter
+  // applies — a part is sendable only if it is a string, a `Blob`, or carries
+  // `bytes()` — and that is what is checked.
+  const part = formFile('file:///tmp/IMG_0042.jpg') as unknown as {
+    name?: string;
+    type?: string;
+    bytes?: () => Promise<Uint8Array>;
+  };
 
-  // An insurance certificate arrives as a PDF about as often as a photograph,
-  // and the server's `mimes` rule is checked against the part's declared type.
-  expect(documentMimeType('file:///tmp/cover.pdf')).toBe('application/pdf');
-  expect(documentFileName('file:///tmp/cover.pdf')).toBe('cover.pdf');
+  expect(typeof part.bytes).toBe('function');
 
-  expect(documentMimeType('file:///tmp/scan.png')).toBe('image/png');
-
-  // An iPhone hands back `.heic` and `expo-image-picker` transcodes it to
-  // jpeg, which the server accepts — the same fallback `httpTransport` makes.
-  expect(documentMimeType('file:///tmp/IMG_0042.heic')).toBe('image/jpeg');
-
-  // A uri with no filename at all still gets a name: a nameless part is
-  // rejected by the server's `file` rule before any of the others run.
-  expect(documentFileName('file:///tmp/')).toBe('document.jpg');
+  // Named and typed by the file itself now rather than guessed from the end of
+  // the uri — which is how a transcoded `.heic` used to be described as
+  // whatever its name still said.
+  expect(part.name).toBe('IMG_0042.jpg');
+  expect(part.type).toBe('image/jpeg');
 });

@@ -18,9 +18,11 @@ export const API_BASE_URL =
 /**
  * How often the trip list refreshes while the app is open.
  *
- * There are no push notifications (PROJECT.md puts them out of Phase 1), so
- * polling is the only way a new assignment reaches the device, and the
- * interval is a deliberate trade rather than a default:
+ * Push now reaches the device too (ADR-0046), so this is no longer the only
+ * way a new assignment arrives — but it stays exactly as it is, because
+ * ADR-0025 §3 makes push best-effort and this is the path that works for a
+ * driver who refused the permission or whose token went stale. The interval is
+ * a deliberate trade rather than a default:
  *
  * - **60 seconds, foreground only.** A dispatcher's assignment reaches the
  *   driver within a minute of them looking at the phone.
@@ -29,12 +31,12 @@ export const API_BASE_URL =
  *   traffic the handset is generating anyway and adds low single-digit
  *   percentage points to hourly drain. Ten seconds would roughly quadruple
  *   that for a signal that changes a few times a shift.
- * - **Nothing polls in the background.** A backgrounded app draining battery
- *   for an assignment the driver is not looking at is how an app gets
- *   force-stopped, after which it receives nothing at all.
- *
- * The right answer is push, and it is named as a gap in `mobile/README.md`
- * rather than approximated with a faster timer.
+ * - **This one does not poll in the background**, even now that the process
+ *   survives there. A trip assigned by a dispatcher is work for later today,
+ *   and waking the radio for it while the phone is in a pocket spends a
+ *   shift's battery on a signal that changes a few times a day. The offer
+ *   poll is the one that earns background time, because it has a passenger
+ *   standing at the end of it.
  */
 export const TRIP_POLL_INTERVAL_MS = 60_000;
 
@@ -47,23 +49,24 @@ export const OUTBOX_TICK_INTERVAL_MS = 15_000;
  * Far faster than `TRIP_POLL_INTERVAL_MS`, and the two are different numbers
  * because they answer different questions. A trip assigned by a dispatcher is
  * work for later today, and a minute's delay costs nothing. An offer is a
- * fifteen-second countdown (`dispatch.offer_ttl_seconds`) with a passenger
+ * forty-five-second countdown (`dispatch.offer_ttl_seconds`) with a passenger
  * standing on a kerb at the end of it — poll that once a minute and the offer
  * has expired before the driver ever sees it.
  *
- * Five seconds is chosen against that window rather than against battery: a
- * fifteen-second offer polled every five is seen with two thirds of its clock
- * left, and polled every ten could be seen with three seconds.
+ * Five seconds is chosen against that window rather than against battery, and
+ * it is deliberately not relaxed now that the window is longer: the number to
+ * protect is how much of their clock a driver gets to *use*, and a job seen
+ * five seconds late is five seconds they do not get back whatever the window
+ * is.
  *
  * The cost is bounded by *when* it runs. This polls only while the driver is
- * on duty and only in the foreground, so it is not a background drain — a
- * driver who signs off stops paying for it entirely, which is the whole point
- * of duty being an explicit act.
+ * on duty — a driver who signs off stops paying for it entirely, which is the
+ * whole point of duty being an explicit act.
  *
- * The right answer is still push (ADR-0025), which makes this the fallback
- * rather than the mechanism. It stays either way: ADR-0025 §3 makes push
- * best-effort, because a driver can refuse the OS permission and ADR-0023's
- * thesis is dead zones.
+ * Push is what actually carries an offer now (ADR-0046), which makes this the
+ * fallback rather than the mechanism. It stays either way: ADR-0025 §3 makes
+ * push best-effort, because a driver can refuse the OS permission and
+ * ADR-0023's thesis is dead zones.
  */
 export const OFFER_POLL_INTERVAL_MS = 5_000;
 

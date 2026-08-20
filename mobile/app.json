@@ -1,22 +1,30 @@
 {
   "expo": {
     "name": "KangaruRide Driver",
-    "slug": "kangaruride-driver",
+    "slug": "kangaru",
+    "owner": "realakram20s-team",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "kangaruride-driver",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "ug.co.kangaruride.driver",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "KangaruRide records the route of a trip you are driving, so the office can verify distance against your odometer readings.",
-        "NSCameraUsageDescription": "KangaruRide lets you photograph the dashboard when you record an odometer reading. The photo is optional."
+        "NSLocationWhenInUseUsageDescription": "KangaruRide sends the office your position while you are online, so you can be offered the jobs nearest to you, and records the route of a trip you are driving so distance can be checked against your odometer readings.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "KangaruRide keeps sending your position while you are online and the app is in your pocket. Without this you stop being offered jobs a few minutes after the screen goes dark. It stops the moment you go offline.",
+        "NSLocationAlwaysUsageDescription": "KangaruRide keeps sending your position while you are online and the app is in your pocket. Without this you stop being offered jobs a few minutes after the screen goes dark. It stops the moment you go offline.",
+        "NSCameraUsageDescription": "KangaruRide lets you photograph the dashboard when you record an odometer reading. The photo is optional.",
+        "UIBackgroundModes": [
+          "location",
+          "remote-notification"
+        ]
       }
     },
     "android": {
       "package": "ug.co.kangaruride.driver",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#0F172A",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -27,11 +35,22 @@
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "WAKE_LOCK",
+        "VIBRATE",
         "CAMERA"
       ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "428e44a0-67ff-4336-a4eb-9cb5c0406258"
+      }
     },
     "plugins": [
       "expo-secure-store",
@@ -39,7 +58,10 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "KangaruRide records the route of a trip you are driving, so the office can verify distance against your odometer readings."
+          "locationWhenInUsePermission": "KangaruRide sends the office your position while you are online, so you can be offered the jobs nearest to you, and records the route of a trip you are driving so distance can be checked against your odometer readings.",
+          "locationAlwaysAndWhenInUsePermission": "KangaruRide keeps sending your position while you are online and the app is in your pocket. Without this you stop being offered jobs a few minutes after the screen goes dark. It stops the moment you go offline.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ],
       [
@@ -52,13 +74,24 @@
         "expo-notifications",
         {
           "icon": "./assets/android-icon-monochrome.png",
-          "color": "#2563EB"
+          "color": "#01903D",
+          "sounds": [
+            "./assets/sounds/offer_ring.wav"
+          ]
         }
       ],
       "expo-font",
       "expo-image",
       "expo-web-browser",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-audio",
+        {
+          "recordAudioAndroid": false,
+          "enableBackgroundRecording": false
+        }
+      ],
+      "expo-asset"
     ]
   }
 }

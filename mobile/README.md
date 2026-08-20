@@ -452,13 +452,60 @@ the vehicle off the coast of Ghana.
 
 ### Polling, and what it costs
 
-There are no push notifications in Phase 1, so the trip list polls every **60
-seconds, foreground only**. Roughly 60 small requests an hour; the radio wake is
-the cost, not the bytes, and at that interval it coincides with traffic the
-handset is generating anyway. Ten seconds would roughly quadruple it for a
-signal that changes a few times a shift. Nothing polls in the background — an
-app that drains battery for an assignment nobody is looking at gets force-stopped,
-after which it receives nothing at all.
+Push carries a job offer now (ADR-0046), but polling stays: ADR-0025 §3 makes
+push best-effort, so this is the path that works for a driver who refused the
+permission or whose token went stale.
+
+The trip list polls every **60 seconds, foreground only**. Roughly 60 small
+requests an hour; the radio wake is the cost, not the bytes, and at that
+interval it coincides with traffic the handset is generating anyway. Ten
+seconds would roughly quadruple it for a signal that changes a few times a
+shift. It stays foreground-only even though the process now survives
+backgrounding — a trip assigned for later today does not earn a radio wake from
+a pocket.
+
+The **offer** poll is the one that does, at five seconds while on duty. It has
+a passenger standing at the end of it.
+
+### The Expo slug is `kangaru`, and the app is not
+
+`app.json` reads `"slug": "kangaru"` while everything else about this app says
+*kangaruride-driver* — the deep-link `scheme`, the Android package
+`ug.co.kangaruride.driver`, the display name. That looks like a mistake and is
+not.
+
+**An EAS project id is permanently bound to one slug** ("A project ID is
+associated with a single slug, which cannot be changed" —
+[expo.fyi/eas-project-id](https://expo.fyi/eas-project-id)). The project this
+app is linked to, `428e44a0-67ff-4336-a4eb-9cb5c0406258`, was created as
+`kangaru`, so the app's slug had to move to meet it. Renaming the project on
+the dashboard changes its display name, not the slug EAS validates against —
+that was tried.
+
+The slug is an Expo-side identifier only. It affects the project's name in the
+EAS dashboard and build URLs, and **nothing on a handset**: the bundle
+identifier, the package, the scheme and the name a driver sees are all
+unaffected.
+
+**Do not "fix" it back to `kangaruride-driver`.** Every EAS command will fail
+with a slug mismatch until it is changed again. The only way to have the
+descriptive name is a *new* project id, which means new credentials and losing
+this project's build history.
+
+### Staying alive while on duty
+
+Going online starts an Android **foreground service** — the ongoing "You are
+online" notification — through `expo-location`'s background updates. That
+service is what keeps the process alive, and the presence heartbeat, the push
+handler and the ringtone all depend on it.
+
+Before it existed, `PresenceController`'s `setInterval` was throttled within
+minutes of backgrounding, and `dispatch.presence_ttl_seconds` is 180 — so a
+driver whose phone went into their pocket left the dispatch pool three minutes
+later with their screen still reading "You are online".
+
+`goOnline` / `goOffline` in `src/duty/OnlineService.ts` own it, called from the
+duty toggle and from both sign-out paths.
 
 ---
 
@@ -697,8 +744,23 @@ hides it.
    all rather than shipping a screen that is always empty. **Ask:** a
    `trip.assigned` notification type.
 
-5. **No push notifications** (brief gap 2, PROJECT.md Phase 1). Polling is the
-   consequence; the interval and its battery cost are in `src/config.ts`.
+5. ~~**No push notifications**~~ **Built (ADR-0046)**, and worth recording how
+   long it was silently broken: the backend channel, the device-token table and
+   the routes had all shipped, but `app.json` carried no `extra.eas.projectId`,
+   so `getExpoPushTokenAsync` threw into `PushRegistrar`'s deliberately-quiet
+   catch and **no handset was ever registered**. Nothing failed; nothing
+   happened. The app also had no notification handler at all, so a push arriving
+   with the app open was suppressed by Android and a tap opened the app on
+   whatever screen it was showing.
+
+   **This is why the driver app can no longer be developed in Expo Go.** Push,
+   foreground services and notification channels all need a development build —
+   see `eas.json`. Polling stays regardless; the interval and its battery cost
+   are in `src/config.ts`.
+
+   Still to do: the true full-screen `CallStyle` notification, which is staged
+   behind Google Play's `USE_FULL_SCREEN_INTENT` declaration, and CallKit on
+   iOS. Both are set out in ADR-0046 §6.
 
 6. **No offline sync endpoint** (brief gap 3). Owned entirely by ADR-0023, as
    the brief says it must be.
