@@ -61,6 +61,20 @@ interface DriverPresenceStore
      */
     public function dispatchable(array $driverIds = []): Collection;
 
+    /**
+     * Every driver currently on duty, whether or not the matcher would offer
+     * them work — the office's view, not the matcher's.
+     *
+     * `dispatchable()` deliberately hides a driver whose position has gone
+     * stale, because the matcher must not rank them from a place they have
+     * left. The live map wants the opposite: that driver is exactly the one
+     * a dispatcher needs to see, greyed and labelled "not reporting", so
+     * somebody calls them. Same rows, different question.
+     *
+     * @return Collection<int, DriverPresence>
+     */
+    public function onDuty(): Collection;
+
     /** Used by tests and by a driver's account being revoked. */
     public function forget(int $driverId): void;
 }

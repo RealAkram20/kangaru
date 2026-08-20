@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use Modules\Fleet\Controllers\AvailabilityBlockController;
 use Modules\Fleet\Controllers\DriverAvailabilityController;
 use Modules\Fleet\Controllers\DriverPresenceController;
+use Modules\Fleet\Controllers\OnDutyDriverController;
 use Modules\Fleet\Controllers\VehicleAllocationController;
 use Modules\Fleet\Controllers\ZoneController;
 
@@ -79,3 +80,9 @@ Route::put('me/duty', [DriverPresenceController::class, 'update'])->name('me.dut
 Route::post('me/presence', [DriverPresenceController::class, 'ping'])
     ->middleware('throttle:30,1')
     ->name('me.presence.store');
+
+// The office's read of the same presence: who is on duty and where, for
+// the live map. Not under `/me/` — this is somebody else looking — and
+// gated by `DriverPolicy::viewAny`, the fleet register's own read, which
+// a client's roles do not hold (security-gate F2).
+Route::get('driver-presence', [OnDutyDriverController::class, 'index'])->name('driver-presence.index');
