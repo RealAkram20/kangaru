@@ -2,6 +2,7 @@
 
 namespace App\Concerns;
 
+use App\Models\Customer;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
 use App\Support\Tenancy\TenantScope;
@@ -98,6 +99,27 @@ trait BelongsToTenant
         $actor = request()->user();
 
         if ($actor instanceof User && $actor->isPlatformLevel()) {
+            $query->withoutGlobalScope(TenantScope::class);
+        }
+
+        /*
+         * A customer is the other actor with no tenant (security-gate F5).
+         *
+         * Customer routes run no `IdentifyTenant`, so for them the scope
+         * always fails closed — which made `POST /customer/trips/{trip}/
+         * rating` 404 for every customer including on their own completed
+         * trip, before `TripRatingController` ever ran. The owner rated a
+         * real ride and nothing arrived; the controller's own "No such
+         * trip." was never reached (the 404 was the framework's — the tell
+         * the census recorded).
+         *
+         * Resolution is not authorization, exactly as for platform staff
+         * above: every customer controller refuses a record that is not
+         * theirs, and with the same 404 the scope would have given —
+         * `TripRatingController` compares `customer_id` before anything
+         * else — so cross-customer ids stay masked.
+         */
+        if ($actor instanceof Customer) {
             $query->withoutGlobalScope(TenantScope::class);
         }
 

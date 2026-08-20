@@ -393,9 +393,22 @@ paths:
                     items: { $ref: '#/components/schemas/User' }
                   meta:
                     type: object
-                    required: [assignable_roles]
+                    required: [assignable_roles, capabilities, routes]
                     additionalProperties: false
                     properties:
+                      routes:
+                        type: array
+                        description: >
+                          The client's active routes this administrator may put a
+                          colleague on (ADR-0045 §8). Empty for a platform account,
+                          which belongs to no tenant and so has no routes of its own.
+                        items:
+                          type: object
+                          required: [id, name]
+                          additionalProperties: false
+                          properties:
+                            id: { type: integer }
+                            name: { type: string }
                       assignable_roles:
                         type: array
                         items:
@@ -406,6 +419,17 @@ paths:
                             value: { type: string }
                             label: { type: string }
                             description: { type: ['string', 'null'] }
+                      capabilities:
+                        type: array
+                        description: The per-person switches a client's administrator may set (ClientCapability), with labels.
+                        items:
+                          type: object
+                          required: [slug, label, description]
+                          additionalProperties: false
+                          properties:
+                            slug: { $ref: '#/components/schemas/ClientCapability' }
+                            label: { type: string }
+                            description: { type: string }
         default:
           $ref: '#/components/responses/Error'
     post:
@@ -416,14 +440,27 @@ paths:
           application/json:
             schema:
               type: object
-              required: [name, email, role, password]
+              required: [name, email, phone, role, password]
               additionalProperties: false
               properties:
                 name: { type: string, maxLength: 255 }
                 email: { type: string, format: email }
+                phone: { type: string, maxLength: 32 }
                 role: { type: string }
                 password: { type: string, minLength: 12 }
                 tenant_id: { type: integer, description: Super Admin only. }
+                capabilities:
+                  type: array
+                  items: { $ref: '#/components/schemas/ClientCapability' }
+                books_without_approval: { type: boolean }
+                route_ids:
+                  type: array
+                  maxItems: 50
+                  description: >
+                    The client's routes this colleague rides (ADR-0045 §8). The full
+                    list, replacing what was there. Refused for a platform account,
+                    which has no routes, and for a route belonging to another client.
+                  items: { type: integer }
       responses:
         '201':
           $ref: '#/components/responses/UserResponse'
@@ -452,11 +489,54 @@ paths:
               properties:
                 name: { type: string, maxLength: 255 }
                 email: { type: string, format: email }
+                phone: { type: string, maxLength: 32 }
                 role: { type: string }
                 status: { enum: [active, suspended] }
+                capabilities:
+                  type: array
+                  description: The full list, replacing what was there — a switch panel is saved whole.
+                  items: { $ref: '#/components/schemas/ClientCapability' }
+                books_without_approval: { type: boolean }
+                route_ids:
+                  type: array
+                  maxItems: 50
+                  description: The full list, replacing what was there — a roster is saved whole (ADR-0045 §8).
+                  items: { type: integer }
       responses:
         '200':
           $ref: '#/components/responses/UserResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/colleagues:
+    get:
+      summary: >
+        The people you may raise a booking for — your own organisation's
+        staff, by name or email. Deliberately not a filter on /users: that
+        one is gated on `staff.view` and answers with roles, capabilities
+        and MFA state, and the Corporate Employee naming a passenger holds
+        none of it. Gated on `bookings.create` instead — you may look up a
+        colleague if you may book a car for one. `q` is required and the
+        result is capped, so this is a lookup and never a directory dump.
+        Empty for platform staff, who belong to no tenant and so have no
+        colleagues; they book walk-ins by name.
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 2, maxLength: 120 } }
+      responses:
+        '200':
+          description: At most fifteen matching colleagues.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Colleague' }
         default:
           $ref: '#/components/responses/Error'
 
@@ -487,6 +567,56 @@ paths:
                     additionalProperties: false
                     properties:
                       settings: { $ref: '#/components/schemas/PublicSettings' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/public/fare-quotes:
+    get:
+      summary: >
+        What a ride would cost, per class, before it is ordered — the public
+        tariff (ADR-0026) answering the order form. Unauthenticated: read on
+        the form before anybody has an account (ADR-0015 §1 requires one to
+        order, not to look), and it reveals only the public tariff's
+        arithmetic. Every class is priced through the same
+        `WalkInFareService::quote()` the driver's estimate uses, mapped
+        through `RideVehicleClass`, so passenger and driver are told one
+        number. A class the tariff does not price, or no tariff at all, is
+        `null` for that class and 200 — the form falls back to its "from"
+        figure. Throttled 30/min/IP.
+      parameters:
+        - { name: pickup_latitude, in: query, required: true, schema: { type: number } }
+        - { name: pickup_longitude, in: query, required: true, schema: { type: number } }
+        - { name: dropoff_latitude, in: query, required: true, schema: { type: number } }
+        - { name: dropoff_longitude, in: query, required: true, schema: { type: number } }
+      responses:
+        '200':
+          description: One quote per ride class, or null where the tariff is silent.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [quotes]
+                    additionalProperties: false
+                    properties:
+                      quotes:
+                        type: object
+                        required: [economy, standard, xl, boda, electric_boda]
+                        additionalProperties: false
+                        properties:
+                          economy: { $ref: '#/components/schemas/NullableWalkInFareEstimate' }
+                          standard: { $ref: '#/components/schemas/NullableWalkInFareEstimate' }
+                          xl: { $ref: '#/components/schemas/NullableWalkInFareEstimate' }
+                          boda: { $ref: '#/components/schemas/NullableWalkInFareEstimate' }
+                          electric_boda: { $ref: '#/components/schemas/NullableWalkInFareEstimate' }
+        '429':
+          $ref: '#/components/responses/Throttled'
         default:
           $ref: '#/components/responses/Error'
 
@@ -802,6 +932,15 @@ paths:
               required: [passenger_name, passenger_phone, origin, destination]
               additionalProperties: false
               properties:
+                passenger_user_id:
+                  type: ['integer', 'null']
+                  description: >
+                    The colleague travelling. **Required** when a client's own
+                    staff raise the booking — their bookings are for their own
+                    people — and `passenger_name` is then taken from that
+                    account rather than from this request, so one employee
+                    cannot arrive spelled three ways. Optional for Shanitah's
+                    own staff, who book walk-ins and callers with no account.
                 passenger_name: { type: string, maxLength: 255 }
                 passenger_phone: { type: string, maxLength: 32 }
                 passenger_count: { type: ['integer', 'null'], minimum: 1, maximum: 60 }
@@ -1464,6 +1603,245 @@ paths:
           $ref: '#/components/responses/Error'
 
   # ------------------------------------------------------------------
+  # Client places and routes (Modules/Clients) - ADR-0045
+  # The plan half: what a corporate client pins, and the circuits built
+  # from them. Trip stops (the evidence half) are a later pass.
+  # ------------------------------------------------------------------
+  /api/v1/places:
+    get:
+      summary: The client's saved places, by name.
+      responses:
+        '200':
+          description: Saved places.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ClientPlace' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Pins a location for this client.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, latitude, longitude]
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                address: { type: ['string', 'null'], maxLength: 255 }
+                latitude: { type: number, minimum: -90, maximum: 90 }
+                longitude: { type: number, minimum: -180, maximum: 180 }
+                arrival_radius_m: { type: ['integer', 'null'], minimum: 25, maximum: 5000 }
+                notes: { type: ['string', 'null'], maxLength: 2000 }
+                is_active: { type: boolean }
+      responses:
+        '201':
+          $ref: '#/components/responses/ClientPlaceResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/places/{place}:
+    parameters:
+      - { name: place, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: One saved place.
+      responses:
+        '200':
+          $ref: '#/components/responses/ClientPlaceResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    patch:
+      summary: Moves, renames or retires a saved place.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                address: { type: ['string', 'null'], maxLength: 255 }
+                latitude: { type: number, minimum: -90, maximum: 90 }
+                longitude: { type: number, minimum: -180, maximum: 180 }
+                arrival_radius_m: { type: ['integer', 'null'], minimum: 25, maximum: 5000 }
+                notes: { type: ['string', 'null'], maxLength: 2000 }
+                is_active: { type: boolean }
+      responses:
+        '200':
+          $ref: '#/components/responses/ClientPlaceResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: >
+        Deletes a saved place. Refused 409 CLIENT_PLACE_IN_USE while any
+        route still visits it - the message names those routes.
+      responses:
+        '204':
+          description: Deleted. No content.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/routes:
+    get:
+      summary: The client's routes, by name, with their stops in order.
+      responses:
+        '200':
+          description: Routes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ClientRoute' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: >
+        Builds a route. Stop order is the array's order - a `sequence` sent
+        by a caller is ignored. Refused 422 UNKNOWN_CLIENT_PLACE or
+        UNKNOWN_ROUTE_MEMBER if any id is not this client's.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                reference: { type: ['string', 'null'], maxLength: 40 }
+                notes: { type: ['string', 'null'], maxLength: 2000 }
+                is_active: { type: boolean }
+                stops:
+                  type: array
+                  maxItems: 25
+                  items: { $ref: '#/components/schemas/ClientRouteStopInput' }
+                member_ids:
+                  type: array
+                  maxItems: 50
+                  items: { type: integer }
+      responses:
+        '201':
+          $ref: '#/components/responses/ClientRouteResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/routes/preview:
+    post:
+      summary: >
+        The road through an ordered list of the client's places, for a
+        circuit that is still being dragged into shape and has no id yet.
+        A POST for a read, because 25 ids in a query string is a URL long
+        enough for a proxy to truncate - and a truncated list draws a
+        shorter circuit rather than failing.
+
+        `data` is null when routing is switched off or the provider
+        declined (ADR-0031 §2). That means no line and no distance, never a
+        straight line between the stops and never a crow's-flight figure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [place_ids]
+              additionalProperties: false
+              properties:
+                place_ids:
+                  description: >
+                    Ordered, origin first. A place may legitimately appear
+                    twice - head office at both ends is the ordinary shape
+                    of a cash run.
+                  type: array
+                  minItems: 2
+                  maxItems: 25
+                  items: { type: integer }
+      responses:
+        '200':
+          description: The circuit's shape, or null if none could be drawn.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    oneOf:
+                      - { $ref: '#/components/schemas/DrawnRoute' }
+                      - { type: 'null' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/routes/{route}:
+    parameters:
+      - { name: route, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: One route, with its stops in order and the team who ride it.
+      responses:
+        '200':
+          $ref: '#/components/responses/ClientRouteResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    patch:
+      summary: >
+        Edits a route. Omitting `stops` or `member_ids` leaves them
+        untouched; sending an empty array empties them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                reference: { type: ['string', 'null'], maxLength: 40 }
+                notes: { type: ['string', 'null'], maxLength: 2000 }
+                is_active: { type: boolean }
+                stops:
+                  type: array
+                  maxItems: 25
+                  items: { $ref: '#/components/schemas/ClientRouteStopInput' }
+                member_ids:
+                  type: array
+                  maxItems: 50
+                  items: { type: integer }
+      responses:
+        '200':
+          $ref: '#/components/responses/ClientRouteResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Retires a route (soft delete).
+      responses:
+        '204':
+          description: Deleted. No content.
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
   # Drivers (Modules/Drivers) — the platform's, not a tenant's (ADR-0005)
   # ------------------------------------------------------------------
   /api/v1/drivers:
@@ -2017,6 +2395,17 @@ paths:
                   data:
                     type: array
                     items: { $ref: '#/components/schemas/LivePosition' }
+                  meta:
+                    description: >
+                      Same contract as /trips — whether this list spans
+                      clients, and the clients a platform reader may narrow
+                      to with `tenant_id`.
+                    type: object
+                    required: [scope, filters]
+                    additionalProperties: false
+                    properties:
+                      scope: { $ref: '#/components/schemas/Scope' }
+                      filters: { $ref: '#/components/schemas/ClientsFilter' }
         default:
           $ref: '#/components/responses/Error'
 
@@ -4157,6 +4546,83 @@ paths:
           $ref: '#/components/responses/Error'
 
   # ------------------------------------------------------------------
+  # Nearby vehicles (Modules/Fleet) — public by design.
+  # The real fleet behind the order page's ambient vehicles and the client
+  # live map's capacity view. Anonymized: positions and silhouettes only.
+  # ------------------------------------------------------------------
+  /api/v1/public/nearby-vehicles:
+    get:
+      summary: The vehicles available near a point, for anyone to see.
+      description: >
+        The dispatchable pool — on duty, position fresh, not on a trip —
+        nearest the given point first, radius-bounded and capped so one
+        call can never dump the fleet. Each entry is a position and a
+        silhouette; the `key` is an hourly-rotating opaque marker id, so a
+        map can move markers smoothly between polls while a day of polling
+        follows nobody. No driver id, name, plate or phone, ever.
+        Throttled to 30/min.
+      parameters:
+        - name: latitude
+          in: query
+          required: true
+          schema: { type: number, minimum: -90, maximum: 90 }
+        - name: longitude
+          in: query
+          required: true
+          schema: { type: number, minimum: -180, maximum: 180 }
+      responses:
+        '200':
+          description: Up to twelve vehicles within 15km, nearest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/NearbyVehicle' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # On-duty drivers (Modules/Fleet) — ADR-0024 section 2, the office's read.
+  # `/live-positions` is where the vehicles on a trip are; this is the
+  # pool waiting for one. Together they are the live map.
+  # ------------------------------------------------------------------
+  /api/v1/driver-presence:
+    get:
+      summary: Who is on duty, and where.
+      description: >
+        Every driver currently on duty, with their last reported position,
+        the vehicle they are in, and the occupying trip that has them if
+        one does. Includes drivers the matcher would hide — a stale
+        position, or none at all — marked `stale`, because the map's job is
+        to get them phoned. `drivers.view` (DriverPolicy::viewAny): the
+        roles that operate the fleet; a client's people are refused, as
+        they are from the fleet register — the riders are Shanitah's.
+      responses:
+        '200':
+          description: The pool, by driver id.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/OnDutyDriver' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
   # Zones (Modules/Fleet) — the geofencing engine, ADR-0021
   # ------------------------------------------------------------------
   /api/v1/zones:
@@ -4562,10 +5028,17 @@ paths:
 
   /api/v1/trips/{trip}/route:
     get:
-      summary: The road between the driver and the drop-off (ADR-0031).
+      summary: The road between the driver and where they are going (ADR-0031).
       description: >
-        A road-following route from the driver's position — or from the pickup
-        when they have not sent one — to the trip's drop-off.
+        A road-following route from the driver's position to one end of the
+        job — the pickup while they are on their way to the passenger, the
+        drop-off once the passenger is in the car. `to` picks which.
+
+
+        **The two are different roads and a client must not confuse them.**
+        On a real Kampala order, the approach measured 7.3 km and the fare
+        71.0 km from the same origin; a screen that draws the wrong one sends
+        a driver away from the person waiting for them.
 
 
         **`route` is null far more often than not, and null is always a 200.**
@@ -4585,12 +5058,23 @@ paths:
         - name: from_latitude
           in: query
           required: false
-          description: Where to route from. Defaults to the pickup when absent.
+          description: >
+            Where to route from. Defaults to the pickup when absent — except
+            for `to=pickup`, where routing from the pickup to the pickup is a
+            zero-length line, so an absent origin answers `null` instead.
           schema: { type: number, minimum: -90, maximum: 90 }
         - name: from_longitude
           in: query
           required: false
           schema: { type: number, minimum: -180, maximum: 180 }
+        - name: to
+          in: query
+          required: false
+          description: >
+            Which end of the job to route to. `dropoff` is the fare itself and
+            the default; `pickup` is the approach, the road a driver is on
+            between accepting and arriving.
+          schema: { type: string, enum: [pickup, dropoff], default: dropoff }
       responses:
         '200':
           description: The route, or null when none can be drawn.
@@ -5550,6 +6034,32 @@ components:
               message: { type: string }
               data: { $ref: '#/components/schemas/Company' }
 
+    ClientPlaceResponse:
+      description: One saved place.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/ClientPlace' }
+
+    ClientRouteResponse:
+      description: One route.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/ClientRoute' }
+
     AvailabilityBlockResponse:
       description: One availability block.
       content:
@@ -5896,6 +6406,9 @@ components:
         - ROLE_IN_USE
         - ORDERING_PAUSED
         - MAIL_DELIVERY_FAILED
+        - UNKNOWN_CLIENT_PLACE
+        - UNKNOWN_ROUTE_MEMBER
+        - CLIENT_PLACE_IN_USE
         - DRIVER_ACCOUNT_CONFLICT
         - DRIVER_APPLICATION_CLOSED
         - AUTH_METHOD_DISABLED
@@ -5981,6 +6494,20 @@ components:
         errors: { $ref: '#/components/schemas/EmptyableStringListMap' }
 
     # -------------------------- resources ----------------------------
+    Colleague:
+      type: object
+      description: >
+        A colleague as a booking's passenger picker needs them. Three fields,
+        and the shortness is the point — the full User carries roles,
+        capabilities and MFA state, none of which belongs behind
+        `bookings.create`.
+      required: [id, name, phone]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        phone: { type: ['string', 'null'] }
+
     User:
       type: object
       required:
@@ -5988,8 +6515,11 @@ components:
         - tenant_id
         - name
         - email
+        - phone
         - role
         - role_label
+        - capabilities
+        - books_without_approval
         - status
         - status_label
         - is_active
@@ -6002,10 +6532,31 @@ components:
       properties:
         id: { type: integer }
         tenant_id: { type: ['integer', 'null'] }
+        tenant_name:
+          type: ['string', 'null']
+          description: The client's display name ("Centenary Bank"); null for platform staff, who have none (ADR-0006). Present on /auth/* and /users* responses; a nested actor (a booking's requester, an audit row's user) omits it.
         name: { type: string }
         email: { type: string }
+        phone:
+          type: ['string', 'null']
+          description: The work number a booking raised for this person is dispatched against. Null on accounts created before the column existed.
         role: { type: string, description: Role slug — the external reference. }
         role_label: { type: string }
+        capabilities:
+          type: array
+          description: Per-person switches a client's administrator set, unioned onto the role's permissions (ClientCapability).
+          items: { $ref: '#/components/schemas/ClientCapability' }
+        books_without_approval:
+          type: boolean
+          description: A booking this person creates is approved on their behalf.
+        route_ids:
+          type: array
+          description: >
+            The client's routes this person rides (ADR-0045 §8) — a roster,
+            never a permission; nothing authorises off it. Present only on
+            /users* responses, which load the relation; a nested actor (a
+            booking's requester, an audit row's user) omits the key.
+          items: { type: integer }
         status: { enum: [active, suspended] }
         status_label: { type: string }
         is_active: { type: boolean }
@@ -6017,6 +6568,11 @@ components:
           type: integer
           description: Present only when a factor is enrolled (ADR-0010).
         mfa_recovery_codes_low: { type: boolean }
+
+    ClientCapability:
+      type: string
+      description: A named bundle of permissions a corporate client's administrator may switch on for one of their own people (App\Enums\ClientCapability).
+      enum: [approves_bookings, sees_finance, manages_staff, manages_routes]
 
     Role:
       type: object
@@ -6101,6 +6657,106 @@ components:
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
         updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
 
+    ClientPlace:
+      description: >
+        A location the client has pinned (ADR-0045). Both coordinates are
+        always present - the column is NOT NULL, so there is no
+        partially-located state for a client to handle.
+      type: object
+      required: [id, name, address, latitude, longitude, arrival_radius_m, notes, is_active, created_at, updated_at]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        address: { type: ['string', 'null'] }
+        latitude: { type: number }
+        longitude: { type: number }
+        arrival_radius_m: { type: ['integer', 'null'] }
+        notes: { type: ['string', 'null'] }
+        is_active: { type: boolean }
+        route_count:
+          description: Only on the single-place read, where the delete path loads it.
+          type: integer
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    DrawnRoute:
+      description: >
+        A road drawn by the configured provider (ADR-0031). `is_estimate` is
+        always true and travels with the payload rather than being a rule in
+        a docblock - a client that renders these must label them estimates.
+        `duration_seconds` is null unless the provider supplied one for
+        every leg; nothing derives it.
+      type: object
+      required: [polyline, distance_km, duration_seconds, provider, is_estimate]
+      additionalProperties: false
+      properties:
+        polyline:
+          description: Precision-5 encoded polyline, the encoding both providers emit.
+          type: string
+        distance_km: { type: number }
+        duration_seconds: { type: ['integer', 'null'] }
+        provider: { enum: [google, osrm] }
+        is_estimate: { enum: [true] }
+
+    ClientRouteStopInput:
+      type: object
+      required: [client_place_id]
+      additionalProperties: false
+      properties:
+        client_place_id: { type: integer }
+        expected_dwell_minutes: { type: ['integer', 'null'], minimum: 0, maximum: 1440 }
+        driver_notes: { type: ['string', 'null'], maxLength: 1000 }
+
+    ClientRouteStop:
+      description: >
+        A place's position in a route. The place is nested rather than
+        flattened, because it is a live reference and not a snapshot -
+        moving a pin moves it on every route at once.
+      type: object
+      required: [id, sequence, expected_dwell_minutes, driver_notes]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        sequence: { type: integer }
+        expected_dwell_minutes: { type: ['integer', 'null'] }
+        driver_notes: { type: ['string', 'null'] }
+        place: { $ref: '#/components/schemas/ClientPlace' }
+
+    ClientRoute:
+      description: >
+        A circuit the client built (ADR-0045). Carries no distance or
+        duration: those are the routing provider's to state per draw
+        (ADR-0031), and a stored one would describe the route as it was
+        drawn rather than as it is.
+      type: object
+      required: [id, name, reference, notes, is_active, created_at, updated_at]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        reference: { type: ['string', 'null'] }
+        notes: { type: ['string', 'null'] }
+        is_active: { type: boolean }
+        stop_count: { type: integer }
+        stops:
+          type: array
+          items: { $ref: '#/components/schemas/ClientRouteStop' }
+        members:
+          description: >
+            Who rides this route. Allow-listed to an id and a name - these
+            are User rows and a route needs nothing else from them.
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            additionalProperties: false
+            properties:
+              id: { type: integer }
+              name: { type: string }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
     ContactDetails:
       description: >
         A number to dial and who answers it. `label` is not decoration —
@@ -6122,7 +6778,7 @@ components:
         names are `RidePhase`'s own in the web client, so the mapping is an
         identity function rather than a translation table.
       type: object
-      required: [reference, service_type, phase, pickup, dropoff, trip_id, captain, created_at]
+      required: [reference, service_type, phase, pickup, dropoff, trip_id, captain, estimated_fare, fare, created_at]
       additionalProperties: false
       properties:
         reference: { type: string }
@@ -6158,7 +6814,35 @@ components:
           anyOf:
             - { $ref: '#/components/schemas/RideCaptain' }
             - { enum: [null] }
+        estimated_fare:
+          description: >
+            What the ride is expected to cost, priced from the captain's own
+            vehicle — the same quote the driver sees (ADR-0026 §2). Null before
+            a captain is assigned, once a settled fare exists, when either end
+            has no pin, or when no public tariff prices the category.
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/WalkInFareEstimate'
+        fare:
+          description: >
+            What the ride cost, once settled at Trip Completed. The passenger's
+            screen renders its fare-pay-rate card from this; without it the
+            card could never appear. `distance_km` is the measured trip
+            distance the fare was priced from.
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/CustomerSettledFare'
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    CustomerSettledFare:
+      type: object
+      required: [total_minor, currency, distance_km, is_estimate]
+      additionalProperties: false
+      properties:
+        total_minor: { type: integer, minimum: 0 }
+        currency: { type: ['string', 'null'] }
+        distance_km: { type: ['number', 'null'] }
+        is_estimate: { type: boolean, enum: [false] }
 
     RideCaptain:
       description: >
@@ -6328,6 +7012,11 @@ components:
         payer:
           description: Which end of a delivery settles the bill. Null on a ride, where there is only one end.
           enum: [sender, receiver, null]
+
+    NullableWalkInFareEstimate:
+      oneOf:
+        - type: 'null'
+        - $ref: '#/components/schemas/WalkInFareEstimate'
 
     WalkInFareEstimate:
       description: >
@@ -6544,6 +7233,138 @@ components:
             ambiguous until you know whether it is a parked vehicle or a
             dead phone.
           type: boolean
+        vehicle:
+          description: >
+            Who this marker is, so the map can name it. Allow-listed — no
+            VIN; the fleet register serves that behind its own policy. Null
+            only if the trip's vehicle row is gone.
+          $ref: '#/components/schemas/LiveMapVehicle'
+        driver:
+          description: Allow-listed — name only, no phone or licence number.
+          $ref: '#/components/schemas/LiveMapDriver'
+        trip:
+          description: >
+            The occupying trip the position was read through. Deliberately
+            carries no passenger: ADR-0024 §7 governs who sees a rider's
+            name, and the trip record behind "Open trip" is where it lives.
+          type: ['object', 'null']
+          required: [id, status, origin, destination, client]
+          additionalProperties: false
+          properties:
+            id: { type: integer }
+            status: { $ref: '#/components/schemas/TripStatus' }
+            origin: { type: ['string', 'null'] }
+            destination: { type: ['string', 'null'] }
+            client:
+              description: Null on a walk-in (ADR-0024 §1) — Shanitah's own ride.
+              type: ['object', 'null']
+              required: [id, name]
+              additionalProperties: false
+              properties:
+                id: { type: integer }
+                name: { type: string }
+
+    LiveMapVehicle:
+      description: >
+        A vehicle as the live map names it — plate, make, model, category;
+        nothing a register would hold. The category is what picks the
+        silhouette the map draws, the same source the public nearby read
+        maps to `kind`.
+      type: ['object', 'null']
+      required: [id, registration_number, make, model, category]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        registration_number: { type: string }
+        make: { type: ['string', 'null'] }
+        model: { type: ['string', 'null'] }
+        category: { type: ['string', 'null'] }
+
+    LiveMapDriver:
+      description: A driver as the live map names them — id and name only.
+      type: ['object', 'null']
+      required: [id, name]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+
+    NearbyVehicle:
+      description: >
+        One available vehicle near a point, anonymized for the public
+        surfaces. A position and a silhouette — deliberately nothing that
+        joins back to the fleet register.
+      type: object
+      required: [key, category, kind, latitude, longitude, age_seconds]
+      additionalProperties: false
+      properties:
+        key:
+          description: Opaque marker id, stable within the hour, rotating across hours.
+          type: string
+        category:
+          description: The vehicle's platform category; null when the driver has no vehicle on record.
+          type: ['string', 'null']
+        kind:
+          description: Which sprite family a map should draw.
+          enum: [sedan, suv, pickup, boda]
+        latitude: { type: number }
+        longitude: { type: number }
+        age_seconds:
+          description: Seconds since the position was reported, device clock.
+          type: ['integer', 'null']
+      # `age_seconds` is null only in the degenerate case of a store row
+      # with no timestamp; dispatchable() should never serve one.
+
+    OnDutyDriver:
+      description: >
+        One on-duty driver, for the live map (ADR-0024 §2, the office's
+        read). Shaped like LivePosition on purpose — `age_seconds` and
+        `stale` mean the same in both — so a page can merge the two lists
+        and sort them by who needs attention.
+      type: object
+      required:
+        - driver_id
+        - driver
+        - vehicle_id
+        - vehicle
+        - latitude
+        - longitude
+        - accuracy_metres
+        - recorded_at
+        - age_seconds
+        - stale
+        - trip
+      additionalProperties: false
+      properties:
+        driver_id: { type: integer }
+        driver: { $ref: '#/components/schemas/LiveMapDriver' }
+        vehicle_id:
+          description: The shift's vehicle, else the one on the driver's profile; null when neither.
+          type: ['integer', 'null']
+        vehicle: { $ref: '#/components/schemas/LiveMapVehicle' }
+        latitude:
+          description: Null, not zero, when the handset has never reported.
+          type: ['number', 'null']
+        longitude: { type: ['number', 'null'] }
+        accuracy_metres: { type: ['number', 'null'] }
+        recorded_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        age_seconds:
+          description: Null when never reported, like recorded_at.
+          type: ['integer', 'null']
+        stale:
+          description: >
+            Older than dispatch.presence_ttl_seconds, or never reported.
+            The matcher hides such a driver; the map shows them greyed, so
+            that somebody phones them.
+          type: boolean
+        trip:
+          description: The occupying trip that has them, or null when they are waiting for work.
+          type: ['object', 'null']
+          required: [id, status]
+          additionalProperties: false
+          properties:
+            id: { type: integer }
+            status: { $ref: '#/components/schemas/TripStatus' }
 
     CustomerProfile:
       description: >
@@ -7006,9 +7827,58 @@ components:
             in config. Those are properties of the measuring apparatus rather
             than business rules.
           type: object
-          required: [variance_threshold_percent, odometer_max_km_per_trip]
+          required:
+            [
+              odometer_enabled,
+              trace_route_ceiling_percent,
+              variance_threshold_percent,
+              odometer_max_km_per_trip,
+            ]
           additionalProperties: false
           properties:
+            odometer_enabled:
+              type: boolean
+              description: >
+                Whether drivers record opening and closing odometer readings
+                at all (ADR-0047). On by default.
+
+
+                Turning it off has a contractual cost: PROJECT.md lists
+                "opening and closing odometer (mileage) readings" as the
+                Bank's acceptance criterion #4 for the Phase 1 MVP, and this
+                switch is platform-wide — corporate trips included.
+
+
+                With it off, the billable distance comes from the recorded GPS
+                trace, bounded by what the road between the trip's start and
+                end allows. A trip with no usable trace completes with a null
+                distance and a review flag rather than an invented figure.
+
+
+                Public: the Driver's Application renders from it, dropping the
+                odometer screens out of the trip flow entirely so that Start
+                Trip and Complete Trip become single taps.
+            trace_route_ceiling_percent:
+              type: number
+              minimum: 0
+              maximum: 200
+              description: >
+                How far past the road route a measured GPS trace may run
+                before it stops being believable, as a percentage. Only
+                consulted when `odometer_enabled` is false.
+
+
+                Real drives run longer than the route — diversions, one-way
+                systems, a passenger asking for a stop — so the margin is
+                generous. It exists to catch the failure that matters once the
+                trace prices the fare rather than merely checking it: jitter or
+                a spoofed location inflating a distance with nothing to check
+                it against.
+
+
+                A trace over the ceiling is billed at the ceiling and flagged,
+                never refused. The passenger is at the kerb and the driver did
+                drive somewhere.
             variance_threshold_percent:
               type: number
               minimum: 1
@@ -7139,10 +8009,26 @@ components:
         The unauthenticated branding subset: catalogue keys flagged
         public only, asset paths as absolute URLs.
       type: object
-      required: [branding, auth, regional, ordering, safety]
+      required: [branding, auth, regional, ordering, safety, tracking]
       additionalProperties: false
       properties:
         branding: { $ref: '#/components/schemas/BrandingSettings' }
+        tracking:
+          description: >
+            Whether the Driver's Application should ask for odometer readings
+            (ADR-0047), and nothing else from that group — the variance
+            threshold and the per-trip ceiling are operator business the app
+            has no use for.
+
+
+            Public because the app renders its trip flow from it: with the
+            odometer off, the odometer screens leave the flow and Start Trip
+            and Complete Trip become single taps.
+          type: object
+          required: [odometer_enabled]
+          additionalProperties: false
+          properties:
+            odometer_enabled: { type: boolean }
         safety:
           description: >
             The emergency number, and nothing else from that group (ADR-0040).
@@ -7414,6 +8300,7 @@ components:
         - id
         - tenant_id
         - requested_by_user_id
+        - passenger_user_id
         - passenger_name
         - passenger_phone
         - passenger_count
@@ -7438,6 +8325,14 @@ components:
           anyOf:
             - { $ref: '#/components/schemas/User' }
             - { enum: [null] }
+        passenger_user_id:
+          type: ['integer', 'null']
+          description: >
+            The colleague this was raised for, when a client raised it; null
+            for the walk-ins and callers Shanitah's own desk books. The link,
+            not the source — `passenger_name` and `passenger_phone` below stay
+            authoritative, because they are the snapshot the driver was
+            dispatched against.
         passenger_name: { type: string }
         passenger_phone: { type: string }
         passenger_count: { type: ['integer', 'null'] }
@@ -9089,7 +9984,7 @@ components:
       additionalProperties: false
       properties:
         id: { type: integer }
-        type: { enum: [booking.approved, booking.rejected, report.export.ready, order_request.received, trip.offered] }
+        type: { enum: [booking.approved, booking.rejected, report.export.ready, order_request.received, trip.offered, trip.assigned, trip.driver_arrived, trip.completed] }
         type_label: { type: string }
         subject: { type: string }
         body: { type: string }

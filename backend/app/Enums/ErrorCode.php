@@ -90,6 +90,25 @@ enum ErrorCode: string
     case MAIL_DELIVERY_FAILED = 'MAIL_DELIVERY_FAILED';
 
     /**
+     * ADR-0045: a route named a saved place that is not this client's, or a
+     * team member who is not in their organisation. 422 rather than 404 —
+     * the route being saved is the resource, and it is the *payload* that
+     * is wrong. A 404 here would also be a worse answer than it looks: the
+     * ids came from the client's own screen, so "not found" reads as "we
+     * lost your data" rather than "that one is not yours".
+     */
+    case UNKNOWN_CLIENT_PLACE = 'UNKNOWN_CLIENT_PLACE';
+    case UNKNOWN_ROUTE_MEMBER = 'UNKNOWN_ROUTE_MEMBER';
+
+    /**
+     * A saved place cannot be deleted while a route still visits it
+     * (ADR-0045 §1 — `client_route_stops.client_place_id` is
+     * restrictOnDelete). 409: the request is legal and the state refuses
+     * it, and the message names the routes so the officer can act.
+     */
+    case CLIENT_PLACE_IN_USE = 'CLIENT_PLACE_IN_USE';
+
+    /**
      * The sign-in account cannot be attached to this driver (ADR-0016):
      * the profile already has one, or the account being linked is already
      * some other driver's. 409 rather than 422 — the request is

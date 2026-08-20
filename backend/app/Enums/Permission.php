@@ -100,6 +100,22 @@ enum Permission: string
     case COMPANIES_UPDATE = 'companies.update';
     case COMPANIES_DELETE = 'companies.delete';
 
+    /**
+     * ADR-0045: read a client's saved places and the routes built from
+     * them. Wide on the platform side, because a dispatcher looking at a
+     * multi-stop trip on the live map has to be able to see the circuit it
+     * came from — a stop list with no plan behind it is unreadable.
+     */
+    case ROUTES_VIEW = 'routes.view';
+
+    /**
+     * Build them. Narrow, and it is the *client's* to hold: ADR-0045 §9
+     * puts route building on the client's side of the panel, because a
+     * bank's cash circuit is a bank's operational decision. Shanitah's
+     * staff read routes; they do not draw them.
+     */
+    case ROUTES_MANAGE = 'routes.manage';
+
     // ── Fleet ─────────────────────────────────────────────────────────
     case VEHICLES_VIEW = 'vehicles.view';
     case VEHICLES_MANAGE = 'vehicles.manage';
@@ -130,7 +146,7 @@ enum Permission: string
             'bookings', 'order_requests' => 'Bookings',
             'trips' => 'Trips',
             'invoices', 'ratecards' => 'Billing',
-            'companies' => 'Clients',
+            'companies', 'routes' => 'Clients',
             'vehicles', 'drivers', 'allocations' => 'Fleet',
             'reports' => 'Reports',
             default => 'Other',
@@ -175,6 +191,8 @@ enum Permission: string
             self::COMPANIES_CREATE => 'Onboard a client company',
             self::COMPANIES_UPDATE => 'Edit a client company',
             self::COMPANIES_DELETE => 'Remove a client company',
+            self::ROUTES_VIEW => 'See saved places and routes',
+            self::ROUTES_MANAGE => 'Build and edit routes',
             self::VEHICLES_VIEW => 'See the fleet',
             self::VEHICLES_MANAGE => 'Add and edit vehicles',
             self::DRIVERS_VIEW => 'See drivers',

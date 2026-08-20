@@ -5,6 +5,7 @@ namespace App\Models;
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Casts\RoleSlug;
 use App\Concerns\Auditable;
+use App\Enums\ClientCapability;
 use App\Enums\Permission;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
@@ -13,10 +14,12 @@ use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Modules\Administration\Models\Role;
+use Modules\Clients\Models\ClientRoute;
 
 /**
  * Deliberately NOT scoped by BelongsToTenant: login must locate a user by
@@ -63,9 +66,15 @@ class User extends Authenticatable
     protected $fillable = [
         'name',
         'email',
+        // The work number a driver is given when this person travels. See
+        // the `phone` migration for why it is nullable on the column and
+        // required by `StoreUserRequest` all the same.
+        'phone',
         'password',
         'tenant_id',
         'role',
+        'capabilities',
+        'books_without_approval',
         'status',
         'deactivated_at',
     ];
@@ -106,6 +115,8 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'role' => RoleSlug::class,
+            'capabilities' => 'array',
+            'books_without_approval' => 'boolean',
             'status' => UserStatus::class,
             'deactivated_at' => 'datetime',
             // App-level encryption, the treatment AGENTS.md requires for
@@ -183,6 +194,30 @@ class User extends Authenticatable
     }
 
     /**
+     * The client's routes this person rides (ADR-0045 §8).
+     *
+     * The other half of `ClientRoute::members()`, and the same warning
+     * applies: **this is a roster, not a permission.** Nothing authorises
+     * off it. It exists so a colleague's routes can be set where the
+     * colleague is created — the roster is a fact about a person, and
+     * making an administrator open four routes to add one new starter to
+     * each was the reason the relation went unused from the route's side.
+     *
+     * @return BelongsToMany<ClientRoute, $this>
+     */
+    public function clientRoutes(): BelongsToMany
+    {
+        // Ordered here rather than at each call site, for the reason
+        // `ClientRoute::stops()` gives: `route_ids` is compared and
+        // round-tripped by the staff screen, and a roster that comes back
+        // in pivot-insertion order looks like a different roster every
+        // time somebody is added.
+        return $this->belongsToMany(ClientRoute::class, 'client_route_members')
+            ->orderBy('client_routes.id')
+            ->withTimestamps();
+    }
+
+    /**
      * `BelongsToTenant::scopeForActor` for the one model that does not have
      * it (ADR-0006).
      *
@@ -253,8 +288,50 @@ class User extends Authenticatable
         }
 
         $role = $this->roleRecord;
+        $fromRole = $role instanceof Role ? $role->permissions : [];
 
-        return $this->resolvedPermissions = $role instanceof Role ? $role->permissions : [];
+        // Plus what a client's administrator switched on for this person
+        // (App\Enums\ClientCapability). Only slugs the enum knows, and only
+        // the permissions those bundles name — an unknown slug or a stray
+        // permission in the column grants nothing. No role means no
+        // capabilities either: the union widens a role, it does not stand
+        // in for one.
+        $fromCapabilities = [];
+        if ($role instanceof Role) {
+            foreach ($this->capabilities() as $capability) {
+                foreach ($capability->permissions() as $permission) {
+                    $fromCapabilities[] = $permission->value;
+                }
+            }
+        }
+
+        return $this->resolvedPermissions = array_values(array_unique([...$fromRole, ...$fromCapabilities]));
+    }
+
+    /**
+     * The capabilities switched on for this user, as enum cases. Slugs the
+     * enum does not know are dropped silently — fail closed, never fatal.
+     *
+     * @return array<int, ClientCapability>
+     */
+    public function capabilities(): array
+    {
+        $slugs = $this->capabilities ?? [];
+        $cases = [];
+        foreach (is_array($slugs) ? $slugs : [] as $slug) {
+            $case = is_string($slug) ? ClientCapability::tryFrom($slug) : null;
+            if ($case !== null) {
+                $cases[$case->value] = $case;
+            }
+        }
+
+        return array_values($cases);
+    }
+
+    /** Whether a booking this user creates is approved on their behalf. */
+    public function booksWithoutApproval(): bool
+    {
+        return (bool) $this->books_without_approval;
     }
 
     /**

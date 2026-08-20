@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Modules\Billing\Models\Invoice;
 use Modules\Bookings\Models\Booking;
+use Modules\Clients\Models\ClientPlace;
+use Modules\Clients\Models\ClientRoute;
 use Modules\Clients\Models\Company;
 use Modules\Fleet\Models\VehicleAllocation;
 use Modules\Notifications\Enums\NotificationType;
@@ -95,6 +97,17 @@ function tenantBoundRoutes(): array
         // 404 on its own update for the wrong reason.
         'companies.update' => ['PATCH', '/api/v1/companies/{company}'],
         'companies.destroy' => ['DELETE', '/api/v1/companies/{company}'],
+        // ADR-0045. Same `update` before `destroy` ordering as companies,
+        // and for the same reason. `place` is deliberately not on `route`'s
+        // stop list in the fixture: a place a route visits answers 409
+        // CLIENT_PLACE_IN_USE, which would still prove the row resolved but
+        // would stop testing the delete path itself.
+        'places.show' => ['GET', '/api/v1/places/{place}'],
+        'places.update' => ['PATCH', '/api/v1/places/{place}'],
+        'places.destroy' => ['DELETE', '/api/v1/places/{place}'],
+        'routes.show' => ['GET', '/api/v1/routes/{route}'],
+        'routes.update' => ['PATCH', '/api/v1/routes/{route}'],
+        'routes.destroy' => ['DELETE', '/api/v1/routes/{route}'],
         'invoices.show' => ['GET', '/api/v1/invoices/{invoice}'],
         'invoices.credit-notes.index' => ['GET', '/api/v1/invoices/{invoice}/credit-notes'],
         'invoices.credit-notes.store' => ['POST', '/api/v1/invoices/{invoice}/credit-notes'],
@@ -200,6 +213,8 @@ function twoClientsOneOfEverything(): array
     $booking = Booking::factory()->forTenant($b['tenant'])->create();
     $company = Company::factory()->forTenant($b['tenant'])->create();
     $allocation = VehicleAllocation::factory()->forTenant($b['tenant'])->create();
+    $place = ClientPlace::factory()->forTenant($b['tenant'])->create();
+    $clientRoute = ClientRoute::factory()->forTenant($b['tenant'])->create();
 
     $bAdmin = User::factory()->create(['tenant_id' => $b['tenant']->id, 'role' => UserRole::SUPER_ADMIN]);
 
@@ -236,6 +251,8 @@ function twoClientsOneOfEverything(): array
             'allocation' => $allocation->id,
             'booking' => $booking->id,
             'company' => $company->id,
+            'place' => $place->id,
+            'route' => $clientRoute->id,
             'invoice' => $invoice->uuid,
             'notification' => $notification->id,
             'rateCard' => $b['card']->id,
@@ -263,7 +280,7 @@ it('binds a tenant-owned model on exactly the routes this file lists', function 
     $visibleToReflection = array_values(array_diff($expected, ['notifications.read']));
 
     expect(tenantBoundRoutesByReflection())->toBe($visibleToReflection);
-    expect(count($expected))->toBe(32);
+    expect(count($expected))->toBe(38);
 });
 
 it('answers 404, never 403, when another client names a tenant-owned record', function () {
@@ -297,7 +314,7 @@ it('answers 404, never 403, when another client names a tenant-owned record', fu
         $checked++;
     }
 
-    expect($checked)->toBe(32);
+    expect($checked)->toBe(38);
 });
 
 it('answers something other than 404 to the owning client on every one of those routes, so the 404s above are not vacuous', function () {
@@ -334,5 +351,5 @@ it('answers something other than 404 to the owning client on every one of those 
         $checked++;
     }
 
-    expect($checked)->toBe(32);
+    expect($checked)->toBe(38);
 });

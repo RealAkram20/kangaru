@@ -36,7 +36,11 @@ use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Models\OrderRequest;
 use Modules\Bookings\Policies\BookingPolicy;
 use Modules\Bookings\Policies\OrderRequestPolicy;
+use Modules\Clients\Models\ClientPlace;
+use Modules\Clients\Models\ClientRoute;
 use Modules\Clients\Models\Company;
+use Modules\Clients\Policies\ClientPlacePolicy;
+use Modules\Clients\Policies\ClientRoutePolicy;
 use Modules\Clients\Policies\CompanyPolicy;
 use Modules\Customers\Policies\CustomerPolicy;
 use Modules\Dispatch\Models\DispatchOffer;
@@ -65,11 +69,13 @@ use Modules\Fleet\Support\DriverPresenceStore;
 use Modules\Fleet\Support\RedisDriverPresenceStore;
 use Modules\Notifications\Listeners\SendBookingDecisionNotification;
 use Modules\Notifications\Listeners\SendReportExportReadyNotification;
+use Modules\Notifications\Listeners\SendTripProgressNotification;
 use Modules\Reports\Enums\ReportType;
 use Modules\Reports\Events\ReportExportCompleted;
 use Modules\Support\Models\SupportRequest;
 use Modules\Support\Policies\SupportRequestPolicy;
 use Modules\Trips\Events\TripCompleted;
+use Modules\Trips\Events\TripStatusChanged;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Models\TripRating;
 use Modules\Trips\Policies\TripPolicy;
@@ -175,6 +181,11 @@ class AppServiceProvider extends ServiceProvider
         // Explicit registration rather than relying on Laravel's naming-
         // convention policy guesser across the Modules\ namespace.
         Gate::policy(Company::class, CompanyPolicy::class);
+        // ADR-0045. Two policies rather than one: reading the register and
+        // building a circuit are different acts, and only the second is
+        // gated on `routes.manage`.
+        Gate::policy(ClientPlace::class, ClientPlacePolicy::class);
+        Gate::policy(ClientRoute::class, ClientRoutePolicy::class);
         Gate::policy(AuditLog::class, AuditLogPolicy::class);
         Gate::policy(Vehicle::class, VehiclePolicy::class);
         Gate::policy(Driver::class, DriverPolicy::class);
@@ -235,6 +246,9 @@ class AppServiceProvider extends ServiceProvider
 
         Event::listen(BookingApproved::class, [SendBookingDecisionNotification::class, 'approved']);
         Event::listen(BookingRejected::class, [SendBookingDecisionNotification::class, 'rejected']);
+        // The requester of a corporate booking hears when their car is
+        // assigned, when the driver arrives, and when the trip completes.
+        Event::listen(TripStatusChanged::class, SendTripProgressNotification::class);
         Event::listen(ReportExportCompleted::class, SendReportExportReadyNotification::class);
 
         // Stable short aliases for audit_logs.auditable_type instead of raw
@@ -257,6 +271,15 @@ class AppServiceProvider extends ServiceProvider
         // own row already covers them.
         Relation::enforceMorphMap([
             'company' => Company::class,
+            // ADR-0045. A moved pin changes where a driver is sent and a
+            // renamed one changes what a report groups by; a reordered
+            // circuit changes the run itself. Both are the client's own
+            // operational decisions, which is precisely why the client may
+            // need to account for them later. Route *stops* are absent on
+            // purpose — rewritten wholesale with their parent, and covered
+            // by the parent's row, as invoice lines are.
+            'client_place' => ClientPlace::class,
+            'client_route' => ClientRoute::class,
             'user' => User::class,
             'vehicle' => Vehicle::class,
             'driver' => Driver::class,

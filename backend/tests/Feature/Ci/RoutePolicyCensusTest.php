@@ -25,8 +25,16 @@ use Illuminate\Support\Facades\Route;
  * - **An idiom-D (public) route without a throttle**, or a non-D route without
  *   an authentication guard. The former is how an SMS-pumping cost arrives;
  *   the latter is how a leak does.
- * - **The counts.** 172 routes, 11 public, on the working tree of 2026-08-18
- *   (identical to `31c87cb` for routes: no route file differs).
+ * - **The counts.** 186 routes, 13 public — 172/11 on the working tree of 2026-08-18,
+ *   plus `GET public/fare-quotes` (ADR-0026's tariff answering the order form) on 2026-08-19,
+ *   plus `GET driver-presence` (the live map's on-duty pool) and
+ *   `GET public/nearby-vehicles` (the order page's ambient fleet, anonymized) on 2026-08-20 —
+ *   the last of which is also the first route file diff since `31c87cb`,
+ *   plus the eleven of ADR-0045 (`places` and `routes`, five verbs each,
+ *   and `POST routes/preview`) on 2026-08-20 — none of them public, so the
+ *   D count is unchanged,
+ *   plus `GET colleagues` (the booking dialog's passenger picker, gated on
+ *   `bookings.create`) on 2026-08-20 — authenticated, so D is still 13.
  *
  * Idioms:
  *   A  Policy / Gate — `$this->authorize()`, `Gate::authorize()`, `can()`.
@@ -77,6 +85,12 @@ function routeCensus(): array
         'POST api/v1/settings/assets/{asset}' => 'A',
         'POST api/v1/settings/mail/test' => 'A',
         'PATCH api/v1/settings/{group}' => 'A',
+        // Idiom A on `Booking::create` rather than on a user policy, and the
+        // borrowed policy is the honest statement of the rule: you may look
+        // up a colleague if you may book a car for one. `staff.view` would
+        // have been the wrong gate — the Corporate Employee naming a
+        // passenger does not administer anybody.
+        'GET api/v1/colleagues' => 'A',
         'GET api/v1/users' => 'A',
         'POST api/v1/users' => 'A',
         'GET api/v1/users/{user}' => 'A',
@@ -88,6 +102,21 @@ function routeCensus(): array
         'GET api/v1/companies/{company}' => 'A',
         'DELETE api/v1/companies/{company}' => 'A',
         'PATCH api/v1/companies/{company}' => 'A',
+        // ADR-0045. All A: both policies are consulted by
+        // `$this->authorize()` on every action, and reads are additionally
+        // narrowed by `forActor()` for platform staff (A/C in effect, filed
+        // A for the same reason `bookings.index` is).
+        'GET api/v1/places' => 'A',
+        'POST api/v1/places' => 'A',
+        'GET api/v1/places/{place}' => 'A',
+        'DELETE api/v1/places/{place}' => 'A',
+        'PATCH api/v1/places/{place}' => 'A',
+        'GET api/v1/routes' => 'A',
+        'POST api/v1/routes' => 'A',
+        'POST api/v1/routes/preview' => 'A',   // ClientRoutePolicy::create — drawing a draft is building one
+        'GET api/v1/routes/{route}' => 'A',
+        'DELETE api/v1/routes/{route}' => 'A',
+        'PATCH api/v1/routes/{route}' => 'A',
 
         // ── Customers (customer guard) and the staff register ────────────
         'POST api/v1/customer/auth/login' => 'D',
@@ -98,7 +127,7 @@ function routeCensus(): array
         'GET api/v1/customer/order-requests/{orderRequest}' => 'C',
         'GET api/v1/customer/rides/active' => 'C',
         'POST api/v1/customer/rides/active/cancellation' => 'C',
-        'POST api/v1/customer/trips/{trip}/rating' => 'C',   // dead today: W1-c-F5
+        'POST api/v1/customer/trips/{trip}/rating' => 'C',   // customer_id compared in the controller; binding fixed 2026-08-20 (F5 closed)
         'GET api/v1/customers' => 'A',
         'GET api/v1/customers/{customer}' => 'A',
         'GET api/v1/customers/{customer}/activity' => 'A',
@@ -176,6 +205,8 @@ function routeCensus(): array
         'GET api/v1/me/duty' => 'C',
         'PUT api/v1/me/duty' => 'C',
         'POST api/v1/me/presence' => 'C',
+        'GET api/v1/driver-presence' => 'A',   // DriverPolicy::viewAny — the fleet register's read; the live map's pool
+        'GET api/v1/public/nearby-vehicles' => 'D',   // anonymized positions + silhouettes only; throttled 30/min; radius- and count-bounded
         'GET api/v1/zones' => 'A',
         'POST api/v1/zones' => 'A',
         'GET api/v1/zones/resolve' => 'A',
@@ -193,6 +224,7 @@ function routeCensus(): array
         'GET api/v1/order-requests/{orderRequest}' => 'A',
         'PATCH api/v1/order-requests/{orderRequest}' => 'A',
         'POST api/v1/public/order-requests' => 'D',
+        'GET api/v1/public/fare-quotes' => 'D',
 
         // ── Dispatch ────────────────────────────────────────────────────
         'POST api/v1/bookings/{booking}/assignment' => 'A',
@@ -312,14 +344,14 @@ it('has a census row for every API route and a route for every census row', func
 
     expect($uncensused)->toBe([], 'Routes with no census row — decide which idiom carries each, and add it here and to docs/security-gate.md');
     expect($phantom)->toBe([], 'Census rows for routes that no longer exist');
-    expect(count($router))->toBe(172);
+    expect(count($router))->toBe(187);
 });
 
-it('uses only the four idioms, and files eleven routes as public', function () {
+it('uses only the four idioms, and files thirteen routes as public', function () {
     $idioms = array_count_values(routeCensus());
 
     expect(array_keys($idioms))->each->toBeIn(['A', 'B', 'C', 'D', 'A/C']);
-    expect($idioms['D'])->toBe(11);
+    expect($idioms['D'])->toBe(13);
     expect($idioms['B'])->toBe(3);
 });
 
@@ -344,8 +376,8 @@ it('authenticates every route that is not filed as public, and throttles every o
         $guarded++;
     }
 
-    expect($public)->toBe(11);
-    expect($guarded)->toBe(161);
+    expect($public)->toBe(13);
+    expect($guarded)->toBe(174);
 });
 
 it('binds the actor\'s tenant on every staff route, so TenantScope has something to scope by', function () {
@@ -380,5 +412,5 @@ it('binds the actor\'s tenant on every staff route, so TenantScope has something
     }
 
     expect($selfService)->toBe(7);
-    expect($staff)->toBe(147);
+    expect($staff)->toBe(160);
 });
