@@ -56,6 +56,7 @@ it('auto-approves a booking when the owner has waived approval', function () {
 
     $this->actingAs($employee, 'sanctum')
         ->postJson('/api/v1/bookings', [
+            'passenger_user_id' => $employee->id,
             'passenger_name' => 'Nakato Grace',
             'passenger_phone' => '0700123456',
             'origin' => 'Kampala',
@@ -77,6 +78,7 @@ it('keeps the approval step by default', function () {
 
     $this->actingAs($employee, 'sanctum')
         ->postJson('/api/v1/bookings', [
+            'passenger_user_id' => $employee->id,
             'passenger_name' => 'Nakato Grace',
             'passenger_phone' => '0700123456',
             'origin' => 'Kampala',
@@ -96,6 +98,7 @@ it('caps how far ahead a booking may be scheduled, per settings', function () {
     ]);
 
     $base = [
+        'passenger_user_id' => $employee->id,
         'passenger_name' => 'Nakato Grace',
         'passenger_phone' => '0700123456',
         'origin' => 'Kampala',

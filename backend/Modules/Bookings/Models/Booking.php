@@ -56,6 +56,10 @@ class Booking extends Model
     protected $fillable = [
         'tenant_id',
         'requested_by_user_id',
+        // Which colleague is travelling, when a client raised it. The link,
+        // not the source — the snapshot below is what a driver is
+        // dispatched against. See the column's migration.
+        'passenger_user_id',
         'passenger_name',
         'passenger_phone',
         'passenger_count',
@@ -106,6 +110,17 @@ class Booking extends Model
     public function requestedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'requested_by_user_id');
+    }
+
+    /**
+     * The colleague travelling, when a client raised the booking. Null for
+     * the walk-ins and callers Shanitah's own desk books for.
+     *
+     * @return BelongsTo<User, $this>
+     */
+    public function passengerUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'passenger_user_id');
     }
 
     /** @return BelongsTo<User, $this> */

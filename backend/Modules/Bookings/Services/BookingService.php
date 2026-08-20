@@ -40,7 +40,14 @@ class BookingService
         // setting off is the owner explicitly waiving that control, and
         // the audit trail records both the waiver (the settings change)
         // and every booking it waved through.
-        if ($this->settings->get('booking', 'approval_required') !== true) {
+        //
+        // The client's own version of the same waiver, per person: a
+        // Corporate Admin may mark someone as booking without approval
+        // (`users.books_without_approval`; see App\Enums\ClientCapability).
+        // Same transition, same audit rows; the flag itself sits on the
+        // audited user record, so who was waved through and who waived it
+        // are both on file.
+        if ($this->settings->get('booking', 'approval_required') !== true || $requester->booksWithoutApproval()) {
             return $this->approve($booking, $requester);
         }
 

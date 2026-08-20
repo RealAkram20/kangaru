@@ -46,6 +46,11 @@ class BookingResource extends JsonResource
             }),
             'requested_by_user_id' => $this->requested_by_user_id,
             'requested_by' => new UserResource($this->whenLoaded('requestedBy')),
+            // The colleague this was raised for, when a client raised it.
+            // The name and number below stay authoritative — they are the
+            // snapshot the driver was dispatched against — and this is what
+            // lets a queue be read by employee rather than by spelling.
+            'passenger_user_id' => $this->passenger_user_id,
             'passenger_name' => $this->passenger_name,
             'passenger_phone' => $this->passenger_phone,
             'passenger_count' => $this->passenger_count,
