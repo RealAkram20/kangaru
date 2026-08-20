@@ -91,7 +91,7 @@ services:
   # graph that the sentinel check would then treat as finished.
   # ---------------------------------------------------------------------------
   osrm-prepare:
-    image: osrm/osrm-backend:v5.27.1
+    image: osrm/osrm-backend:v5.25.0
     restart: "no"
     volumes:
       - osrm-data:/data
@@ -125,7 +125,7 @@ services:
   # proxy: nothing outside this stack has any business asking it for routes.
   # ---------------------------------------------------------------------------
   osrm:
-    image: osrm/osrm-backend:v5.27.1
+    image: osrm/osrm-backend:v5.25.0
     restart: unless-stopped
     command: osrm-routed --algorithm mld /data/uganda-latest.osrm
     volumes:
