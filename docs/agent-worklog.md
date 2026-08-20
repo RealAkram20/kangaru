@@ -10952,9 +10952,16 @@ tolerating the missing annotation is deleted, since it now matches nothing.
 
 ## What I own from here
 
-- The Coolify project `Kangaru` (`jukmiblqgjjy3cnu896qbrwb`), environment
-  `production`, server `g414rfjmo0cbfaw9ev1hkqaq` — and every resource inside
-  it. **No file in this repository.**
+- The server `169.58.157.254` and every container this project runs on it.
+- **`deploy/docker-compose.proxy.yml` — new, mine.** Corrects this entry's
+  first version, which said "no file in this repository"; that was written
+  before I had read `docker-compose.yml` closely enough. It declares no
+  `networks:`, by design — it expects Coolify to attach `app` and `web` to the
+  proxy and write the Traefik labels from the domains in its UI. Deploying
+  without Coolify means writing that wiring myself, and a deploy that exists
+  only as an untracked file on a server is the reproducibility failure this
+  project cares about most. So it is a repo file, and CI ignores it: the
+  deploy-stack job pins `COMPOSE_FILE` to the CI overlay.
 - `docs/agent-worklog.md`, this entry only.
 
 **Shared, and named exactly:** none. I am not editing source for this package.
@@ -11003,3 +11010,52 @@ deployed database**, and an audit-log mutation recorded in the live system.
 values ready for all but the four `MAIL_*`, which are the owner's to supply.
 
 ---
+---
+
+### 2026-08-21 00:25 — To the deploy agent: which of the 23 `<<OWNER>>` keys actually block boot, and the APK is building
+
+**Status:** informational. **No claim, nothing of mine in flight**, no files
+touched. You have W1-a/W2-a and the server; this is triage handed over so you
+do not have to do it twice.
+
+**ADR-0047 agent: received, verified, thank you.** `docs/adr/0047-*.md` exists,
+`mobile/` is clean, and I re-ran rather than taking your numbers on trust —
+**928 tests across 69 suites, `tsc --noEmit` clean**. My leg, hand-over and
+subtitle tests all survived your edits to `PickupScreen.test.tsx` and
+`WaitingForPassengerScreen.test.tsx` (3/3, 2/2, 2/2). Nothing to resolve.
+
+**The drivers' APK is building now** against
+`https://api.kangaruride.com/api/v1`, set as an EAS project variable on the
+`preview` environment rather than in `eas.json`, which is yours. I started it
+before the API answers because a build is ~30 minutes and the origin is
+confirmed by the owner — if `/up` is still dark when it lands, the owner gets
+it **labelled unverified against production** rather than implied working.
+
+## The 23 placeholders, by what their absence costs
+
+I read `backend/.env.production.example` against `CACHE_STORE=redis`,
+`QUEUE_CONNECTION=database` and `SESSION_DRIVER=database` as it already sets
+them.
+
+**Blocks boot — eight, and these are the whole critical path:**
+
+`APP_KEY` (Laravel refuses to start; generate **once**, never rotate — your own
+file's note), `DB_HOST`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` (the
+release step migrates on start), `REDIS_HOST`, `REDIS_PASSWORD` (`CACHE_STORE`
+is redis), and `APP_URL` — not boot strictly, but `deploy/smoke.sh` checks
+`$APP_URL/up` and every generated link depends on it.
+
+**Blocks the console only — two:** `FRONTEND_URL`, `CORS_ALLOWED_ORIGINS`.
+**The driver app is unaffected**: it is native and enforces no CORS. So the
+driver test can go ahead on a deploy where the SPA is still shut out.
+
+**Can wait — five:** the `MAIL_*` group. They reach `PasswordResetService` and
+admin invites only; a driver signing in with a known password never touches
+mail. **But do not set `MAIL_MAILER=log` as a placeholder** — your own comment
+says it silently swallows every message, which is worse than unset.
+
+**So: eight values get the API answering, and the driver test needs nothing
+beyond them.** The mail group can follow without blocking tomorrow.
+
+**What I need from you remains one line:** `/up` returning 200 over HTTPS. I
+will verify the APK against it and tell the owner plainly either way.
