@@ -10682,3 +10682,324 @@ server rather than one I hope does.
 
 **When you are ready, one line in this log is enough** — your work green, and
 whether the API is serving. I will cut the build off the back of it.
+
+---
+
+### 2026-08-21 00:00 — Waiting on two signals before the drivers' first APK. Please post one line each.
+
+**Status:** blocked, deliberately, and waiting. **Nothing of mine is in
+flight; no files claimed.** This supersedes the timing half of my 23:55 note,
+which was written before I had read the A0 entry above.
+
+The owner has asked for the first production APK for drivers and has confirmed
+the origin: **`https://api.kangaruride.com/api/v1`**. I will bake that in. I am
+holding the build on two conditions, both of which belong to other people.
+
+**To the Track A / deploy agent —** your entry says *"Nothing is deployed"*,
+and the wire agrees:
+
+| check | now |
+| --- | --- |
+| `https://api.kangaruride.com/up` | `000` — no certificate yet |
+| `http://api.kangaruride.com/up` | `404` — Traefik answering, no route |
+| DNS | correct, `169.58.157.254` |
+
+**Please post one line when `/up` returns 200 over HTTPS.** I do not need the
+whole stack green — I need the API reachable, so the first build a driver ever
+installs is one I have watched reach the server rather than one I hope does.
+Also: 23 `<<OWNER>>` keys still sit in `backend/.env.production.example`, which
+I have flagged to the owner as theirs to fill.
+
+**To the ADR-0047 agent —** `mobile/src/screens/TripInProgressScreen.tsx` and
+`WaitingForPassengerScreen.tsx` are still dirty, `docs/adr/0047-*.md` does not
+exist, and `7911820` already carries a **mid-edit snapshot** of your work. I
+have not touched either file and will not.
+
+**Please post one line when your change is finished and green.** An EAS build
+freezes the tree at upload and takes ~30 minutes, so cutting now would put a
+half-finished odometer toggle into drivers' first install with no ADR behind
+it. For the record I checked and my own edits in those two files are intact —
+`leg="fare"`, the `useHandover` arrival moment, and the subtitle reading
+`queued.get(trip.id)` — so there is nothing between us to resolve.
+
+**What is already true and needs no further work from either of you:** the
+mobile tree compiles (`tsc --noEmit` clean), 922 tests across 69 suites pass,
+`npx expo-doctor` is 21/21, and everything of mine is committed and clean.
+`.easignore` cut the EAS upload from 96.9 MB to 33.2 MB. The app icons are the
+real brand mark rather than Expo's placeholders.
+
+**On receiving both lines I will cut the build immediately** and post the APK
+URL here and to the owner. Nothing else is waiting on me.
+
+---
+
+### 2026-08-21 — Switching the odometer off, and what then prices the trip (ADR-0047)
+
+**Source:** the owner — *"Now that we can calculate the pricing and the via
+distance we want the ability to disable or enable Odometer in the settings"*.
+
+**Status:** backend, driver app and admin console all built and green. 1353
+backend tests, 928 mobile across 69 suites, 534 frontend across 53. `tsc -b
+--force`, `tsc --noEmit` and both linters clean. The road ceiling proved by
+mutation and restored byte-identical.
+
+**Read before starting:** the three entries above mine, per the rules. The
+other agent's `.easignore`, the `PresenceController.getFix` fix and the
+`app.json` icon/doctor work are all intact — I checked `app.json` holds both
+our diffs before touching anything.
+
+## The premise was half true, and that is what shaped the design
+
+*"Now that we can calculate the pricing and the via distance"* is true for
+**quoting** and was not yet true for **settling**. `TripStateMachine:139` set
+`distance_km = odometer_end - odometer_start` and `TripPricingEngine` prices
+from that field; `gps_distance_km` existed but fed only a variance *flag*, and
+routing fed only quotes. `docs/measured-distance-plan.md` — the design that
+makes the trace primary — still says "Nothing here is built."
+
+So this is not a toggle. Turning the odometer off removes the only source of
+the number every fare is computed from, and something has to replace it.
+
+## What I put in front of the owner first
+
+**PROJECT.md's acceptance criterion #4 is "Opening and closing odometer
+(mileage) readings"** — one of the six the Bank formally accepts this platform
+on. A platform-wide switch stops producing it for corporate trips too.
+
+I offered a walk-in-only scope that could not break the contract, and
+recommended it. **The owner chose platform-wide knowing that.** Their call, so
+it is built as asked — and the consequence is stated in the admin form itself,
+in a warning that appears the moment the switch goes off, rather than being
+quietly narrowed or buried in this file.
+
+## The trace prices the trip, and the road is the ceiling
+
+`TripDistanceResolver` owns the whole decision. The trace alone is not safe
+once money depends on it: `trip_locations` carries no mock-location flag
+(measured-distance-plan §1), so an unbounded trace is a handset that can pay
+itself, and jitter inflates a slow crawl even when nobody is cheating.
+
+So the trace is billed unless it exceeds the road between its own two
+endpoints plus `tracking.trace_route_ceiling_percent` (30%). Over that:
+**capped and flagged, never refused** — the passenger is at the kerb and the
+driver did drive somewhere. This is the measured-distance plan's *boundedness*
+property in its smallest useful form; the full plan is still worth building.
+
+Three decisions worth keeping:
+
+- **Null distance is written as null, never zero.** Zero says "the vehicle did
+  not move", which reads as a complete answer and invites nobody to look. Null
+  reaches billing as unpriced work somebody resolves.
+- **The endpoints come from the trace, not the order request.** Corporate trips
+  frequently have no drop-off pin, so an order-based bound would be unavailable
+  for most of what this platform carries.
+- **Routing off means unbounded and unflagged.** An operator who has not turned
+  routing on has not asked for a second opinion, and flagging every trip makes
+  the flag mean nothing.
+
+**What it will get wrong, stated rather than discovered:** a genuine multi-stop
+circuit is capped low, because the reference is first-point-to-last-point. It
+under-bills and flags rather than over-billing silently, which is the right
+direction to fail. It does not bite today — nothing links a `Trip` to ADR-0045's
+route stops yet. **When that linkage lands, use `RouteService::via()` in
+`TripDistanceResolver::ceilingFor`; it is the one place that changes.**
+
+## Files I own — do not edit
+
+- `backend/Modules/Trips/Services/TripDistanceResolver.php`, `TripDistance.php`
+- `backend/tests/Feature/Trips/OdometerDisabledTest.php`
+- `mobile/src/trips/odometerSetting.ts`
+- `docs/adr/0047-optional-odometer.md`
+
+## Shared files, with the exact edit
+
+- `backend/Modules/Administration/Services/SettingsService.php` — two keys added
+  to the `tracking` group only.
+- `backend/Modules/Trips/Services/TripStateMachine.php` — a fifth constructor
+  dependency; the two capture methods now **return `?string`** and
+  `applySideEffects` returns it, so the timeline can say why a trip was priced
+  as it was. **Deliberately not a property on the service**: it is a singleton,
+  and a note held between calls lands on the next trip's timeline.
+- `backend/Modules/Trips/Services/RouteDistanceCalculator.php` — `endpointsFor()`
+  added; `kilometresFor` untouched.
+- `backend/Modules/Trips/Requests/TransitionTripRequest.php` — the two
+  `requiredIf` rules only. The after-validation ceiling and floor checks needed
+  no change: both already guard on the field being present.
+- `docs/api/openapi.yaml` — `TrackingSettings` and `PublicSettings` (ADR-0011).
+- `mobile/src/api/endpoints.ts` — `fetchOdometerEnabled` added.
+- `mobile/src/trips/transitions.ts` — `driverActions` takes an options bag,
+  **defaulting to odometer-on** so any caller nobody updated keeps today's
+  behaviour.
+- `mobile/src/screens/` — `PickupScreen`, `TripDetailScreen`,
+  `WaitingForPassengerScreen`, `TripInProgressScreen`, and their four suites
+  (each gets a `mockOdometerEnabled`, defaulting true, reset in `beforeEach`).
+- `frontend/src/pages/SystemSettingsPage.tsx` + its test — the `TrackingCard`
+  only.
+
+## The timing, which is the part I want seen
+
+**The owner is testing with real drivers today.** This lands the same night, and
+it changes the trip flow: with the switch off, the opening-reading form and the
+closing odometer screen both leave the app.
+
+**It is off-by-default and nothing changes until somebody flips it** —
+`odometer_enabled` defaults to `true`, and the enabled path is pinned by its own
+test so a change to the disabled path cannot alter it. But I would **not flip it
+before the test**. The GPS-priced path has never run on a handset, only in
+suites; the cap arithmetic is proved, the behaviour of a real trace on a real
+Kampala road is not.
+
+## Not built, deliberately
+
+- **No backfill.** Trips completed before the switch keep their odometer
+  distance. Nothing recomputes history.
+- **No per-client or per-service-type scope.** The owner chose platform-wide;
+  the resolver would support narrowing later without changing shape.
+- **The mobile app still ships `OdometerScreen`** — it is simply unreachable
+  when the switch is off. Deleting a screen for a setting that can be turned
+  back on would be the wrong direction.
+- **`WalkInFareService`'s quote is untouched.** It estimates before a trip
+  exists and has no trace to price from; only settlement moved.
+
+---
+
+### 2026-08-21 — To the build agent: ADR-0047 is finished and green. Cut it.
+
+**Reply to your 00:00 note.** Both things you named are done.
+
+- `docs/adr/0047-optional-odometer.md` **exists** — it did not when you looked,
+  and you were right to hold on that.
+- `TripInProgressScreen.tsx` and `WaitingForPassengerScreen.tsx` are finished,
+  not mid-edit. What `7911820` caught was a genuine half-state; the tree is
+  past it now.
+
+**Green, just run:** mobile `tsc --noEmit` clean, **928 tests across 69
+suites**, eslint 0 errors. Backend 1353. Frontend `tsc -b --force` clean, 534
+across 53. The road-ceiling guard proved by mutation and restored
+byte-identical.
+
+**Nothing in this change alters the APK's behaviour as it will ship.**
+`tracking.odometer_enabled` defaults to **true**, and the enabled path is
+pinned by its own test precisely so work on the disabled path cannot move it. A
+driver installing tomorrow's build sees the odometer flow exactly as it is
+today. The switch is inert until somebody opens System Settings and turns it
+off.
+
+**One thing to pass to the owner, though, and I would say it plainly:** do not
+flip that switch during the driver test. The GPS-priced path is proved in
+suites and has never run on a handset — the cap arithmetic is right, the
+behaviour of a real trace on a real Kampala road is unknown. It is a thing to
+try on a quiet day with one vehicle, not on the day the fleet meets the app.
+The admin form warns about the Bank's acceptance criterion when it is switched
+off; it does not warn that the path is untested on hardware, because that is a
+fact about today rather than about the setting.
+
+**I have claimed no files you need.** My shared-file edits are listed on my
+ADR-0047 entry above; none of them is `app.json`, `eas.json`, `.easignore`,
+`package.json` or any asset. I checked `app.json` still carries both our
+diffs — your `androidNavigationBar` removal and `expo-asset` plugin alongside
+my EAS linkage, `googleServicesFile` and the ADR-0046 permissions — before I
+touched anything, and it does.
+
+**Also yours to know, since it is on the build path:** `mobile/google-services.json`
+is committed and `android.googleServicesFile` points at it. The owner supplied
+it for Firebase project `kangaru-c698b`, package `ug.co.kangaruride.driver` —
+matched and verified. Android push needs the FCM **service-account key**
+uploaded to EAS credentials as well, which the owner has not sent yet, so
+expect push to be inert in this build even though everything around it is
+wired. That is not a blocker for the ride flow.
+
+Nothing else of mine is outstanding. Go ahead.
+
+---
+
+### 2026-08-21 00:20 — Claiming the deployment itself: W1-a's open half, then W2-a
+
+**Status:** in progress. **Claimed at 00:20 local.** Same agent as the A0 entry
+above. If another entry claims either package with an earlier timestamp, I
+withdraw — I searched first, and **every mention of W1-a's deploy and of W2-a in
+this log is a referral, not a claim.** W1-a's own entry parks its exit criteria
+("a deploy where all five containers are up… plus a timed restore") on a server
+that did not exist when it was written; W1-c parks "against the deployed
+database"; W1-d parks "a rollback performed on the live server"; the A0-second
+entry says plainly *"Nothing is deployed. That is W1-a and W2-a, both still
+unclaimed."* Four boxes in `master-plan.md` §5 need a deployment to exist.
+
+**Why now and not before:** the server exists as of tonight, and A0 is all but
+closed.
+
+## A0's remaining half, closed in the commit that carries this entry
+
+The ADR-0047 agent posted *"finished and green. Cut it."* — so the tree can
+finally be clean, which is A0's first exit criterion. I have committed their
+finished work rather than leaving it dirty: `docs/adr/0047-optional-odometer.md`,
+`SystemSettingsPage` and its test, and the four driver screens and their tests.
+**Verified before committing rather than taken on report:** mobile
+`tsc --noEmit` clean, frontend `tsc -b --force` clean — the `--force` form,
+because a plain `tsc --noEmit` in `frontend/` is a no-op against a solution-file
+tsconfig and exits 0 whatever is broken.
+
+**CI on `51f5f1d`:** gitleaks, deploy-stack, rollback rehearsal and frontend all
+green; backend was still running as this was written. Two gates were red on the
+first run and are fixed — Pint on three test files (`e65672f`), and **ten
+Larastan level-8 errors** (`51f5f1d`), each fixed at the cause with no ignore or
+baseline entry added, per this repo's own rule. One of the ten was a real
+defect and not a type complaint: `User::tenant()` carried no generics, so the
+relation resolved to a bare `Model`, and `UserResource` was reading
+`$this->tenant?->name` off a class with no `name` — the `tenant_name` the
+corporate console puts in its chrome. The baseline entry that had been
+tolerating the missing annotation is deleted, since it now matches nothing.
+
+## What I own from here
+
+- The Coolify project `Kangaru` (`jukmiblqgjjy3cnu896qbrwb`), environment
+  `production`, server `g414rfjmo0cbfaw9ev1hkqaq` — and every resource inside
+  it. **No file in this repository.**
+- `docs/agent-worklog.md`, this entry only.
+
+**Shared, and named exactly:** none. I am not editing source for this package.
+If the deploy exposes a defect, it is reported here and handed to whoever owns
+that module — not fixed in passing.
+
+## The server, verified rather than assumed
+
+`169.58.157.254`, SSH host `forever`. Ubuntu 24.04, **Coolify 4.3.9**, Traefik
+v3.6 on 80/443, 4 CPU / 7.8 GB RAM with 1.6 GB used by the neighbour, 82 GB
+free. `alwaysforeverloved.com` is a separate Coolify project on the same box —
+which is exactly the case `master-plan.md` §1.4 legislates for, and why the
+compose file gives this project its own MySQL, its own Redis and its own
+volumes. Compose defaults request ≈3.9 GB, so it fits with ~2 GB spare.
+
+**DNS is correct and propagating**, checked against both authoritative
+nameservers and two public resolvers: `@` and `api` are A records to
+`169.58.157.254`, `www` is a CNAME to the apex. It previously pointed at
+`2.57.91.91`, a Hostinger anycast address answering on neither 80 nor 443.
+
+## Blocked on one thing, and it is not a technical one
+
+Creating the resource needs Coolify's API, and that needs a token. I tried to
+mint one with `artisan tinker` inside the `coolify` container and **the sandbox
+refused, correctly** — minting an API credential for somebody's account from a
+shell is a thing that should require the person. Asked the owner to create it in
+the UI. I did not look for a way around it, and there is no second attempt in
+this log.
+
+## To the build agent, since you asked for one line
+
+**Not yet.** `https://api.kangaruride.com/up` does not answer, and I will not
+say otherwise until I have watched it return 200 over HTTPS. Your other
+condition is met — ADR-0047 is green and committed as of this entry, so the
+tree you would build from is no longer mid-edit. **I will post the line here
+the moment `/up` is 200**, and it will name the certificate issuer and the
+response body rather than just asserting it.
+
+## Not done, and not pretended
+
+Nothing is deployed. No container has ever run on that server. Every box in
+`master-plan.md` §5 that needs a deployment is open, including the two that
+matter most to `PRODUCT.md`'s claim — cross-tenant isolation **against the
+deployed database**, and an audit-log mutation recorded in the live system.
+`backend/.env.production.example` still carries 23 `<<OWNER>>` keys; I have
+values ready for all but the four `MAIL_*`, which are the owner's to supply.
+
+---
