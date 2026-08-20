@@ -1,0 +1,165 @@
+# =============================================================================
+# OSRM overlay — the routing engine, self-hosted.
+#
+# ## Why this file exists
+#
+# `maps.osrm_base_url` defaults to `https://router.project-osrm.org`, and
+# `Modules/Trips/Routing/OsrmProvider.php` says plainly what that is: the
+# project's public demo, "rate-limited and explicitly not for production use
+# under OSRM's own usage policy". Its own docblock names the fix — "a Docker
+# container and the Uganda extract from Geofabrik, and the URL below is the
+# only thing that changes". This is that container.
+#
+# It is not cosmetic. Routing decides the distance on a fare quote, the road
+# drawn on a driver's screen, and — since ADR-0045 — the **road ceiling that
+# caps a trace-priced trip**, which is the thing standing between a jittery GPS
+# trace and an inflated invoice. A rate-limited third party in that path means
+# fares quietly degrade to the dashed straight line.
+#
+# Self-hosted costs nothing per PRODUCT.md's discipline: no key, no account, no
+# metered API. Only disk and one preprocessing pass.
+#
+#   docker compose -f docker-compose.yml \
+#                  -f deploy/docker-compose.proxy.yml \
+#                  -f deploy/docker-compose.osrm.yml up -d
+#
+# ## Why a separate file rather than a service in docker-compose.yml
+#
+# CI's deploy-stack job runs `compose up` on every push. Adding this there
+# would make every CI run download an OSM extract from Geofabrik and spend
+# minutes preprocessing it — turning a stack test into a test of somebody
+# else's download server. The routing engine is a production concern, so it
+# lives in a production overlay.
+#
+# ## The three services, and why it is three and not one
+#
+# Preprocessing is a one-off that must not run again on every restart, and
+# `osrm-routed` must not start before it finishes. Compose expresses that with
+# two one-shot services and `service_completed_successfully`. Both are
+# idempotent: they check for the finished artefact and exit immediately if it
+# is there, so a redeploy costs seconds rather than repeating the work.
+# =============================================================================
+
+volumes:
+  # The extract and everything preprocessing produces from it. Survives
+  # redeploys — this is what makes the second deploy fast.
+  osrm-data:
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # osrm-fetch — the Uganda extract from Geofabrik.
+  #
+  # A separate image from the one that processes it, because the osrm-backend
+  # image ships the routing binaries and not a downloader.
+  # ---------------------------------------------------------------------------
+  osrm-fetch:
+    image: curlimages/curl:8.11.1
+    user: root
+    restart: "no"
+    volumes:
+      - osrm-data:/data
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        if [ -f /data/uganda-latest.osrm.mldgr ]; then
+          echo "[osrm-fetch] already prepared, nothing to download"
+          exit 0
+        fi
+        if [ -f /data/uganda-latest.osm.pbf ]; then
+          echo "[osrm-fetch] extract already present"
+          exit 0
+        fi
+        echo "[osrm-fetch] downloading the Uganda extract from Geofabrik"
+        curl -fSL --retry 3 --retry-delay 5 \
+          -o /data/uganda-latest.osm.pbf.part \
+          https://download.geofabrik.de/africa/uganda-latest.osm.pbf
+        mv /data/uganda-latest.osm.pbf.part /data/uganda-latest.osm.pbf
+        echo "[osrm-fetch] done"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+
+  # ---------------------------------------------------------------------------
+  # osrm-prepare — extract, partition, customize. The MLD pipeline.
+  #
+  # No memory limit on this one deliberately. It is the only step that is
+  # genuinely memory-hungry, it runs once, and an OOM here leaves a half-built
+  # graph that the sentinel check would then treat as finished.
+  # ---------------------------------------------------------------------------
+  osrm-prepare:
+    image: osrm/osrm-backend:v5.27.1
+    restart: "no"
+    volumes:
+      - osrm-data:/data
+    depends_on:
+      osrm-fetch:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        if [ -f /data/uganda-latest.osrm.mldgr ]; then
+          echo "[osrm-prepare] already prepared, skipping"
+          exit 0
+        fi
+        echo "[osrm-prepare] extract"
+        osrm-extract -p /opt/car.lua /data/uganda-latest.osm.pbf
+        echo "[osrm-prepare] partition"
+        osrm-partition /data/uganda-latest.osrm
+        echo "[osrm-prepare] customize"
+        osrm-customize /data/uganda-latest.osrm
+        echo "[osrm-prepare] done"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+
+  # ---------------------------------------------------------------------------
+  # osrm — the routing server. Reached at http://osrm:5000 from `app`, on this
+  # project's own network. It publishes no host port and is not routed by the
+  # proxy: nothing outside this stack has any business asking it for routes.
+  # ---------------------------------------------------------------------------
+  osrm:
+    image: osrm/osrm-backend:v5.27.1
+    restart: unless-stopped
+    command: osrm-routed --algorithm mld /data/uganda-latest.osrm
+    volumes:
+      - osrm-data:/data
+    depends_on:
+      osrm-prepare:
+        condition: service_completed_successfully
+    expose:
+      - "5000"
+    healthcheck:
+      # A real route through Kampala, not a port check. `osrm-routed` accepts
+      # connections before the graph is loaded, so a TCP probe would report
+      # healthy while every route still failed.
+      #
+      # Written against bash's own /dev/tcp rather than curl, because the
+      # osrm-backend image ships routing binaries and there is no promise that
+      # curl is among them. A healthcheck whose only failure mode is "the tool
+      # I assumed isn't installed" reports an outage that is not happening.
+      test:
+        - CMD
+        - bash
+        - -c
+        - 'exec 3<>/dev/tcp/127.0.0.1/5000 && printf "GET /route/v1/driving/32.5825,0.3476;32.6100,0.3200?overview=false HTTP/1.0\r\n\r\n" >&3 && grep -q "\"code\":\"Ok\"" <&3'
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: ${OSRM_CPUS:-0.5}
+          memory: ${OSRM_MEM:-1G}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
