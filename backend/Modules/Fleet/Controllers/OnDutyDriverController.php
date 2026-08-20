@@ -3,6 +3,7 @@
 namespace Modules\Fleet\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Models\User;
 use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -91,7 +92,12 @@ class OnDutyDriverController extends Controller
         // `forActor`, not `query()` (ADR-0006): the caller is platform
         // staff with no tenant bound, and the plain tenant scope would
         // answer nothing — every driver would read as waiting.
-        $trips = Trip::forActor($request->user())
+        // Guaranteed non-null, and a platform user rather than a customer:
+        // this route sits behind `auth:sanctum` and a fleet permission.
+        /** @var User $actor */
+        $actor = $request->user();
+
+        $trips = Trip::forActor($actor)
             ->whereIn('driver_id', $driverIds)
             ->whereIn('status', TripStatus::occupyingValues())
             ->get(['id', 'driver_id', 'status'])

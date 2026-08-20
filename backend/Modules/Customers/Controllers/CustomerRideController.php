@@ -266,12 +266,12 @@ class CustomerRideController extends Controller
      *
      * `updated_at` rather than `completed_at`: a cancellation writes no
      * `completed_at`, and the status write is the last thing that touches the
-     * row either way.
+     * row either way. A persisted trip always carries one, so there is no
+     * null case to guard.
      */
     private function justEnded(Trip $trip): bool
     {
-        return $trip->updated_at !== null
-            && $trip->updated_at->gt(now()->subMinutes(self::AFTERGLOW_MINUTES));
+        return $trip->updated_at->gt(now()->subMinutes(self::AFTERGLOW_MINUTES));
     }
 
     private function activeRideFor(Customer $customer): ?OrderRequest

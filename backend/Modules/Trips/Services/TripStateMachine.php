@@ -151,9 +151,14 @@ class TripStateMachine
     }
 
     /**
+     * Declared `null` rather than `?string`: starting a trip never produces a
+     * note. Its sibling below does — the trace's own account of how the
+     * distance was arrived at — and `applySideEffects` returns `?string` for
+     * that one. Saying so here keeps the difference visible.
+     *
      * @param  array<string, mixed>  $payload
      */
-    private function captureOpeningOdometer(Trip $trip, array $payload, ?string $photoPath = null): ?string
+    private function captureOpeningOdometer(Trip $trip, array $payload, ?string $photoPath = null): null
     {
         // **`started_at` is unconditional; the reading is not** (ADR-0047).
         // The timestamp is the Bank's acceptance criterion #1 and has nothing

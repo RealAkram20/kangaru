@@ -165,6 +165,7 @@ class User extends Authenticatable
         return $this->requiresMfa() && ! $this->hasMfaEnabled();
     }
 
+    /** @return BelongsTo<Tenant, $this> */
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);
@@ -316,7 +317,11 @@ class User extends Authenticatable
      */
     public function capabilities(): array
     {
-        $slugs = $this->capabilities ?? [];
+        // `getAttribute`, not `$this->capabilities`: the column and this
+        // method share a name, and reading the property leaves it ambiguous
+        // to a reader (and to static analysis) which of the two is meant.
+        // This says plainly that the stored column is what is being read.
+        $slugs = $this->getAttribute('capabilities');
         $cases = [];
         foreach (is_array($slugs) ? $slugs : [] as $slug) {
             $case = is_string($slug) ? ClientCapability::tryFrom($slug) : null;

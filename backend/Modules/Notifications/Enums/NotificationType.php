@@ -104,6 +104,7 @@ enum NotificationType: string
             self::TRIP_COMPLETED => 'Trip completed',
             self::ORDER_REQUEST_RECEIVED => 'Walk-in order received',
             self::TRIP_OFFERED => 'New job',
+            self::TRIP_OFFER_WITHDRAWN => 'Job withdrawn',
             self::DRIVER_CLOSURE_ANSWERED => 'Account closure',
             self::DRIVER_SUPPORT_ANSWERED => 'Report answered',
         };

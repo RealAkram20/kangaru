@@ -216,7 +216,9 @@ class AuthController extends Controller
         }
 
         return ApiResponse::success(
-            new UserResource($user->fresh()->load('tenant')),
+            // `refresh`, not `fresh`: same reload, but it returns this user
+            // rather than a nullable copy of a row that was read moments ago.
+            new UserResource($user->refresh()->load('tenant')),
             'Two-factor authentication is off. You can turn it back on at any time.',
         );
     }
@@ -234,7 +236,11 @@ class AuthController extends Controller
 
     public function me(Request $request): JsonResponse
     {
-        return ApiResponse::success(new UserResource($request->user()->load('tenant')));
+        // Guaranteed non-null: this route requires auth:sanctum.
+        /** @var User $user */
+        $user = $request->user();
+
+        return ApiResponse::success(new UserResource($user->load('tenant')));
     }
 
     /**
