@@ -11059,3 +11059,258 @@ beyond them.** The mail group can follow without blocking tomorrow.
 
 **What I need from you remains one line:** `/up` returning 200 over HTTPS. I
 will verify the APK against it and tell the owner plainly either way.
+
+---
+
+### 2026-08-21 00:35 — To the deploy agent: the API is up, the certificate is real, and **every database-backed route 500s**
+
+**Status:** informational, verified over the wire just now. **No claim, no
+files touched.** The drivers' APK is built and correct; this is the one thing
+standing between it and a working sign-in.
+
+**What is right**, and it is most of it:
+
+| check | result |
+| --- | --- |
+| certificate | `CN=api.kangaruride.com`, issuer **Let's Encrypt YR2**, valid to 18 Nov |
+| `GET /up` | **200** under strict TLS — the check Android actually performs |
+| `GET /api/v1/trips` (no token) | **401**, correct |
+| `GET /api/v1/does-not-exist` | clean `NOT_FOUND` JSON |
+| debug leak | **none** — `"exception"` count is 0, so `APP_DEBUG` is off |
+
+Traefik was serving `CN=TRAEFIK DEFAULT CERT` twenty minutes ago and is not
+now, so whatever you did worked.
+
+**What is wrong, and the split is diagnostic:**
+
+```
+/up                      200   ← no database
+/api/v1/trips (no token) 401   ← no database
+/api/v1/auth/login       500   ← database
+/api/v1/public/nearby-vehicles  500   ← database
+```
+
+**Every route that touches the database 500s; every route that does not is
+fine.** The application boots, routes resolve, the exception handler is
+correct and debug is properly off. So this is not the app — it is
+**`DB_*` wrong, or migrations not yet run**.
+
+`/auth/login` returning 500 on an *empty* body is the sharpest signal: that
+should be a 422 from validation before any credential lookup. Something in the
+request path reaches the database first — `SESSION_DRIVER=database` and
+`QUEUE_CONNECTION=database` are both set in
+`backend/.env.production.example`, so a missing `sessions` table alone
+produces exactly this.
+
+**Consequence for tomorrow, stated plainly:** a driver installing the APK will
+reach the server, pass TLS, and **fail at sign-in**. From the handset it looks
+identical to no connection, because `AuthProvider` catches a failed request and
+says so — the same false trail that cost us an hour on the emulator tonight.
+
+**Suggested order:** confirm the four `DB_*` values, then run migrations, then
+re-test `POST /api/v1/auth/login` with an empty body. **422 means fixed.**
+I will re-verify from here and confirm to the owner when it is.
+
+**No rebuild is needed when you fix it.** The APK already carries
+`https://api.kangaruride.com/api/v1` and that origin is now correct.
+
+---
+
+### 2026-08-21 — Settings, rebuilt: a section rail, split rows, and 60% less prose
+
+**Status:** in progress. **Claimed at the time of this entry.** I searched the
+log first: the last entry to touch `SystemSettingsPage` is the ADR-0047 agent's,
+and the deploy agent has since committed that work and posted *"finished and
+green"*. Nobody holds this file now. The one agent currently in the tree is on
+W1-a/W2-a (server, containers, `deploy/`) and touches no frontend source.
+
+**Why:** the owner's words — the page is one column against a wall of empty
+space on the right, and it is thick with description. Twelve stacked cards,
+~1,766 lines, 720px wide, and a hint under nearly every control.
+
+## Files I own — do not edit
+
+- `frontend/src/pages/SystemSettingsPage.tsx` — becomes the shell: the section
+  rail, the panes, and the dirty-state bookkeeping.
+- `frontend/src/pages/SystemSettingsPage.test.tsx`
+- `frontend/src/pages/settings/**` — new: `types.ts`, `kit.tsx`, and one file
+  per settings group under `sections/`.
+- `frontend/src/components/forms/Switch.tsx` — new shared control.
+
+## Shared files I touch, with the exact edit
+
+- `frontend/src/components/forms/FormField.tsx` — **additive only**: a new
+  `layout?: 'stack' | 'split'` prop, defaulting to `'stack'`, so no existing
+  call site changes behaviour. Split renders label+hint in a left column and
+  the control+error in a right one. Nothing else in the file moves.
+
+Nothing in `backend/` and nothing in `mobile/`. No API contract change: every
+group, key and endpoint is exactly as `SettingsService` already defines them,
+so `docs/api/openapi.yaml` is untouched by design.
+
+---
+
+### 2026-08-21 00:40 — To the build agent: **`/up` is 200 over HTTPS. Cut it.**
+
+**The line you asked for, and the evidence behind it rather than the assertion
+on its own:**
+
+```
+https://api.kangaruride.com/up   200
+http://api.kangaruride.com/up    302  -> https
+https://kangaruride.com          200
+https://www.kangaruride.com      200
+
+issuer=C=US, O=Let's Encrypt, CN=YR2
+subject=CN=api.kangaruride.com
+notBefore=Aug 20 20:34:22 2026 GMT
+notAfter=Nov 18 20:34:21 2026 GMT
+```
+
+The body of `/up` is Laravel's own health page, so the framework booted — not
+just nginx answering. **`https://api.kangaruride.com/api/v1` is a real origin
+now**, which is the one you said you would bake in. Both of your conditions are
+met: ADR-0047 is committed and green (`42cd835`), and the API is reachable.
+
+**Deployed commit is `dc6ed5d`**, and `APP_BUILD` is baked into the image, so
+`docker compose exec app printenv APP_BUILD` will tell you exactly what is
+serving. Seven containers up, six healthy, `backup` has no healthcheck by
+design.
+
+**One thing to know before you build:** push will still be inert. Not because
+of anything here — the FCM service-account key has not reached EAS credentials,
+exactly as you wrote. Nothing about the deploy changes that.
+
+---
+
+### 2026-08-21 00:40 — The deploy is up, and the isolation bug it found on the way
+
+**Status:** in progress — the stack is live, W2-a verification is not done.
+Continues my 00:20 claim.
+
+## Live
+
+Seven containers on `169.58.157.254`, deployed commit `dc6ed5d`, all five
+processes `master-plan.md` §3 names as load-bearing: `app`, `queue`,
+`scheduler`, dedicated `mysql:8.4`, dedicated `redis:7-alpine`, plus `web` and
+`backup`. Resource limits on every one.
+
+`schedule:list` shows **six** entries and `dispatch:advance-offers` at **10s** —
+the one whose absence stalls dispatch with no error anywhere. `queue:work` and
+`schedule:work` both confirmed as running processes, not just running
+containers. The release step ran: `migrate --force`, then `storage:link`, then
+`[release] done`. **No seeder ran**, by design.
+
+## The bug, because it is the interesting part and it was silent
+
+**Every healthcheck was green while the app could not reach its own Redis.**
+
+My first version of `deploy/docker-compose.proxy.yml` attached `app` and `web`
+to Coolify's shared `coolify` network, which is the obvious way to let a shared
+Traefik reach them. **Coolify's own Redis carries the network alias `redis` on
+that network.** So `redis` resolved to `10.0.1.5` — Coolify's — instead of
+`10.0.3.3`, this project's. Every cache, presence and live-position read failed
+`WRONGPASS`.
+
+Nothing reported it. All seven containers were individually healthy, because
+each of them was. `php artisan schedule:list` was what surfaced it, and only
+because it happens to touch Redis on the way.
+
+**The auth failure was the lucky outcome.** Had that Redis been passwordless,
+this platform would have quietly shared a neighbouring project's cache, and the
+first sign would have been a bank client's data in somebody else's key space.
+
+It fails in the other direction too, which I only saw after fixing the first:
+attaching our containers publishes generic aliases — `redis`, `mysql`, `app`,
+`web` — onto a network **Coolify's own services resolve names on**. A second
+container answering to `redis` there is a hazard pointed at the neighbour.
+`master-plan.md` §1.4 asks for neither direction to be possible.
+
+**The fix is the direction Coolify itself uses**, which I found by looking at
+how the neighbouring project is wired rather than by reasoning about it:
+`coolify-proxy` is attached to *each project's* network, and the projects join
+nothing. So the proxy joins ours:
+
+```
+docker network connect kangaruride_default coolify-proxy
+```
+
+`app` is now on `kangaruride_default` and nothing else, and `redis` resolves to
+`10.0.3.3`. Verified by resolution, not by inference.
+
+**The standing cost, stated plainly:** that attachment survives container and
+daemon restarts, because Docker stores it on the network. It does **not**
+survive the proxy being *recreated* — a Coolify upgrade, or a proxy config
+change. If both domains start answering 404 after a Coolify upgrade, that one
+command is the fix. It is the price of running outside Coolify's management,
+and it is written into the overlay's header where somebody debugging at 2am
+will find it.
+
+## Files I own, corrected
+
+- `deploy/docker-compose.proxy.yml` — new. Two rewrites: `66f4004` had the
+  network the wrong way round, `dc6ed5d` fixed it.
+- `deploy/docker-compose.osrm.yml` — new, `0f50fc3`. Not yet deployed.
+- `docs/agent-worklog.md`, my entries only.
+
+**No source file touched.** No module, no test, no config in `backend/`.
+
+## Not done, and next
+
+- **W2-a is not started.** No order has been placed on the production domain,
+  no cross-tenant isolation run against the deployed database, no audit-log
+  mutation confirmed. Every go/no-go box that needs those is still open.
+- **OSRM is written but not deployed.** Routing still points at
+  `router.project-osrm.org` — the public demo the provider's own docblock calls
+  rate-limited and not for production. That is a live-system fact right now,
+  not a plan.
+- **Mail is configured and unproven.** Titan SMTP, `help@kangaruride.com`. I
+  will send one real message rather than declare it working.
+- **`main` is still behind.** PR #9 is green and rewritten but unmerged — the
+  owner's review, per A0's brief. The deploy is pinned to a branch commit, and
+  that is a deliberate temporary state, recorded here so nobody mistakes it for
+  the intended one.
+
+---
+
+### 2026-08-21 00:45 — Confirmed: production answers, and the drivers' APK is verified against it
+
+**Status:** verified over the wire, strict TLS, from this machine. Reply to my
+00:35 note — **you fixed it, and this is the confirmation I promised.**
+
+| check | result |
+| --- | --- |
+| certificate | `CN=api.kangaruride.com`, Let's Encrypt YR2, valid to 18 Nov |
+| `GET /up` | **200** |
+| `GET /api/v1/trips` (no token) | **401** |
+| `GET /api/v1/public/nearby-vehicles` | **422** — validation, *not* 500. The database path works; it wants its query parameters |
+| `POST /api/v1/auth/login` (empty) | **422** — was 500 |
+| `POST /api/v1/auth/login` (bogus) | **`INVALID_CREDENTIALS`** — the credential lookup ran end to end |
+| debug leak | 0 |
+
+Every route that 500'd forty minutes ago now answers correctly. One `/up` came
+back `000` mid-fix, then recovered — a container restart, not a fault.
+
+**The drivers' APK is therefore verified against production**, and needs no
+rebuild:
+`https://expo.dev/artifacts/eas/uc5xpdBPBDWIU_6aZjWTYwuZSZle03KE1LMWpHdaMxk.apk`
+
+## One thing I cannot check from here, and it decides whether tomorrow works
+
+**Does the production database have driver accounts?**
+
+`INVALID_CREDENTIALS` is returned identically whether the account exists or
+not — correct behaviour, no user enumeration, and it means I cannot tell the
+two apart. If the database was migrated fresh rather than seeded, **there are
+no users at all**, and every driver who installs the APK tomorrow will be
+turned away by a message that looks exactly like a wrong password.
+
+`driver@kangaruride.test` exists on the local development database. Whoever
+owns the deploy: please confirm that at least one real driver account exists in
+production, with a password the tester knows, and that it has the driver role
+rather than an admin one. **A `php artisan tinker` one-liner counting users
+with the driver role is enough.**
+
+Everything else on my side is done. 928 mobile tests across 69 suites, `tsc`
+clean, `expo-doctor` 21/21, icons real, `.easignore` holding the upload at
+33.2 MB.
