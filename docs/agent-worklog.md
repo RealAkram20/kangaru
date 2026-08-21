@@ -12850,7 +12850,23 @@ tests `Vehicles/VehicleCategoryTest`, `Vehicles/VehicleCategoryRateCardSyncTest`
 
 ### 2026-08-21 — "Add a drop-off" mid-trip: `trip_stops` and the driver's circuit (ADR-0045 §2 + §4, driver slice)
 
-**Status: in progress.** The owner's ask, verbatim in spirit: *"for now we
+**Status: complete.** Backend 1457 tests / 5737 assertions green (`vendor/bin/pest`),
+mobile 1022 tests / 78 suites green, `tsc --noEmit` clean, eslint 0 errors,
+Pint clean, PHPStan clean on `Modules/Trips`, `app/Enums`, `app/Support/Auth`.
+Migration proved reversible up→down→up against the testing DB. Five guards
+proved by mutation, including the cross-client one, and all five restored
+(listed below). Both screens
+rendered and their outlines read — which is what caught the two defects in
+"Found by rendering" below.
+
+**A local-only snag worth knowing:** `php artisan test` dies with a PHP
+`memory_limit` fatal (128 MB) part-way through, inside a *mail blade view*,
+and `-d memory_limit=1G` does not help because the subprocess it spawns does
+not inherit it. `vendor/bin/pest` — which is exactly what `.github/workflows/
+ci.yml:159` runs — passes the whole suite. Not caused by this change and not
+fixed by it; recorded so the next agent does not read it as a red suite.
+
+The owner's ask, verbatim in spirit: *"for now we
 have stop and pause — we need an 'Add a Drop off'; on click we have the
 search for the new destination. Most of our corporate clients are banks and
 they serve about 5 ATMs and branches, one at a time, driven by this one
@@ -12962,11 +12978,69 @@ below), and an itinerary the driver works through.
 - **Sequence is unique per trip and driver adds append.** No reordering
   surface anywhere in this slice (§7's refusal quoted, not re-argued).
 
+**Corrections to the claim above, made while building:**
+
+- **`ClientScope.php` was not on my shared-file list and had to be.** The
+  driver token is an allow-list by route name and **fails closed**, and that
+  file's own docblock records *seven* endpoints shipping 403 to the only app
+  that draws them by being omitted from it. Both new routes are named there,
+  and `TokenScopeTest` gained a case pinning them — the reflective guard
+  beside it only sweeps `me.*`, so `trips.*` needs naming by hand.
+- **Four CI census counts moved**, all mechanical: `RoutePolicyCensusTest`
+  (195→197 routes, 179→181 guarded, 165→167 tenant-bound staff),
+  `CrossTenantAnswers404Test` (38→40, and both new rows added to its hand
+  list), `DriverOwnershipIsolationTest` (52→54 driver routes).
+- **`TripStopService::applyTransition` has no `trip_completed` branch**, and
+  the claim said it would. The graph's only exit from `waiting` is
+  `trip_resumed`, so an arrived stop cannot survive to completion — the
+  resume that legalises completing already closed it. A *pending* stop does
+  survive, and stays pending: a run that ended before its itinerary did is
+  evidence, not a loose end to tidy. Test renamed to say so.
+
+**Found by rendering the screens, and fixed — neither showed up in a test:**
+
+1. **"Journey: Under 100 m" on every circuit.** The Journey stat is the
+   straight line from pickup to drop-off. A bank run starts *and ends* at
+   head office, so on the exact trip this feature exists for, the two ends
+   are the same place and the stat reported a morning's driving as under a
+   hundred metres. It now renders `—` whenever the trip has stops: there is
+   no honest mid-run substitute (summing legs would be straight lines for a
+   road journey, and `distance_km`/`gps_distance_km` are both written at Trip
+   Completed), which is the same reasoning this screen already applies to
+   distance *travelled*. Two tests pin it — withheld on a circuit, still
+   shown on a point-to-point trip.
+2. **The search opened empty.** A driver had to type before seeing their own
+   client's estate. It now asks with an empty query on open, so the primary
+   flow — open, tap the next ATM — is one tap; the endpoint already caps at
+   twelve with or without `q`, so this is one request rather than a page, and
+   §10's bound is unchanged because it is the same register the same driver
+   may already read. Walk-in trips still do not ask at all (`enabled: false`
+   — there is no register), and the list gained a "Saved places" heading so
+   an unheaded column of names cannot read as suggestions the app invented.
+
+**Guards proved by mutation, and restored:**
+
+1. `TripStopCandidateController`'s `tenant_id` filter → `> 0`. **Another
+   bank's ATM appears in the driver's search** — the failure prints
+   `'Ntinda ATM other bank'` alongside the client's own row, which is the
+   cross-client leak ADR-0001 calls the worst bug this platform can have,
+   in the exact shape `docs/security-gate.md` F2 is about.
+2. Dropping the `unplanned_stop_count` increment → 2 tests fail (§4's flag).
+3. Skipping the arrive stamp in `applyTransition` → the arrive/resume test
+   fails.
+4. `nextPendingStop` returning the *last* pending stop → `stops.test.ts` fails.
+5. `onArrive` queueing `waiting` without the stop id → the in-progress
+   screen's arrival test fails.
+
 **Not built, and deliberately:**
 
 - **Skip this stop (§6).** First-class in the schema (`skipped` +
   `skip_reason` exist from day one) and absent from the UI; it needs a reason
   sheet and its own endpoint, and nothing in this slice writes it.
+- **Nothing was driven against a running server.** Both suites and both
+  rendered screens are the evidence here; no real handset, no real API call,
+  no APK. The endpoints are on the driver token's allow-list and covered by
+  16 feature tests, but the first end-to-end proof is still owed.
 - **Copy-on-booking from client routes (§1)** and **the driver picking a
   route (§10)** — the itinerary here is built stop by stop by the driver.
 - **Dispatch/console surfaces** — the endpoint accepts
@@ -13161,4 +13235,126 @@ happen to share a config file.
 - **No `traces_sample_rate: 1.0`.** 10% of transactions, 100% of errors —
   tracing is billed per transaction and a platform that has not launched does
   not need every one of them to find a 1.4 s page load.
+
+
+---
+
+### 2026-08-21 — Sentry: **done and green**, and the bug that only a real deploy could find
+
+Closing the claim above. Backend **1457 passed**, frontend **575**, driver app
+**1018**, Pint clean, Larastan clean, `tsc` on both TypeScript apps, eslint, a
+production bundle build — and **CI green on all five jobs**, including the
+deploy-stack smoke test and the timed rollback rehearsal.
+
+**It is inert until a DSN is set.** Nothing is reporting yet; the owner's org
+is `armgenius` and the DSN has been asked for.
+
+## The part worth reading: a bug six suites could not see
+
+`before_send` was written as `'before_send' => new ScrubsSecrets` — an object
+in a config array. It passed **Pint, Larastan level 8, 1455 backend tests, 575
+frontend tests, 1018 driver-app tests and a production bundle build**, and it
+made **every production container fail to start**.
+
+Each container runs `php artisan config:cache` at boot. Laravel `var_export`s
+the merged config and requires the result back; an object with no
+`__set_state()` cannot be read back, and Laravel rethrows it as *"Your
+configuration files are not serializable."*
+
+Nothing local could have caught it — the test environment reads config from
+PHP and never from the cache. CI's deploy-stack job did, twenty minutes and a
+full image build later, and said only:
+
+```
+dependency failed to start: container kangaru-app-1 is unhealthy
+```
+
+A true signal with a useless message. That job earned its runtime here.
+
+The fix is a static callable — `[ScrubsSecrets::class, 'handle']` is an array
+of two strings, so it is both a valid callable and something `var_export`
+round-trips.
+
+**And the guard I wrote for it was itself a lying test.** The first version of
+`Ci/ConfigIsCacheableTest` called `var_export()` and **passed against the very
+bug it was written for**: `var_export` does not throw on an object, it happily
+writes `\App\Foo::__set_state(array(...))`, and the Error only arrives when
+that string is read back. Mutation caught it. It now exports *and* evaluates,
+and it walks every config file rather than pinning `sentry.php`, because the
+next closure or enum instance will be somewhere nobody thought to look.
+
+That is the second lying test on this branch found the same way, both mine,
+both assertions that could not distinguish the case they were named after.
+
+## Guards proved by mutation, all restored
+
+| guard | mutation | bites |
+|---|---|---|
+| passwords are scrubbed | dropped `password` from the denylist | ✅ 3 fail |
+| the walk is recursive | removed the recursive call | ✅ 5 fail |
+| config survives `config:cache` | put the object back | ✅ 2 fail |
+
+## The measurement, since "sluggish" was the reason for all this
+
+`https://kangaruride.com/` serves a **2,169-byte static `index.html`** at
+**0.69 s / 1.69 s / 0.69 s** TTFB over three consecutive samples. A static
+file behind Cloudflare and Traefik. The 2.4× spread matters more than the
+mean.
+
+**It is not the bundle.** The entry chunk is **37 KB gzipped with the Sentry
+SDK inside it**, against `mapbox-gl` at **485 KB gzipped / 1.8 MB raw**. Total
+`dist` is 14 MB. Whatever is costing 1.4 s happens before a byte of JavaScript
+is parsed, which is exactly what tracing will now say.
+
+## Files I own
+
+`docs/adr/0054-error-and-performance-tracking.md`;
+`backend/app/Support/Observability/ScrubsSecrets.php`;
+`backend/config/sentry.php`; `backend/tests/Feature/Observability/`;
+`backend/tests/Feature/Ci/ConfigIsCacheableTest.php`;
+`frontend/src/lib/observability.ts`; `mobile/src/observability.ts`.
+
+## Shared files touched, with the exact edit
+
+- `backend/bootstrap/app.php` — one `Integration::handles($exceptions)` and
+  its import. **Reporting only**: every existing `render()` callback still
+  produces this platform's own error envelope, so no client sees a different
+  response because monitoring was switched on.
+- `backend/composer.json`/`.lock` — `sentry/sentry-laravel`, **and a
+  `league/commonmark` patch bump that cleared six advisories, two rated
+  high.** Found by `composer audit` running as part of the install; unrelated
+  to Sentry and worth more than it cost.
+- `backend/.env.production.example` — four keys. `<<OWNER>>` count 23 → 25.
+- `frontend/` — `@sentry/react`, one init in `main.tsx`, four typed env vars,
+  and **the privacy notice**, which now says in plain words that a failure
+  sends what you had typed.
+- `mobile/` — `@sentry/react-native` and its config plugin in `app.json`, one
+  call in `index.ts` beside the other two pre-React registrations.
+- `docs/data-inventory.md` — §5 names Sentry as a processor; §8 records the
+  two obligations this repository cannot discharge.
+
+**I did not touch `Modules/Trips` or `Modules/Bookings`** — another agent had
+52 files open there. Checked before starting and again before committing;
+72 of their files remain uncommitted and untouched.
+
+## Owed, and outside this repository
+
+- **A data-processing agreement with Sentry.** The sharpest of the ones in
+  `data-inventory.md` §8: the only processor switched on by a deliberate
+  decision after that document existed, and the only one receiving a bank
+  client's data rather than a member of the public's typing.
+- **A retention window on the Sentry project.** Sentry's default is 90 days,
+  inside §6's floor — but it is a setting in somebody else's console and
+  nothing here will notice if it changes.
+
+## Not built, deliberately
+
+- **No alerting rules, no dashboards, no on-call rota.** Those decide who gets
+  woken up at 03:00 and nobody has been asked.
+- **No session replay, no screenshots, on any of the three apps.** They record
+  the screen rather than the request — a passenger's address and a bank's trip
+  list as video. A separate decision from "send the request body", and one
+  nobody has been asked either.
+- **`traces_sample_rate` is 0.1, not 1.0.** Tracing bills per transaction and
+  a 1.4 s page load is as visible in a tenth of samples as in all of them.
 
