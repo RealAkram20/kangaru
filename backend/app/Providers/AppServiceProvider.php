@@ -89,6 +89,8 @@ use Modules\Trips\Support\DirectContactChannel;
 use Modules\Trips\Support\LivePositionStore;
 use Modules\Trips\Support\RedisLivePositionStore;
 use Modules\Vehicles\Models\Vehicle;
+use Modules\Vehicles\Models\VehicleCategory;
+use Modules\Vehicles\Policies\VehicleCategoryPolicy;
 use Modules\Vehicles\Policies\VehiclePolicy;
 
 class AppServiceProvider extends ServiceProvider
@@ -237,6 +239,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(ClientRoute::class, ClientRoutePolicy::class);
         Gate::policy(AuditLog::class, AuditLogPolicy::class);
         Gate::policy(Vehicle::class, VehiclePolicy::class);
+        Gate::policy(VehicleCategory::class, VehicleCategoryPolicy::class);
         Gate::policy(Driver::class, DriverPolicy::class);
         Gate::policy(DriverApplication::class, DriverApplicationPolicy::class);
         Gate::policy(DriverSettlementRequest::class, DriverSettlementRequestPolicy::class);
@@ -331,6 +334,10 @@ class AppServiceProvider extends ServiceProvider
             'client_route' => ClientRoute::class,
             'user' => User::class,
             'vehicle' => Vehicle::class,
+            // ADR-0050. Renaming or retiring a category changes what the
+            // fleet may record next and what a tariff may price; the office
+            // may be asked why a category stopped being offered.
+            'vehicle_category' => VehicleCategory::class,
             'driver' => Driver::class,
             // ADR-0027's applications queue. Approving one mints a principal
             // and rejecting one ends somebody's application — both are

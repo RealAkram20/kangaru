@@ -7,6 +7,7 @@ use App\Models\User;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Modules\Administration\Services\SettingsService;
+use Modules\Vehicles\Rules\ActiveVehicleCategory;
 
 class StoreBookingRequest extends FormRequest
 {
@@ -33,6 +34,20 @@ class StoreBookingRequest extends FormRequest
             'passenger_name' => ['required', 'string', 'max:255'],
             'passenger_phone' => ['required', 'string', 'max:32'],
             'passenger_count' => ['nullable', 'integer', 'min:1', 'max:60'],
+            /*
+             * ADR-0051. The kind of vehicle the client wants.
+             *
+             * Optional, and null is a real answer: "no preference" is the
+             * ordinary case and the one every booking before this one has.
+             *
+             * Validated against the live vocabulary, so a client cannot ask
+             * for a category the fleet does not run — and, since the rule
+             * checks `active`, cannot ask for one it has stopped running.
+             * **A retired category is not grandfathered here**, unlike on
+             * `UpdateVehicleRequest`: a booking is a request being made now,
+             * not a record predating the retirement.
+             */
+            'vehicle_category' => ['nullable', 'string', new ActiveVehicleCategory],
             'origin' => ['required', 'string', 'max:255'],
             // ADR-0020 §2 — what the matcher ranks proximity by. Optional:
             // the internal booking dialog has no address autocomplete yet,

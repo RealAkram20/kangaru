@@ -54,6 +54,11 @@ class BookingResource extends JsonResource
             'passenger_name' => $this->passenger_name,
             'passenger_phone' => $this->passenger_phone,
             'passenger_count' => $this->passenger_count,
+            // ADR-0051. Null means no preference was stated, which is not
+            // the same as a preference that was overridden — the office and
+            // a client's auditor both need to be able to tell those apart,
+            // so this is never coerced to a default.
+            'vehicle_category' => $this->vehicle_category,
             'origin' => $this->origin,
             'destination' => $this->destination,
             'scheduled_for' => $this->scheduled_for,

@@ -206,7 +206,11 @@ it('names the ringtone channel the app created, not a default one', function () 
     $user->notify(TripOfferedNotification::for($offer));
 
     Http::assertSent(function ($request) use ($offer) {
-        expect($request['0']['channelId'])->toBe('offers.v1');
+        // `v2` since ADR-0049 §4 — a channel cannot be edited to stop
+        // bypassing Do Not Disturb, so respecting silent mode meant a new id.
+        // If this assertion is ever changed, `OFFER_CHANNEL_ID` in
+        // `mobile/src/push/channels.ts` has to change in the same commit.
+        expect($request['0']['channelId'])->toBe('offers.v2');
         // One live offer per handset, replacing rather than stacking: a
         // driver back from a dead zone should not find a column of dead jobs.
         expect($request['0']['collapseId'])->toBe('offer-'.$offer->id);

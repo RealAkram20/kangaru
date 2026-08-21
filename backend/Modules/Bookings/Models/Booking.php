@@ -63,6 +63,11 @@ class Booking extends Model
         'passenger_name',
         'passenger_phone',
         'passenger_count',
+        // ADR-0051: the kind of vehicle the client asked for, or null when
+        // they stated no preference. A preference, not a constraint — the
+        // recommender ranks a match far above everything else and still
+        // offers the alternatives, saying which is which.
+        'vehicle_category',
         'origin',
         // ADR-0020: where the pickup actually is, when the caller knew.
         // Nullable — every booking that predates this has none, and the

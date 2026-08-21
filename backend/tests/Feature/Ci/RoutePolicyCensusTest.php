@@ -25,7 +25,7 @@ use Illuminate\Support\Facades\Route;
  * - **An idiom-D (public) route without a throttle**, or a non-D route without
  *   an authentication guard. The former is how an SMS-pumping cost arrives;
  *   the latter is how a leak does.
- * - **The counts.** 186 routes, 13 public — 172/11 on the working tree of 2026-08-18,
+ * - **The counts.** 195 routes, 16 public — 172/11 on the working tree of 2026-08-18,
  *   plus `GET public/fare-quotes` (ADR-0026's tariff answering the order form) on 2026-08-19,
  *   plus `GET driver-presence` (the live map's on-duty pool) and
  *   `GET public/nearby-vehicles` (the order page's ambient fleet, anonymized) on 2026-08-20 —
@@ -34,7 +34,12 @@ use Illuminate\Support\Facades\Route;
  *   and `POST routes/preview`) on 2026-08-20 — none of them public, so the
  *   D count is unchanged,
  *   plus `GET colleagues` (the booking dialog's passenger picker, gated on
- *   `bookings.create`) on 2026-08-20 — authenticated, so D is still 13.
+ *   `bookings.create`) on 2026-08-20 — authenticated, so D is still 13,
+ *   plus ADR-0048's public application-document routes on 2026-08-21, which
+ *   moved D 13 -> 16 with the reasons on each row,
+ *   plus the four of ADR-0050 (`vehicle-categories`, four verbs) on
+ *   2026-08-21 — all `vehicles.view` / `vehicles.manage`, none public,
+ *   because a corporate client has no fleet menu at all, so D stays 16.
  *
  * Idioms:
  *   A  Policy / Gate — `$this->authorize()`, `Gate::authorize()`, `can()`.
@@ -135,6 +140,13 @@ function routeCensus(): array
         'DELETE api/v1/customers/{customer}/suspension' => 'A',
 
         // ── Vehicles ────────────────────────────────────────────────────
+        // ADR-0050. The fleet's category vocabulary — read on
+        // `vehicles.view` (every platform role, so the rate card dialog can
+        // render the choices to Finance), written on `vehicles.manage`.
+        'GET api/v1/vehicle-categories' => 'A',
+        'POST api/v1/vehicle-categories' => 'A',
+        'PATCH api/v1/vehicle-categories/{vehicleCategory}' => 'A',
+        'DELETE api/v1/vehicle-categories/{vehicleCategory}' => 'A',
         'GET api/v1/vehicles' => 'A',
         'POST api/v1/vehicles' => 'A',
         'GET api/v1/vehicles/{vehicle}' => 'A',
@@ -146,6 +158,16 @@ function routeCensus(): array
         'POST api/v1/closure-requests/{closureRequest}/confirm' => 'B',
         'POST api/v1/closure-requests/{closureRequest}/decline' => 'B',
         'POST api/v1/driver-applications' => 'D',
+        // ADR-0048 §4. Public, and authorised by a claim ticket rather than a
+        // session: an opaque 64-character secret minted at submission that
+        // resolves to exactly one `driver_applications` row and reaches
+        // nothing else. Filed 'D' because that is what it is — unauthenticated
+        // and throttled — and *not* filed as a weaker 'A', which would claim a
+        // policy protects it. The ticket is checked in the controller and the
+        // 404 is deliberately identical for unknown, expired and decided.
+        'GET api/v1/driver-applications/documents' => 'D',
+        'POST api/v1/driver-applications/documents' => 'D',
+        'DELETE api/v1/driver-applications/documents/{type}' => 'D',
         'GET api/v1/driver-applications' => 'A',
         'GET api/v1/driver-applications/{driverApplication}' => 'A',
         'POST api/v1/driver-applications/{driverApplication}/approve' => 'A',
@@ -158,6 +180,7 @@ function routeCensus(): array
         'POST api/v1/drivers/{driver}/account' => 'A',
         'DELETE api/v1/drivers/{driver}/account' => 'A',
         'GET api/v1/drivers/{driver}/documents' => 'A',
+        'POST api/v1/drivers/{driver}/documents' => 'A',
         'GET api/v1/drivers/{driver}/documents/{document}/file' => 'A',
         'POST api/v1/drivers/{driver}/documents/{document}/reject' => 'A',
         'POST api/v1/drivers/{driver}/documents/{document}/verify' => 'A',
@@ -344,14 +367,34 @@ it('has a census row for every API route and a route for every census row', func
 
     expect($uncensused)->toBe([], 'Routes with no census row — decide which idiom carries each, and add it here and to docs/security-gate.md');
     expect($phantom)->toBe([], 'Census rows for routes that no longer exist');
-    expect(count($router))->toBe(187);
+    /**
+     * 187 until ADR-0048, 190 now: the three applicant KYC verbs (§4).
+     *
+     * Hard-coded for the same reason the public count below is — a route
+     * appearing without anybody deciding its idiom is the thing this file
+     * exists to make impossible, and a total that drifted silently would let
+     * a census row be *deleted* alongside its route with nothing to notice.
+     */
+    expect(count($router))->toBe(195);
 });
 
-it('uses only the four idioms, and files thirteen routes as public', function () {
+it('uses only the four idioms, and files sixteen routes as public', function () {
     $idioms = array_count_values(routeCensus());
 
     expect(array_keys($idioms))->each->toBeIn(['A', 'B', 'C', 'D', 'A/C']);
-    expect($idioms['D'])->toBe(13);
+
+    /**
+     * **Thirteen until ADR-0048, sixteen now**, and the number is hard-coded
+     * on purpose: it is a tripwire, so that opening a route to the whole
+     * internet is never something that happens quietly as a side effect of a
+     * feature. It caught these three, which is the system working.
+     *
+     * The three are the applicant KYC verbs (ADR-0048 §4). Each is throttled
+     * at ADR-0027 §5's 5/min/IP, none returns file bytes, and none takes an
+     * id in the URL — the row is whichever one the claim ticket resolves to,
+     * so there is nothing to enumerate by changing a path segment.
+     */
+    expect($idioms['D'])->toBe(16);
     expect($idioms['B'])->toBe(3);
 });
 
@@ -376,8 +419,11 @@ it('authenticates every route that is not filed as public, and throttles every o
         $guarded++;
     }
 
-    expect($public)->toBe(13);
-    expect($guarded)->toBe(174);
+    // 13 -> 16: ADR-0048 §4's three applicant KYC verbs, all throttled at
+    // ADR-0027 §5's 5/min/IP. `$guarded` is unchanged because all three are
+    // public by design, not by omission.
+    expect($public)->toBe(16);
+    expect($guarded)->toBe(179);
 });
 
 it('binds the actor\'s tenant on every staff route, so TenantScope has something to scope by', function () {
@@ -412,5 +458,5 @@ it('binds the actor\'s tenant on every staff route, so TenantScope has something
     }
 
     expect($selfService)->toBe(7);
-    expect($staff)->toBe(160);
+    expect($staff)->toBe(165);
 });

@@ -109,6 +109,24 @@ enum ErrorCode: string
     case CLIENT_PLACE_IN_USE = 'CLIENT_PLACE_IN_USE';
 
     /**
+     * A vehicle category cannot be deleted while a vehicle, a rate card
+     * price or an invoice line still names it (ADR-0050 §3).
+     *
+     * Unlike `CLIENT_PLACE_IN_USE` above, **no foreign key is enforcing
+     * this** — `rate_card_rates.vehicle_category` and
+     * `invoice_lines.vehicle_category` are deliberately plain strings, so
+     * that an issued invoice reproduces from stored data without joining a
+     * table somebody can rename. The database will not refuse this delete;
+     * the controller must, or an immutable rate card rate is left naming
+     * nothing on a version that can never be corrected.
+     *
+     * 409 for the shared reason: the request is well-formed and the world
+     * disagrees with it. The message names the counts and points at
+     * retirement, which is the action that actually resolves it.
+     */
+    case VEHICLE_CATEGORY_IN_USE = 'VEHICLE_CATEGORY_IN_USE';
+
+    /**
      * The sign-in account cannot be attached to this driver (ADR-0016):
      * the profile already has one, or the account being linked is already
      * some other driver's. 409 rather than 422 — the request is
