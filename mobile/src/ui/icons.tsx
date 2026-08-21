@@ -53,13 +53,7 @@ const base = ({ size = 20, color = colors.placeholder, strokeWidth = 1.7 }: Icon
   strokeWidth,
 });
 
-function Outline({
-  size,
-  children,
-}: {
-  size: number;
-  children: React.ReactNode;
-}) {
+function Outline({ size, children }: { size: number; children: React.ReactNode }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       {children}
@@ -114,7 +108,15 @@ export function LockIcon(props: IconProps) {
 
   return (
     <Outline size={size}>
-      <Rect x="3" y="11" width="18" height="11" rx="2" ry="2" {...strokeProps(color, strokeWidth)} />
+      <Rect
+        x="3"
+        y="11"
+        width="18"
+        height="11"
+        rx="2"
+        ry="2"
+        {...strokeProps(color, strokeWidth)}
+      />
       <Path d="M7 11V7a5 5 0 0 1 10 0v4" {...strokeProps(color, strokeWidth)} />
     </Outline>
   );
@@ -572,10 +574,7 @@ export function HouseIcon(props: IconProps) {
 
   return (
     <Outline size={size}>
-      <Path
-        d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"
-        {...strokeProps(color, strokeWidth)}
-      />
+      <Path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8" {...strokeProps(color, strokeWidth)} />
       <Path
         d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
         {...strokeProps(color, strokeWidth)}
@@ -601,10 +600,7 @@ export function ReceiptIcon(props: IconProps) {
   return (
     <Outline size={size}>
       <Path d="M12 17V7" {...strokeProps(color, strokeWidth)} />
-      <Path
-        d="M16 8h-6a2 2 0 0 0 0 4h4a2 2 0 0 1 0 4H8"
-        {...strokeProps(color, strokeWidth)}
-      />
+      <Path d="M16 8h-6a2 2 0 0 0 0 4h4a2 2 0 0 1 0 4H8" {...strokeProps(color, strokeWidth)} />
       <Path
         d="M4 3a1 1 0 0 1 1-1 1.3 1.3 0 0 1 .7.2l.933.6a1.3 1.3 0 0 0 1.4 0l.934-.6a1.3 1.3 0 0 1 1.4 0l.933.6a1.3 1.3 0 0 0 1.4 0l.933-.6a1.3 1.3 0 0 1 1.4 0l.934.6a1.3 1.3 0 0 0 1.4 0l.933-.6A1.3 1.3 0 0 1 19 2a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1 1.3 1.3 0 0 1-.7-.2l-.933-.6a1.3 1.3 0 0 0-1.4 0l-.934.6a1.3 1.3 0 0 1-1.4 0l-.933-.6a1.3 1.3 0 0 0-1.4 0l-.933.6a1.3 1.3 0 0 1-1.4 0l-.934-.6a1.3 1.3 0 0 0-1.4 0l-.933.6a1.3 1.3 0 0 1-.7.2 1 1 0 0 1-1-1z"
         {...strokeProps(color, strokeWidth)}
@@ -745,10 +741,7 @@ export function GiftIcon(props: IconProps) {
   return (
     <Outline size={size}>
       <Path d="M12 7v14" {...strokeProps(color, strokeWidth)} />
-      <Path
-        d="M20 11v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8"
-        {...strokeProps(color, strokeWidth)}
-      />
+      <Path d="M20 11v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8" {...strokeProps(color, strokeWidth)} />
       <Rect x="3" y="7" width="18" height="4" rx="1" {...strokeProps(color, strokeWidth)} />
     </Outline>
   );
@@ -911,10 +904,7 @@ export function LogOutIcon(props: IconProps) {
     <Outline size={size}>
       <Path d="m16 17 5-5-5-5" {...strokeProps(color, strokeWidth)} />
       <Path d="M21 12H9" {...strokeProps(color, strokeWidth)} />
-      <Path
-        d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"
-        {...strokeProps(color, strokeWidth)}
-      />
+      <Path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" {...strokeProps(color, strokeWidth)} />
     </Outline>
   );
 }
@@ -936,15 +926,9 @@ export function Trash2Icon(props: IconProps) {
     <Outline size={size}>
       <Path d="M10 11v6" {...strokeProps(color, strokeWidth)} />
       <Path d="M14 11v6" {...strokeProps(color, strokeWidth)} />
-      <Path
-        d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"
-        {...strokeProps(color, strokeWidth)}
-      />
+      <Path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" {...strokeProps(color, strokeWidth)} />
       <Path d="M3 6h18" {...strokeProps(color, strokeWidth)} />
-      <Path
-        d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
-        {...strokeProps(color, strokeWidth)}
-      />
+      <Path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" {...strokeProps(color, strokeWidth)} />
     </Outline>
   );
 }
@@ -1026,10 +1010,7 @@ export function UploadIcon(props: IconProps) {
     <Outline size={size}>
       <Path d="M12 3v12" {...strokeProps(color, strokeWidth)} />
       <Path d="m17 8-5-5-5 5" {...strokeProps(color, strokeWidth)} />
-      <Path
-        d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
-        {...strokeProps(color, strokeWidth)}
-      />
+      <Path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" {...strokeProps(color, strokeWidth)} />
     </Outline>
   );
 }
@@ -1168,6 +1149,180 @@ export function CircleQuestionMarkIcon(props: IconProps) {
       <Circle cx="12" cy="12" r="10" {...strokeProps(color, strokeWidth)} />
       <Path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" {...strokeProps(color, strokeWidth)} />
       <Path d="M12 17h.01" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `car-taxi-front`. A job offer, on the surface that announces one.
+ *
+ * Transcribed verbatim from
+ * `lucide-react/dist/esm/icons/car-taxi-front.mjs`.
+ *
+ * **The front view, not `CarIcon`'s side view, and that is the mockup's
+ * choice rather than mine.** The owner's reference for the offer banner draws
+ * a taxi head-on with a roof sign — the `M10 2h4` stroke above the cab is that
+ * sign, and it is what makes the glyph read as *a taxi* rather than as *a
+ * car*. `CarIcon` is the side profile and stays where it is: it means "a
+ * vehicle" on the trip screens, which is a different sentence.
+ */
+export function CarTaxiFrontIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="M10 2h4" {...strokeProps(color, strokeWidth)} />
+      <Path
+        d="m21 8-2 2-1.5-3.7A2 2 0 0 0 15.646 5H8.4a2 2 0 0 0-1.903 1.257L5 10 3 8"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path d="M7 14h.01" {...strokeProps(color, strokeWidth)} />
+      <Path d="M17 14h.01" {...strokeProps(color, strokeWidth)} />
+      <Rect width="18" height="8" x="3" y="10" rx="2" {...strokeProps(color, strokeWidth)} />
+      <Path d="M5 18v2" {...strokeProps(color, strokeWidth)} />
+      <Path d="M19 18v2" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `contact`. An identity document — a card with a face and a name on it.
+ *
+ * Transcribed verbatim from `lucide-react/dist/esm/icons/contact.mjs`.
+ *
+ * Paired with `IdCardIcon` below and the pair is deliberate. Both are cards
+ * with a person on them, because both *are*, and the KYC screen lists them
+ * four rows apart under different headings. `contact` stands upright with the
+ * two tabs at its top — a national ID in a wallet; `id-card` lies landscape
+ * with a name written beside the face — a licence. A driver scanning the
+ * screen reads the heading first and the shape second, which is the order
+ * that survives being read at arm's length in the sun.
+ */
+export function ContactIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="M16 2v2" {...strokeProps(color, strokeWidth)} />
+      <Path d="M7 22v-2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2" {...strokeProps(color, strokeWidth)} />
+      <Path d="M8 2v2" {...strokeProps(color, strokeWidth)} />
+      <Circle cx="12" cy="11" r="3" {...strokeProps(color, strokeWidth)} />
+      <Rect x="3" y="4" width="18" height="18" rx="2" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `scan-face`. The selfie slot, and the only glyph on the KYC screen
+ * that asks for a photograph of the person rather than of a paper.
+ *
+ * Transcribed verbatim from `lucide-react/dist/esm/icons/scan-face.mjs`.
+ *
+ * **The corner brackets are doing the work.** A plain face would say
+ * "profile"; the brackets say the face is being *framed*, which is what the
+ * row is asking the applicant to do. It is the mockup's own choice and it is
+ * the right one.
+ *
+ * It is worth saying what the brackets do **not** mean here: nothing on this
+ * platform scans, matches or measures a face. ADR-0048 §2 refuses face
+ * matching and liveness detection in terms, and a person in an office looks
+ * at this photograph beside the identity document and decides. The glyph is
+ * the closest Lucide has to "a photo of your face" and no more than that.
+ */
+export function ScanFaceIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="M3 7V5a2 2 0 0 1 2-2h2" {...strokeProps(color, strokeWidth)} />
+      <Path d="M17 3h2a2 2 0 0 1 2 2v2" {...strokeProps(color, strokeWidth)} />
+      <Path d="M21 17v2a2 2 0 0 1-2 2h-2" {...strokeProps(color, strokeWidth)} />
+      <Path d="M7 21H5a2 2 0 0 1-2-2v-2" {...strokeProps(color, strokeWidth)} />
+      <Path d="M8 14s1.5 2 4 2 4-2 4-2" {...strokeProps(color, strokeWidth)} />
+      <Path d="M9 9h.01" {...strokeProps(color, strokeWidth)} />
+      <Path d="M15 9h.01" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `id-card`. The driving licence.
+ *
+ * Transcribed verbatim from `lucide-react/dist/esm/icons/id-card.mjs`.
+ *
+ * **The mockup draws a steering wheel here, and Lucide has no steering
+ * wheel.** DESIGN.md §7 is explicit that a glyph absent from Lucide is a
+ * design conversation and not a licence to draw one, so this is the
+ * substitution rather than a transcription miss — recorded here so the next
+ * reader does not "correct" it.
+ *
+ * It is also arguably the better answer. A steering wheel means *driving*; a
+ * licence is a card an officer at a checkpoint asks to see, and that is the
+ * thing the row is asking for. The three vehicle rows below already carry the
+ * driving.
+ */
+export function IdCardIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="M16 10h2" {...strokeProps(color, strokeWidth)} />
+      <Path d="M16 14h2" {...strokeProps(color, strokeWidth)} />
+      <Path d="M6.17 15a3 3 0 0 1 5.66 0" {...strokeProps(color, strokeWidth)} />
+      <Circle cx="9" cy="11" r="2" {...strokeProps(color, strokeWidth)} />
+      <Rect x="2" y="5" width="20" height="14" rx="2" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `car-front`. The vehicle itself, photographed as it looks on the road.
+ *
+ * Transcribed verbatim from `lucide-react/dist/esm/icons/car-front.mjs`.
+ *
+ * Three car-shaped glyphs now live in this file and they mean three different
+ * sentences, so the split is worth stating once:
+ *
+ * - `CarIcon` is the side profile and means **a vehicle** — the registration
+ *   row, and the trip screens.
+ * - `CarTaxiFrontIcon` has a roof sign and means **a job** — the offer.
+ * - This one is the plain front view and means **your car, as a photograph**.
+ *
+ * They are distinguishable at 20pt because Lucide draws them from different
+ * angles rather than by adding detail, which is exactly why transcribing the
+ * geometry rather than approximating it matters.
+ */
+export function CarFrontIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path
+        d="m21 8-2 2-1.5-3.7A2 2 0 0 0 15.646 5H8.4a2 2 0 0 0-1.903 1.257L5 10 3 8"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path d="M7 14h.01" {...strokeProps(color, strokeWidth)} />
+      <Path d="M17 14h.01" {...strokeProps(color, strokeWidth)} />
+      <Rect width="18" height="8" x="3" y="10" rx="2" {...strokeProps(color, strokeWidth)} />
+      <Path d="M5 18v2" {...strokeProps(color, strokeWidth)} />
+      <Path d="M19 18v2" {...strokeProps(color, strokeWidth)} />
+    </Outline>
+  );
+}
+
+/**
+ * Lucide `image`. "Choose from your photos", on the picker sheet.
+ *
+ * Transcribed verbatim from `lucide-react/dist/esm/icons/image.mjs`.
+ */
+export function ImageIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Rect width="18" height="18" x="3" y="3" rx="2" ry="2" {...strokeProps(color, strokeWidth)} />
+      <Circle cx="9" cy="9" r="2" {...strokeProps(color, strokeWidth)} />
+      <Path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" {...strokeProps(color, strokeWidth)} />
     </Outline>
   );
 }

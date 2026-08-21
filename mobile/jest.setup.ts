@@ -331,3 +331,43 @@ globalThis.requestIdleCallback ??= ((callback: (deadline: { didTimeout: boolean;
 
 globalThis.cancelIdleCallback ??= ((handle: IdleHandle) =>
   clearTimeout(handle)) as typeof globalThis.cancelIdleCallback;
+
+/*
+ * `react-native-notify-kit` is the full-screen call screen (ADR-0049 §3), and
+ * it is a TurboModule — importing it under Jest reaches for native code that
+ * does not exist.
+ *
+ * Every path in the app that touches it goes through `loadNotifyKit`, which
+ * returns null on anything that is not an Android development build, so most
+ * suites never get here at all. This exists for the ones that assert *what*
+ * would have been displayed: the mock records calls rather than pretending to
+ * be a notification system.
+ *
+ * The enums are the real numbers, transcribed. `offerEvent.ts` carries its own
+ * copy of `EventType` and explains why it cannot import this one; a test that
+ * used a made-up value here would agree with that copy while both were wrong.
+ */
+jest.mock('react-native-notify-kit', () => ({
+  __esModule: true,
+  default: {
+    displayNotification: jest.fn(async () => 'notification-id'),
+    cancelNotification: jest.fn(async () => undefined),
+    getDisplayedNotifications: jest.fn(async () => []),
+    getInitialNotification: jest.fn(async () => null),
+    onBackgroundEvent: jest.fn(),
+    onForegroundEvent: jest.fn(() => () => undefined),
+    createChannel: jest.fn(async () => 'channel-id'),
+  },
+  EventType: { DISMISSED: 0, PRESS: 1, ACTION_PRESS: 2, DELIVERED: 3 },
+  AndroidCategory: { CALL: 'call' },
+  AndroidImportance: { NONE: 0, MIN: 1, LOW: 2, DEFAULT: 3, HIGH: 4 },
+  AndroidVisibility: { SECRET: -1, PRIVATE: 0, PUBLIC: 1 },
+}));
+
+// `expo-intent-launcher` opens Android's own settings screen for the
+// full-screen-intent permission. There is no Android under Jest; the mock is
+// here so importing `fullScreenIntent.ts` does not fail a suite that only
+// wanted the `Platform.Version` check next to it.
+jest.mock('expo-intent-launcher', () => ({
+  startActivityAsync: jest.fn(async () => ({ resultCode: -1 })),
+}));

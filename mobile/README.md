@@ -68,13 +68,51 @@ Profile ──── who the driver is: rating, vehicle, member since, documents
         └── Notifications        ← ADR-0039; what the office said, and a dot
         └── Report an issue      ← ADR-0044; one of five topics, written to the office
         └── Your reports         ← ADR-0044; what you sent, and what they answered
-        └── Documents            ← ADR-0033; upload, and what the office said
+        └── Documents            ← ADR-0033/0048; the six slots, grouped, and
+                                    what the office said. Shares
+                                    `documents/DocumentSlotList` with KYC.
         └── Performance          ← ADR-0038; six dials, and the bonus week
         └── Promotions           ← ADR-0036/0037; weekly target, peak, referrals
         └── Time off
         └── Change password
         └── Updates & sync       ← the outbox, and the parked queue
 ```
+
+## Before there is an account at all
+
+```
+Welcome ──── hero carousel, social buttons, "Sign up with email"
+        └── Sign in
+        └── Sign up              ← ADR-0027; the application form
+              └── KYC Verification  ← ADR-0048 §4; **immediately after
+                                      submitting**, and the reason the
+                                      sign-up screen no longer ends in a
+                                      confirmation panel of its own
+```
+
+**The applicant has no account and holds a claim ticket instead.** Submitting
+the form returns `upload_token` — 64 opaque characters that resolve to one
+`driver_applications` row and authorise three verbs on their own documents,
+and nothing else on the platform. It lives 24 hours, dies when the office
+decides, and **is held in memory only**: it is a live credential for somebody's
+identity documents, and `RootNavigator` drops it on the way out.
+
+That is also why the KYC screen does not use `useQuery` like every other
+screen here. `App.tsx` persists the query cache to AsyncStorage with no
+`shouldDehydrateQuery` filter, so keying a query by the ticket would write it
+to disk for 24 hours.
+
+**Nothing on that screen is required.** ADR-0048 §6 keeps every document
+optional at application time — an applicant who uploads nothing is in the queue
+on the same terms as one who uploads six — and the footnote under *Submit for
+Review* says so. A disabled button there would assert a rule the platform does
+not have.
+
+**The picker is ours** (`documents/MediaPickerSheet`). Camera or photo library,
+over `expo-image-picker`, which was already a dependency. The cost is stated
+rather than hidden: the server accepts PDF and this app cannot send one,
+because picking a PDF needs `expo-document-picker` and the owner chose no new
+dependency.
 
 **The five Help Topics rows write to the office now (ADR-0044).** They used to
 open the same contact card five times, differing only by a subtitle — and the

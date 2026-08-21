@@ -16,7 +16,22 @@ import { registerRootComponent } from 'expo';
  */
 import './src/duty/PresenceTask';
 
+/*
+ * **Registered before React, for the same reason and with the same warning.**
+ *
+ * Android cold-starts this app *into* a notification button press: a driver
+ * taps Accept on a locked phone and the runtime is created for that tap. No
+ * component has mounted, so a handler registered inside React does not exist
+ * at the only moment it is needed.
+ *
+ * Removing this line fails no test, no typecheck and no lint run. It produces
+ * an Accept button that works on a desk and does nothing on a lock screen.
+ */
+import { registerOfferBackgroundHandler } from './src/push/offerBackgroundHandler';
+
 import App from './App';
+
+registerOfferBackgroundHandler();
 
 // registerRootComponent calls AppRegistry.registerComponent('main', () => App);
 // It also ensures that whether you load the app in Expo Go or in a native build,

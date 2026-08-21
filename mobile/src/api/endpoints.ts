@@ -386,10 +386,28 @@ export async function fetchLegalDocuments(api: ApiClient): Promise<LegalDocument
  * by nature: this is the one form a person reaches before they are anybody.
  *
  * A 202 means *received*, not *approved* — no account exists until the
- * office reviews the application, which is why nothing is returned and the
- * screen must not attempt a sign-in afterwards. The server deliberately
- * answers the same way whether or not the email is already known.
+ * office reviews the application, which is why the screen must not attempt a
+ * sign-in afterwards. The server deliberately answers the same way whether or
+ * not the email is already known.
+ *
+ * **What it does return is a claim ticket, not a session** (ADR-0048 §4).
+ * `upload_token` resolves to this one application row and authorises exactly
+ * three verbs on exactly one sub-resource: send a document, list what has been
+ * sent, withdraw one. It reaches no policy, no trip and no account, it cannot
+ * read a file back, and it dies the moment the office decides.
+ *
+ * **It is returned exactly once and there is no way to ask for it again** —
+ * an endpoint that re-issued it would take an email address and say whether an
+ * application existed for it, which is the enumeration oracle ADR-0027 §5
+ * refuses. Lose it and the applicant sends their papers after approval, from
+ * the profile screen, like every other driver.
  */
+export type DriverApplicationReceipt = {
+  upload_token: string;
+  /** ISO 8601. Twenty-four hours out, on the server's clock. */
+  upload_expires_at: string | null;
+};
+
 export async function submitDriverApplication(
   api: ApiClient,
   input: {
@@ -401,8 +419,8 @@ export async function submitDriverApplication(
     /** Consent to the /public/legal notices. The server refuses without it. */
     termsAccepted: boolean;
   },
-): Promise<void> {
-  await api.request('/driver-applications', {
+): Promise<DriverApplicationReceipt> {
+  const response = await api.request<DriverApplicationReceipt>('/driver-applications', {
     method: 'POST',
     body: {
       name: input.name,
@@ -413,6 +431,8 @@ export async function submitDriverApplication(
       terms_accepted: input.termsAccepted,
     },
   });
+
+  return response.data;
 }
 
 /** Which ways in the owner has switched on (ADR-0028 §1). */
@@ -1312,7 +1332,25 @@ export type DriverProfile = {
 
 /** The four papers this platform asks a driver for (ADR-0033 §1). */
 export type DriverDocumentType =
-  'driving_licence' | 'identity_document' | 'vehicle_insurance' | 'vehicle_registration';
+  | 'driving_licence'
+  | 'identity_document'
+  | 'vehicle_insurance'
+  | 'vehicle_registration'
+  /**
+   * The two ADR-0048 §1 added, and the naming rule that admitted them.
+   *
+   * ADR-0033 §1 closed the catalogue at four and said "a fifth type is one
+   * case here" — an invitation with a condition attached: **nothing in the
+   * catalogue may be named for one country.** *PSV badge*, *logbook* and
+   * *third-party sticker* were refused on it. A face is a face in Kampala and
+   * in Nairobi, and a photograph of a car is not a jurisdiction's paperwork.
+   *
+   * Neither carries an expiry, and that is not an oversight: expiry is
+   * required where the document *is* its date, and a selfie has no date to
+   * lapse.
+   */
+  | 'identity_selfie'
+  | 'vehicle_photo';
 
 /** The three **stored** states. `expired` is not one — see `compliance_state`. */
 export type DriverDocumentStatus = 'pending' | 'verified' | 'rejected';
@@ -1355,6 +1393,8 @@ export type DriverDocument = {
  * driver opening the screen is asking what they still owe the office; the
  * uploaded subset answers a different question.
  */
+export type DriverDocumentGroup = 'personal' | 'driver' | 'vehicle';
+
 export type DriverDocumentSlot = {
   type: DriverDocumentType;
   type_label: string;
@@ -1362,6 +1402,18 @@ export type DriverDocumentSlot = {
   hint: string;
   /** Served rather than hardcoded here, so the rule lives in one place. */
   requires_expiry: boolean;
+  /**
+   * Which headed section this slot belongs under (ADR-0048 §1).
+   *
+   * **Served, not inferred here.** The driver app and the console both draw
+   * these six rows, and two client-side copies of "which section is a selfie
+   * in" would disagree the first time a seventh type is added. A handset that
+   * has never heard of a new group still renders it, because
+   * `groupSlots` orders by `group_label` rather than by a list of names it
+   * holds.
+   */
+  group: DriverDocumentGroup | string;
+  group_label: string;
   document: DriverDocument | null;
 };
 

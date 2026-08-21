@@ -10,7 +10,7 @@ import { initials, tripsTotal } from '../profile/presentation';
 import { useDriverProfile } from '../profile/queries';
 import { useNotifications } from '../notifications/queries';
 import { useDriverStats } from '../trips/queries';
-import { ratingValue } from '../trips/statsPresentation';
+import { ratingNote, ratingValue } from '../trips/statsPresentation';
 import { usePressScale } from '../ui/components';
 import {
   BellIcon,
@@ -111,9 +111,42 @@ export function DrawerContent(props: DrawerContentComponentProps) {
       return;
     }
 
+    /**
+     * **`initial: false` is what puts the tab's own root screen underneath
+     * this one, and without it the tab stops working.**
+     *
+     * The owner found it: *"if I open Promotions and then I try to click the
+     * Profile it does not work — this is application wide."*
+     *
+     * Navigating into a nested navigator that has **not been rendered yet**
+     * does not push onto its stack — there is no stack. React Navigation
+     * builds the child's *initial state* from what it was handed, so the
+     * Profile stack came into existence as `["Promotions"]`, index 0, with
+     * `ProfileHome` never in it at all. Measured, not guessed:
+     *
+     *     without initial:false   index=0  routes=["Promotions"]
+     *     with    initial:false   index=1  routes=["ProfileHome","Promotions"]
+     *
+     * From `index: 0` there is nothing to pop, so pressing the Profile tab
+     * had nothing to do and did nothing — while the other three tabs, sitting
+     * at their own roots, kept switching normally. That asymmetry is exactly
+     * what the owner described.
+     *
+     * **The back gesture was the other half of it.** A stack of one has
+     * nothing behind it, so Android's back from Promotions left the app
+     * instead of returning to Profile.
+     *
+     * It bites seven of this drawer's eleven rows — every one naming a screen
+     * that is not its tab's initial route: Trips History under Home, and
+     * Promotions, Performance, Notifications, Documents, Safety and Support
+     * under Profile. The four that name a root were always fine, which is why
+     * this survived so long.
+     *
+     * Guarded by `DrawerContent.test.tsx`, which fails without this flag.
+     */
     props.navigation.navigate('Main', {
       screen: target,
-      params: { screen: inner, params },
+      params: { screen: inner, params, initial: false },
     });
   };
 
@@ -154,7 +187,11 @@ export function DrawerContent(props: DrawerContentComponentProps) {
         style={styles.identity}
         accessible
         accessibilityRole="button"
-        accessibilityLabel={`${profile?.name ?? 'Driver'}. Rating ${ratingValue(stats)}. ${tripsTotal(profile)}. ${onDuty ? 'Online' : 'Offline'}. Opens your profile.`}
+        accessibilityLabel={`${profile?.name ?? 'Driver'}. ${
+          stats?.rating === null || stats?.rating === undefined
+            ? (ratingNote(stats) ?? 'No ratings yet')
+            : `Rating ${ratingValue(stats)}`
+        }. ${tripsTotal(profile)}. ${onDuty ? 'Online' : 'Offline'}. Opens your profile.`}
         onPress={() =>
           go({
             key: 'profile',
@@ -170,12 +207,40 @@ export function DrawerContent(props: DrawerContentComponentProps) {
             {profile?.name ?? '—'}
           </Text>
 
+          {/*
+            **A withheld score says why, rather than drawing a bare dash.**
+
+            The owner read this row as a defect — *"the client left us the
+            review, it counts, but the rating is showing —"* — and they were
+            right to. The figure is correct: ADR-0030 §3 publishes nothing
+            below five ratings, because one three-star rating is not a 3.0.
+            What was wrong is that this row alone never said so.
+
+            `HomeScreen` and `ProfileScreen` both draw `ratingValue` beside
+            `ratingNote` and always have. This drew the dash on its own, next
+            to a star, which reads as a score of nothing — and
+            `ratingNote`'s own docblock is explicit about the cost: *"a bare
+            dash says nothing and invites a driver to assume the worst about a
+            score that can end their income."*
+
+            The trip count stays either way; it is the one number here that is
+            never withheld, and dropping it to make room would trade one
+            silence for another.
+          */}
           <View style={styles.ratingRow}>
             <StarIcon size={16} />
-            <Text style={styles.rating}>{ratingValue(stats)}</Text>
-            <Text style={styles.tripCount} numberOfLines={1}>
-              ({tripsTotal(profile)})
-            </Text>
+            {stats?.rating === null || stats?.rating === undefined ? (
+              <Text style={styles.tripCount} numberOfLines={1}>
+                {ratingNote(stats) ?? 'No ratings yet'} · {tripsTotal(profile)}
+              </Text>
+            ) : (
+              <>
+                <Text style={styles.rating}>{ratingValue(stats)}</Text>
+                <Text style={styles.tripCount} numberOfLines={1}>
+                  ({tripsTotal(profile)})
+                </Text>
+              </>
+            )}
           </View>
 
           {/*

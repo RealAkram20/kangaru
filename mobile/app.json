@@ -41,7 +41,8 @@
         "POST_NOTIFICATIONS",
         "WAKE_LOCK",
         "VIBRATE",
-        "CAMERA"
+        "CAMERA",
+        "USE_FULL_SCREEN_INTENT"
       ]
     },
     "web": {
@@ -84,6 +85,7 @@
       "expo-image",
       "expo-web-browser",
       "@react-native-community/datetimepicker",
+      "./plugins/withLockScreenCallUi",
       [
         "expo-audio",
         {

@@ -18,6 +18,21 @@ export type RequestOptions = {
   /** Sent as multipart/form-data — the transition endpoint's photo path. */
   form?: FormData;
   query?: Record<string, string | number | boolean | undefined>;
+  /**
+   * Extra request headers, merged over the client's own.
+   *
+   * Exists for one caller and it is worth naming: the applicant's KYC upload
+   * carries its claim ticket in `X-Upload-Token` (ADR-0048 §4). A GET and a
+   * DELETE have no body to put it in, and the query string is the one place
+   * it must not go — query strings are written to access logs, proxy logs and
+   * browser history as a matter of course, and this one is a live credential
+   * for somebody's identity documents.
+   *
+   * `Authorization` is **not** overridable through here: it is applied after
+   * this merge, so a caller cannot accidentally impersonate anybody by
+   * passing a header.
+   */
+  headers?: Record<string, string>;
   /** Milliseconds before the request is aborted and treated as an unknown outcome. */
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -72,8 +87,13 @@ export class ApiClient {
     }
 
     const token = this.config.getToken();
-    const headers: Record<string, string> = { Accept: 'application/json' };
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      ...options.headers,
+    };
 
+    // After the spread, deliberately: a caller's `headers` may add
+    // `X-Upload-Token` but may never replace the bearer this client owns.
     if (token !== null) {
       headers.Authorization = `Bearer ${token}`;
     }

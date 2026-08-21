@@ -93,6 +93,54 @@ it('reads the identity block as one sentence rather than four fragments', async 
   ).toBeTruthy();
 });
 
+/**
+ * The owner read a bare "—" here as the app losing a review: *"the client left
+ * us the review, it counts, but the rating is showing —"*.
+ *
+ * The figure was right — ADR-0030 §3 publishes nothing below five ratings —
+ * but this row was the only one of the three that draws a rating which never
+ * said so. `HomeScreen` and `ProfileScreen` have always paired the value with
+ * `ratingNote`.
+ */
+it('says why a score is withheld instead of drawing a bare dash', async () => {
+  mockStats.mockReturnValue({ data: { rating: null, rating_count: 1 } });
+
+  const screen = await renderDrawer();
+
+  expect(await screen.findByText('1 rating so far · 428 trips')).toBeTruthy();
+  // The dash beside a star is what read as "your score is nothing".
+  expect(screen.queryByText('—')).toBeNull();
+});
+
+it('says so plainly when nobody has rated the driver at all', async () => {
+  mockStats.mockReturnValue({ data: { rating: null, rating_count: 0 } });
+
+  const screen = await renderDrawer();
+
+  expect(await screen.findByText('No ratings yet · 428 trips')).toBeTruthy();
+});
+
+/** A screen reader must hear the same explanation, not "Rating —". */
+it('carries the withheld reason into the spoken sentence', async () => {
+  mockStats.mockReturnValue({ data: { rating: null, rating_count: 2 } });
+
+  const screen = await renderDrawer();
+
+  expect(
+    await screen.findByLabelText(
+      'John Kamau. 2 ratings so far. 428 trips. Online. Opens your profile.',
+    ),
+  ).toBeTruthy();
+});
+
+/** And the published case is untouched. */
+it('still draws the score once there are enough ratings to publish one', async () => {
+  const screen = await renderDrawer();
+
+  expect(await screen.findByText('4.8')).toBeTruthy();
+  expect(await screen.findByText('(428 trips)')).toBeTruthy();
+});
+
 it('draws initials when there is no photograph, which is the ordinary case', async () => {
   const screen = await renderDrawer();
 
@@ -164,6 +212,21 @@ it('names no live trip, whatever the driver is in the middle of', async () => {
   expect(screen.queryByText('Trip in progress')).toBeNull();
 });
 
+/*
+ * **`initial: false` is asserted, not incidental.**
+ *
+ * Without it, navigating into a tab that has not been rendered yet does not
+ * push onto its stack — React Navigation builds the child's *initial state*
+ * out of what it was handed, so the Profile stack came into existence as
+ * `["Documents"]` alone with `ProfileHome` never in it. From index 0 there is
+ * nothing to pop, so the Profile tab went dead and Android's back gesture left
+ * the app. The owner reported both, as one symptom: *"if I open Promotions and
+ * then I try to click the Profile it does not work — this is application
+ * wide."*
+ *
+ * `nestedNavigate.test.tsx` proves the mechanism against a real navigator;
+ * this holds the call site to it.
+ */
 it('navigates into the tab nesting and closes behind itself', async () => {
   const screen = await renderDrawer();
 
@@ -172,7 +235,7 @@ it('navigates into the tab nesting and closes behind itself', async () => {
   expect(closeDrawer).toHaveBeenCalled();
   expect(navigate).toHaveBeenCalledWith('Main', {
     screen: 'Profile',
-    params: { screen: 'Documents', params: undefined },
+    params: { screen: 'Documents', params: undefined, initial: false },
   });
 });
 
@@ -187,7 +250,7 @@ it('sends a tab row to its stack root, so it always visibly navigates', async ()
 
   expect(navigate).toHaveBeenCalledWith('Main', {
     screen: 'Wallet',
-    params: { screen: 'WalletHome', params: undefined },
+    params: { screen: 'WalletHome', params: undefined, initial: false },
   });
 });
 
@@ -199,7 +262,7 @@ it('opens the profile from the identity block, so the face is not a dead control
   expect(closeDrawer).toHaveBeenCalled();
   expect(navigate).toHaveBeenCalledWith('Main', {
     screen: 'Profile',
-    params: { screen: 'ProfileHome', params: undefined },
+    params: { screen: 'ProfileHome', params: undefined, initial: false },
   });
 });
 

@@ -31,6 +31,7 @@ import { SafetyScreen } from '../screens/SafetyScreen';
 import { SupportScreen } from '../screens/SupportScreen';
 import { RideCompleteScreen } from '../screens/RideCompleteScreen';
 import { SignInScreen } from '../screens/SignInScreen';
+import { KycVerificationScreen } from '../screens/KycVerificationScreen';
 import { SignUpScreen } from '../screens/SignUpScreen';
 import { BankDetailsScreen } from '../screens/BankDetailsScreen';
 import { CloseAccountScreen } from '../screens/CloseAccountScreen';
@@ -85,7 +86,9 @@ const theme = {
  * not asked for anything yet.
  */
 function AuthScreens() {
-  const [screen, setScreen] = useState<'welcome' | 'signin' | 'signup' | 'forgot'>('welcome');
+  const [screen, setScreen] = useState<'welcome' | 'signin' | 'signup' | 'kyc' | 'forgot'>(
+    'welcome',
+  );
 
   /**
    * The verified name and email a social sign-in handed back for a stranger
@@ -93,6 +96,19 @@ function AuthScreens() {
    * their phone number and nothing they already proved.
    */
   const [prefill, setPrefill] = useState<{ name: string; email: string } | null>(null);
+
+  /**
+   * The claim ticket a submitted application returns (ADR-0048 §4), and the
+   * number the confirmation says the office will ring.
+   *
+   * **Held in memory and nowhere else.** It is a live credential for somebody's
+   * identity documents, valid for 24 hours, belonging to a person with no
+   * account — so there is nothing to persist it *to* that would not be a worse
+   * place than this. Losing it by backgrounding the app costs an applicant
+   * their upload step and not their application, which is the right way round
+   * for that trade.
+   */
+  const [ticket, setTicket] = useState<{ token: string; phone: string } | null>(null);
 
   // The hardware back button walks back to the front door rather than out of
   // the app. Plain state gets no back handling for free — without this,
@@ -127,7 +143,34 @@ function AuthScreens() {
         <SignUpScreen
           onSignIn={() => setScreen('signin')}
           onBack={() => setScreen('welcome')}
+          onSubmitted={(token, phone) => {
+            setTicket({ token, phone });
+            setScreen('kyc');
+          }}
           prefill={prefill}
+        />
+      );
+    case 'kyc':
+      // Guarded rather than asserted: `ticket` and `screen` are two pieces of
+      // state and only the transition above sets both. A `kyc` screen with no
+      // ticket cannot happen today, and must not render a broken screen if it
+      // ever does.
+      return ticket === null ? (
+        <SignInScreen
+          onSignUp={() => setScreen('signup')}
+          onBack={() => setScreen('welcome')}
+          onForgot={() => setScreen('forgot')}
+        />
+      ) : (
+        <KycVerificationScreen
+          uploadToken={ticket.token}
+          phone={ticket.phone}
+          onDone={() => {
+            // Dropped on the way out. Nothing later in this session has any
+            // business holding it.
+            setTicket(null);
+            setScreen('signin');
+          }}
         />
       );
     case 'forgot':

@@ -1,8 +1,4 @@
-import type {
-  DriverDocumentCompliance,
-  DriverDocumentSlot,
-  DriverProfile,
-} from '../api/endpoints';
+import type { DriverDocumentCompliance, DriverDocumentSlot, DriverProfile } from '../api/endpoints';
 import {
   documentAnnouncement,
   documentNote,
@@ -56,6 +52,11 @@ function slot(overrides: Partial<DriverDocumentSlot> = {}): DriverDocumentSlot {
     type_label: 'Driving licence',
     hint: 'Both sides if the details are split across them.',
     requires_expiry: true,
+    // Required since ADR-0048 §1 grouped the six slots into the KYC screen's
+    // three headed sections. Served rather than inferred, so a fixture has to
+    // carry it exactly as the server does.
+    group: 'driver',
+    group_label: 'Driver information',
     document: null,
     ...overrides,
   };
@@ -212,9 +213,10 @@ describe('documentsSummary', () => {
       documentsSummary(compliance({ state: 'action_needed', verified: 3, action_needed: 1 })),
     ).toEqual({ label: '1 needs attention', tone: 'danger' });
 
-    expect(
-      documentsSummary(compliance({ state: 'incomplete', verified: 1, pending: 1 })),
-    ).toEqual({ label: '2 still to send', tone: 'warning' });
+    expect(documentsSummary(compliance({ state: 'incomplete', verified: 1, pending: 1 }))).toEqual({
+      label: '2 still to send',
+      tone: 'warning',
+    });
   });
 
   it('never guesses the friendly answer when nothing has loaded', () => {
@@ -251,8 +253,9 @@ describe('documentState', () => {
   it('names each of the other states', () => {
     expect(documentState(slot({ document: document() })).label).toBe('Verified');
     expect(
-      documentState(slot({ document: document({ status: 'pending', compliance_state: 'pending' }) }))
-        .label,
+      documentState(
+        slot({ document: document({ status: 'pending', compliance_state: 'pending' }) }),
+      ).label,
     ).toBe('Waiting for the office');
     expect(
       documentState(

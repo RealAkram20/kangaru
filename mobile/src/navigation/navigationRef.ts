@@ -28,9 +28,11 @@ export function openPickup(tripId: number): void {
     return;
   }
 
+  // `initial: false` puts `TripsHome` underneath, and it is not cosmetic —
+  // see `openTrip` below, which carries the full argument.
   navigationRef.navigate('Main', {
     screen: 'Home',
-    params: { screen: 'Pickup', params: { tripId } },
+    params: { screen: 'Pickup', params: { tripId }, initial: false },
   } as never);
 }
 
@@ -58,8 +60,31 @@ export function openTrip(tripId: number): void {
     return;
   }
 
+  /**
+   * **`initial: false`, and this is the worst place in the app to have got it
+   * wrong.**
+   *
+   * Navigating into a nested navigator that has not been rendered yet does not
+   * push onto its stack — there is no stack. React Navigation builds the
+   * child's *initial state* from what it was handed, so the Home stack came
+   * into existence as `["TripDetail"]` alone, with `TripsHome` never in it.
+   *
+   * Two things follow, both of them bad and neither of them visible in a
+   * screenshot: **Android's back gesture leaves the app** rather than
+   * returning to the trip list, because a stack of one has nothing behind it;
+   * and **the Home tab goes dead**, because pressing an already-focused tab
+   * pops its stack to the root and there is nothing to pop.
+   *
+   * This function is the likeliest of all of them to hit that state. It runs
+   * from `PushRouter` on a **cold start** — the process was created by the tap
+   * on the notification, no tab has ever rendered, so the Home stack is being
+   * built from scratch by this very call. The desk case, where the driver has
+   * already been on Home, is the one that always worked.
+   *
+   * `DrawerContent.tsx` carries the same flag for the same reason.
+   */
   navigationRef.navigate('Main', {
     screen: 'Home',
-    params: { screen: 'TripDetail', params: { tripId } },
+    params: { screen: 'TripDetail', params: { tripId }, initial: false },
   } as never);
 }

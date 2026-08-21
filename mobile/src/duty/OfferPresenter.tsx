@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BackHandler } from 'react-native';
+import { BackHandler, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { isApiError } from '../api/errors';
 import { openPickup } from '../navigation/navigationRef';
+import { hideCallNotification } from '../push/callNotification';
+import { openedFromCallScreen } from '../push/callLaunch';
 import { OfferScreen } from '../screens/OfferScreen';
+import { OfferBanner } from './OfferBanner';
 import { offerRingtone } from './offerRingtone';
 import { useAcceptOffer, useDeclineOffer, useDuty, useOffers } from './queries';
 
@@ -39,6 +43,7 @@ import { useAcceptOffer, useDeclineOffer, useDuty, useOffers } from './queries';
  * the moment to add the ref, and not before.
  */
 export function OfferPresenter() {
+  const insets = useSafeAreaInsets();
   const { data: duty } = useDuty();
   const onDuty = duty?.on_duty ?? false;
 
@@ -55,12 +60,34 @@ export function OfferPresenter() {
   const [dismissed, setDismissed] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Whether the job is showing as the full screen or as the banner
+   * (ADR-0049 §5).
+   *
+   * Starts collapsed. A driver with the app open is doing something, and a
+   * job they may well decline should not throw that away — `OfferBanner`
+   * carries the four facts the decision usually turns on and answers in one
+   * tap. Tapping it opens the whole offer for the times it does not.
+   */
+  const [expanded, setExpanded] = useState(false);
+
   // Soonest to expire first — the server already orders them that way, and
   // showing anything else would have a driver answering a job with nine
   // seconds on it while one with three sat behind it.
   const offer = offers.find((candidate) => candidate.id !== dismissed) ?? null;
 
   const showing = offer !== null;
+
+  /**
+   * The job on screen, as an id.
+   *
+   * Read out here rather than as `offer?.id` inside each dependency array: the
+   * effects below deliberately key on the *identity* of the offer and not on
+   * the object, because `expires_in_seconds` is a different number on every
+   * five-second poll. Naming it once is what lets the dependency arrays say
+   * exactly what they mean instead of being lint exceptions.
+   */
+  const showingOfferId = offer?.id ?? null;
 
   // A stale error must not outlive the job it belonged to. Without this, a
   // driver who loses one race sees "somebody else took it" printed under the
@@ -71,8 +98,66 @@ export function OfferPresenter() {
     if (offer?.id !== shownId.current) {
       shownId.current = offer?.id ?? null;
       setError(null);
+
+      // A new job is a new decision, taken at the size the driver is used to.
+      // Without this, a second offer arriving while the first was expanded
+      // would inherit the full screen — which is the right surface for a
+      // locked phone and the wrong one for a driver who is now holding the
+      // app open and mid-read.
+      setExpanded(false);
     }
   }, [offer?.id]);
+
+  /**
+   * **The lock-screen case, and the only thing that expands without a tap.**
+   *
+   * Android brought this app up because a job was offered — the driver was
+   * woken by a ringing phone in a cradle and has nothing else on screen to
+   * protect. `OfferScreen` is the right surface for that: it is the call
+   * screen the full-screen intent exists to show.
+   *
+   * Asked once per process, and only acted on while an offer is actually up:
+   * a driver who let the first job expire and opened the app twenty minutes
+   * later must not have the *next* one open expanded because of how the
+   * process happened to start.
+   */
+  useEffect(() => {
+    if (offer === null) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void openedFromCallScreen().then((launchedFor) => {
+      if (!cancelled && launchedFor === offer.id) {
+        setExpanded(true);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [offer]);
+
+  /**
+   * Takes the call notification down once the driver is looking at the job.
+   *
+   * A notification for a screen somebody is standing on is clutter, and worse
+   * than clutter: its Accept button is a second, slower way to answer a job
+   * they are already answering, and pressing both is the double-answer
+   * `claimAnswer` exists to catch. Removing it leaves exactly one way in.
+   *
+   * Keyed on the id alone — `expires_in_seconds` changes on every poll, and
+   * listing it would re-run this every five seconds (the same trap
+   * `useCountdown` and the ring effect below both document).
+   */
+  useEffect(() => {
+    if (showingOfferId === null) {
+      return;
+    }
+
+    void hideCallNotification(showingOfferId);
+  }, [showingOfferId]);
 
   // **The ring, tied to the offer on screen and to nothing else.**
   //
@@ -125,13 +210,21 @@ export function OfferPresenter() {
     }
 
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      setDismissed(offer.id);
+      // Back unwinds one step at a time, which is what back means everywhere
+      // else in the app. From the full screen it returns to the banner — the
+      // job is still live and the driver has not answered it — and only from
+      // the banner does it get out of the way entirely.
+      if (expanded) {
+        setExpanded(false);
+      } else {
+        setDismissed(offer.id);
+      }
 
       return true;
     });
 
     return () => subscription.remove();
-  }, [showing, offer?.id]);
+  }, [showing, expanded, offer?.id]);
 
   const answer = useCallback(
     async (act: Promise<unknown>) => {
@@ -162,6 +255,18 @@ export function OfferPresenter() {
             ? caught.message
             : 'Could not reach the office. Check your connection and try again.',
         );
+
+        // **An answer that failed needs explaining, and the banner has no
+        // room to explain.** It carries four facts and two buttons by design;
+        // there is nowhere on it to say *"another driver was faster"* without
+        // pushing the pickup off the card.
+        //
+        // So a failure opens the full offer, which has an error line and the
+        // countdown still running on it. The driver sees what happened and,
+        // if there is time left, can answer again. Doing nothing here would
+        // leave them looking at a banner whose button they pressed and which
+        // did not visibly change.
+        setExpanded(true);
       }
     },
     [],
@@ -169,6 +274,34 @@ export function OfferPresenter() {
 
   if (offer === null) {
     return null;
+  }
+
+  // **The answers, written once and passed to whichever surface is showing.**
+  //
+  // Both call the same mutations with the same follow-through, because they
+  // are the same act — the banner is not a lesser accept. Defining them here
+  // rather than inline in each branch is what stops the two drifting, which
+  // is the failure a driver would find first and understand last.
+  const acceptThis = () =>
+    void answer(accept.mutateAsync(offer.id).then((trip) => openPickup(trip.id)));
+
+  const declineThis = () => void answer(decline.mutateAsync({ offerId: offer.id }));
+
+  if (!expanded) {
+    return (
+      <View style={[styles.bannerSlot, { top: insets.top + 8 }]} pointerEvents="box-none">
+        <OfferBanner
+          // A new job is a new banner, not the old one with different words in
+          // it — the same reason `OfferScreen` is keyed below.
+          key={offer.id}
+          offer={offer}
+          pending={accept.isPending ? 'accept' : decline.isPending ? 'decline' : null}
+          onAccept={acceptThis}
+          onDecline={declineThis}
+          onOpen={() => setExpanded(true)}
+        />
+      </View>
+    );
   }
 
   return (
@@ -189,10 +322,8 @@ export function OfferPresenter() {
       // moves it to `driver_en_route`), so the screen that opens is the one
       // for the leg the driver is now on — not the home card with the job
       // behind it, waiting for a second tap.
-      onAccept={() =>
-        void answer(accept.mutateAsync(offer.id).then((trip) => openPickup(trip.id)))
-      }
-      onDecline={() => void answer(decline.mutateAsync({ offerId: offer.id }))}
+      onAccept={acceptThis}
+      onDecline={declineThis}
       // Dismissing leaves the clock running rather than declining. A driver
       // who wants a moment to look at the map has not said no, and turning
       // "not now" into a decline would cost them a fare they never refused —
@@ -210,3 +341,36 @@ export function OfferPresenter() {
     />
   );
 }
+
+const styles = StyleSheet.create({
+  /**
+   * Where the banner sits: pinned to the top, over everything, inset from the
+   * gutters.
+   *
+   * **Top, not bottom, and not centred.** It is standing in for a heads-up
+   * notification, and every heads-up on both platforms comes from the top —
+   * a driver who has seen one before knows where to look without being
+   * taught. Centring it would read as a modal, which is a thing you must
+   * answer; this is a thing you may ignore, and it should sit where ignorable
+   * things sit.
+   *
+   * `pointerEvents="box-none"` on the wrapper is load-bearing: without it this
+   * view spans the width of the screen and swallows taps on whatever is
+   * underneath it, so a driver with an offer up could not scroll their trip
+   * list. The banner itself still takes its own presses.
+   *
+   * `top` is set at the call site from the safe-area inset, because a notch is
+   * a runtime measurement rather than a token.
+   */
+  bannerSlot: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    // Above the tab bar, the drawer scrim and any screen-level modal. The
+    // navigator paints in the order it is declared and this is declared last,
+    // but an explicit index is what keeps that true if somebody reorders
+    // `RootNavigator`.
+    zIndex: 100,
+    elevation: 100,
+  },
+});

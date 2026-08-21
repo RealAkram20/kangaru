@@ -43,6 +43,10 @@ import {
   useUpdateDriverProfile,
   useUploadDriverPhoto,
 } from '../profile/queries';
+import {
+  fullScreenIntentIsGrantable,
+  openFullScreenIntentSettings,
+} from '../push/fullScreenIntent';
 import { useDriverStats } from '../trips/queries';
 import { usePayoutAccount } from '../wallet/payoutQueries';
 import { ratingNote, ratingValue } from '../trips/statsPresentation';
@@ -66,6 +70,7 @@ import {
   LockIcon,
   LogOutIcon,
   PencilIcon,
+  SmartphoneIcon,
   StarIcon,
   Trash2Icon,
   WalletIcon,
@@ -547,6 +552,38 @@ export function ProfileScreen({ navigation }: Props) {
               void setRingtoneEnabled(next);
             }}
           />
+          {/*
+            **Only on Android 14 and above** (ADR-0049 §2), where the
+            permission is genuinely missing. Below it, `USE_FULL_SCREEN_INTENT`
+            is granted at install, and a row asking a driver to go and enable
+            something they already have is an instruction that makes the app
+            look broken.
+
+            **Worded as an action, not as a state**, and that is a limitation
+            rather than a style choice: nothing in this stack can read whether
+            the permission was granted. `canUseFullScreenIntent()` is the
+            platform call and neither `expo-notifications` nor
+            `react-native-notify-kit` exposes it. A "Not allowed" label we
+            cannot verify would be wrong on every handset that had already
+            said yes, so the row says what tapping it does and stops there.
+
+            It sits under the ringtone switch on purpose: both are about how
+            loudly a job is allowed to arrive, and a driver who has just turned
+            the sound off is exactly the one who should see that the screen can
+            still light up.
+          */}
+          {fullScreenIntentIsGrantable() ? (
+            <>
+              <View style={styles.separator} />
+              <MenuRow
+                icon={<SmartphoneIcon color={colors.primary} size={22} strokeWidth={2} />}
+                label="Show jobs over the lock screen"
+                subtitle="Android needs your permission for a job to open like an incoming call. Opens Android settings."
+                announcement="Show jobs over the lock screen. Opens Android settings, where you can allow a job offer to open like an incoming call."
+                onPress={() => void openFullScreenIntentSettings()}
+              />
+            </>
+          ) : null}
           <View style={styles.separator} />
           <MenuRow
             icon={<LockIcon color={colors.primary} size={22} strokeWidth={2} />}

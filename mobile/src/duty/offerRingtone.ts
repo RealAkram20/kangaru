@@ -70,10 +70,29 @@ function ensurePlayer(): AudioPlayer | null {
  * lesser harm — and a missed turn caused by our ringtone would be a road
  * safety problem, not a UX one.
  *
- * **`playsInSilentMode`.** An offer must ring on a handset the driver has
- * silenced, for the same reason the notification channel bypasses Do Not
- * Disturb: going on duty is a statement that they are working. The driver's
- * own switch — `ringtonePreference` — is the smaller, honest way to opt out.
+ * **`playsInSilentMode: false`, and that is a reversal (ADR-0049 §4).**
+ *
+ * This used to be `true`, on the argument that going on duty is a statement
+ * that the driver is working and a silenced phone should still ring for the
+ * job they signed on for. The owner's answer is that a driver silences a
+ * phone on purpose and for reasons the app does not know — a funeral, a
+ * clinic, a passenger asleep in the back — and an app that rings through it
+ * is one they silence permanently, in Android's own settings, where nobody in
+ * the office can see that they did.
+ *
+ * Expo's own note on the flag is what makes this the whole fix rather than
+ * half of it: *"On Android, when `false`, playback is suppressed when the
+ * ringer mode is silent or vibrate."* So one setting covers both platforms,
+ * and it agrees with `offers.v2` no longer bypassing Do Not Disturb — the
+ * two halves of the ring, moved together.
+ *
+ * **`buzz` is untouched, and that is the point of the vibrate case.** A
+ * handset on vibrate has said *tell me quietly*, not *do not tell me*. The
+ * sound is suppressed above and the pattern below still runs, which is what a
+ * driver on vibrate expects and is how they find the phone in a pocket.
+ *
+ * `ringtonePreference` remains the driver's own in-app switch, and is now the
+ * smaller sibling of the OS setting rather than a workaround for it.
  */
 function ensureAudioMode(): void {
   if (audioModeSet) {
@@ -83,16 +102,19 @@ function ensureAudioMode(): void {
   audioModeSet = true;
 
   void setAudioModeAsync({
-    playsInSilentMode: true,
+    playsInSilentMode: false,
     interruptionMode: 'duckOthers',
     // The offer can arrive while the app is backgrounded and the ring has to
     // survive being brought forward, which on Android means the session must
     // not be torn down on the transition.
     shouldPlayInBackground: true,
   }).catch(() => {
-    // Defaults will have to do. Worst case the ring is quieter than intended
-    // or does not pierce silent mode; the notification and the vibration are
-    // both still there.
+    // Defaults will have to do — and note which way they fail. Expo's default
+    // for `playsInSilentMode` is `true`, so a session that could not be
+    // configured is one that rings *through* a silenced handset: the exact
+    // behaviour ADR-0049 §4 removed. Not worth a retry loop around audio, but
+    // worth knowing that the failure here is loud rather than quiet, which is
+    // the opposite of every other fallback in this module.
   });
 }
 
