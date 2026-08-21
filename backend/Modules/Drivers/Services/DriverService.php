@@ -3,10 +3,14 @@
 namespace Modules\Drivers\Services;
 
 use App\Models\User;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Requests\StoreDriverRequest;
 use Modules\Drivers\Requests\UpdateDriverRequest;
+use Modules\Vehicles\Models\Vehicle;
 
 /**
  * Plain Eloquent CRUD — no repository. Simple single-model CRUD doesn't
@@ -22,20 +26,69 @@ class DriverService
 
     public function list(User $user): Collection
     {
-        // Eager loaded because DriverResource now reports whether each
-        // driver can sign in; without this the list is one query per row
-        // (AGENTS.md — prevent N+1).
-        return Driver::query()->with('user')->get();
+        // Eager loaded because DriverResource reports whether each driver can
+        // sign in, and — since ADR-0048 — what they drive; without this the
+        // list is two queries per row (AGENTS.md — prevent N+1).
+        return Driver::query()->with(['user', 'vehicle'])->get();
     }
 
+    /**
+     * Creates the driver, and the vehicle they own if the form carried one.
+     *
+     * **One transaction, or neither** (ADR-0048 §8). The alternative the
+     * console has today is two screens: send the clerk to Vehicles, have them
+     * register the machine, come back, and find the driver form empty. A
+     * half-applied version of this — a vehicle in the fleet belonging to a
+     * driver whose creation then failed on a duplicate licence number — is
+     * that same abandoned state, made durable and invisible.
+     */
     public function create(StoreDriverRequest $request): Driver
     {
-        return Driver::create($request->validated());
+        $attributes = $request->validated();
+        $vehicle = $this->pullVehicleAttributes($attributes);
+
+        return DB::transaction(function () use ($attributes, $vehicle, $request): Driver {
+            if ($vehicle !== null) {
+                $attributes['vehicle_id'] = $this->registerVehicle($vehicle, $request->user());
+            }
+
+            return Driver::create($attributes);
+        });
     }
 
     public function update(Driver $driver, UpdateDriverRequest $request): Driver
     {
-        $driver->update($request->validated());
+        $attributes = $request->validated();
+        $vehicle = $this->pullVehicleAttributes($attributes);
+
+        DB::transaction(function () use ($driver, $attributes, $vehicle, $request): void {
+            if ($vehicle !== null) {
+                $attributes['vehicle_id'] = $this->registerVehicle($vehicle, $request->user());
+            }
+
+            /**
+             * Un-ticking the box clears the link and **does not delete the
+             * vehicle** (ADR-0048 §8).
+             *
+             * A checkbox that destroys a fleet record is the silent
+             * destruction this codebase refuses elsewhere — ADR-0016 §5 keeps
+             * the account when the link goes, for the same reason. The
+             * vehicle stays and is deleted where vehicles are deleted, by
+             * somebody who meant to.
+             *
+             * Only when the caller actually said so: a PATCH that never
+             * mentions `owns_vehicle` must not clear a link it was not asked
+             * about.
+             */
+            if (array_key_exists('owns_vehicle', $attributes)
+                && ! $attributes['owns_vehicle']
+                && ! array_key_exists('vehicle_id', $attributes)
+                && $driver->owns_vehicle) {
+                $attributes['vehicle_id'] = null;
+            }
+
+            $driver->update($attributes);
+        });
 
         // A driver suspended on the fleet screen who can still sign in is
         // suspended on paper only: `TripPolicy::transition` asks whether
@@ -66,5 +119,49 @@ class DriverService
         $this->accounts->close($driver);
 
         $driver->delete();
+    }
+
+    /**
+     * Lifts the nested `vehicle` object out of the validated attributes.
+     *
+     * By reference, because what is left has to be safe to hand to
+     * `Driver::create()` — `vehicle` is not a column, and a mass assignment
+     * carrying it would be silently dropped by `$fillable` today and become a
+     * confusing failure the day somebody adds a `vehicle` accessor.
+     *
+     * @param  array<string, mixed>  $attributes
+     * @return array<string, mixed>|null
+     */
+    private function pullVehicleAttributes(array &$attributes): ?array
+    {
+        $vehicle = $attributes['vehicle'] ?? null;
+        unset($attributes['vehicle']);
+
+        return is_array($vehicle) && $vehicle !== [] ? $vehicle : null;
+    }
+
+    /**
+     * Creates the fleet vehicle a driver owns, and checks the permission that
+     * governs the fleet before it does.
+     *
+     * **`vehicles.manage`, separately and explicitly** (ADR-0048 §9). Folding
+     * vehicle creation into `drivers.manage` would be exactly the side door
+     * ADR-0016 §1 refuses at length: a role that was never granted the fleet
+     * would be able to write fleet records from a different screen, and the
+     * escalation rule would be intact in one module and defeated in another.
+     *
+     * A clerk holding only `drivers.manage` gets the fleet picker and not the
+     * inline form, and is told which permission they are missing rather than
+     * being shown a form that fails on submit.
+     */
+    private function registerVehicle(array $vehicle, ?User $actor): int
+    {
+        if ($actor === null || Gate::forUser($actor)->denies('create', Vehicle::class)) {
+            throw new AuthorizationException(
+                'Registering a vehicle needs the fleet permission. Pick an existing vehicle instead.'
+            );
+        }
+
+        return Vehicle::create($vehicle)->getKey();
     }
 }

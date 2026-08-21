@@ -29,6 +29,18 @@ enum DriverDocumentType: string
     case VEHICLE_REGISTRATION = 'vehicle_registration';
 
     /**
+     * Added by ADR-0048 §1, on the terms this docblock already set.
+     *
+     * "A fifth type is one case here" was an invitation with a condition
+     * attached, and the condition is the naming rule above: nothing in this
+     * catalogue may be named for one country. A face is a face in Kampala and
+     * in Nairobi, and a photograph of a car is not a jurisdiction's
+     * paperwork. Both pass; *PSV badge* still does not.
+     */
+    case IDENTITY_SELFIE = 'identity_selfie';
+    case VEHICLE_PHOTO = 'vehicle_photo';
+
+    /**
      * @return array<int, string>
      */
     public static function values(): array
@@ -43,6 +55,8 @@ enum DriverDocumentType: string
             self::IDENTITY_DOCUMENT => 'Identity document',
             self::VEHICLE_INSURANCE => 'Vehicle insurance',
             self::VEHICLE_REGISTRATION => 'Vehicle registration',
+            self::IDENTITY_SELFIE => 'Photo of you',
+            self::VEHICLE_PHOTO => 'Photo of the vehicle',
         };
     }
 
@@ -60,6 +74,78 @@ enum DriverDocumentType: string
             self::IDENTITY_DOCUMENT => 'A national ID, passport, or whatever your country issues.',
             self::VEHICLE_INSURANCE => 'The current certificate for the vehicle you drive.',
             self::VEHICLE_REGISTRATION => 'Proof the vehicle is registered to its owner.',
+            self::IDENTITY_SELFIE => 'Your face, in good light, so we can match it to your ID.',
+            self::VEHICLE_PHOTO => 'The whole vehicle, with the number plate readable.',
+        };
+    }
+
+    /**
+     * Which headed section of the KYC screen this belongs under.
+     *
+     * Server-side because both the driver app and the console draw this list
+     * (ADR-0048 §1, `DriverDocumentGroup`). A second copy of "which section
+     * is a selfie in" is a copy that disagrees.
+     */
+    public function group(): DriverDocumentGroup
+    {
+        return match ($this) {
+            self::IDENTITY_DOCUMENT, self::IDENTITY_SELFIE => DriverDocumentGroup::PERSONAL,
+            self::DRIVING_LICENCE, self::VEHICLE_REGISTRATION,
+            self::VEHICLE_INSURANCE => DriverDocumentGroup::DRIVER,
+            self::VEHICLE_PHOTO => DriverDocumentGroup::VEHICLE,
+        };
+    }
+
+    /**
+     * The order the slots are drawn in, within and across groups.
+     *
+     * Fixed here rather than left to `cases()` so that the reading order a
+     * reviewer relies on — identity, then the licence, then the vehicle —
+     * does not change as a side effect of adding a case in the wrong place.
+     */
+    public function position(): int
+    {
+        return match ($this) {
+            self::IDENTITY_DOCUMENT => 1,
+            self::IDENTITY_SELFIE => 2,
+            self::DRIVING_LICENCE => 3,
+            self::VEHICLE_REGISTRATION => 4,
+            self::VEHICLE_INSURANCE => 5,
+            self::VEHICLE_PHOTO => 6,
+        };
+    }
+
+    /**
+     * The six types in the order a screen should draw them.
+     *
+     * @return array<int, self>
+     */
+    public static function ordered(): array
+    {
+        $cases = self::cases();
+
+        usort($cases, static fn (self $a, self $b): int => [$a->group()->position(), $a->position()]
+            <=> [$b->group()->position(), $b->position()]);
+
+        return $cases;
+    }
+
+    /**
+     * Whether this document only makes sense for a driver with a vehicle.
+     *
+     * **Nothing hides a slot on this today**, and that is deliberate: a
+     * corporate driver in a depot car is still asked for the vehicle's papers,
+     * because the depot's insurance certificate is a thing the office wants on
+     * file against the person driving. It is here so a screen that wants to
+     * *explain* the vehicle group has something true to say, and so a future
+     * rule has one place to read rather than a list of type names copied into
+     * a component.
+     */
+    public function concernsVehicle(): bool
+    {
+        return match ($this) {
+            self::VEHICLE_INSURANCE, self::VEHICLE_REGISTRATION, self::VEHICLE_PHOTO => true,
+            self::DRIVING_LICENCE, self::IDENTITY_DOCUMENT, self::IDENTITY_SELFIE => false,
         };
     }
 
@@ -76,7 +162,11 @@ enum DriverDocumentType: string
     {
         return match ($this) {
             self::DRIVING_LICENCE, self::VEHICLE_INSURANCE => true,
-            self::IDENTITY_DOCUMENT, self::VEHICLE_REGISTRATION => false,
+            // A selfie and a photograph of a car have no date to lapse.
+            // Asking for one would be a field inviting a driver to invent
+            // something (ADR-0048 §1).
+            self::IDENTITY_DOCUMENT, self::VEHICLE_REGISTRATION,
+            self::IDENTITY_SELFIE, self::VEHICLE_PHOTO => false,
         };
     }
 }

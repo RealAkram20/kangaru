@@ -44,6 +44,38 @@ list is unbuilt and named below.
 | `trip.completed` | `TripStatusChanged` → `trip_completed` — the body carries the six data points (Centenary letter) | the booking's requester | in-app + mail |
 | `trip.offered` | `DispatchOfferService::ring()` | the offered driver | push + in-app |
 | `trip.offer_withdrawn` | `DispatchOfferService::withdraw()` — an accept superseding a wave, or a passenger cancelling | the losing drivers | push, silently |
+| `driver.document.reviewed` | `DriverDocumentService::verify()` / `::reject()` — a person at the office, never a machine | the driver whose document it is | **in-app + push + mail** |
+
+### `driver.document.reviewed` is the only type that takes all three channels
+
+ADR-0052. Each channel is doing a different job and none of them is a
+duplicate of another:
+
+- the **in-app row** is the record, and it is the only one that cannot fail —
+  push is best-effort (ADR-0025 §3) and a driver may have declined the OS
+  permission outright;
+- the **push** is what makes a *rejection* reach somebody the same day, which
+  is the entire point of the feature: a driver who does not know their licence
+  was refused believes they are compliant;
+- the **email** is the only channel that survives an uninstalled app, and the
+  only one allowed to carry the office's rejection reason in words.
+
+**The reason is on the email and nowhere else.** It is somebody's account of a
+defect in a stranger's identity document, and a push lands on a lock screen
+that is read over a shoulder. `body()` — which the push channel and the in-app
+row both render verbatim — never contains it, and `context()` does not either,
+so it never becomes push `data`.
+
+`pushOptions()` cannot be used to soften the push body instead, and the way it
+fails is worth knowing: `ExpoPushChannel` composes `$shown + … + $options`, and
+PHP's `+` keeps the **left** operand's keys, so a `body` supplied there is
+discarded without a warning. The safe design is a `body()` that is already safe
+on every channel. `DriverDocumentNotificationTest` pins it.
+
+This type replaces ADR-0033 §6's explicit refusal to notify at all. That
+refusal was an argument about consistency — settlements and ratings had no
+notification either — and ADR-0043 and ADR-0044 have since made the platform
+consistent the other way.
 
 ### The two `trip.offer*` rows are the only ones that reach a handset
 

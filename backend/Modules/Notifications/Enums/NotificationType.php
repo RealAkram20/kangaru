@@ -93,6 +93,23 @@ enum NotificationType: string
      */
     case DRIVER_SUPPORT_ANSWERED = 'driver.support.answered';
 
+    /**
+     * What the office decided about one of a driver's documents (ADR-0052).
+     *
+     * **The argument this enum demands, and it is AGENTS.md's own:** *Document
+     * Expiring* is on the prescriptive list at the top of this file, and a
+     * document being refused is the same obligation arriving sooner. A driver
+     * whose licence the office could not accept is unverified and does not
+     * know it.
+     *
+     * ADR-0033 §6 refused this in 2026-08 on consistency grounds — settlements
+     * and ratings had no notification either, so adding one here would have
+     * been an outlier. Two cases above (`DRIVER_CLOSURE_ANSWERED`,
+     * `DRIVER_SUPPORT_ANSWERED`) have since made the opposite true: documents
+     * were the last office decision a driver could only find by looking.
+     */
+    case DRIVER_DOCUMENT_REVIEWED = 'driver.document.reviewed';
+
     public function label(): string
     {
         return match ($this) {
@@ -107,6 +124,7 @@ enum NotificationType: string
             self::TRIP_OFFER_WITHDRAWN => 'Job withdrawn',
             self::DRIVER_CLOSURE_ANSWERED => 'Account closure',
             self::DRIVER_SUPPORT_ANSWERED => 'Report answered',
+            self::DRIVER_DOCUMENT_REVIEWED => 'Document checked',
         };
     }
 
@@ -189,6 +207,34 @@ enum NotificationType: string
             self::DRIVER_SUPPORT_ANSWERED => [
                 NotificationChannel::DATABASE,
                 NotificationChannel::PUSH,
+            ],
+            /*
+             * **All three, and it is the only type here that takes all
+             * three** (ADR-0052 §3).
+             *
+             * The in-app row is the record, and it is the one channel that
+             * cannot fail: push is best-effort by ADR-0025 §3 and a driver may
+             * have declined the OS permission outright.
+             *
+             * The push is what makes a *rejection* reach somebody the same
+             * day. That is the whole feature — a driver who does not know
+             * their licence was refused believes they are compliant, and every
+             * day until they next open the app is a day the office waits.
+             *
+             * Mail is here for the reason the closure answer takes it: it is
+             * the only channel that survives the app being uninstalled, off,
+             * or signed out — and it is the only one that can carry the
+             * office's rejection reason in words, which neither of the other
+             * two may (see the notification class).
+             *
+             * The fatigue AGENTS.md warns about is bounded by construction:
+             * six documents, one message per human decision, and nothing here
+             * fires on a schedule.
+             */
+            self::DRIVER_DOCUMENT_REVIEWED => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::PUSH,
+                NotificationChannel::MAIL,
             ],
         };
     }

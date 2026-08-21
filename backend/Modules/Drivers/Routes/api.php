@@ -209,6 +209,12 @@ Route::post('settlement-requests/{settlementRequest}/decline', [SettlementReques
 // accepting somebody's licence look like an edit.
 Route::get('drivers/{driver}/documents', [DriverDocumentReviewController::class, 'index'])
     ->name('drivers.documents.index');
+// The office filing a document a driver handed over in person (ADR-0052 §5).
+// Same request class, same validation and same `pending` result as the
+// driver's own upload — only the hand holding the file is different, and
+// uploading is still not verifying.
+Route::post('drivers/{driver}/documents', [DriverDocumentReviewController::class, 'store'])
+    ->name('drivers.documents.store');
 Route::get('drivers/{driver}/documents/{document}/file', [DriverDocumentReviewController::class, 'file'])
     ->name('drivers.documents.file');
 Route::post('drivers/{driver}/documents/{document}/verify', [DriverDocumentReviewController::class, 'verify'])

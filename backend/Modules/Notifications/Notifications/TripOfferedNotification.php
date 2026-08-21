@@ -112,10 +112,25 @@ class TripOfferedNotification extends KangaruNotification
             // Versioned because **a channel is immutable once created**: past
             // its name and description, the OS refuses changes so a user's own
             // settings cannot be overridden. Changing the ringtone therefore
-            // means `offers.v2`, created alongside, and this string is the
-            // half of that pair the server holds. It must match
+            // means a new id, created alongside, and this string is the half
+            // of that pair the server holds. It must match
             // `mobile/src/push/channels.ts`.
-            'channelId' => 'offers.v1',
+            //
+            // **`v2` since ADR-0049 §4**, and the reason is the immutability
+            // above rather than anything wrong with `v1`. The owner asked for
+            // a ring that falls silent under silent mode and Do Not Disturb;
+            // `offers.v1` was created with `bypassDnd: true` and no call can
+            // change that on a handset that has already run the app. So the
+            // id moved, the app creates `v2` and deletes `v1` in the same
+            // release, and this line moved with it.
+            //
+            // **These two ends have to ship together.** A server naming a
+            // channel the installed app has not created does not fail — the
+            // push is delivered on the default channel, silently and at
+            // ordinary importance, which presents as "push works, it just
+            // never rings". `TripOfferedPushTest` asserts this string; it
+            // cannot assert the app's half.
+            'channelId' => 'offers.v2',
             // iOS, where there are no channels and the sound rides on the
             // message. Bundled by the `expo-notifications` config plugin,
             // named without its path.

@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Context;
 use Illuminate\Validation\ValidationException;
 use Modules\Dispatch\Console\AdvanceDispatchOffers;
 use Modules\Drivers\Console\AwardWeeklyBonuses;
+use Modules\Drivers\Console\PruneAbandonedApplicationDocuments;
 use Modules\Fleet\Console\CloseStaleDutySessions;
 use Modules\Reports\Console\PruneReportExports;
 use Modules\Trips\Console\MaintainTripLocationPartitions;
@@ -42,6 +43,7 @@ return Application::configure(basePath: dirname(__DIR__))
         AdvanceDispatchOffers::class,
         AwardWeeklyBonuses::class,
         CloseStaleDutySessions::class,
+        PruneAbandonedApplicationDocuments::class,
     ])
     ->withMiddleware(function (Middleware $middleware): void {
         // ---------------------------------------------------------------------

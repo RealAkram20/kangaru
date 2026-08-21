@@ -43,17 +43,29 @@ class DriverApplicationController extends Controller
      * the answer.
      *
      * 202, not 201: the platform has accepted the application for review, and
-     * has deliberately not created the account the caller asked for. Nothing
-     * is returned but a sentence — an id would be a handle for guessing at
-     * other people's applications, and §6 gives the applicant nothing to
-     * look up anyway.
+     * has deliberately not created the account the caller asked for.
+     *
+     * **The id is still not returned** — it would be a handle for guessing at
+     * other people's applications, and ADR-0027 §6 gives the applicant nothing
+     * to look up anyway. What is returned is the claim ticket (ADR-0048 §4):
+     * 64 opaque random characters that resolve to this row and nothing else,
+     * so the KYC screen can send photographs one at a time instead of staking
+     * the whole form on a single 48 MB request.
+     *
+     * **Returned exactly once.** The column holds a SHA-256 of it and there is
+     * no endpoint that will send it again — such an endpoint would take an
+     * email address and say whether an application exists for it, which is
+     * precisely the oracle §5 refuses.
      */
     public function store(StoreDriverApplicationRequest $request): JsonResponse
     {
-        $this->applications->submit($request->validated());
+        $application = $this->applications->submit($request->validated());
 
         return ApiResponse::success(
-            null,
+            [
+                'upload_token' => $application->getAttribute('upload_token'),
+                'upload_expires_at' => $application->upload_token_expires_at?->toIso8601String(),
+            ],
             'Your application has been received. The office will call you on the number you gave.',
             202,
         );

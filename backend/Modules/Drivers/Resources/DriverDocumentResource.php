@@ -42,8 +42,20 @@ class DriverDocumentResource extends JsonResource
         return [
             'id' => $this->id,
             'driver_id' => $this->driver_id,
+            /**
+             * Null for every document on an approved driver, and set only
+             * while the row is still an applicant's (ADR-0048 §3).
+             *
+             * Sent so a console reviewer can tell the two apart at a glance:
+             * a `pending` document against a driver is somebody the office
+             * already employs, and the same state against an application is
+             * somebody it has not decided about.
+             */
+            'driver_application_id' => $this->driver_application_id,
             'type' => $type->value,
             'type_label' => $type->label(),
+            'group' => $type->group()->value,
+            'group_label' => $type->group()->label(),
             /**
              * **The stored status, and the state anything should act on.**
              *
@@ -72,6 +84,12 @@ class DriverDocumentResource extends JsonResource
              * copy and the office's copy come from different endpoints, and a
              * handset building `/drivers/{id}/documents/...` would be asking
              * for a route its token cannot reach (`ClientScope`).
+             *
+             * **Null while the document belongs to an application**, and that
+             * is a deliberate refusal rather than a missing route. ADR-0048 §4
+             * gives an applicant's claim ticket metadata and never file bytes:
+             * a stolen ticket must not become a way to *read* somebody's
+             * national ID, only to overwrite it, which is noisy and useless.
              */
             'file_url' => $this->fileUrlFor($request),
         ];
@@ -85,8 +103,19 @@ class DriverDocumentResource extends JsonResource
      * keeps the resource one shape — the app and the console render the same
      * fields — while never handing either side a URL it cannot use.
      */
-    private function fileUrlFor(Request $request): string
+    private function fileUrlFor(Request $request): ?string
     {
+        /**
+         * An applicant's document has no readable URL at all (ADR-0048 §4),
+         * and this branch is also what stops the office route below being
+         * built with a null `driver` — which would produce a path like
+         * `/drivers//documents/12` and 404 in a way that looks like a missing
+         * file rather than a missing decision.
+         */
+        if ($this->driver_id === null) {
+            return null;
+        }
+
         $user = $request->user();
         $isOwner = $user !== null
             && $this->driver !== null

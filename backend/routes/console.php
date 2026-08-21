@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
 use Modules\Dispatch\Console\AdvanceDispatchOffers;
 use Modules\Drivers\Console\AwardWeeklyBonuses;
+use Modules\Drivers\Console\PruneAbandonedApplicationDocuments;
 use Modules\Fleet\Console\CloseStaleDutySessions;
 use Modules\Reports\Console\PruneReportExports;
 use Modules\Trips\Console\MaintainTripLocationPartitions;
@@ -118,6 +119,30 @@ Schedule::command(CloseStaleDutySessions::class)
     ->everyMinute()
     // A slow sweep must not stack behind itself: two runs would both read the
     // same open sessions and race to close them.
+    ->withoutOverlapping()
+    ->onOneServer();
+
+// Destroys the uploads of driver applications nobody ever decided
+// (ADR-0048 §5).
+//
+// **This is a data-protection obligation, not housekeeping.** Approval carries
+// an applicant's documents onto the new driver and rejection destroys them; an
+// application that is simply never decided is the third ending, and without
+// this it means a photograph of a stranger's face and national ID living on
+// the operator's disk indefinitely, against somebody who was never employed
+// and never refused.
+//
+// Registered here in the same change as the ADR that promises it. ADR-0029
+// created an obligation with no machinery and nothing discharged it for ten
+// months; the `MaintainTripLocationPartitions` note below records the same
+// failure in the other direction — a command written and never scheduled.
+//
+// Daily and off-peak. The window is 90 days, so the cost of a missed run is
+// measured in hours against a quarter, and `withoutOverlapping` matters more
+// than the exact hour: the sweep deletes files, and two of them racing over
+// one application is not a thing to find out about later.
+Schedule::command(PruneAbandonedApplicationDocuments::class)
+    ->dailyAt('03:40')
     ->withoutOverlapping()
     ->onOneServer();
 

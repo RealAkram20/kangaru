@@ -47,6 +47,28 @@ return [
             NotificationChannel::DATABASE->value,
         ],
 
+        /*
+         | What the office decided about a driver's document (ADR-0052).
+         |
+         | All three channels, which no other type here takes. The row is the
+         | record and cannot fail; the push is what makes a *rejection* reach
+         | somebody the same day; the email is the only channel that survives
+         | an uninstalled app, and the only one allowed to carry the office's
+         | reason in words.
+         |
+         | **Listed here rather than left to `defaultChannels()` because this
+         | is the one an operator is most likely to want to change.** A
+         | deployment that has not configured mail, or one whose drivers have
+         | no email addresses worth speaking of, drops `mail` from this line
+         | and nothing else changes. Emptying it turns the notification off
+         | without deleting the code that raises it.
+         */
+        NotificationType::DRIVER_DOCUMENT_REVIEWED->value => [
+            NotificationChannel::DATABASE->value,
+            NotificationChannel::PUSH->value,
+            NotificationChannel::MAIL->value,
+        ],
+
     ],
 
     /*

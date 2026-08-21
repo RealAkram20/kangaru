@@ -36,13 +36,29 @@ function reviewerWhoMayDecide(): User
 }
 
 it('accepts an application from a stranger with no token at all', function () {
-    $this->postJson('/api/v1/driver-applications', applicationPayload())
-        ->assertStatus(202)
-        ->assertJsonPath('data', null);
+    $response = $this->postJson('/api/v1/driver-applications', applicationPayload())
+        ->assertStatus(202);
 
     $application = DriverApplication::sole();
     expect($application->status)->toBe(DriverApplicationStatus::PENDING);
     expect($application->terms_accepted_at)->not->toBeNull();
+
+    /**
+     * ADR-0048 §4 changed this response, and the change is narrow.
+     *
+     * **The id is still not returned** — it would be a handle for guessing at
+     * other people's applications. What comes back is the claim ticket: an
+     * opaque secret that resolves to this row and nothing else on the
+     * platform.
+     */
+    expect($response->json('data.id'))->toBeNull();
+    expect($response->json('data.upload_token'))->toBeString()->toHaveLength(64);
+    expect($response->json('data.upload_expires_at'))->toBeString();
+
+    // Stored hashed, never in the clear — a database dump must not hand out
+    // the ability to overwrite anybody's documents.
+    expect($application->upload_token_hash)
+        ->toBe(hash('sha256', $response->json('data.upload_token')));
 });
 
 /**
@@ -87,6 +103,20 @@ it('answers identically whether or not the email is already known', function () 
     $fresh->assertStatus(202);
     $duplicate->assertStatus(202);
     expect($duplicate->json('message'))->toBe($fresh->json('message'));
+
+    /**
+     * ADR-0048 §4 added a body to this response and must not have added an
+     * oracle with it.
+     *
+     * The **shape** is what has to match, not the values: a claim ticket is
+     * random by construction, so two identical tickets would be the bug. What
+     * would leak is a known email getting no ticket, or a different set of
+     * keys — either of which answers "does this person already drive for
+     * KangaruRide" to anybody who cares to ask twice.
+     */
+    expect(array_keys($duplicate->json('data')))->toBe(array_keys($fresh->json('data')));
+    expect($duplicate->json('data.upload_token'))->toBeString()->toHaveLength(64);
+    expect($duplicate->json('data.upload_token'))->not->toBe($fresh->json('data.upload_token'));
 });
 
 it('refuses an application without affirmative consent', function () {

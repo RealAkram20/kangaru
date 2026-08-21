@@ -53,6 +53,32 @@ class DriverDocumentPolicy
     }
 
     /**
+     * The office uploading or replacing a driver's document on their behalf
+     * (ADR-0052 §5).
+     *
+     * Class-level, like `viewAny()`, because there is no document yet to
+     * authorise against — the whole point is to create one.
+     *
+     * **The same `drivers.manage` gate, and no separate permission.** A clerk
+     * who may already read every driver's identity document and decide whether
+     * it is genuine is not meaningfully restrained by being unable to file the
+     * photograph the driver just handed across the counter. Inventing a
+     * permission for it would be a role nobody can describe.
+     *
+     * **What this does not grant is the part worth naming: an upload is never
+     * a verification.** `DriverDocumentService::upload()` writes `pending` and
+     * clears every review field, whoever called it, so an administrator who
+     * files a document has *not* approved it — somebody still has to look and
+     * `review()` below still gates that. ADR-0033 §4's "nothing is
+     * auto-verified, ever" survives this addition intact, and would not have
+     * survived a shortcut that filed and accepted in one act.
+     */
+    public function create(User $user): bool
+    {
+        return $user->hasPermission(Permission::DRIVERS_MANAGE);
+    }
+
+    /**
      * Verifying or rejecting.
      *
      * One ability for both, because they are the same authority used two ways:

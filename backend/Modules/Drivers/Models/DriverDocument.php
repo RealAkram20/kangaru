@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
+use Modules\Drivers\Contracts\HoldsDocuments;
 use Modules\Drivers\Enums\DriverDocumentStatus;
 use Modules\Drivers\Enums\DriverDocumentType;
 
@@ -26,10 +27,12 @@ use Modules\Drivers\Enums\DriverDocumentType;
  * that there is never a second notion of "is this driver compliant".
  *
  * @property int $id
- * @property int $driver_id
+ * @property int|null $driver_id
+ * @property int|null $driver_application_id
  * @property DriverDocumentType $type
  * @property DriverDocumentStatus $status
  * @property string $file_path
+ * @property bool $encrypted
  * @property string|null $original_name
  * @property string $mime_type
  * @property int $size_bytes
@@ -41,6 +44,7 @@ use Modules\Drivers\Enums\DriverDocumentType;
  * @property CarbonInterface $created_at
  * @property CarbonInterface $updated_at
  * @property-read Driver|null $driver
+ * @property-read DriverApplication|null $driverApplication
  * @property-read User|null $reviewedBy
  */
 class DriverDocument extends Model
@@ -48,10 +52,22 @@ class DriverDocument extends Model
     use Auditable;
 
     protected $fillable = [
+        /**
+         * **Exactly one of these two is set. Never both, never neither**
+         * (ADR-0048 §3).
+         *
+         * A row belongs to a driver, or to an applicant who has not been
+         * approved yet. The database cannot express "exactly one of"
+         * portably, so `owner()` below and `DriverDocumentService` are where
+         * the invariant is actually kept — which is why it is written here
+         * where somebody adding a third writer will read it.
+         */
         'driver_id',
+        'driver_application_id',
         'type',
         'status',
         'file_path',
+        'encrypted',
         'original_name',
         'mime_type',
         'size_bytes',
@@ -79,6 +95,7 @@ class DriverDocument extends Model
             'type' => DriverDocumentType::class,
             'status' => DriverDocumentStatus::class,
             'size_bytes' => 'integer',
+            'encrypted' => 'boolean',
             // A date, not a datetime: a licence expires on a day, and midnight
             // in the app's UTC is 03:00 in Kampala.
             'expires_at' => 'date',
@@ -93,10 +110,37 @@ class DriverDocument extends Model
         return $this->belongsTo(Driver::class);
     }
 
+    /**
+     * The applicant this belongs to, while it belongs to an applicant.
+     *
+     * Null for every document on an approved driver: approval re-points the
+     * row and clears this (ADR-0048 §5), so a non-null value here always
+     * means "nobody has been approved for this yet".
+     *
+     * @return BelongsTo<DriverApplication, $this>
+     */
+    public function driverApplication(): BelongsTo
+    {
+        return $this->belongsTo(DriverApplication::class);
+    }
+
     /** @return BelongsTo<User, $this> */
     public function reviewedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'reviewed_by_user_id');
+    }
+
+    /**
+     * The thing this document is filed against — a driver, or an applicant.
+     *
+     * Returns null only if the invariant above has been broken, which is a
+     * state no writer in this module can produce. Callers that need a
+     * directory or an audit subject go through here rather than testing
+     * `driver_id` for null and guessing at the other case.
+     */
+    public function owner(): ?HoldsDocuments
+    {
+        return $this->driver ?? $this->driverApplication;
     }
 
     /**
