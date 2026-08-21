@@ -944,6 +944,14 @@ paths:
                 passenger_name: { type: string, maxLength: 255 }
                 passenger_phone: { type: string, maxLength: 32 }
                 passenger_count: { type: ['integer', 'null'], minimum: 1, maximum: 60 }
+                vehicle_category:
+                  description: >
+                    ADR-0051. Optional; omit or send null for no preference.
+                    Validated against the **active** categories — a client
+                    may not request one the fleet has stopped running.
+                  anyOf:
+                    - { $ref: '#/components/schemas/VehicleCategoryKey' }
+                    - { enum: [null] }
                 origin: { type: string, maxLength: 255 }
                 destination: { type: string, maxLength: 255 }
                 scheduled_for:
@@ -1988,9 +1996,16 @@ paths:
         profile, no credential that can sign in. Deliberately answers
         identically whether or not the email is already known — a duplicate
         is refused at approval, in front of a human, not at submission in
-        front of a script. 202 with no body on success; an id would be a
+        front of a script.
+
+        202 on success. **The id is still not returned** — it would be a
         handle for guessing at other people's applications, and there is no
-        status checker to use it on (§6).
+        status checker to use it on (§6). What comes back is the claim ticket
+        (ADR-0048 §4): an opaque secret that resolves to this row and nothing
+        else on the platform, so the KYC screen can send photographs one at a
+        time instead of staking the whole form on a single 48 MB request.
+        Returned exactly once — the column holds a SHA-256 of it, and an
+        endpoint that would send it again is the oracle §5 refuses.
       requestBody:
         required: true
         content:
@@ -2031,7 +2046,33 @@ paths:
                   enum: [true, 'true', 1, '1', 'yes', 'on']
       responses:
         '202':
-          $ref: '#/components/responses/MessageOnly'
+          description: Accepted for review, with a claim ticket for the documents.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [upload_token, upload_expires_at]
+                    additionalProperties: false
+                    properties:
+                      upload_token:
+                        type: string
+                        minLength: 64
+                        maxLength: 64
+                        description: >
+                          64 opaque random characters. Not the application id,
+                          not derived from it, and cannot be walked to a
+                          neighbouring row.
+                      upload_expires_at:
+                        type: string
+                        format: date-time
+                        description: 24 hours (ADR-0048 §4).
         default:
           $ref: '#/components/responses/Error'
     get:
@@ -2067,6 +2108,140 @@ paths:
                       page: { type: integer }
                       per_page: { type: integer }
                       total: { type: integer }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/driver-applications/documents:
+    get:
+      summary: >
+        The six KYC slots an applicant has filled, by claim ticket
+        (ADR-0048 §4). Unauthenticated, throttled 5/min/IP.
+      description: >
+        **Not the status checker ADR-0027 §6 refuses.** It takes an opaque
+        secret minted at submission, never an email address, and answers with
+        which document slots the holder has filled — not with a decision, and
+        never with file bytes. Unknown, expired and already-decided tickets all
+        get the same 404, so the status code cannot be used as an oracle.
+
+        There is deliberately no `{application}` segment: the row is whichever
+        one the ticket resolves to, so there is no id in the URL to change.
+      parameters:
+        - name: upload_token
+          in: query
+          required: true
+          schema: { type: string, minLength: 64, maxLength: 64 }
+          description: >
+            Accepted here for the GET only. Writes take it in the body or the
+            `X-Upload-Token` header — a query string is written to access
+            logs, proxy logs and browser history as a matter of course.
+      responses:
+        '200':
+          description: The six slots, grouped and ordered.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DriverDocumentSlot' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: >
+        An applicant sending one of their papers before approval
+        (ADR-0048 §4). Unauthenticated, throttled 5/min/IP.
+      description: >
+        Same mime list and same 8 MB ceiling as the driver's own upload, by
+        extension rather than by copy: the file lands on the same private disk
+        and becomes the same row on the same driver, so a looser limit here
+        would be a way past the fleet's limits by applying instead of being
+        hired.
+
+        One request per file rather than the whole set with the application —
+        six photographs at 8 MB is a 48 MB request from a handset on a Ugandan
+        mobile connection, and when it fails at 80% the applicant loses the
+        form as well as the files.
+
+        Re-sending a type **replaces** it (ADR-0033 §2). Optional in every
+        sense: approval requires no documents at all (ADR-0048 §6).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [upload_token, type, file]
+              additionalProperties: false
+              properties:
+                upload_token: { type: string, minLength: 64, maxLength: 64 }
+                type: { $ref: '#/components/schemas/DriverDocumentType' }
+                file:
+                  type: string
+                  format: binary
+                  description: Image or PDF, 8 MB.
+                expires_at:
+                  type: ['string', 'null']
+                  format: date
+                  description: >
+                    Required for driving_licence and vehicle_insurance, whose
+                    entire meaning is a date. Must not be in the past.
+      responses:
+        '201':
+          description: Received. `file_url` is null — metadata, never bytes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DriverDocument' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/driver-applications/documents/{type}:
+    parameters:
+      - name: type
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/DriverDocumentType' }
+    delete:
+      summary: >
+        Withdraws one document before anybody has decided (ADR-0048 §4).
+        Unauthenticated, throttled 5/min/IP.
+      description: >
+        For the applicant who realises they sent a document they did not mean
+        to send at all — uploading over it fixes a bad photograph, and does
+        not help with that. The file is destroyed, not merely unlinked.
+
+        204 whether or not anything was held of that type: nothing held is the
+        state the caller asked for, and a 404 would make a retried withdrawal
+        look broken.
+
+        **Deliberately not offered to a driver.** ADR-0033 §2 makes
+        re-uploading the way a driver corrects a document, and it resets the
+        review; a driver who could delete instead could remove a document the
+        office had already rejected, taking the objection with it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [upload_token]
+              additionalProperties: false
+              properties:
+                upload_token: { type: string, minLength: 64, maxLength: 64 }
+      responses:
+        '204':
+          description: Withdrawn, or nothing was held.
         default:
           $ref: '#/components/responses/Error'
 
@@ -2109,6 +2284,24 @@ paths:
                 license_number: { type: string, maxLength: 64 }
                 license_expiry: { type: string, format: date, description: Must be in the future. }
                 vehicle_id: { type: [integer, 'null'] }
+                owns_vehicle:
+                  type: boolean
+                  description: >
+                    Whether the machine is theirs (ADR-0048 §7). A rider
+                    recruited at a stage almost always owns the boda they
+                    applied on, and the reviewer is the first person on the
+                    platform in a position to say so.
+                vehicle:
+                  description: >
+                    Registers the driver's own vehicle in the same transaction
+                    as the approval (ADR-0048 §8), for the very common case
+                    where the fleet has never seen it. Mutually exclusive with
+                    `vehicle_id` — a request carrying both is refused rather
+                    than resolved. Needs `vehicles.manage` on top of the
+                    approval permissions.
+                  oneOf:
+                    - type: 'null'
+                    - { $ref: '#/components/schemas/InlineVehicle' }
                 role: { type: string, description: 'Role slug. Defaults to driver.' }
       responses:
         '201':
@@ -3506,6 +3699,63 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+    post:
+      summary: The office filing a document on a driver's behalf (ADR-0052 §5).
+      description: >
+        `drivers.manage`. A driver hands their licence across the counter, or
+        emails a scan, or photographs it badly six times and gives up. Until
+        this endpoint the only way a document reached the platform was the
+        handset in that driver's pocket.
+
+        **Filing is not verifying.** The row lands `pending` with every review
+        field cleared, exactly as the driver's own upload does — ADR-0033 §4's
+        "nothing is auto-verified, ever" applies to the office as much as to a
+        machine, and accepting it is a second act with its own audit entry.
+
+        Same request shape, mime list, 8 MB ceiling and per-type expiry rule as
+        `/me/documents`, by sharing the form request rather than restating it.
+        Re-sending a type **replaces** what is held (ADR-0033 §2).
+      parameters:
+        - in: path
+          name: driver
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [type, file]
+              additionalProperties: false
+              properties:
+                type: { $ref: '#/components/schemas/DriverDocumentType' }
+                file:
+                  type: string
+                  format: binary
+                  description: Image or PDF, 8 MB.
+                expires_at:
+                  type: ['string', 'null']
+                  format: date
+                  description: >
+                    Required for driving_licence and vehicle_insurance, whose
+                    entire meaning is a date. Must not be in the past.
+      responses:
+        '201':
+          description: Filed, and waiting for somebody to check it.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DriverDocument' }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/drivers/{driver}/documents/{document}/file:
     get:
       summary: The document file, for the office.
@@ -4730,6 +4980,128 @@ paths:
   # ------------------------------------------------------------------
   # Vehicles (Modules/Vehicles) — the platform's fleet (ADR-0005)
   # ------------------------------------------------------------------
+  # ------------------------------------------------------------------
+  # Vehicle categories (ADR-0050) — the fleet's own vocabulary.
+  #
+  # The list is what every category chooser renders: the vehicle form, the
+  # driver form's inline vehicle, and the rate card version dialog. It
+  # replaces a constant that was hand-mirrored into four files and had
+  # already drifted in two of them.
+  # ------------------------------------------------------------------
+  /api/v1/vehicle-categories:
+    get:
+      summary: >
+        The fleet's vehicle categories, in the office's display order, each
+        with what is holding it and which tariffs do not price it.
+      description: >
+        Needs `vehicles.view`, which every system role holds — Finance must
+        be able to render the choices on the rate card dialog.
+
+
+        Unpaginated: nine rows today, and a chooser cannot page through the
+        options it offers.
+      responses:
+        '200':
+          description: Categories.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/VehicleCategory' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Adds a category to the fleet's vocabulary.
+      description: >
+        Needs `vehicles.manage`. **Creating a category never sets a price**,
+        so this grants no money power — and the new category is unpriced on
+        every existing tariff, because a rate card version is immutable and
+        nothing can add a rate to one. The 201 message says so, and the list
+        response names the cards.
+
+
+        `key` is writable here and nowhere else, ever (ADR-0050 §2).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, name]
+              additionalProperties: false
+              properties:
+                key: { $ref: '#/components/schemas/VehicleCategoryKey' }
+                name: { type: string, maxLength: 80 }
+                description: { type: ['string', 'null'], maxLength: 255 }
+                active: { type: boolean }
+      responses:
+        '201':
+          $ref: '#/components/responses/VehicleCategoryResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/vehicle-categories/{vehicleCategory}:
+    parameters:
+      - { name: vehicleCategory, in: path, required: true, schema: { type: integer } }
+    patch:
+      summary: Renames, redescribes, reorders or retires a category.
+      description: >
+        Needs `vehicles.manage`.
+
+
+        **`key` is absent from this body and that absence is the decision.**
+        Renaming a key would leave every historical invoice line and every
+        immutable rate card rate holding a string that names nothing —
+        silently, with no error, visible only as a document that no longer
+        reproduces from stored data.
+
+
+        `active: false` retires the category: no new vehicle and no new rate
+        card version may choose it, while every vehicle and every version
+        that already does carries on unchanged. Never refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 80 }
+                description: { type: ['string', 'null'], maxLength: 255 }
+                active: { type: boolean }
+                position: { type: integer, minimum: 0, maximum: 9999 }
+      responses:
+        '200':
+          $ref: '#/components/responses/VehicleCategoryResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Deletes a category that nothing has ever used.
+      description: >
+        Needs `vehicles.manage`.
+
+
+        Answers **409 `VEHICLE_CATEGORY_IN_USE`** when any vehicle, rate card
+        price or invoice line names the key, with a message giving the counts
+        and pointing at retirement. No foreign key enforces this — those
+        columns are deliberately plain strings so an invoice reproduces
+        without joining a mutable table — so the refusal is the only thing
+        standing between a delete and an immutable rate card rate naming
+        nothing.
+      responses:
+        '204':
+          description: Deleted. No content.
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/vehicles:
     get:
       summary: The platform's fleet.
@@ -4765,7 +5137,7 @@ paths:
                 make: { type: string, maxLength: 100 }
                 model: { type: string, maxLength: 100 }
                 year: { type: integer, minimum: 1980 }
-                category: { $ref: '#/components/schemas/VehicleCategory' }
+                category: { $ref: '#/components/schemas/VehicleCategoryKey' }
                 seating_capacity: { type: integer, minimum: 1, maximum: 100 }
                 color: { type: ['string', 'null'], maxLength: 50 }
                 vin: { type: ['string', 'null'], maxLength: 50 }
@@ -4800,7 +5172,7 @@ paths:
                 make: { type: string, maxLength: 100 }
                 model: { type: string, maxLength: 100 }
                 year: { type: integer, minimum: 1980 }
-                category: { $ref: '#/components/schemas/VehicleCategory' }
+                category: { $ref: '#/components/schemas/VehicleCategoryKey' }
                 seating_capacity: { type: integer, minimum: 1, maximum: 100 }
                 color: { type: ['string', 'null'], maxLength: 50 }
                 vin: { type: ['string', 'null'], maxLength: 50 }
@@ -6151,6 +6523,19 @@ components:
               message: { type: string }
               data: { $ref: '#/components/schemas/Vehicle' }
 
+    VehicleCategoryResponse:
+      description: One vehicle category.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/VehicleCategory' }
+
     InvoiceResponse:
       description: One invoice.
       content:
@@ -6409,6 +6794,7 @@ components:
         - UNKNOWN_CLIENT_PLACE
         - UNKNOWN_ROUTE_MEMBER
         - CLIENT_PLACE_IN_USE
+        - VEHICLE_CATEGORY_IN_USE
         - DRIVER_ACCOUNT_CONFLICT
         - DRIVER_APPLICATION_CLOSED
         - AUTH_METHOD_DISABLED
@@ -6469,18 +6855,79 @@ components:
     BookingStatus:
       enum: [pending, approved, rejected, assigned, cancelled]
 
+    VehicleCategoryKey:
+      description: >
+        The stored category key — the string that lives on
+        `vehicles.category`, `rate_card_rates.vehicle_category` and
+        `invoice_lines.vehicle_category`.
+
+
+        **Not an enum, since ADR-0050.** It was
+        `[boda, tricycle, sedan, suv, van, minibus, bus, pickup, truck]`,
+        which was the same frozen list as `Vehicle::CATEGORIES` held in a
+        third file — and pinning it here would defeat the whole point of the
+        `vehicle_categories` table, which is that the office adds a category
+        without a deploy. A client that hard-codes these nine will break on
+        the tenth. Fetch `GET /api/v1/vehicle-categories` for the live list
+        and render `name`, never the key.
+
+
+        Immutable once created: a key is never renamed, because an issued
+        invoice line stores it and must keep reproducing (ADR-0050 §2). The
+        self-drive subset on the public order endpoint is deliberately
+        narrower than the fleet's own list.
+      type: string
+      maxLength: 40
+      pattern: '^[a-z0-9]+(_[a-z0-9]+)*$'
+
     VehicleCategory:
       description: >
-        Mirrors `Vehicle::CATEGORIES`. A category priced on a rate card but
-        absent here is a vehicle nobody can invoice.
+        One row of the fleet's category vocabulary (ADR-0050).
 
 
-        `boda` and `tricycle` were missing while the walk-in tariff already
-        priced both and a fleet vehicle was already recorded as a boda — the
-        rows had been inserted by seeders, which skips the validation that
-        would have refused them. The self-drive subset on the public order
-        endpoint is deliberately narrower than this list.
-      enum: [boda, tricycle, sedan, suv, van, minibus, bus, pickup, truck]
+        `vehicles_count`, `rate_cards_total` and `unpriced_rate_cards` are
+        present on the list response only, and are **absent** rather than
+        zero on a create or an update — an empty `unpriced_rate_cards` reads
+        as "priced on every tariff", which is precisely the claim the list
+        exists to make honestly.
+      type: object
+      required: [id, key, name, description, active, position, created_at, updated_at]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        key: { $ref: '#/components/schemas/VehicleCategoryKey' }
+        name: { type: string, maxLength: 80 }
+        description: { type: ['string', 'null'], maxLength: 255 }
+        active:
+          description: >
+            Whether a new vehicle or a new rate card version may choose it.
+            Retiring (`false`) is the only "delete" available once anything
+            uses the key; it changes no price and voids no record.
+          type: boolean
+        position: { type: integer }
+        vehicles_count:
+          description: Live fleet vehicles carrying this key; soft-deleted ones excluded.
+          type: integer
+        rate_cards_total:
+          description: Active rate cards visible to this actor.
+          type: integer
+        unpriced_rate_cards:
+          description: >
+            The active rate cards whose **newest** version does not price
+            this category. A vehicle of this kind cannot be quoted or
+            invoiced on any card listed here until a new version prices it —
+            and a version is immutable, so nothing can add the price to the
+            one that exists.
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            additionalProperties: false
+            properties:
+              id: { type: integer }
+              name: { type: string }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
 
     # -------------------------- envelopes ----------------------------
     ErrorEnvelope:
@@ -7423,6 +7870,7 @@ components:
         - license_expiry
         - status
         - vehicle_id
+        - owns_vehicle
         - account
         - created_at
         - updated_at
@@ -7436,6 +7884,28 @@ components:
         email: { type: ['string', 'null'] }
         license_number: { type: string }
         license_expiry: { $ref: '#/components/schemas/NullableTimestamp' }
+        owns_vehicle:
+          description: >
+            Whether `vehicle_id` names the driver's **own** vehicle
+            (ADR-0048 §7) rather than one the depot handed them. Not derivable
+            from `vehicle_id`, which is why it is stored and sent.
+          type: boolean
+        vehicle:
+          description: >
+            Flat vehicle summary, present only when the relation was
+            eager-loaded. Absent (not null) when it was not, so a list that
+            stopped eager-loading is visible in development rather than quietly
+            slow in production.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [id, registration_number, make, model]
+              additionalProperties: false
+              properties:
+                id: { type: integer }
+                registration_number: { type: string }
+                make: { type: string }
+                model: { type: string }
         status: { enum: [active, suspended, inactive] }
         vehicle_id:
           description: >
@@ -7518,6 +7988,7 @@ components:
         - license_expiry
         - status
         - vehicle_id
+        - owns_vehicle
         - account
         - created_at
         - updated_at
@@ -7539,6 +8010,39 @@ components:
             `driver_presence.vehicle_id` remains the per-shift answer and
             still wins when it is set.
           type: ['integer', 'null']
+        owns_vehicle:
+          description: >
+            Whether `vehicle_id` names the driver's **own** vehicle
+            (ADR-0048 §7), rather than one the depot handed them.
+
+            Not derivable from `vehicle_id`, which is why it is stored: a boda
+            rider whose machine is their livelihood and a driver holding the
+            keys to a depot car this week set the same column to the same kind
+            of value, and the two differ in who insures it, who repairs it,
+            and whether the vehicle papers on file are the driver's or the
+            platform's.
+
+            `owns_vehicle: true` with `vehicle_id: null` is a real and
+            meaningful state: a driver the office recorded as owning a machine
+            the fleet has not registered yet.
+          type: boolean
+        vehicle:
+          description: >
+            Enough of the vehicle to name it on a row, and no more — a driver
+            list is read to answer "who is out in what", and the answer is a
+            number plate. Present only when the relation was eager-loaded;
+            absent rather than null when it was not, so a slow list is visible
+            in development instead of quiet in production.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [id, registration_number, make, model]
+              additionalProperties: false
+              properties:
+                id: { type: integer }
+                registration_number: { type: string }
+                make: { type: string }
+                model: { type: string }
         account:
           description: >
             The account this driver signs in with, or null if they cannot sign
@@ -7556,6 +8060,35 @@ components:
                 status: { enum: [active, suspended] }
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
         updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    InlineVehicle:
+      description: >
+        A vehicle registered from the driver form (ADR-0048 §8), so a clerk
+        onboarding a boda rider does not have to abandon a half-typed form to
+        register the machine on another screen.
+
+        **Every rule is the fleet screen's own**, deliberately: the same plate
+        uniqueness, the same year window, the same category list. A vehicle
+        created this way is an ordinary fleet vehicle — it appears on the
+        vehicles list, it dispatches, and nothing marks it as having arrived
+        by a side door. If it were validated more loosely than one typed on
+        the fleet screen, the side door is exactly what it would be.
+
+        `status` is deliberately absent: a vehicle registered alongside its
+        driver is active, and a form with no way to say what is being
+        maintained should not be able to create one that cannot work.
+      type: object
+      required: [registration_number, make, model, year, category, seating_capacity]
+      additionalProperties: false
+      properties:
+        registration_number: { type: string, maxLength: 50 }
+        make: { type: string, maxLength: 100 }
+        model: { type: string, maxLength: 100 }
+        year: { type: integer, minimum: 1980 }
+        category: { enum: [sedan, suv, van, minibus, bus, pickup, truck] }
+        seating_capacity: { type: integer, minimum: 1, maximum: 100 }
+        color: { type: ['string', 'null'], maxLength: 50 }
+        vin: { type: ['string', 'null'], maxLength: 50 }
 
     Vehicle:
       type: object
@@ -7579,7 +8112,7 @@ components:
         make: { type: string }
         model: { type: string }
         year: { type: integer }
-        category: { $ref: '#/components/schemas/VehicleCategory' }
+        category: { $ref: '#/components/schemas/VehicleCategoryKey' }
         seating_capacity: { type: integer }
         color: { type: ['string', 'null'] }
         vin: { type: ['string', 'null'] }
@@ -8274,7 +8807,7 @@ components:
         make: { type: string }
         model: { type: string }
         year: { type: integer }
-        category: { $ref: '#/components/schemas/VehicleCategory' }
+        category: { $ref: '#/components/schemas/VehicleCategoryKey' }
         seating_capacity: { type: integer }
         color: { type: ['string', 'null'] }
         vin: { type: ['string', 'null'] }
@@ -8304,6 +8837,7 @@ components:
         - passenger_name
         - passenger_phone
         - passenger_count
+        - vehicle_category
         - origin
         - destination
         - scheduled_for
@@ -8336,6 +8870,24 @@ components:
         passenger_name: { type: string }
         passenger_phone: { type: string }
         passenger_count: { type: ['integer', 'null'] }
+        vehicle_category:
+          description: >
+            The kind of vehicle the client asked for (ADR-0051), or null
+            when they stated no preference.
+
+
+            **A preference, not a constraint.** `DispatchRecommender` ranks a
+            matching vehicle above everything except one contracted to this
+            client, and still offers the others with a reason line saying
+            which is which. Nothing refuses a mismatch.
+
+
+            Null is a real answer and is never defaulted: "did not mind" and
+            "asked for a van and was sent a sedan" are different facts, and a
+            client's auditor is entitled to tell them apart.
+          anyOf:
+            - { $ref: '#/components/schemas/VehicleCategoryKey' }
+            - { enum: [null] }
         origin: { type: string }
         destination: { type: string }
         scheduled_for: { $ref: '#/components/schemas/NullableTimestamp' }
@@ -8400,8 +8952,30 @@ components:
         this schema and every shipped handset, and is then untouchable.
         `identity_document` covers a national ID in Kampala and a passport in
         Nairobi with no migration between them.
+        `identity_selfie` and `vehicle_photo` were added by ADR-0048 §1 on
+        the same terms: a face is a face in Kampala and in Nairobi, and a
+        photograph of a car is not a jurisdiction's paperwork. The set is six
+        and is closed again.
       type: string
-      enum: [driving_licence, identity_document, vehicle_insurance, vehicle_registration]
+      enum:
+        - driving_licence
+        - identity_document
+        - vehicle_insurance
+        - vehicle_registration
+        - identity_selfie
+        - vehicle_photo
+
+    DriverDocumentGroup:
+      description: >
+        Which headed section of the KYC screen a type belongs under
+        (ADR-0048 §1).
+
+        Served rather than inferred client-side, so the driver app and the
+        console group the six slots the same way without either of them
+        holding a list of type names. A seventh type then reaches both screens
+        correctly grouped with no client release.
+      type: string
+      enum: [personal, driver, vehicle]
 
     DriverDocumentStatus:
       description: >
@@ -8430,8 +9004,11 @@ components:
       required:
         - id
         - driver_id
+        - driver_application_id
         - type
         - type_label
+        - group
+        - group_label
         - status
         - status_label
         - compliance_state
@@ -8447,9 +9024,23 @@ components:
       additionalProperties: false
       properties:
         id: { type: integer }
-        driver_id: { type: integer }
+        driver_id:
+          type: ['integer', 'null']
+          description: >
+            Null only while the document belongs to an applicant nobody has
+            approved yet (ADR-0048 §3). Exactly one of this and
+            `driver_application_id` is ever set.
+        driver_application_id:
+          type: ['integer', 'null']
+          description: >
+            Set only while the row is still an applicant's. A `pending`
+            document against a driver is somebody the office already employs;
+            the same state against an application is somebody it has not
+            decided about.
         type: { $ref: '#/components/schemas/DriverDocumentType' }
         type_label: { type: string }
+        group: { $ref: '#/components/schemas/DriverDocumentGroup' }
+        group_label: { type: string }
         status: { $ref: '#/components/schemas/DriverDocumentStatus' }
         status_label: { type: string }
         compliance_state: { $ref: '#/components/schemas/DriverDocumentComplianceState' }
@@ -8472,12 +9063,17 @@ components:
           description: Present only on a rejection, and never empty when it is.
         reviewed_at: { type: ['string', 'null'], format: date-time }
         file_url:
-          type: string
+          type: ['string', 'null']
           description: >
             A route path, not a storage URL, and **chosen by who is asking** —
             the owner gets `/me/documents/{id}/file`, the office gets the
             driver-scoped one. A handset building the office path would be
             asking for a route its token cannot reach (`ClientScope`).
+
+            **Null while the document belongs to an application** (ADR-0048
+            §4), and that is a refusal rather than a missing route: an
+            applicant's claim ticket gets metadata and never file bytes, so a
+            stolen ticket cannot become a way to read somebody's national ID.
 
     DriverDocumentSlot:
       description: >
@@ -8487,11 +9083,13 @@ components:
         reason this wrapper exists.** Omitting absent types would answer "what
         have I sent" when the question is "what do I still owe you".
       type: object
-      required: [type, type_label, hint, requires_expiry, document]
+      required: [type, type_label, hint, requires_expiry, group, group_label, document]
       additionalProperties: false
       properties:
         type: { $ref: '#/components/schemas/DriverDocumentType' }
         type_label: { type: string }
+        group: { $ref: '#/components/schemas/DriverDocumentGroup' }
+        group_label: { type: string }
         hint:
           type: string
           description: What to photograph, in the driver's words rather than the schema's.
@@ -9886,7 +10484,7 @@ components:
               - zone_rates
             additionalProperties: false
             properties:
-              vehicle_category: { $ref: '#/components/schemas/VehicleCategory' }
+              vehicle_category: { $ref: '#/components/schemas/VehicleCategoryKey' }
               base_fare_minor: { type: integer }
               per_km_minor: { type: integer }
               per_waiting_minute_minor: { type: integer }
@@ -9951,7 +10549,7 @@ components:
             required: [vehicle_category]
             additionalProperties: false
             properties:
-              vehicle_category: { $ref: '#/components/schemas/VehicleCategory' }
+              vehicle_category: { $ref: '#/components/schemas/VehicleCategoryKey' }
               base_fare_minor: { type: ['integer', 'null'], minimum: 0 }
               per_km_minor: { type: ['integer', 'null'], minimum: 0 }
               per_waiting_minute_minor: { type: ['integer', 'null'], minimum: 0 }

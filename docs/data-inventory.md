@@ -70,7 +70,10 @@ customer travelled**, joinable through `trips`.
 | Data | Where it lands | Why | Retention |
 |---|---|---|---|
 | Name, email, phone | `users`, `drivers` | Employment and platform access | Anonymised **90 days** after deactivation |
-| Identity and licence documents | `driver_documents` | ADR-0033 compliance review | Anonymised 90 days after deactivation |
+| Identity and licence documents | `driver_documents`, private disk, **encrypted at rest (ADR-0053)** | ADR-0033 compliance review | Anonymised 90 days after deactivation |
+| **Photograph of a driver's face** (`identity_selfie`) | `driver_documents`, private disk, **encrypted at rest (ADR-0053)** | ADR-0048 §2 — for a **human** to set beside the identity document and decide whether they are the same person. **No face matching, no liveness check, no third-party identity service**; ADR-0033 §4's "nothing is auto-verified, ever" is untouched, and a selfie makes automation easier to reach for, which is why the ADR restates it. | Anonymised 90 days after deactivation |
+| **Photograph of a driver's vehicle** (`vehicle_photo`) | `driver_documents`, private disk, **encrypted at rest (ADR-0053)** | ADR-0048 §1 — the vehicle as it looks on the road, for the same compliance review. Includes a readable number plate by design. | Anonymised 90 days after deactivation |
+| Documents uploaded **with an application**, before anybody is approved | `driver_documents` (`driver_application_id` set, `driver_id` null) | ADR-0048 §§3–5. Streamed behind the same guard as a driver's; **never readable by the applicant's own claim ticket**, which gets metadata only. | Carried onto the driver at approval; **destroyed at rejection**; swept at **90 days** if the application is never decided (`drivers:prune-abandoned-application-documents`) |
 | MFA secret | `users.mfa_secret` | Encrypted at rest | Life of account |
 
 ---

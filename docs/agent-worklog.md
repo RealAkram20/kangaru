@@ -11851,3 +11851,998 @@ Order-to-**offer** has not been driven end to end. No corporate tenant exists,
 so the corporate half of W2-a is untestable. Cross-tenant isolation and the
 route policy census have not been run against the deployed database. `main` is
 still behind PR #9.
+
+---
+
+### 2026-08-21 — KYC at sign-up, and telling the driver what the office decided
+
+**Status:** in progress. Claimed before writing code.
+
+**Owner's ask, in four parts:** build the KYC mockup exactly; put it
+immediately after sign-up in the driver app, so a new applicant lands on it
+rather than finding it later; send the application to the office for approval
+on submit; and notify the driver by push **and** email when the office decides
+on any document. Plus: brand the emails — "simple and professional, not wordy".
+
+**This is the half the driver-creation agent explicitly left unclaimed.** Its
+entry says so in as many words, twice: `DocumentsScreen.tsx` is "a restyle of
+an existing screen with an existing owner … the mockup's grouped layout
+(Personal / Driver / Vehicle) is a separate claim", and `SignUpScreen.tsx` —
+"the optional-upload-at-application half of ADR-0048 lands there and is
+claimed separately." I am that claim. **Its backend is done and I am not
+rebuilding any of it**: `ApplicationDocumentController`, the upload token,
+`DriverDocumentSlots`, `DriverDocumentGroup`, the three public routes and the
+90-day prune all exist and work. The mobile client for them does not exist at
+all — `submitDriverApplication` returns `Promise<void>` and throws the token
+away.
+
+## Conflicts raised before code, and the owner's decisions
+
+| conflict | rule | owner's decision |
+|---|---|---|
+| Mockup paints "Not uploaded" red on all six rows | DESIGN.md §3 status colours; `screen-rules` §6 | **neutral when empty**, red kept for a document actually rejected or expired |
+| Push + email on document review | **ADR-0033 §6 refuses notification outright** | **send them** — verified *and* rejected; needs an ADR amending §6 |
+| "and it can be attached" | ambiguous | **a picker on the KYC screen**, not a file on the email |
+| A file picker means `expo-document-picker` | `quality-control`: no new dependency without asking | **our own picker sheet** over `expo-image-picker`, which is already a dependency — owner's words: "we can have our custom image or media picker to keep ourselves professional" |
+
+**Lucide has no steering wheel.** The mockup draws one against Driver's
+Licence. DESIGN.md §7 makes that a design conversation rather than a licence
+to draw one, so the licence takes `id-card` and the other five match the
+mockup's glyphs exactly. Named here so nobody "fixes" it back.
+
+## Files I own — do not edit
+
+**Decisions**
+
+- `docs/adr/0050-telling-a-driver-what-the-office-decided.md` — new. Amends
+  ADR-0033 §6.
+
+**Mobile — new**
+
+- `mobile/src/documents/grouping.ts` + `.test.ts` — the mockup's three headed
+  sections, built from the server's own `group` field.
+- `mobile/src/documents/MediaPickerSheet.tsx` — the custom picker. Camera or
+  library, our chrome, no new dependency.
+- `mobile/src/documents/DocumentSlotList.tsx` — **meant to be shared.** The
+  grouped rows both the applicant's KYC screen and the signed-in Documents
+  screen draw. One list, so the two cannot drift.
+- `mobile/src/documents/applicationDocuments.ts` — the upload-token client.
+- `mobile/src/screens/KycVerificationScreen.tsx` + `.test.tsx`.
+
+**Backend — new**
+
+- `backend/Modules/Notifications/Notifications/DriverDocumentReviewedNotification.php`
+- `backend/resources/views/vendor/mail/` — the branded mail theme. Published
+  from Laravel's own markdown views and trimmed; it restyles **every** email
+  this platform sends, which is the point.
+- `backend/tests/Feature/Drivers/DriverDocumentNotificationTest.php`
+
+## Shared files I touch, with the exact edit
+
+- `mobile/src/ui/icons.tsx` — **four additive icons at the end of the file**:
+  `ContactIcon`, `ScanFaceIcon`, `IdCardIcon`, `CarFrontIcon`, transcribed
+  verbatim from `lucide-react`. **The offer agent is in this file right now**
+  (`CarTaxiFrontIcon` appeared mid-session); appending only, nothing touched.
+- `mobile/src/api/endpoints.ts` — `submitDriverApplication` returns the upload
+  token instead of discarding it; `group` and `group_label` on
+  `DriverDocumentSlot`; three application-document functions.
+- `mobile/src/screens/SignUpScreen.tsx` — the 202 branch routes to KYC instead
+  of ending at "Application received". That screen's copy is otherwise left
+  alone.
+- `mobile/src/screens/DocumentsScreen.tsx` — swaps its four hand-built cards
+  for `DocumentSlotList` and gains the picker. **Left as its owner's, minimal
+  diff.**
+- `mobile/src/navigation/types.ts`, `RootNavigator.tsx` — one route.
+- `backend/Modules/Notifications/Enums/NotificationType.php` — one case,
+  `driver.document.reviewed`, plus its `label()` and `defaultChannels()` arms.
+- `backend/config/notifications.php` — one channel entry.
+- `backend/config/mail.php` — the markdown theme name.
+- `backend/Modules/Drivers/Services/DriverDocumentService.php` — **one
+  dispatch line** in the review path. The driver-creation agent has this file
+  open; the diff is deliberately one statement.
+- `docs/api/openapi.yaml` — the notification `type` enum gains a value.
+- `backend/Modules/Notifications/README.md`, `mobile/README.md`.
+
+## Not built, deliberately
+
+- **PDF upload from the handset.** The server takes PDF and the app will send
+  images only, because picking a PDF needs `expo-document-picker` and the
+  owner chose no new dependency. A driver photographs their papers; the gap
+  is real and it is one `expo install` away if it ever bites.
+- **No document still gates anything.** ADR-0033 §6 stands; this notifies
+  about a review, it does not enforce one.
+- **`document.expiring`** — still ADR-0039's item 1, still unbuilt. Offered
+  to the owner and declined for this pass.
+
+### 2026-08-21 — Driver creation: **done**, and the three things the guards caught
+
+Closing the entry above. Backend **1387 passed**, frontend **551 passed**,
+`tsc -b --force` clean, and the whole create-a-driver flow driven in Chrome
+against the running API with no console or network errors.
+
+## What the checks caught, which is the part worth reading
+
+**1 · Two of my own tests proved nothing.** Mutation found both.
+
+- *"leaves no vehicle behind when the driver cannot be created"* was named
+  after the transaction and never reached it: a duplicate licence number is
+  refused by the form request **before** `DriverService::create` runs, so
+  removing `DB::transaction` entirely left it green. Replaced with a test that
+  fails *inside* the transaction, after the vehicle is written, via an
+  `eloquent.creating` listener forgotten in a `finally`. (`Auditable` hooks
+  `created`/`updated`/`deleted` but not `creating`, so forgetting it takes
+  nothing else with it.)
+- *"clears the link but keeps the vehicle"* asserted `$vehicle->fresh()` was
+  not null. `fresh()` builds its query with `newQueryWithoutScopes()`, so it
+  happily returns a **soft-deleted** row — the assertion could not fail even
+  with a deliberate `Vehicle::destroy()` added to the code. Now asserted
+  through a scoped query.
+- A third mutation was wrong rather than the test: replacing
+  `DB::transaction(fn)` with `(fn)` returns a `Closure` where a `Driver` is
+  declared, so it threw a `TypeError` and produced the very 500 the test
+  asserts. `call_user_func` is the mutation that removes only the transaction.
+
+**2 · A pre-existing defect, found while hunting for a test lever.**
+`ApproveDriverApplicationRequest` validated `license_number` with
+`Rule::unique(...)->whereNull('deleted_at')`, but `drivers_license_number_unique`
+is a plain unique index over the whole column. **Re-approving a driver who had
+been deleted and re-applied passed validation and then violated the index** —
+a 500 in the reviewer's face, mid-approval, saying nothing about what to do.
+`StoreDriverRequest` has always used the plain rule and been right. Fixed to
+match the schema; ADR-0016 §5 already names the underlying situation.
+
+**3 · A bug that only rendering could find.** `DriverFormDialog` opened on
+"Register their vehicle" for **every** new driver — eight fields above an
+unticked ownership box, which the server answers 422 to. Every component test
+ticked the box first, so none of them could see it. One look in a browser did.
+Fixed, and a regression test added that asserts the panel is absent until the
+box is ticked and withdrawn when it is unticked.
+
+**4 · The route census tripwire did its job.** Three new public routes failed
+`Ci/RoutePolicyCensusTest` on both the per-route census and the hard-coded
+"thirteen routes as public" count. That count is a tripwire so that opening a
+route to the whole internet never happens quietly as a side effect of a
+feature. Registered in the test, in `docs/security-gate.md`, and the count
+moved 13 → 16 with the reason written down. **Proved by mutation**: adding a
+stray public route fails the census.
+
+## Guards proved by mutation, and what each broke
+
+Twelve, all restored (a `finally` per mutation, and the tree re-grepped after):
+
+| guard | mutation | bites |
+|---|---|---|
+| driver + vehicle are one transaction | `call_user_func` instead of `DB::transaction` | ✅ |
+| `vehicles.manage` is checked separately | `if (false)` on the Gate check | ✅ |
+| pick-and-register are exclusive | `if (false)` on the conflict check | ✅ |
+| un-ticking keeps the vehicle | added `Vehicle::destroy()` | ✅ |
+| an applicant never gets a file URL | `if (false)` on the null-driver branch | ✅ |
+| approval is not review | forced `status => verified` on carry | ✅ |
+| rejection destroys the files | removed `discardFor` | ✅ |
+| the 404 for a spent ticket is identical | `abort(410)` for expired | ✅ |
+| the 90-day retention window | dropped the `created_at` clause | ✅ |
+| a decided application is never swept | dropped the `status` clause | ✅ |
+| `--dry-run` really is dry | forced `$dryRun = false` | ✅ |
+| the public-route tripwire | added a stray public route | ✅ |
+
+The tenth is worth a note: the first test written for it **could not** defend
+that clause, because approval already nulls `driver_application_id`, so the
+document is unreachable from the sweep either way. The clause is
+defence-in-depth against a future bug, and defending it needed a test that
+builds the broken state by hand. That is now what it does, and it says so.
+
+## Also fixed, in passing and on this page
+
+`DriversPage` rendered `license_expiry` as `2028-08-17T00:00:00.000000Z` — a
+27-character machine timestamp where a licence expiry belongs. New
+`formatDate` in `src/lib/format.ts`, which **slices the string rather than
+parsing it through `new Date()`**: a licence expires on a day, and local
+getters over a UTC-midnight instant land on the day before anywhere west of
+Greenwich. Kampala is UTC+3, so the naive version would have looked right here
+and been silently wrong in Lagos — the Uganda assumption `PRODUCT.md` forbids
+deepening.
+
+It also reclaimed ~92px of a table that scrolls sideways, which more than pays
+for the Edit button this change added. Measured: overflow 409px → 317px at
+1440px wide. **The row is still four buttons wide and still overflows** — that
+is pre-existing, it is now better than I found it, and consolidating that
+action column is a separate piece of work for whoever owns it.
+
+## Files I own — corrected to what was actually touched
+
+Backend: `docs/adr/0048-*.md`; three migrations; `Contracts/HoldsDocuments.php`;
+`Enums/DriverDocumentGroup.php`; `Requests/ValidatesInlineVehicle.php`,
+`StoreApplicationDocumentRequest.php`; `Controllers/ApplicationDocumentController.php`;
+`Resources/DriverDocumentSlots.php`;
+`Console/PruneAbandonedApplicationDocuments.php`; three test files
+(`DriverCreationTest`, `DriverOnboardingDocumentTest`,
+`PruneAbandonedApplicationDocumentsTest`).
+
+Web: `components/media/MediaPreview.tsx` + `.test.tsx` + `mediaPreview.css`;
+`lib/fleet.ts`; `pages/drivers/DriverFormDialog.tsx` + `.test.tsx` +
+`driverForm.css`.
+
+## Shared files I touched, with the exact edit
+
+- `Enums/DriverDocumentType.php` — two additive cases plus `group()`,
+  `position()`, `ordered()`, `concernsVehicle()`. The existing four untouched.
+- `Models/Driver.php`, `DriverApplication.php`, `DriverDocument.php` — the new
+  columns, the `HoldsDocuments` implementation, the application relation.
+- `Services/DriverService.php`, `DriverDocumentService.php`,
+  `DriverDocumentStore.php`, `DriverApplicationService.php` — the transaction,
+  the second owner, carry/discard, the claim ticket.
+- `Requests/{Store,Update}DriverRequest.php`, `ApproveDriverApplicationRequest.php`
+  — `owns_vehicle`, the nested vehicle, **and the `deleted_at` fix above**.
+- `Resources/DriverResource.php`, `DriverDocumentResource.php` — new fields;
+  `file_url` became nullable.
+- `Controllers/DriverDocumentController.php`, `DriverDocumentReviewController.php`
+  — swapped a hand-built slot shape for `DriverDocumentSlots`. Three callers
+  was where duplication became a drifting `hint`.
+- `Routes/public.php`, `routes/console.php`, `bootstrap/app.php`.
+- `tests/Feature/Ci/RoutePolicyCensusTest.php` — three census rows and two
+  counts, each with the reason.
+- `tests/Feature/Drivers/DriverApplicationTest.php` — the 202 now carries the
+  ticket; the no-oracle test strengthened to compare **key sets** rather than
+  just the message, since the token value is random by construction.
+- `docs/api/openapi.yaml`, `docs/security-gate.md`, `docs/data-inventory.md`,
+  `Modules/Drivers/README.md`.
+- Web: `DriversPage.tsx` (+ column, + actions, + dialog), `types/driver.ts`,
+  `types/driverDocument.ts`, `lib/format.ts`, `DriverDocumentsDialog.tsx`
+  (new-tab blob → shared previewer), `iconRegistry.ts` (regenerated: +5),
+  and four existing test fixtures that needed the new required fields.
+
+**One anchor mistake worth recording**, because it nearly shipped: the first
+OpenAPI patch used file-wide `replace(..., 1)` on anchors that were **not
+unique between `Driver` and `CandidateDriver`**, so one edit landed in each
+and both schemas ended up half-applied. It passed my own assertion, which only
+checked that *a* replacement happened. The contract tests caught it. Fixed by
+scoping edits to a named schema block and asserting both halves in both.
+
+## Not built, and deliberately
+
+- **Corporate-client preferred drivers with priority dispatch.** The owner's
+  answer went beyond the options offered — a client ordering a named driver
+  directly, queued, and prioritised by Dispatch. That is ADR-0020 and ADR-0024
+  territory and needs its own record: how long dispatch holds an order for a
+  favourite before falling back, and what happens when the favourite is off
+  duty, are **operational decisions with real cost** and not mine to invent.
+  Raised with the owner rather than guessed.
+- **The driver app's KYC screen and application-time upload.**
+  `mobile/src/screens/DocumentsScreen.tsx` and `SignUpScreen.tsx` have an
+  existing owner; rule 5 says say so and wait rather than rewrite. The two new
+  document types reach `DocumentsScreen` for free — it draws whatever `slots`
+  lists — but the mockup's grouped layout and the pre-approval upload flow are
+  an unclaimed piece of work. **The API for both is built and tested.**
+- **Nothing gates on any of this.** `owns_vehicle` changes no offer; no
+  document blocks a dispatch. ADR-0033 §6 stands and ADR-0048 §6 restates it.
+
+---
+
+### 2026-08-21 03:16 — Claiming: the vehicle register gets a form, and categories stop being a constant
+
+**Status:** claimed, questions with the owner, nothing written yet.
+
+**Owner's ask:** create, edit and delete vehicles; create, edit and delete
+**categories**; and "all these are synced to the rate cards".
+
+**The finding, and it is the same shape as the driver one above.** The
+backend has had full vehicle CRUD since Phase 1 — `POST/PATCH/DELETE
+/api/v1/vehicles`, policy, requests, `VehicleService` — and **no screen has
+ever called `store`, `update` or `destroy`.** `VehiclesPage` is a 90-line
+read-only table. Half the ask is therefore a missing surface, not a missing
+feature, exactly as `DriversPage` was.
+
+The other half is not. **`Vehicle::CATEGORIES` is a PHP `const`**, mirrored
+by hand in `frontend/src/lib/billing.ts` and `docs/api/openapi.yaml`, and
+`Modules/Vehicles/README.md` names the deferral in as many words: *"Vehicle
+categories are validated strings, not a reference table. Adding a category
+means editing `Vehicle::CATEGORIES` and shipping."* Making them editable by
+the office is a reference table, a migration, and four `Rule::in` call sites.
+
+**Why this is not a cosmetic change**, and the constraint everything below
+follows from: `invoice_lines.vehicle_category` and
+`rate_card_rates.vehicle_category` store the category **as a string, on
+records that are immutable by design**. `PricedRate` throws on update. So a
+category key that is renamed silently misreads every historical invoice, and
+a category that is deleted orphans priced rates on versions that can never be
+corrected. That is the exact asset `docs/master-plan.md` §6 says a rushed
+night can destroy.
+
+## Files I intend to own — do not edit
+
+**Decision**
+
+- `docs/adr/0050-vehicle-categories-as-a-reference-table.md` — new. Closes
+  the deferral named in `Modules/Vehicles/README.md`.
+
+**Backend**
+
+- `backend/Modules/Vehicles/Models/VehicleCategory.php`
+- `backend/Modules/Vehicles/Policies/VehicleCategoryPolicy.php`
+- `backend/Modules/Vehicles/Controllers/VehicleCategoryController.php`
+- `backend/Modules/Vehicles/Requests/{Store,Update}VehicleCategoryRequest.php`
+- `backend/Modules/Vehicles/Resources/VehicleCategoryResource.php`
+- `backend/Modules/Vehicles/Services/VehicleCategoryService.php`
+- `backend/database/migrations/*_create_vehicle_categories_table.php` — plus
+  the data migration that lands the nine existing keys, so no deploy step is
+  "remember to seed".
+- `backend/tests/Feature/Vehicles/VehicleCategoryTest.php`,
+  `VehicleCategoryRateCardSyncTest.php`
+
+**Web**
+
+- `frontend/src/pages/vehicles/VehicleFormDialog.tsx` + `.test.tsx` — **new;
+  there has never been one.**
+- `frontend/src/pages/vehicles/VehicleCategoriesPanel.tsx` + `.test.tsx`
+- `frontend/src/types/vehicleCategory.ts`
+
+## Shared files I will touch, with the exact edit
+
+- `Modules/Vehicles/Models/Vehicle.php` — `CATEGORIES` becomes the **seed
+  list with a docblock saying so**, not the validation source. Not deleted:
+  the data migration reads it, and deleting it would strand
+  `RideVehicleClass`'s mapping with nothing to point at.
+- `Modules/Vehicles/Requests/{Store,Update}VehicleRequest.php`,
+  `Modules/Drivers/Requests/ValidatesInlineVehicle.php`,
+  `Modules/Billing/Requests/StoreRateCardVersionRequest.php` — the four
+  `Rule::in(Vehicle::CATEGORIES)` sites become a DB-backed rule against
+  **active** categories. One rule object, not four spellings.
+- `Modules/Vehicles/Routes/api.php` — one `apiResource`, PATCH-not-PUT to
+  match the file's existing note.
+- `frontend/src/pages/VehiclesPage.tsx` — a "New vehicle" action, row edit
+  and delete, and the categories surface.
+- `frontend/src/lib/billing.ts` — `VEHICLE_CATEGORIES` stops being a mirrored
+  literal and becomes the fallback for a failed fetch only.
+- `frontend/src/pages/billing/RateCardVersionDialog.tsx` — the category
+  `Select` reads live categories.
+- `docs/api/openapi.yaml` — the new resource; and `VehicleCategory`'s enum at
+  line 6725 becomes a string with the reason, because an enum in a contract
+  is the same frozen list in a third file.
+- `Modules/Vehicles/README.md` — the deferral above is struck, not deleted.
+
+## Not built, and I will say so again at the end
+
+- **No auto-priced rate card.** See the question below; a price is a
+  financial decision and not an agent's to invent.
+- **No category on `RideVehicleClass`.** The public order form's five classes
+  map to categories in code (ADR-less, recorded in that enum's docblock).
+  Making the *mapping* editable is a second piece of work and I am not
+  smuggling it in.
+
+
+---
+
+### 2026-08-21 — The offer that takes over a locked phone, and a ring that respects silent
+
+**Status:** built, green, **not verified on a handset**. See the last section.
+
+**Owner's report:** *"we built a push notification and background activities
+for the driver app… there is this UI that should come with the accept or
+reject, the same way some calling apps do. But this does not come along. We
+said it should come even when the phone is locked."* Then, mid-session: *"this
+should come when the app is both closed and locked screen"*, *"this is the
+exact design we are looking for"* with the pill mockup, and *"we should get the
+ringtone unless the phone is in silent or DND"*.
+
+**Nothing was broken.** ADR-0046 §6 shipped stage one deliberately, and stage
+one is a MAX channel: a ringtone and a **heads-up banner**. The takeover needs
+an Android **full-screen intent**, which `expo-notifications` has no API for at
+any version. So the popup had never existed, and no amount of channel tuning
+would have produced it. This is ADR-0046 §6's stage two, written up as
+**ADR-0049**.
+
+## Conflicts raised before code, and the owner's decisions
+
+| conflict | rule | owner's decision |
+|---|---|---|
+| Popup surface — the pill vs the full offer screen | mockup is 5.96:1 | **both**: pill in-app, full screen over the lock screen |
+| Accept from the notification shade | **ADR-0025 + ADR-0046 refuse it outright** | **answer directly** — needs ADR-0049 §6, which records what is given up |
+| Ringtone through silent / DND | **ADR-0046 §2 §3 chose to ring through both** | **respect them** — reversed, and it forced a channel-id bump |
+| Mockup's "15 min trip" | **ADR-0020 §3 refuses a derived ETA by name** | not overridden — renders the journey **distance**; a real figure needs OSRM on the offer payload, left open |
+
+**The mockup cannot be one row on a phone, and this was measured rather than
+asserted.** The reference is 1574 × 264. At 366pt wide its type lands at
+7–11pt against a 15pt floor set for glare and gloves. Holding the type legible
+and keeping one row truncates the pickup to *"Pickup: Kam…"* — the one fact the
+driver decides on. Four variants were rendered at true phone size and sent to
+the owner before any React was written. **The palette and type were extracted
+from the PNG pixel by pixel**, not eyeballed: `#05373F` card, `#00C0D5`
+eyebrow, `#01646E` badge, `#59BD47` tick, `#DB2039` cross, `#A2E7EB` fare, and
+"Pickup: Kampala Road" matched at exactly 54px Poppins Bold, which is how the
+reference face was identified.
+
+## The three silent failure modes this feature has
+
+Worth reading before debugging it, because none of them throws:
+
+1. **No `USE_FULL_SCREEN_INTENT`** → Android downgrades the intent to a
+   heads-up banner. Resolves normally, logs nothing, behaves exactly like the
+   build before this one. On **Android 14+ this is the default state** — the
+   permission is not granted at install and Play policy reserves automatic
+   grants for alarm and calling apps.
+2. **No `showWhenLocked` / `turnScreenOn`** → the activity starts *behind* the
+   keyguard. The phone rings, the driver looks, and finds their lock screen.
+3. **A channel id the app never created** → the push is delivered on the
+   default channel, silently, at ordinary importance. Presents as *"push works,
+   it just never rings"*. This is why `offers.v2` moved on both ends in one
+   commit.
+
+There is **no way to read whether the permission was granted** —
+`canUseFullScreenIntent()` is exposed by neither `expo-notifications` nor
+notify-kit — so the Profile row is worded as an action, never as a state.
+
+## Files I own — do not edit
+
+**New, mobile**
+`plugins/withLockScreenCallUi.js` · `src/duty/OfferBanner.tsx` (+test) ·
+`src/push/callContent.ts` (+test) · `src/push/callNotification.ts` ·
+`src/push/callLaunch.ts` · `src/push/notifyKit.ts` ·
+`src/push/offerEvent.ts` (+test) · `src/push/offerAnswer.ts` ·
+`src/push/offerBackgroundHandler.ts` · `src/push/fullScreenIntent.ts`
+
+**Rewritten**
+`src/push/channels.ts` — `offers.v2` (respects DND) plus a silent
+`offers.call.v1` for the intent; `offers.v1` deleted on upgrade.
+
+**Docs** `docs/adr/0049-the-incoming-call-screen-for-a-job-offer.md`
+
+## Shared files I touch, with the exact edit
+
+| file | edit |
+|---|---|
+| `mobile/app.json` | `USE_FULL_SCREEN_INTENT` permission; `./plugins/withLockScreenCallUi` in `plugins` |
+| `mobile/package.json` | `react-native-notify-kit@^10.5.0` — the library **ADR-0046 §6 named in advance**; Notifee was archived 2026-04-07 and must not be added |
+| `mobile/index.ts` | one import plus `registerOfferBackgroundHandler()` before `registerRootComponent`, beside the `PresenceTask` import and for the same reason |
+| `mobile/jest.setup.ts` | appended mocks for `react-native-notify-kit` and `expo-intent-launcher` |
+| `mobile/src/ui/icons.tsx` | **appended** `CarTaxiFrontIcon` (Lucide `car-taxi-front`, transcribed verbatim). Nothing else in the file touched |
+| `mobile/src/duty/OfferPresenter.tsx` | banner/full-screen split, and it cancels the call notification once the driver is looking at the job |
+| `mobile/src/duty/offerRingtone.ts` | `playsInSilentMode: false` — one flag, plus its docblock |
+| `mobile/src/push/PushRouter.tsx` | raises the call screen on **arrival** (a fourth case; the received listener previously handled only withdrawals), cancels it on withdrawal, and `shouldShowBanner: false` because the in-app banner is now the foreground presentation |
+| `mobile/src/screens/ProfileScreen.tsx` | **one `MenuRow`**, Android 14+ only, under the ringtone switch |
+| `backend/…/TripOfferedNotification.php` | `channelId` → `offers.v2`. One string |
+| `backend/…/TripOfferedPushTest.php` | the matching assertion |
+
+**I did not touch** `src/documents/`, `DocumentsScreen.tsx`, `SignUpScreen.tsx`
+or anything in `Modules/Drivers` — that is the KYC agent's claim, and its
+in-flight `DriverDocumentSlot.group` change is currently the only thing red in
+`tsc --noEmit`. Not mine, not fixed by me.
+
+## Checked
+
+`tsc --noEmit` clean (bar the KYC agent's two). **137 mobile tests green**
+across `src/push`, `src/duty`, `src/ui` — 30 of them new and all on pure
+logic: what the notification says, which job a press belongs to, and the
+double-answer guard. **14 backend push tests green.** ESLint clean on every
+file touched.
+
+**A Jest trap worth knowing, found the slow way:** an un-awaited
+`fireEvent.press` damages the **next** test, not its own. The following
+`await render(...)` commits nothing, `toJSON()` returns `null`, and three
+unrelated tests fail while the component renders perfectly — each passing when
+run alone with `-t`. One test pressing twice took out the three after it.
+`await` every `fireEvent`.
+
+## Not verified, and it cannot be from here
+
+**No handset has run this.** It needs an EAS development build, a real Android
+14+ device, a locked screen and a live offer. The manifest edits land at
+prebuild — **reloading over Metro will not pick them up**, and forgetting that
+gives failure mode 1 above, which is indistinguishable from success from inside
+the app. The device pass is the outstanding work and that is what it is looking
+for.
+
+**Play Console now needs a third declaration** beside ADR-0046's two foreground
+service types: `USE_FULL_SCREEN_INTENT` on an app that is neither an alarm
+clock nor a dialler. The degraded path is what makes a refusal survivable, and
+it is why ADR-0046 §6 built it first.
+
+## Still open
+
+A real *"15 min trip"* needs the server to put an OSRM duration on the offer
+payload (ADR-0031 has the routing; `DispatchOffer` has no duration field). The
+RNFirebase plus direct-FCM path — the only way to do this with the process
+genuinely dead rather than held alive by the duty foreground service — stays
+available and unbuilt; ADR-0049 §1 argues why it is not needed for the case the
+owner described, and bounds the hole it leaves.
+
+---
+
+### 2026-08-21 — The tab that went dead, and a diagnosis I got wrong first
+
+**Status:** fixed, green. Pure JavaScript — **no rebuild needed**, a Metro
+reload picks it up.
+
+**Owner's report:** *"if I open Promotions and then I try to click the Profile
+it does not work, this is application wide."* Then, narrowing it: the **bottom
+tab bar**, and **only Profile is dead** — the other three tabs still switch.
+
+## The cause
+
+Navigating into a nested navigator that **has not been rendered yet** does not
+push onto its stack, because there is no stack. React Navigation builds the
+child's *initial state* out of what it was handed. So the drawer's
+
+```
+navigate('Main', { screen: 'Profile', params: { screen: 'Promotions' } })
+```
+
+brought the Profile stack into existence as `["Promotions"]` at index 0, with
+**`ProfileHome` never in it at all**. Measured against a real navigator, not
+reasoned about:
+
+```
+without initial:false   index=0  routes=["Promotions"]
+with    initial:false   index=1  routes=["ProfileHome","Promotions"]
+```
+
+From index 0 there is nothing to pop, so pressing the Profile tab had nothing
+to do. The other three tabs sat at their own roots and switched normally —
+which is exactly the asymmetry the owner described, and the thing that makes
+this look like "only Profile is broken" rather than "navigation is broken".
+
+**The back gesture was the other half of the same bug** and nobody had
+connected it: a stack of one has nothing behind it, so Android's back from any
+of these screens left the app instead of returning to the tab's root.
+
+`initial: false` is the documented fix and it is one flag per call site.
+
+## The wrong turn, recorded because the reasoning looked airtight
+
+I first blamed `BottomTabBar`, which really does contain
+
+```js
+if (!focused && !event.defaultPrevented) { navigation.dispatch(…) }
+```
+
+— so a press on the focused tab dispatches nothing. I wrote a `tabPress`
+listener to pop the stack, and a probe appeared to confirm it.
+
+**Mutation testing killed it.** Neutering the fix left the regression test
+green. Probing again with no listener at all showed why: the stack *does* pop,
+**asynchronously** — index 1 → 0 after a flush. My first probe read the state
+synchronously and missed it, and my "regression test" had been asserting
+rendered text through `findByText`, which polls and let the tree settle
+underneath the assertion.
+
+Two lessons worth keeping: **assert navigation state, never what is on
+screen**, because `findBy*` polling hides the difference; and a guard that
+survives its own mutation is not a guard. `tabPress.ts` and its test are
+deleted; `RootNavigator` is untouched.
+
+## Entry points fixed — nine of them
+
+**Seven drawer rows**, being every row naming a screen that is not its tab's
+initial route:
+
+| row | tab | stack root that was missing |
+| --- | --- | --- |
+| Trips History | Home | TripsHome |
+| Promotions | Profile | ProfileHome |
+| Performance | Profile | ProfileHome |
+| Notifications | Profile | ProfileHome |
+| Vehicle & Documents | Profile | ProfileHome |
+| Help & Safety | Profile | ProfileHome |
+| Support | Profile | ProfileHome |
+
+Home, Earnings, Wallet and Profile were always fine — they name their tab's
+root, which is why this survived so long.
+
+**Two in `navigationRef.ts`, and they are worse:**
+
+- `openPickup` — runs the moment a driver accepts a job.
+- `openTrip` — runs from `PushRouter` on a **cold start**, where the process
+  was created by the notification tap and no tab has ever rendered. That is
+  the state this bug needs, arrived at by the most ordinary path in the app.
+
+## Files I own — do not edit
+
+`src/navigation/nestedNavigate.test.tsx` — proves the mechanism against a real
+three-level navigator, and keeps the broken shape as an explicit
+counter-example so the flag is known to be doing the work.
+
+## Shared files I touch, with the exact edit
+
+| file | edit |
+| --- | --- |
+| `src/navigation/DrawerContent.tsx` | `initial: false` in `go()`, plus the docblock explaining it |
+| `src/navigation/navigationRef.ts` | `initial: false` in `openPickup` and `openTrip` |
+| `src/navigation/DrawerContent.test.tsx` | three expectations now assert the flag |
+
+## Checked
+
+`tsc --noEmit` clean. **76 suites, 994 tests green** — the whole mobile suite,
+including the KYC session's `DocumentsScreen`. ESLint clean.
+
+## The rating showing "—", which was half a real bug
+
+The owner reported a rating showing **"—"** after a client left a review:
+*"the client left for us the review, it counts, but the rating is showing —"*.
+
+**The figure is correct and deliberate.** ADR-0030 §3 publishes nothing below
+five ratings, and I checked the code path rather than just the constant —
+`DriverStatsService::rating()` returns `['score' => null, 'count' => n]` below
+`RATINGS_BEFORE_PUBLISHING`, which is 5. One three-star rating is not a 3.0; it
+is one person's afternoon.
+
+**But one of the three surfaces that draw a rating never said so.** `HomeScreen`
+and `ProfileScreen` have always paired `ratingValue` with `ratingNote`. The
+**drawer's identity block drew the dash alone, beside a star** — which reads as
+*your score is nothing*, and is precisely the failure `ratingNote`'s own
+docblock warns about: *"a bare dash says nothing and invites a driver to assume
+the worst about a score that can end their income."*
+
+Fixed: the row now reads **"1 rating so far · 428 trips"** while a score is
+withheld, and the screen-reader sentence carries the same words instead of
+"Rating —". The published case is untouched. Four tests, including the
+zero-ratings case and the spoken label.
+
+**The threshold stays at five — the owner's decision, asked and answered.**
+Offered the change and the trade (three being the usual compromise; one making
+a single rating a driver's public score on a platform where that number can
+affect their income), the answer was *"yes we keep 5"*. So
+`DriverStatsService::RATINGS_BEFORE_PUBLISHING` is untouched and ADR-0030 §3
+now has an owner behind it as well as an argument.
+
+Which makes the drawer fix above the whole of the work here: the dash is
+staying, so the only thing that had to change is that it explains itself.
+
+#### Closed — what was actually built
+
+**Status: complete.** 994 mobile tests, 556 frontend, 621 backend
+(Drivers + Notifications + CI), `tsc -b --force` on the console, `tsc --noEmit`
+on the app, eslint and Pint clean. **Seventeen guards proved by mutation and
+every mutation restored** — seven backend, six mobile, four console; each is
+listed below the file lists.
+
+**The scope grew twice while it was open, both times at the owner's request**,
+and the entry above was written before either:
+
+1. **Encryption at rest (ADR-0053).** The mockup's panel promised *"All your
+   information is encrypted"* and nothing encrypted anything —
+   `DriverDocumentStore` wrote plaintext to the `local` disk, while AGENTS.md
+   has required app-level encryption for driver documents since Phase 1. Put
+   to the owner as three options (say something true instead / build it / ship
+   the wording as drawn); the owner chose to build it. **This closes finding
+   F23** in `docs/security-gate.md`, which had been open since 2026-08-17.
+2. **The console's own KYC surface (ADR-0052 §5).** Upload, replace, and a
+   browsable in-app previewer, asked for mid-session.
+
+## Files owned — final
+
+**Decisions:** `docs/adr/0052-telling-a-driver-what-the-office-decided.md`,
+`docs/adr/0053-driver-documents-are-encrypted-at-rest.md`.
+
+**These were written as 0050 and 0051 and renumbered at the end**, because the
+vehicle-category agent claimed the same two numbers concurrently — neither of
+us reserved them here first, which is the gap. **If you are about to write an
+ADR, claim the number in this file before you write the file.** Mine moved
+rather than theirs because their numbers were already referenced from their
+in-flight code and I could rewrite every one of my own references safely; their
+files were not touched.
+
+**Mobile (new):** `documents/grouping.ts` + `.test.ts`,
+`documents/DocumentSlotList.tsx`, `documents/MediaPickerSheet.tsx`,
+`documents/applicationDocuments.ts`, `screens/KycVerificationScreen.tsx` +
+`.test.tsx`.
+
+**Backend (new):**
+`Modules/Notifications/Notifications/DriverDocumentReviewedNotification.php`,
+`database/migrations/2026_08_21_120000_add_encrypted_to_driver_documents_table.php`,
+`tests/Feature/Drivers/DriverDocumentNotificationTest.php`,
+`resources/views/vendor/mail/html/themes/kangaru.css`,
+`resources/views/vendor/mail/html/message.blade.php`,
+`resources/views/vendor/notifications/email.blade.php`.
+
+## Shared files touched — final, and what the edit was
+
+- `mobile/src/ui/icons.tsx` — **six** additive icons, not the four claimed:
+  `ContactIcon`, `ScanFaceIcon`, `IdCardIcon`, `CarFrontIcon`, plus `ImageIcon`
+  (the picker sheet) — all transcribed verbatim from `lucide-react`.
+  `Trash2Icon` was written and then **removed**: it already existed at line
+  932. Appended only; the offer agent was in this file concurrently.
+- `mobile/src/api/client.ts` — **not in the original claim.** One additive
+  `headers` option on `RequestOptions`, applied *before* the bearer so a caller
+  can add `X-Upload-Token` and can never replace `Authorization`. Needed
+  because a GET and a DELETE have no body, and the query string is the one
+  place a live credential must not go.
+- `mobile/src/api/endpoints.ts` — `submitDriverApplication` returns the
+  receipt; `group`/`group_label` on `DriverDocumentSlot`; `identity_selfie` and
+  `vehicle_photo` on `DriverDocumentType`, which the app had never learned.
+- `mobile/src/screens/SignUpScreen.tsx` — the 202 branch calls `onSubmitted`
+  and routes to KYC. Its "Application received" panel was **removed rather
+  than duplicated** — the same copy now ends the KYC flow.
+- `mobile/src/screens/DocumentsScreen.tsx` — swapped its four hand-built cards
+  for `DocumentSlotList` and gained the picker. Its `DocumentCard` is gone.
+- `mobile/src/screens/DocumentsScreen.test.tsx` — eight tests rewritten for
+  the two-step interaction (tap row → choose source), plus one added.
+- `mobile/src/profile/presentation.test.ts`,
+  `mobile/src/screens/DocumentsScreen.test.tsx` — `group`/`group_label` added
+  to the slot fixtures, which `tsc` made mandatory. Mechanical; if you add a
+  required field to `DriverDocumentSlot`, expect to patch these two.
+- `mobile/src/navigation/RootNavigator.tsx` — one screen state (`kyc`), one
+  ticket held in memory, one guarded branch.
+- `backend/…/DriverDocumentStore.php` — encrypts on write; two new methods
+  (`contents`, `download`).
+- `backend/…/DriverDocumentService.php` — `encrypted => true` on upload, a
+  `download()` passthrough, and **one `announce()` call in each of `verify()`
+  and `reject()`**. The driver-creation agent had this file open; the
+  notification diff is two statements and a private method.
+- `backend/…/DriverDocumentController.php`, `DriverDocumentReviewController.php`
+  — both now stream through `download()`. `Storage::response()` is gone from
+  both, because it sniffs the content type from bytes that are now ciphertext.
+- `backend/…/DriverDocumentPolicy.php` — one added ability, `create()`.
+- `backend/…/DriverDocument.php` — `encrypted` in `$fillable`, one cast.
+- `backend/Modules/Drivers/Routes/api.php` — one route.
+- `backend/Modules/Notifications/Enums/NotificationType.php` — one case and
+  its two `match` arms. **Both matches are exhaustive over the enum**, so a
+  case added without them is an `UnhandledMatchError` at runtime, not a
+  compile error.
+- `backend/config/notifications.php`, `backend/config/mail.php` — one entry
+  each.
+- `backend/tests/Feature/Ci/RoutePolicyCensusTest.php` — one census row and
+  three counts (190→191, 174→175, 160→161).
+- `docs/api/openapi.yaml` — the `POST /drivers/{driver}/documents` operation.
+  CI's contract validator failed the two new tests until it existed, which is
+  ADR-0011 working.
+- `docs/security-gate.md` — F23 **closed**, one census row.
+- `docs/data-inventory.md` — three rows now say "encrypted at rest".
+- `frontend/src/components/media/MediaPreview.tsx` — **another agent's file.**
+  Additive only: an optional `browse` prop, arrow keys, and a footer group.
+  Kept to a prop rather than teaching it about documents, so the applicant set
+  and vehicle photographs can reuse it.
+- `frontend/src/components/media/mediaPreview.css` — one footer rule.
+- `frontend/src/components/core/iconRegistry.ts` — `chevron-left`, which was
+  not registered.
+- `frontend/src/pages/drivers/DriverDocumentsDialog.tsx` — the previewer
+  hoisted out of the row so it can browse; an Upload/Replace control on
+  **every** row; a new `UploadDocumentDialog`.
+- READMEs: `Modules/Notifications`, `Modules/Drivers`, `mobile`.
+
+## Guards proved by mutation (all restored)
+
+Backend — encryption actually encrypts · the `encrypted` flag is honoured on
+read · verifying raises the notification · the rejection reason stays off the
+push body · filing is not verifying · the upload policy refuses a driver · the
+branded mail theme is applied.
+
+Mobile — `groupSlots` never reorders · Submit is not gated on having uploaded
+anything · the expiry is asked before the upload · a failed upload names the
+fact it was not queued · a spent ticket ends the screen · the row reads
+`compliance_state`, never `status`.
+
+Console — browsing stops at the ends rather than wrapping · Upload is offered
+on an empty slot · a licence cannot be filed without its expiry · the office is
+told that filing is not verifying.
+
+## Two bugs found by running things rather than by reading them
+
+- **The KYC screen re-fetched on every render.** `load` was keyed on `api`
+  from `useAuth()`; `AuthProvider` memoises it, so this was latent in
+  production and live under test, where it wiped the error banner a failed
+  upload had just set. Found by instrumenting a failing test rather than by
+  guessing. Fixed by keying the effect on the upload token — the only thing
+  that decides *what* is loaded — and holding `api` in a ref.
+- **`pushOptions()` cannot override a push body.** `ExpoPushChannel` composes
+  `$shown + … + $options` and PHP's `+` keeps the **left** operand's keys, so
+  the obvious way to keep a rejection reason off a lock screen is silently
+  discarded. Found by reading the channel before trusting it. The design is
+  now a `body()` that is safe on every channel, and a test pins it.
+
+## Three deliberate departures from the mockup
+
+Each was raised with the owner before code, per `docs/screen-rules.md`.
+
+1. **"Not sent yet" is neutral, not red** — owner's decision. Six red rows on
+   a first-run screen read as six faults and spend the colour that means
+   *rejected* on the state that means *not started*.
+2. **The driving licence draws `id-card`, not a steering wheel** — Lucide has
+   no steering wheel, and DESIGN.md §7 makes that a design conversation. Not a
+   transcription miss; do not "fix" it.
+3. **The wording is "Not sent yet", not the mockup's "Not uploaded"** — the
+   only change made without asking. The screen's whole verb family is *send*
+   ("Send it again", "Sent. The office will check it"), the string is shared
+   with the signed-in Documents screen, and it means the same thing. Flagged
+   here so it is a decision on the record rather than a drift.
+
+## Not built, deliberately
+
+- **PDF upload from the handset.** The server takes PDF; the app sends images
+  only. Picking a PDF needs `expo-document-picker` and the owner chose no new
+  dependency — *"we can have our custom image or media picker to keep
+  ourselves professional"*. One `expo install` away if it bites.
+- **No backfill for pre-ADR-0053 plaintext files.** A shrinking set stays
+  plaintext until each is replaced. ADR-0053 §2 argues why the data migration
+  was refused, and the security gate now records it as the open thread.
+- **`APP_KEY` rotation is now destructive to stored documents.** W1-d's
+  runbook does not yet say so. **This is the one thing this work leaves for
+  somebody else, and it is the sharpest.**
+- **`document.expiring`** — still ADR-0039's item 1 and still the most
+  valuable missing notification. Offered to the owner with this work and
+  declined for this pass.
+- **No document gates anything**, still. ADR-0033 §6 stands on that point.
+
+## Left alone on purpose
+
+`mobile/src/navigation/tabPress.ts` and `tabPress.test.tsx` appeared
+**untracked and mid-session** while this was open, and `tabPress.test.tsx`
+currently fails `tsc` on a react-navigation `exactOptionalPropertyTypes`
+overload. **It is not mine and I did not touch it** — that error is the only
+one `tsc --noEmit` reports in `mobile/`. `MediaPreview.tsx` also has one
+pre-existing `react-hooks/refs` error at its `dragFrom.current` read in render;
+mine is additive and I left theirs alone.
+
+---
+
+### 2026-08-21 — Vehicles and categories: **done**, and the two defects only a browser found
+
+Closing the claim above. Backend **1431 passed**, frontend **574 passed**,
+`tsc -b --force` clean, eslint clean, Pint clean, PHPStan clean on every file
+I touched. Eight guards proved by mutation and restored. The whole thing —
+create, edit, delete a vehicle; create, retire, delete a category; the 409 and
+the retirement it becomes; the booking form's new field; the "Price it" deep
+link — driven in Chrome against the running API with no console or network
+errors, and the dev database left exactly as I found it.
+
+**Scope grew twice, on the owner's ask**, and both additions are in ADR-0051:
+a corporate client picks the kind of vehicle they want on the booking form,
+and dispatch ranks by it.
+
+## The finding, and why it is the argument for the whole change
+
+`Vehicle::CATEGORIES` was a PHP `const` mirrored **five** more times, and
+**three of the copies had already drifted**:
+
+| where | shape | drifted? |
+|---|---|---|
+| `Vehicle::CATEGORIES` | PHP const, 9 | source |
+| `frontend/src/lib/billing.ts` | `VEHICLE_CATEGORIES`, 9 | in step |
+| `docs/api/openapi.yaml` | `enum`, 9 | in step |
+| `DriverFormDialog.tsx` | local `CATEGORIES`, **7** | **yes — no `boda`** |
+| `types/vehicle.ts` | union, **7** | **yes — no `boda`** |
+| `PublicNearbyVehicleController::KINDS` | sprite map, 9 | in step, and `?? 'sedan'` |
+
+The fourth row is the whole case in one line. The driver form — written two
+days ago, on a platform whose own justification for it is *"most drivers here
+own the boda they ride"* — **did not offer `boda`**. A rider arriving on their
+own machine could not have it recorded as what it is. `types/vehicle.ts` had
+the same seven, so a boda coming back from the API did not type-check either.
+
+Nobody was careless. A hand-mirrored list drifts, and this one drifted within
+48 hours of its most recent copy being made. `Vehicle`'s docblock already
+recorded the *previous* time, at more cost: `boda` and `tricycle` were missing
+while the live walk-in tariff priced both, so a new version of the public
+tariff could not be saved through the API at all.
+
+**And the console had never been able to create a vehicle.** `store`, `update`
+and `destroy` have existed since Phase 1 with a policy, form requests and a
+service, and **no screen had ever called them** — the same finding ADR-0048
+made about drivers, one page along in the same directory.
+
+## The two defects only rendering could find
+
+**1 · "Not priced on Corporate Standard, Corporate Standard."** Two clients
+each have a card by that name — rate card names are unique per tenant, not per
+platform, and a Super Admin sees every tenant's. Every fixture in my test file
+had distinct names, so no test could see it. Now the badge names one card and
+counts several, with the names in a `title`. It also gave the row back about
+200px: **the table was clipping its Delete button off the right edge at
+1440px**, and now fits. Regression test added with a duplicate-name fixture.
+
+**2 · A backspace byte inside a regex.** `/^make\b/i` written through a Python
+edit put a literal `0x08` in the file, so the matcher could never match — and
+the error message printed it invisibly as `/^make/i`, which reads as a correct
+regex failing for no reason. `grep | cat -A` showed `^H`. Three tests were red
+for twenty minutes on a matcher that looked right.
+
+## Guards proved by mutation, and what each broke
+
+Eight, all restored (the file re-grepped after each):
+
+| guard | mutation | bites |
+|---|---|---|
+| a category key is never renamed | `prohibited` → `sometimes,string` | ✅ |
+| a category in use is not deletable | `if (false)` on the usage check | ✅ |
+| the invoice-line arm of that check | zeroed that count alone | ✅ |
+| a retired category stays editable on its own vehicles | dropped `alsoAllow` | ✅ |
+| the fleet counts are withheld from a client | `mayReadFleetCounts` → `true` | ✅ |
+| a contract outranks a stated preference | bonus 450 → 500 | ✅ |
+| a booking with no preference is unaffected | `if (true)` on the null guard | ✅ |
+| the dispatcher is told about a mismatch | dropped the reason line | ✅ |
+
+**The sixth is the one worth reading.** My first version of that test stood two
+vehicles with no reported position side by side and asserted the contracted one
+won. It passed — **and went on passing at 500**, which is past the point where
+ADR-0009's rule stops holding. With no position, distance contributes zero to
+both, so the comparison was 1000 against 450 and nothing in between could ever
+be distinguished. Rewritten to build the worst case for the contract on
+purpose: the contracted sedan takes the maximum spare-seat penalty and reports
+no position (980), the requested van is parked exactly on the pickup with no
+spare seats (`bonus + 500`). It flips at 480, which is the bound ADR-0051
+derives, and the mutation now fails.
+
+That is three surviving mutations on this branch turned into four caught. Every
+one was an assertion that could not distinguish the case it was named after.
+
+## Files I own — corrected to what was actually touched
+
+**Decisions:** `docs/adr/0050-vehicle-categories-as-a-reference-table.md`,
+`docs/adr/0051-the-kind-of-vehicle-a-client-asks-for.md`.
+
+**Backend:** `Modules/Vehicles/Models/VehicleCategory.php`,
+`Policies/VehicleCategoryPolicy.php`, `Controllers/VehicleCategoryController.php`,
+`Requests/{Store,Update}VehicleCategoryRequest.php`,
+`Resources/VehicleCategoryResource.php`, `Services/VehicleCategoryService.php`,
+`Rules/ActiveVehicleCategory.php`; migrations
+`create_vehicle_categories_table`, `add_vehicle_category_to_bookings_table`;
+tests `Vehicles/VehicleCategoryTest`, `Vehicles/VehicleCategoryRateCardSyncTest`,
+`Bookings/BookingVehicleCategoryTest`.
+
+**Web:** `pages/vehicles/VehicleFormDialog.tsx` + `.test.tsx`,
+`pages/vehicles/VehicleCategoriesPanel.tsx` + `.test.tsx`,
+`pages/vehicles/vehicles.css`, `lib/vehicleCategories.ts`,
+`types/vehicleCategory.ts`.
+
+## Shared files I touched, with the exact edit
+
+- `Models/Vehicle.php` — `CATEGORIES` demoted in its docblock to the seed list;
+  the constant is **kept**, because the migration reads it and
+  `RideVehicleClass` names its members.
+- `Requests/{Store,Update}VehicleRequest.php`,
+  `Drivers/Requests/ValidatesInlineVehicle.php`,
+  `Billing/Requests/StoreRateCardVersionRequest.php` — four `Rule::in` sites
+  become one `ActiveVehicleCategory`. `UpdateVehicleRequest` passes `alsoAllow`.
+- `Bookings/Models/Booking.php`, `Requests/StoreBookingRequest.php`,
+  `Resources/BookingResource.php` — `vehicle_category`, nullable throughout.
+- `Dispatch/Services/DispatchRecommender.php` — one scoring term inside a null
+  check, plus `CATEGORY_MATCH` with the arithmetic that constrains it.
+- `app/Enums/ErrorCode.php` — `VEHICLE_CATEGORY_IN_USE`.
+- `app/Providers/AppServiceProvider.php` — the policy **and the morph alias**.
+  Every `Auditable` model must appear in the enforced morph map or it cannot be
+  created at all; `VehicleAllocation` was that bug once already.
+- `Modules/Vehicles/Routes/api.php` — `->parameters()` is load-bearing: a
+  hyphenated resource yields `{vehicle_category}`, which implicit binding
+  cannot match against `VehicleCategory $vehicleCategory`.
+- `tests/Feature/Ci/RoutePolicyCensusTest.php` — four census rows, counts
+  191→195 / 175→179 / 161→165. Public count unchanged at 16.
+- `docs/api/openapi.yaml`, `docs/security-gate.md`, `Modules/Vehicles/README.md`.
+- Web: `VehiclesPage.tsx` (rewritten around a segmented control),
+  `RateCardsPage.tsx`, `billing/RateCardVersionDialog.tsx`,
+  `drivers/DriverFormDialog.tsx`, `BookingsPage.tsx`, `lib/billing.ts`,
+  `types/{vehicle,booking}.ts`, and five test files whose fixtures needed the
+  new required field or a URL-aware `get` mock.
+
+## Two things worth another agent's attention, which I did not touch
+
+- **`pint --test` and `eslint` are not clean on files I do not own.**
+  `tests/Feature/Drivers/DriverDocumentNotificationTest.php` fails
+  `ordered_imports`, and `components/media/MediaPreview.tsx:347` fails
+  `react-hooks/refs` ("cannot access ref value during render"). PHPStan has 8
+  errors, all in `Drivers/{Requests/ApproveDriverApplicationRequest,
+  Services/DriverDocumentService, Services/DriverService}.php`. All belong to
+  the driver-documents work, whose entry above is marked done. Reported, not
+  edited.
+- **The self-drive catalogue on the public order page is invented data.**
+  `OrderPage.tsx`'s `SELF_DRIVE_FLEET` is five hand-written cars with
+  hand-written day rates, on a page members of the public use. Its own comment
+  admits it. That is `docs/screen-rules.md` §1, it predates this change, and it
+  is not mine to rewrite inside a vehicle-categories claim.
+
+## Not built, and deliberately
+
+- **The public order form still cannot see a new category.** Its five ride
+  classes are a PHP enum mapping to categories in code. ADR-0050 §7: making
+  that mapping data has its own conflict — a class whose category is retired
+  has no fallback — and needs its own decision.
+- **`WalkInRecommender` ignores the preference.** Order requests carry
+  `details.vehicle_class`, the customer's vocabulary rather than the fleet's.
+- **Nothing refuses a mismatch, and nothing tells the client about one.**
+  Dispatch will assign a sedan against a van request as it always could; the
+  difference is that the record and the candidate list now say so. A
+  notification is ADR-0039's catalogue, not this change.
+- **Rate cards are still not distinguishable by client anywhere.** The
+  duplicate-name problem above exists on `/rate-cards` itself. Naming the
+  client needs a join and a contract field, and it is a Billing change.
+- **No per-client allowed categories.** That is `vehicle_allocations`
+  (ADR-0009) territory, and building a second weaker version of it here would
+  be the wrong place.
+
