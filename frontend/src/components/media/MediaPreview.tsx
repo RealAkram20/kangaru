@@ -228,9 +228,22 @@ export function MediaPreview({
 
   const panning = kind === 'image' && zoom > 1
 
+  /**
+   * Whether a drag is in flight, as **state** and not as the ref below.
+   *
+   * The cursor class used to read `dragFrom.current` during render, which
+   * eslint's `react-hooks/refs` refuses — and it was right about more than
+   * the rule: writing a ref schedules no render, so the grab cursor never
+   * actually changed to grabbing while the pointer was down. The ref keeps
+   * the drag *origin*, which genuinely should not re-render on every pixel;
+   * the boolean is what the cursor needs, so it is the thing that renders.
+   */
+  const [dragging, setDragging] = useState(false)
+
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!panning) return
     dragFrom.current = { x: event.clientX, y: event.clientY, ox: offset.x, oy: offset.y }
+    setDragging(true)
     event.currentTarget.setPointerCapture(event.pointerId)
   }
 
@@ -242,6 +255,7 @@ export function MediaPreview({
 
   const endDrag = () => {
     dragFrom.current = null
+    setDragging(false)
   }
 
   return (
@@ -344,7 +358,7 @@ export function MediaPreview({
             <div
               className={[
                 'kr-media__stage',
-                panning ? (dragFrom.current ? 'kr-media__stage--grabbing' : 'kr-media__stage--grab') : '',
+                panning ? (dragging ? 'kr-media__stage--grabbing' : 'kr-media__stage--grab') : '',
               ]
                 .filter(Boolean)
                 .join(' ')}

@@ -41,4 +41,23 @@ interface HoldsDocuments
      * are, and "driver 41" is enough to find the row.
      */
     public function documentOwnerLabel(): string;
+
+    /**
+     * The owner's primary key — what `driver_documents.driver_id` or
+     * `driver_application_id` stores.
+     *
+     * **Declared here rather than inherited silently.** Both implementers
+     * are Eloquent models, so `getKey()` was already there at runtime and
+     * `DriverDocumentService` called it three times — but the service is
+     * typed against *this interface*, not against `Model`, and a contract
+     * that leans on a base class it does not name is exactly what Larastan
+     * level 8 refuses. It was three CI errors.
+     *
+     * No return type, matching `Model::getKey()`, which declares none: the
+     * key is an int here and the signature has to stay compatible with
+     * whatever a future implementer's key is.
+     *
+     * @return mixed
+     */
+    public function getKey();
 }

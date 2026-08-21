@@ -257,7 +257,11 @@ class DriverDocumentService
             ->get()
             ->keyBy(fn (DriverDocument $document): string => $document->type->value);
 
-        return array_map(
+        // `array_values` around the map: `array_map` over one array preserves
+        // its keys, so the result is an `array<int, …>` and the declared
+        // `list<…>` is a promise PHPStan level 8 will not take on trust.
+        // The keys are 0..n here anyway; this is the proof, not a change.
+        return array_values(array_map(
             static fn (DriverDocumentType $type): array => [
                 'type' => $type,
                 'document' => $held->get($type->value),
@@ -267,7 +271,7 @@ class DriverDocumentService
             // fixed on the enum (ADR-0048 §1) so that both apps agree without
             // either of them sorting for itself.
             DriverDocumentType::ordered(),
-        );
+        ));
     }
 
     /**

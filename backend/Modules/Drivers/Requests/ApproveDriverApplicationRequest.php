@@ -3,9 +3,9 @@
 namespace Modules\Drivers\Requests;
 
 use App\Models\User;
-use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 use Modules\Administration\Models\Role;
 use Modules\Administration\Policies\UserPolicy;
 

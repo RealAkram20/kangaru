@@ -8,7 +8,7 @@
 #
 #   1. all seven containers are up, each with a CPU and a memory limit
 #   2. the API boots (/up), errors are JSON, the SPA serves and falls back
-#   3. `schedule:list` shows exactly the six commands routes/console.php has
+#   3. `schedule:list` shows exactly the seven commands routes/console.php has
 #   4. a queued job is completed BY THE QUEUE CONTAINER, through Redis
 #   5. the storage volume is one volume, shared by app and queue
 #   6. a backup is taken, the database is mutated, the backup is restored,
@@ -92,18 +92,23 @@ ok "web serves the SPA, falls back on deep links, index.html is no-store"
 echo "== 3. scheduler"
 schedule=$(art schedule:list --no-ansi)
 count=0
-for name in reports:prune-exports sanctum:prune-expired dispatch:advance-offers drivers:award-weekly-bonuses duty:close-stale trip-locations:maintain; do
+# Seventh since ADR-0048 (21 August 2026): drivers:prune-abandoned-application-documents.
+# The count is a tripwire, not a formality — it is what stops a command being
+# added or silently dropped without a decision. This one is a data-protection
+# obligation (a never-decided application's identity photographs, deleted at
+# 90 days), so the right move was to move the number, not the command.
+for name in reports:prune-exports sanctum:prune-expired dispatch:advance-offers drivers:award-weekly-bonuses duty:close-stale trip-locations:maintain drivers:prune-abandoned-application-documents; do
   if echo "$schedule" | grep -q "$name"; then count=$((count + 1)); else echo "    missing: $name" >&2; fi
 done
-if [ "$count" -ne 6 ]; then
+if [ "$count" -ne 7 ]; then
   echo "$schedule" >&2
-  fail "schedule:list shows $count/6 expected commands"
+  fail "schedule:list shows $count/7 expected commands"
 fi
 lines=$(echo "$schedule" | grep -c 'php artisan ' || true)
-[ "$lines" -eq 6 ] || { echo "$schedule" >&2; fail "schedule:list has $lines scheduled entries, expected exactly 6"; }
+[ "$lines" -eq 7 ] || { echo "$schedule" >&2; fail "schedule:list has $lines scheduled entries, expected exactly 7"; }
 ten=$(echo "$schedule" | grep 'dispatch:advance-offers' | grep -c ' 10s ' || true)
 [ "$ten" -eq 1 ] || fail "dispatch:advance-offers is not on a ten-second cadence"
-ok "schedule:list: exactly 6 entries, dispatch:advance-offers every 10 s"
+ok "schedule:list: exactly 7 entries, dispatch:advance-offers every 10 s"
 
 sched_alive=$(dc exec -T scheduler sh -c "pgrep -f '[a]rtisan schedule:work' | wc -l" | tr -d '\r ' || true)
 [ "$sched_alive" -eq 1 ] || fail "expected exactly 1 schedule:work process, found $sched_alive"

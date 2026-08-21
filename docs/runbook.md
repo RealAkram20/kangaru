@@ -87,7 +87,7 @@ Admin whose TOTP secret is committed to this repository.
 docker compose ps                                        # 7 running/healthy
 docker compose exec app printenv APP_BUILD               # the commit you deployed
 curl -fsS https://api.<domain>/up                        # 200
-docker compose exec app php artisan schedule:list        # exactly 6 entries
+docker compose exec app php artisan schedule:list        # exactly 7 entries
 docker compose exec scheduler pgrep -fa schedule:work    # exactly 1
 docker compose exec queue pgrep -fa queue:work           # exactly 1
 docker compose exec app php artisan about                # cache redis, queue database
@@ -148,11 +148,11 @@ offer sits with one driver until it expires and nothing moves it on.
 ```sh
 docker compose exec scheduler pgrep -fa schedule:work     # expect exactly 1
 docker compose logs --tail=50 scheduler                   # should be busy
-docker compose exec app php artisan schedule:list         # 6 entries, advance-offers "10s"
+docker compose exec app php artisan schedule:list         # 7 entries, advance-offers "10s"
 ```
 
 If the process is gone: `docker compose up -d scheduler`. If it is running but
-the schedule shows fewer than six entries, the container is on stale code —
+the schedule shows fewer than seven entries, the container is on stale code —
 redeploy rather than restart, and check `APP_BUILD`.
 
 **One-off, to unstick the current offer while you diagnose:**

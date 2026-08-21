@@ -4,6 +4,7 @@ namespace Modules\Drivers\Services;
 
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -154,8 +155,23 @@ class DriverService
      * inline form, and is told which permission they are missing rather than
      * being shown a form that fails on submit.
      */
-    private function registerVehicle(array $vehicle, ?User $actor): int
+    /**
+     * @param  array<string, mixed>  $vehicle  the validated inline vehicle
+     * @param  Authenticatable|null  $actor  whoever is signed in, of any guard
+     */
+    private function registerVehicle(array $vehicle, ?Authenticatable $actor): int
     {
+        // `$request->user()` is `Authenticatable`, and on this platform that
+        // is a `User` **or** a `Customer` — the public order flow has its own
+        // guard. Narrowing here rather than at each call site keeps the rule
+        // in one place, and a customer falls through to the same refusal as
+        // an unauthenticated request, which is the honest answer: a customer
+        // is not a fleet actor and `Gate::forUser` on one would be asking the
+        // wrong policy about the wrong subject.
+        if (! $actor instanceof User) {
+            $actor = null;
+        }
+
         if ($actor === null || Gate::forUser($actor)->denies('create', Vehicle::class)) {
             throw new AuthorizationException(
                 'Registering a vehicle needs the fleet permission. Pick an existing vehicle instead.'
