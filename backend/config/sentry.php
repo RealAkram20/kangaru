@@ -86,8 +86,13 @@ return [
      * would also work: this way the value never crosses the wire at all,
      * so it cannot be read from a request log, a proxy, or an account
      * somebody later shares with a contractor.
+     *
+     * **A static callable, not an object.** An object here cannot survive
+     * `php artisan config:cache`, which every container runs at start, and
+     * the failure is a container that never becomes healthy rather than
+     * anything a test would show. See ScrubsSecrets::handle().
      */
-    'before_send' => new ScrubsSecrets,
+    'before_send' => [ScrubsSecrets::class, 'handle'],
 
     // @see: https://docs.sentry.io/platforms/php/guides/laravel/configuration/options/#ignore_transactions
     'ignore_transactions' => [

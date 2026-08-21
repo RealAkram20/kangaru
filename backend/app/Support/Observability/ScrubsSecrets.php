@@ -73,6 +73,31 @@ class ScrubsSecrets
 
     private const REDACTED = '[redacted]';
 
+    /**
+     * The entry point `config/sentry.php` names, and it is **static for a
+     * reason that cost a failed deploy to learn**.
+     *
+     * `before_send` was first written as `new ScrubsSecrets` — an object
+     * sitting in a config array. That works in every test and on every
+     * developer machine, and it makes the application unbootable in
+     * production: each container runs `php artisan config:cache` at start
+     * (`deploy/README.md` §1), Laravel `var_export`s the whole config, and an
+     * object without `__set_state()` throws *"Your configuration files are
+     * not serializable"*. The container never becomes healthy and the deploy
+     * stops.
+     *
+     * Nothing in the test suite runs `config:cache`, so nothing local could
+     * have caught it. CI's deploy-stack job did, which is the entire argument
+     * for that job existing.
+     *
+     * `[ScrubsSecrets::class, 'handle']` is an array of two strings: a valid
+     * PHP callable and something `var_export` handles.
+     */
+    public static function handle(Event $event, ?EventHint $hint = null): ?Event
+    {
+        return (new self)->__invoke($event, $hint);
+    }
+
     public function __invoke(Event $event, ?EventHint $hint = null): ?Event
     {
         $request = $event->getRequest();
