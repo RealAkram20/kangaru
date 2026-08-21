@@ -23,6 +23,7 @@ use Modules\Drivers\Console\PruneAbandonedApplicationDocuments;
 use Modules\Fleet\Console\CloseStaleDutySessions;
 use Modules\Reports\Console\PruneReportExports;
 use Modules\Trips\Console\MaintainTripLocationPartitions;
+use Sentry\Laravel\Integration;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
@@ -262,4 +263,22 @@ return Application::configure(basePath: dirname(__DIR__))
         });
 
         $exceptions->context(fn () => Context::all());
+
+        /*
+         * ADR-0054. Report to Sentry, and **only here** — not by replacing
+         * the render callbacks above.
+         *
+         * `Integration::handles()` hooks Laravel's *reporting* channel, which
+         * runs before rendering and independently of it. Every `render()`
+         * block above still turns the exception into this platform's own
+         * error envelope, so no client sees a different response because
+         * observability was switched on. That separation is the point: a
+         * monitoring tool that changes what an API returns is a monitoring
+         * tool that has to be trusted in the request path, and this one does
+         * not.
+         *
+         * With no DSN configured this is inert — the SDK short-circuits — so
+         * a developer without one, and CI, behave exactly as before.
+         */
+        Integration::handles($exceptions);
     })->create();

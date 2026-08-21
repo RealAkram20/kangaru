@@ -128,12 +128,37 @@ reading the request that makes the transfer.
 | **Mapbox** | The **address text typed into the search box** | Only when `VITE_MAPBOX_TOKEN` is configured | `places.ts` → `api.mapbox.com/geocoding/v5` |
 | **komoot (Photon)** | The address text typed into the search box | The keyless fallback when Mapbox is not configured — **so this is the live path unless a token is set** | `places.ts` → `photon.komoot.io/api` |
 | **CARTO** | Basemap tile requests | Map fallback path | `MapPanel.tsx:44` → `basemaps.cartocdn.com` |
+| **Sentry** (Functional Software, Inc.) | **Whatever was in the failing request** — passenger name and phone, pickup and drop-off, the signed-in user's id and email, the URL, and the stack trace | Only when an error or a sampled transaction occurs, from the API, the web app and the driver app | ADR-0054; `SENTRY_SEND_DEFAULT_PII=true` in `backend/.env.production.example`; `config/sentry.php` |
 
 **The geocoder is the transfer that matters.** A customer typing their home
 address into the pickup box sends that text to a third party **as they type**,
 before they have submitted anything. Under §2 this platform is the data
 controller and these are processors; a cross-border transfer disclosure is
 required, and no data-processing agreement with any of them is on file.
+
+**Sentry is the one that was chosen deliberately, so it is recorded
+deliberately.** The owner was shown two options — scrubbed reports carrying no
+personal data, or full request data — and chose full request data (ADR-0054
+§2). The consequence is that a crash while somebody is ordering a car sends
+that person's name, number and journey to a third party, and a bank client's
+trip data reaches it the same way.
+
+Three things narrow it, and none of them is the same as not sending it:
+
+- **The EU region** (`ingest.de.sentry.io`), chosen at organisation creation
+  and unchangeable afterwards. Frankfurt rather than the United States.
+- **Credentials never go**, whatever the personal-data setting says.
+  Passwords, tokens, TOTP secrets, cookies and idempotency keys are redacted
+  before the event leaves the server — `App\Support\Observability\ScrubsSecrets`,
+  with tests that fail if the list is narrowed.
+- **No session replay and no screenshots**, on any of the three apps. Those
+  record the screen rather than the request, and nobody was asked about them.
+
+**Still owed, and this is the gap:** a data-processing agreement with Sentry,
+and a 90-day retention setting on the Sentry project itself — Sentry's default
+is 90 days for errors, which happens to match §6's floor, but it is a setting
+in somebody else's console rather than something this repository enforces. §8
+carries both.
 
 ---
 
@@ -230,7 +255,14 @@ and that one is code — which is what W1-e builds.
   operational runbook and `W1-d` owns `docs/runbook.md` — named here so it lands
   somewhere rather than nowhere.
 - **The four retention jobs** in §6.1.
-- **Data-processing agreements** with the processors in §5.
+- **Data-processing agreements** with the processors in §5. **Sentry is now
+  the sharpest of these**, because it is the only one that was switched on by
+  a deliberate decision after this document existed, and the only one
+  receiving a bank client's data rather than a member of the public's typing.
+- **A retention setting on the Sentry project.** Sentry's default is 90 days
+  for errors, which is inside §6's floor — but it is a setting in a third
+  party's console, not a job in this repository, so it is not enforced by
+  anything here and nothing will notice if it changes.
 - **A subject-access and erasure route.** ADR-0043 built closure for *drivers*.
   A member of the public has no way to ask what is held about them, or to have
   it removed. The Act provides those rights.

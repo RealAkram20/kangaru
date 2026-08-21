@@ -12846,3 +12846,319 @@ tests `Vehicles/VehicleCategoryTest`, `Vehicles/VehicleCategoryRateCardSyncTest`
   (ADR-0009) territory, and building a second weaker version of it here would
   be the wrong place.
 
+---
+
+### 2026-08-21 — "Add a drop-off" mid-trip: `trip_stops` and the driver's circuit (ADR-0045 §2 + §4, driver slice)
+
+**Status: in progress.** The owner's ask, verbatim in spirit: *"for now we
+have stop and pause — we need an 'Add a Drop off'; on click we have the
+search for the new destination. Most of our corporate clients are banks and
+they serve about 5 ATMs and branches, one at a time, driven by this one
+driver."* That is ADR-0045 §4 (a driver may add a stop, flagged not billed)
+plus the §2 arrive/continue wiring that lets the circuit actually progress,
+and §10's scope ruling is what authorises the search source.
+
+**What this builds:** `trip_stops` (the evidence side — every trip in the
+database today keeps an empty list and changes not at all), a driver-only
+`POST /trips/{trip}/stops` and `GET /trips/{trip}/stop-candidates`, the §2
+side effects on `waiting`/`trip_resumed`/`trip_completed` (a `stop_id`
+payload on the pause marks arrival; the resume closes it), the route endpoint
+retargeting to the next pending stop, and the mobile face: an **Add a
+drop-off** button beside Pause/End on `TripInProgressScreen`, a search screen
+over the client's own place register (the ATM estate — no geocoder, see
+below), and an itinerary the driver works through.
+
+**Files I own (backend):**
+
+- `backend/database/migrations/2026_08_21_160000_create_trip_stops_table.php`
+- `backend/Modules/Trips/Enums/{TripStopSource,TripStopStatus}.php`
+- `backend/Modules/Trips/Models/TripStop.php`
+- `backend/Modules/Trips/Services/TripStopService.php`
+- `backend/Modules/Trips/Controllers/{TripStopController,TripStopCandidateController}.php`
+- `backend/Modules/Trips/Requests/StoreTripStopRequest.php`
+- `backend/Modules/Trips/Resources/{TripStopResource,TripStopCandidateResource}.php`
+- `backend/tests/Feature/Trips/TripStopTest.php`
+
+**Files I own (mobile):**
+
+- `mobile/src/screens/AddDropoffScreen.tsx` and its test
+- `mobile/src/trips/StopList.tsx` and its test — deliberately **not** an
+  extension of `RouteRail`: the rail states the two ends of a job, this is a
+  worklist with per-row state and an action, and the earlier entry that
+  declined to extend `RouteRail` for multi-point still stands.
+- `mobile/src/trips/stops.ts` and its test (pure helpers: next pending,
+  ordering, arrived-stop lookup)
+
+**Shared files I must touch, with the exact edit:**
+
+- `backend/Modules/Trips/Policies/TripPolicy.php` — two added methods
+  (`addStop`, `viewStopCandidates`); nothing existing altered.
+- `backend/Modules/Trips/Services/TripStateMachine.php` — §2 side effects:
+  `waiting` with a validated `stop_id` marks the stop arrived; `trip_resumed`
+  and `trip_completed` close an arrived stop. Delegated to `TripStopService`.
+- `backend/Modules/Trips/Requests/TransitionTripRequest.php` — one added
+  `stop_id` rule block.
+- `backend/Modules/Trips/Models/TripEvent.php` + its table — nullable
+  `stop_id` column (same migration as `trip_stops`), optional parameter on
+  `record()`. Append-only nature untouched.
+- `backend/Modules/Trips/Models/Trip.php` — `stops()` relation,
+  `unplanned_stop_count` in casts; column added in the same migration.
+- `backend/Modules/Trips/Resources/TripResource.php` — `stops` (whenLoaded)
+  and `unplanned_stop_count` fields; `show()` and the driver-relevant loads
+  gain `'stops'`.
+- `backend/Modules/Trips/Controllers/TripRouteController.php` — the fare leg
+  targets the next located pending stop when one exists; corporate trips
+  (no order request) can now route driver-fix → stop.
+- `backend/Modules/Trips/Routes/api.php` — two added routes.
+- `backend/app/Enums/ErrorCode.php` — one case, `TRIP_NOT_ACTIVE`.
+- `docs/api/openapi.yaml` — the two paths, the `TripStop` schema, `stops` +
+  `unplanned_stop_count` on `Trip`, `stop_id` on the transition body, the
+  error-code enum entry.
+- `docs/security-gate.md` — census rows for the two endpoints.
+- `backend/Modules/Trips/README.md`, `backend/Modules/Bookings/README.md` —
+  the multi-stop deferral note corrected (ADR-0045's consequence, "must be
+  corrected rather than left to mislead").
+- `mobile/src/api/types.ts` — `TripStop` type, `stops?` +
+  `unplanned_stop_count` on `Trip`.
+- `mobile/src/api/endpoints.ts` — `addTripStop`, `fetchTripStopCandidates`.
+- `mobile/src/trips/queries.ts` — `useTripStopCandidates`.
+- `mobile/src/offline/outboxTypes.ts` — `stop_id?` on `TransitionPayload`.
+- `mobile/src/offline/SyncProvider.tsx` — `stopId?` on `queueTransition`.
+- `mobile/src/offline/httpTransport.ts` — the form builder appends `stop_id`
+  when present (dead today — pauses carry no photo — guarded for the day one
+  does).
+- `mobile/src/navigation/types.ts` — one route, `AddDropoff: { tripId }`.
+- `mobile/src/navigation/RootNavigator.tsx` — one import, one screen line.
+- `mobile/src/screens/TripInProgressScreen.tsx` — the Add a drop-off button,
+  the itinerary panel, next-stop as the map/Navigate target, "Arrived" on the
+  next pending stop queueing `waiting` with `stopId`.
+- `mobile/src/screens/TripMapScreen.tsx` — drop-off pin follows the next
+  pending stop when one exists.
+- `mobile/src/trips/record.ts` — the "this platform has no stops" comment
+  corrected per ADR-0045's consequences; the rail still draws from
+  `trip_events` and that is still true and said.
+- `mobile/README.md` — the navigation tree gains the screen.
+
+**Decisions taken, and the rule behind each:**
+
+- **The search is the client's own place register, not a geocoder.** §10
+  bounds what a driver may see to the client whose trip they are currently
+  driving, and the ATM estate is exactly `client_places` — authoritative in a
+  way OSM never is for "Centenary ATM Ntinda". No third-party transfer from
+  driver handsets (`docs/data-inventory.md` untouched), no key, no spend.
+  A free-text row ("Add ‹what you typed›") covers everything else, label-only
+  — the same honesty as a trip keyed in at the desk. A geocoder in the driver
+  app is a follow-up decision, not a silent addition.
+- **Arrive/continue reuse `waiting ⇄ trip_resumed` with a `stop_id` payload**
+  — §2's table, verbatim. No new `TripStatus`, no new edge, no second pause
+  button: a pause with a stop is an arrival, a pause without one stays a
+  plain hold, and the resume closes whichever stop is open. Dwell inherits
+  ADR-0023's drain-time drift exactly as billable waiting always has, so the
+  two figures cannot disagree.
+- **Adding a stop is a direct POST, not an outbox item.** The search needs
+  connectivity anyway; a dead-zone driver keeps driving exactly as today and
+  nothing typed is lost because nothing is typed. The arrive/continue taps —
+  the billable, evidence-bearing acts — stay queued.
+- **Sequence is unique per trip and driver adds append.** No reordering
+  surface anywhere in this slice (§7's refusal quoted, not re-argued).
+
+**Not built, and deliberately:**
+
+- **Skip this stop (§6).** First-class in the schema (`skipped` +
+  `skip_reason` exist from day one) and absent from the UI; it needs a reason
+  sheet and its own endpoint, and nothing in this slice writes it.
+- **Copy-on-booking from client routes (§1)** and **the driver picking a
+  route (§10)** — the itinerary here is built stop by stop by the driver.
+- **Dispatch/console surfaces** — the endpoint accepts
+  `trips.transition.any` and stamps `added_by_dispatch`, but no web screen
+  calls it yet.
+- **The invoice note for `unplanned_stop_count` (§4)** — the column counts;
+  Billing presentation is untouched (§3 pricing untouched by design).
+- **The record screen's per-stop rail and the web trip record** — the
+  evidence lands and is served; the two read surfaces still draw what they
+  drew.
+
+---
+
+### 2026-08-21 — Driver app responsiveness: the frozen screens and the dead buttons
+
+**Source:** the owner — the shipped app is "slow and it gets stuck on some
+screens"; pressed, they picked all four areas (duty, offers, trip screens,
+start-up) and described it as "frozen / won't respond" rather than a spinner.
+
+**Status: done.** Three parallel audits (hang patterns, JS-thread
+jank, duty/GPS/push) produced a ranked defect list; this entry is the
+high-impact slice. Root causes being fixed: (1) every `useMutation` inherits
+networkMode 'online', so any tap made while the radio flickers pauses
+silently and its button stays disabled forever; (2) two screens re-render
+their whole tree — 13 KB WebView `source` prop included — once per second;
+(3) `react-native-screens` freezing is off, so backgrounded screens keep
+ticking and up to five map WebViews stay live; (4) the query-cache persister
+stringifies the entire cache to AsyncStorage at up to 1 Hz, driven by the 5 s
+offers poll; (5) `SyncProvider` publishes a new context value every 15 s even
+when idle, re-rendering every screen; (6) four `queueTransition` call sites
+have no `try/finally`, so one rejection leaves the trip buttons dead; (7)
+`signOut` awaits three unbounded promises, so a hung native call wedges
+sign-out.
+
+**Files I edit (no other live claim):**
+
+- `mobile/App.tsx` — mutations default `networkMode: 'offlineFirst'`;
+  persister `throttleTime` + `shouldDehydrateQuery` (offers excluded);
+  providers mounted above the font gate so restore/session/SQLite overlap
+  font loading.
+- `mobile/index.ts` — `enableFreeze(true)`.
+- `mobile/src/screens/WaitingForPassengerScreen.tsx` — the 1 Hz ticker moves
+  into leaf clock components; the screen stops re-rendering per second.
+- `mobile/src/screens/PickupScreen.tsx`, `TripDetailScreen.tsx`,
+  `TimeOffScreen.tsx` — `try/finally` + visible failure notice around
+  `queueTransition`/`queueAvailabilityRequest`, copying
+  `WaitingForPassengerScreen`'s existing pattern.
+- `mobile/src/duty/queries.ts` — `useSetDuty` gains `onError` →
+  invalidate `['duty']`; `useAcceptOffer` `onError` also invalidates
+  `['trips']` (accept that timed out client-side but landed server-side).
+- `mobile/src/duty/useDutyToggle.ts` — a `goOnline()` refusal is surfaced
+  instead of discarded.
+- `mobile/src/duty/OfferPresenter.tsx` — accept/decline pending state scoped
+  to the offer it was fired for, so a stale paused mutation cannot disable
+  the next offer's buttons.
+- `mobile/src/duty/CountdownRing.tsx` — the countdown window is captured
+  once per offer; the ring stops snapping back to full on every 5 s poll.
+- `mobile/src/push/PushRouter.tsx` — the subscribe promise gains a `.catch`
+  so a rejected `getLastNotificationResponseAsync` cannot kill push for the
+  session.
+- `mobile/src/auth/AuthProvider.tsx` — `signOut`/`signOutLocally` steps
+  bounded with the file's own `withTimeout`.
+- `mobile/src/screens/ProfileScreen.tsx` — a signing-out pending state so
+  the tap visibly does something.
+
+**Shared files claimed by the trip-stops agent — minimal diffs in disjoint
+regions, named exactly:**
+
+- `mobile/src/screens/TripInProgressScreen.tsx` — the 1 Hz ticker moves into
+  a leaf clock component (stats region only), and the pause/hold branch gains
+  the same `.finally` the other branch already has. The actions row your
+  Add-a-drop-off button lands in is untouched.
+- `mobile/src/navigation/RootNavigator.tsx` — `freezeOnBlur: true` added to
+  stack `screenOptions` only; no route lines touched.
+- `mobile/src/offline/SyncProvider.tsx` — a `catch` on the SQLite bootstrap
+  effect (surfaced through `SyncState`), and an equality bail-out in
+  `refreshState` so an unchanged queue publishes no new context value.
+  `queueTransition`'s signature is untouched — your `stopId` edit is safe.
+- `mobile/src/trips/queries.ts` — `orderTripsForToday` memoized inside
+  `useTrips` keyed on `query.data`; nothing else in the file touched.
+
+**Deliberately not in this slice** (audited, ranked, left for their own
+entries): enabling the React Compiler (new dev dependency — needs the
+owner's yes), bundling maplibre-gl locally instead of unpkg per map mount,
+photo resize before upload (`expo-image-manipulator` — new dependency),
+`isError` branches on the five read screens that render failure as "no
+data", `PresenceController` heartbeat re-entrancy/timeout, `GpsStreamer`
+`start()` re-entrancy, notifications pagination, the 189 KB wordmark asset,
+holding an answered offer on screen through its terminal state, and
+`hideAllCallNotifications()` (written, never called) wired into
+`goOffline`.
+
+**Closed 2026-08-21.** Everything claimed above landed, plus two files the
+claims implied without naming: `mobile/src/ui/SyncBanner.tsx` (the sentence
+`storageFailed` surfaces through) and `mobile/src/screens/PickupScreen.test.tsx`
+(the stuck-button regression test). Extra fixes folded in along the way, all
+inside claimed files: `useDrain`'s countdown window captured once per offer
+(`CountdownRing` snapped back to full on every 5 s poll — the effect keyed on
+`totalSeconds`, which the poll re-counts), and `PushRouter`'s launch-intent
+read guarded so a rejection cannot cost the session its listeners.
+
+Verified: `tsc --noEmit` clean for everything mine (the remaining
+`unplanned_stop_count` fixture errors belong to the in-flight trip-stops
+entry above and are theirs to finish); eslint clean over all 18 touched
+files — note the compiler-aware `react-hooks/refs` rule refused the first
+version of the countdown fix, and the committed shape is `useCountdown`'s
+own capture-once pattern; 28 suites / ~290 tests over every touched module
+pass, run as targeted lists (never alongside the trip-stops agent's runs).
+The new regression test is **proven by mutation**: the `try/finally` removed
+from `PickupScreen.run` fails it, restored byte-identical passes it.
+
+**Not verified, stated plainly:** nothing here ran on a handset or emulator.
+The one change with native surface is `enableFreeze(true)` +
+`freezeOnBlur` — behaviourally it means a screen stacked *behind* another
+stops re-rendering until refocus, so a trip that transitions while the
+driver sits on `TripMapScreen` navigates on the way back rather than
+behind the map. Sanity-check the trip flow on the emulator before the next
+EAS build cut. The React Compiler question is the owner's: the codebase
+was written for it, nine files say so, and it is off.
+
+
+---
+
+### 2026-08-21 — Claiming: Sentry across all three apps, and the paperwork that has to go with it
+
+**Status:** claimed. The owner asked for error and performance tracking
+because *"the system gets errors, sluggish, and I want us to know what is
+happening with the app."*
+
+**The complaint is real and I measured it before agreeing to instrument it.**
+`https://kangaruride.com/` serves a **2,169-byte static `index.html`** at
+**0.69 s, 1.69 s, 0.69 s** time-to-first-byte over three samples. That is a
+static file behind Cloudflare and Traefik; it should be tens of milliseconds,
+and the 2.4× spread between samples matters more than the mean. Every page
+load in the console starts with that, which is almost certainly what "sluggish"
+names. **Sentry will not fix it; it will tell us which layer owns it**, and
+that is the point of asking for it.
+
+## Three decisions the owner made, and one I made
+
+| decision | choice |
+|---|---|
+| data residency | **Sentry EU region** (Frankfurt, `ingest.de.sentry.io`) |
+| what Sentry sees | **full request data** — `send_default_pii=true` |
+| coverage | **all three apps**, driver app included |
+
+The second was chosen **against my recommendation**, which is recorded here
+because it is the owner's to make and because a future reader deserves to see
+that it was a decision rather than a default. It has consequences that are not
+optional and that I am carrying out as part of this work:
+
+- `docs/data-inventory.md` gains Sentry as a **named processor**, with the
+  categories it receives.
+- The privacy notice (W1-e, a go-live blocker) names the transfer.
+- ADR-0054 records it, including the option that was refused.
+
+**The one I made, and did not ask about: secrets are still scrubbed.**
+Passwords, tokens, TOTP secrets, session cookies, `Authorization` headers and
+the demo MFA secret never leave the server, `send_default_pii` or not. That is
+not the trade the owner chose — a credential in a bug report is a security
+defect, not a richer diagnostic — and the two are different categories that
+happen to share a config file.
+
+## Files I intend to own — do not edit
+
+- `docs/adr/0054-error-and-performance-tracking.md` — new.
+- `backend/config/sentry.php` — published, then edited.
+- `backend/app/Support/Observability/` — the scrubber and the release stamp.
+- `frontend/src/lib/observability.ts`
+- `mobile/src/observability.ts`
+
+## Shared files I touch, with the exact edit
+
+- `backend/composer.json` / `.lock` — `sentry/sentry-laravel`.
+- `backend/bootstrap/app.php` — `Integration::handles($exceptions)`, the one
+  line Laravel 12 needs. **Checked against the tree first: the agent currently
+  in `Modules/Trips` and `Modules/Bookings` (52 files) is not in this file.**
+- `backend/.env.production.example` — the DSN and the two sample rates, as
+  `<<OWNER>>` placeholders like the other 23.
+- `frontend/package.json` / lock — `@sentry/react`.
+- `frontend/src/main.tsx` — one init call.
+- `mobile/package.json` / lock, `mobile/app.json` — `@sentry/react-native`
+  and its config plugin. **This one is a real cost:** the plugin is native, so
+  the driver app needs a rebuild and a fresh signed APK on every handset. Said
+  plainly to the owner before it was chosen.
+- `docs/data-inventory.md`, the privacy notice, `docs/runbook.md`.
+
+## Not built, and deliberately
+
+- **No alerting rules, no dashboards, no on-call rota.** Those are decisions
+  about who gets woken up, and nobody has been asked.
+- **No `traces_sample_rate: 1.0`.** 10% of transactions, 100% of errors —
+  tracing is billed per transaction and a platform that has not launched does
+  not need every one of them to find a 1.4 s page load.
+

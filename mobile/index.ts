@@ -28,8 +28,28 @@ import './src/duty/PresenceTask';
  * an Accept button that works on a desk and does nothing on a lock screen.
  */
 import { registerOfferBackgroundHandler } from './src/push/offerBackgroundHandler';
+import { enableFreeze } from 'react-native-screens';
+import { startObservability } from './src/observability';
 
 import App from './App';
+
+/*
+ * Screens behind the focused one stop rendering. Without this, a trip's whole
+ * history of screens stays live: Home's map WebView, a backgrounded
+ * TripInProgressScreen's once-a-second clock tick, every map the driver has
+ * navigated past — all re-rendering behind the screen actually on display,
+ * on the same JS thread that has to answer the next tap.
+ */
+enableFreeze(true);
+
+/*
+ * ADR-0054. First, and outside React, for the same reason the two handlers
+ * above are: Android cold-starts this app into a notification tap with no
+ * component tree, and a crash during that start is the one most worth
+ * reporting. Inert without EXPO_PUBLIC_SENTRY_DSN, which is how development
+ * and the Jest environment run.
+ */
+startObservability();
 
 registerOfferBackgroundHandler();
 

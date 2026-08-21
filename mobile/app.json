@@ -93,7 +93,8 @@
           "enableBackgroundRecording": false
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      "@sentry/react-native"
     ]
   }
 }
