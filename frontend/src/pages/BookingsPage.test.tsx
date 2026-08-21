@@ -32,6 +32,9 @@ function booking(overrides: Partial<Booking> = {}): Booking {
     passenger_name: 'Grace Amongin',
     passenger_phone: '+256700000000',
     passenger_count: 2,
+    // ADR-0051: required on the wire — `BookingResource` sends it
+    // unconditionally, and null is the "no preference" case.
+    vehicle_category: null,
     origin: 'Kampala',
     destination: 'Entebbe',
     scheduled_for: null,
@@ -183,6 +186,9 @@ describe('BookingsPage', () => {
       origin: 'Nakawa',
       destination: 'Jinja',
       scheduled_for: null,
+      // ADR-0051: sent on every booking, and null is the "no preference"
+      // answer rather than an omission.
+      vehicle_category: null,
       notes: null,
     })
   })

@@ -2,7 +2,7 @@
 //
 // `import { icons } from 'lucide-react'` pulls all 1756 icons into the
 // bundle: a runtime dictionary lookup cannot be tree-shaken. That measured
-// 467,925 bytes, 34% of the main chunk, for the 132 icons this app names.
+// 467,925 bytes, 34% of the main chunk, for the 137 icons this app names.
 // Named imports are tree-shakeable, so only these ship.
 //
 // Regenerate after adding an icon:  node tools/generate-icon-registry.mjs
@@ -31,6 +31,7 @@ import {
   Check,
   CheckCheck,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ChevronUp,
   ChevronsUpDown,
@@ -45,6 +46,7 @@ import {
   Code,
   Contact,
   Crosshair,
+  Currency,
   Dot,
   Download,
   Ellipsis,
@@ -64,6 +66,7 @@ import {
   GripVertical,
   Group,
   Heading,
+  Image,
   ImageOff,
   Inbox,
   Info,
@@ -101,6 +104,7 @@ import {
   ReceiptText,
   RefreshCw,
   RotateCcw,
+  RotateCw,
   Route,
   Scale,
   Search,
@@ -115,6 +119,7 @@ import {
   SlidersHorizontal,
   Smartphone,
   Sparkles,
+  Split,
   Star,
   StickyNote,
   Summary,
@@ -141,6 +146,7 @@ import {
   Wallet,
   X,
   ZoomIn,
+  ZoomOut,
 } from 'lucide-react'
 
 /** Kebab-case Lucide name -> component, for the names this app uses. */
@@ -167,6 +173,7 @@ export const ICON_REGISTRY: Record<string, LucideIcon> = {
   'check': Check,
   'check-check': CheckCheck,
   'chevron-down': ChevronDown,
+  'chevron-left': ChevronLeft,
   'chevron-right': ChevronRight,
   'chevron-up': ChevronUp,
   'chevrons-up-down': ChevronsUpDown,
@@ -181,6 +188,7 @@ export const ICON_REGISTRY: Record<string, LucideIcon> = {
   'code': Code,
   'contact': Contact,
   'crosshair': Crosshair,
+  'currency': Currency,
   'dot': Dot,
   'download': Download,
   'ellipsis': Ellipsis,
@@ -200,6 +208,7 @@ export const ICON_REGISTRY: Record<string, LucideIcon> = {
   'grip-vertical': GripVertical,
   'group': Group,
   'heading': Heading,
+  'image': Image,
   'image-off': ImageOff,
   'inbox': Inbox,
   'info': Info,
@@ -237,6 +246,7 @@ export const ICON_REGISTRY: Record<string, LucideIcon> = {
   'receipt-text': ReceiptText,
   'refresh-cw': RefreshCw,
   'rotate-ccw': RotateCcw,
+  'rotate-cw': RotateCw,
   'route': Route,
   'scale': Scale,
   'search': Search,
@@ -251,6 +261,7 @@ export const ICON_REGISTRY: Record<string, LucideIcon> = {
   'sliders-horizontal': SlidersHorizontal,
   'smartphone': Smartphone,
   'sparkles': Sparkles,
+  'split': Split,
   'star': Star,
   'sticky-note': StickyNote,
   'summary': Summary,
@@ -277,4 +288,5 @@ export const ICON_REGISTRY: Record<string, LucideIcon> = {
   'wallet': Wallet,
   'x': X,
   'zoom-in': ZoomIn,
+  'zoom-out': ZoomOut,
 }

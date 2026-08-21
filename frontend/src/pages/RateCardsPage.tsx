@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/useAuth'
 import { Badge } from '../components/core/Badge'
 import { Button } from '../components/core/Button'
@@ -35,8 +36,18 @@ const RATE_COLUMNS: DataColumn<RateRow>[] = [
     // read as missing data on a pricing document.
     render: (r) => (r.zone === null ? 'Anywhere else' : r.zone),
   },
-  { key: 'base_fare_minor', header: 'Base fare', numeric: true, render: (r) => formatUgx(r.base_fare_minor) },
-  { key: 'per_km_minor', header: 'Per km', numeric: true, render: (r) => formatUgx(r.per_km_minor) },
+  {
+    key: 'base_fare_minor',
+    header: 'Base fare',
+    numeric: true,
+    render: (r) => formatUgx(r.base_fare_minor),
+  },
+  {
+    key: 'per_km_minor',
+    header: 'Per km',
+    numeric: true,
+    render: (r) => formatUgx(r.per_km_minor),
+  },
   {
     key: 'per_waiting_minute_minor',
     header: 'Per waiting min',
@@ -54,17 +65,24 @@ const RATE_COLUMNS: DataColumn<RateRow>[] = [
     header: 'Maximum',
     numeric: true,
     // Null is uncapped, which is a different statement from "capped at 0".
-    render: (r) => (r.maximum_charge_minor === null ? 'Uncapped' : formatUgx(r.maximum_charge_minor)),
+    render: (r) =>
+      r.maximum_charge_minor === null ? 'Uncapped' : formatUgx(r.maximum_charge_minor),
   },
 ]
 
 export function RateCardsPage() {
   const { user } = useAuth()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [cards, setCards] = useState<RateCard[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [forbidden, setForbidden] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
-  const [dialogFor, setDialogFor] = useState<{ card: RateCard | null } | null>(null)
+  const [dialogFor, setDialogFor] = useState<{
+    card: RateCard | null
+    /** ADR-0050 §5. A category to open the version with, blank. */
+    addCategory?: string
+  } | null>(null)
 
   const canManage = canManageBilling(user)
 
@@ -113,6 +131,45 @@ export function RateCardsPage() {
       cancelled = true
     }
   }, [])
+
+  /**
+   * Opened from "Price it" on the vehicle categories screen (ADR-0050 §5).
+   *
+   * The categories screen can say a category is unpriced but cannot fix it —
+   * a rate card version is immutable, so the price has to go on a *new*
+   * version, and that is this dialog. Arriving here with the right card
+   * already open and the missing category already added is the difference
+   * between a warning and a way out.
+   *
+   * **Derived during render, not set from an effect.** Copying the router's
+   * state into `useState` would be one source of truth mirrored into a
+   * second, and it is the shape `react-hooks/set-state-in-effect` refuses:
+   * a synchronous setState in an effect body cascades a render for a value
+   * that was already available. It waits for `cards` only because the card
+   * has to be found before the dialog can copy its latest version.
+   *
+   * The state is cleared when the dialog closes rather than when it opens,
+   * so a browser Back into this entry does not reopen a dialog over a card
+   * whose prices may since have changed.
+   */
+  const priceRequest = location.state as { priceCategory?: string; cardId?: number } | null
+
+  const requested =
+    priceRequest?.priceCategory !== undefined && cards !== null
+      ? (cards.find((candidate) => candidate.id === priceRequest.cardId) ?? null)
+      : null
+
+  const openDialog =
+    dialogFor ??
+    (requested !== null ? { card: requested, addCategory: priceRequest?.priceCategory } : null)
+
+  const closeDialog = () => {
+    setDialogFor(null)
+
+    if (priceRequest?.priceCategory !== undefined) {
+      navigate(location.pathname, { replace: true, state: null })
+    }
+  }
 
   const makeDefault = async (card: RateCard) => {
     try {
@@ -199,12 +256,13 @@ export function RateCardsPage() {
         />
       ))}
 
-      {dialogFor && (
+      {openDialog && (
         <RateCardVersionDialog
-          card={dialogFor.card}
-          onClose={() => setDialogFor(null)}
+          card={openDialog.card}
+          addCategory={openDialog.addCategory}
+          onClose={closeDialog}
           onSaved={(message) => {
-            setDialogFor(null)
+            closeDialog()
             setNotice(message)
             void load()
           }}
@@ -278,7 +336,9 @@ function RateCardPanel({
           />
         ))}
         {(card.versions ?? []).length === 0 && (
-          <p style={{ color: 'var(--text-secondary)' }}>This card has no versions and cannot price a trip.</p>
+          <p style={{ color: 'var(--text-secondary)' }}>
+            This card has no versions and cannot price a trip.
+          </p>
         )}
       </div>
     </Card>

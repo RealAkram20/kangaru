@@ -4,6 +4,17 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import { apiOk, makeUser, renderAs } from '../test/harness'
 import { RateCardsPage } from './RateCardsPage'
 
+/*
+ * ADR-0050 §5: the page now reads router state, so that "Price it" on the
+ * vehicle categories screen can open the version dialog on the card that is
+ * missing a category. `renderAs` mounts no Router, and the same stub is what
+ * NotificationsPage.test and CrossClientQueue.test already use.
+ */
+vi.mock('react-router-dom', () => ({
+  useLocation: () => ({ pathname: '/rate-cards', state: null }),
+  useNavigate: () => vi.fn(),
+}))
+
 vi.mock('../lib/apiClient', () => ({
   apiClient: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn() },
 }))

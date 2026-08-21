@@ -1,0 +1,179 @@
+/*
+ * The in-place media previewer (ADR-0048).
+ *
+ * A stylesheet rather than inline styles, unlike most components here, for one
+ * reason: this component needs `:focus-visible`, `@media
+ * (prefers-reduced-motion)` and a `::backdrop`-like scrim with hover states,
+ * none of which a style object can express. `dataTable.css` and
+ * `routeBuilder.css` are here for the same reason.
+ *
+ * Every value is a token. No raw hex — DESIGN.md §8.
+ */
+
+.kr-media {
+  display: flex;
+  flex-direction: column;
+  /* The stage should own the dialog's height and the toolbar should not move
+     as the content loads, so the frame is a fixed grid rather than a column
+     that reflows when a 4:3 photo replaces a spinner. */
+  min-height: 0;
+  gap: var(--space-3);
+}
+
+/* ---------------------------------------------------------------- stage -- */
+
+.kr-media__stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Sunken, so a document with white margins — which most scanned papers
+     have — reads as a sheet on a surface rather than bleeding into the
+     dialog. */
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  min-height: 0;
+  /* Tall enough for a portrait ID card to be legible without scrolling, and
+     capped in viewport units so the toolbar and the metadata row stay on
+     screen on a laptop. */
+  height: min(62vh, 560px);
+}
+
+/* The image is dragged when zoomed, so the cursor has to say so. */
+.kr-media__stage--grab { cursor: grab; }
+.kr-media__stage--grabbing { cursor: grabbing; }
+
+.kr-media__image {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  /* `transform` only — never width/height or `zoom` — so zooming and rotating
+     stay on the compositor. DESIGN.md: animate transform and opacity, nothing
+     else. */
+  transform-origin: center center;
+  transition: transform var(--dur-base) var(--ease-out);
+  /* The browser's own drag-image would fight the pan gesture. */
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/*
+ * The PDF, rendered by the browser itself.
+ *
+ * **No pdf.js.** Chrome, Firefox, Safari and Edge all ship a PDF viewer with
+ * search, page navigation, zoom and printing already built, and it is a
+ * `quality-control` north-star answer that a ~400 kB dependency should not be
+ * added to reproduce them. The frame is given the whole stage because that
+ * viewer draws its own chrome inside it.
+ */
+.kr-media__frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  background: var(--surface-card);
+}
+
+.kr-media__placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--text-secondary);
+  max-width: 38ch;
+}
+
+/* -------------------------------------------------------------- toolbar -- */
+
+.kr-media__toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.kr-media__spacer { flex: 1 1 auto; }
+
+/*
+ * The zoom read-out.
+ *
+ * Tabular figures, because this number changes as the user holds a button and
+ * a proportional "1" is narrower than a "9" — the control would otherwise
+ * jitter sideways while being pressed.
+ */
+.kr-media__zoom {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  min-width: 5ch;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------- metadata -- */
+
+.kr-media__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.kr-media__meta dt {
+  font-weight: var(--weight-medium);
+  color: var(--text-body);
+  display: inline;
+}
+
+.kr-media__meta dd {
+  display: inline;
+  margin: 0 0 0 var(--space-1);
+}
+
+.kr-media__meta > div { min-width: 0; }
+
+/* The original filename comes from a handset and can be anything at all. */
+.kr-media__filename {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+/* --------------------------------------------------------------- small -- */
+
+@media (max-width: 640px) {
+  .kr-media__stage {
+    /* More of a phone's screen, since there is no room beside it for anything
+       else and the toolbar wraps to its own line anyway. */
+    height: min(56vh, 420px);
+  }
+
+  /* The read-out is the first thing to go: the two buttons either side of it
+     already say what it does. */
+  .kr-media__zoom { display: none; }
+}
+
+/*
+  The footer's two halves: browsing on the left, Close on the right.
+
+  `space-between` rather than pushing Close with a spacer, so that a dialog
+  opened over a single file — no `browse` prop, no left-hand group — still puts
+  Close where every other dialog in the console puts it.
+*/
+.kr-media__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.kr-media__browse {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}

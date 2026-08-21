@@ -23,6 +23,11 @@ function driver(overrides: Partial<Driver> = {}): Driver {
     license_number: 'DL-99881',
     license_expiry: '2028-01-01',
     status: 'active',
+    // ADR-0048 §7. Both are required on the wire: `DriverResource` sends them
+    // unconditionally, so a fixture that omits them is a fixture testing a
+    // response shape the server does not produce.
+    vehicle_id: null,
+    owns_vehicle: false,
     account: null,
     created_at: '2026-01-01T00:00:00.000000Z',
     updated_at: '2026-01-01T00:00:00.000000Z',

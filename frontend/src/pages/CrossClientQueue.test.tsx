@@ -59,6 +59,9 @@ function booking(
     passenger_name: 'Grace Amongin',
     passenger_phone: '+256700000000',
     passenger_count: 2,
+    // ADR-0051: required on the wire — `BookingResource` sends it
+    // unconditionally, and null is the "no preference" case.
+    vehicle_category: null,
     origin,
     destination: 'Entebbe',
     scheduled_for: null,
@@ -131,6 +134,8 @@ const driver: Driver = {
   license_number: 'DL-99881',
   license_expiry: '2028-01-01',
   status: 'active',
+  vehicle_id: null,
+  owns_vehicle: false,
   account: null,
   created_at: '2026-01-01T00:00:00.000000Z',
   updated_at: '2026-01-01T00:00:00.000000Z',

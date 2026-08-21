@@ -4,6 +4,7 @@ import { ClientFilterSelect } from '../components/filters/ClientFilterSelect'
 import { apiClient } from '../lib/apiClient'
 import { apiError, fieldErrors } from '../lib/apiError'
 import { useDebouncedValue } from '../lib/useDebouncedValue'
+import { categoryLabel, categoryOptions, useVehicleCategories } from '../lib/vehicleCategories'
 import {
   bookingStatusIcon,
   bookingStatusLabel,
@@ -13,6 +14,7 @@ import {
 import type { ApiSuccess, FilterOption, ScopedCursorMeta, TenancyScope } from '../types/api'
 import type { Booking } from '../types/booking'
 import type { Colleague } from '../types/staff'
+import type { VehicleCategory } from '../types/vehicleCategory'
 import { isCorporateRole } from '../lib/navigation'
 import { Badge } from '../components/core/Badge'
 import { Button } from '../components/core/Button'
@@ -27,6 +29,7 @@ import { PlaceField } from '../components/forms/PlaceField'
 import type { PlaceHit } from './public/places'
 import { coordinatesFor, withCoordinateErrorsOnFields } from './public/orderCoordinates'
 import { Input } from '../components/forms/Input'
+import { Select } from '../components/forms/Select'
 import { PageFill } from '../components/layout/PageFill'
 
 /**
@@ -181,6 +184,15 @@ export function BookingsPage() {
   }, [apply, client, search, next])
 
   const canApprove = user !== null && APPROVER_ROLES.includes(user.role)
+  /**
+   * ADR-0051 §3. One fetch for the page: the table renders the requested
+   * vehicle type by name, and the new-booking dialog offers the choices.
+   *
+   * Readable by anyone holding `bookings.create`, which is what opened this
+   * endpoint to the two corporate roles — names only, never the fleet
+   * counts, because the fleet's composition is roster information.
+   */
+  const { categories, error: categoriesError } = useVehicleCategories()
 
   const approve = useCallback(
     async (booking: Booking) => {
@@ -231,6 +243,21 @@ export function BookingsPage() {
       { key: 'passenger_name', card: 'meta', header: 'Passenger' },
       { key: 'passenger_count', card: 'meta', header: 'Pax', numeric: true },
       {
+        key: 'vehicle_category',
+        card: 'meta',
+        header: 'Vehicle',
+        // ADR-0051. An em dash for "no preference stated" rather than a
+        // blank cell: the column has to distinguish a client who did not
+        // mind from one whose request is sitting there unmet, and a blank
+        // reads as missing data.
+        render: (row) =>
+          row.vehicle_category === null ? (
+            <span title="No preference stated.">—</span>
+          ) : (
+            <>{categoryLabel(categories, row.vehicle_category)}</>
+          ),
+      },
+      {
         key: 'requested_by_user_id',
         card: 'meta',
         header: 'Requested by',
@@ -280,7 +307,7 @@ export function BookingsPage() {
         },
       },
     ],
-    [canApprove, approve, scope],
+    [canApprove, approve, scope, categories],
   )
 
   // The rows are already what the server matched, so there is nothing left
@@ -302,43 +329,43 @@ export function BookingsPage() {
       )}
 
       <PageFill.Flex>
-      <Card
-        fill
-        title="Bookings"
-        subtitle={bookings ? `${bookings.length} total` : undefined}
-        padding="none"
-        actions={
-          <>
-            {/*
+        <Card
+          fill
+          title="Bookings"
+          subtitle={bookings ? `${bookings.length} total` : undefined}
+          padding="none"
+          actions={
+            <>
+              {/*
               Before the search box, because it narrows what is fetched
               rather than what is displayed. The two read as one control
               otherwise, and a dispatcher would reasonably expect typing a
               client's name to do the same job — it does not, and cannot,
               past the first page.
             */}
-            <ClientFilterSelect
-              scope={scope}
-              clients={clients}
-              value={client}
-              onChange={setClient}
-            />
-            <Input
-              iconLeft="search"
-              placeholder={
-                scope === 'platform'
-                  ? 'Filter by client, route, passenger or status'
-                  : 'Filter by route, passenger or status'
-              }
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              style={{ width: 280 }}
-            />
-            <Button iconLeft="plus" onClick={() => setCreating(true)}>
-              New booking
-            </Button>
-          </>
-        }
-        /*
+              <ClientFilterSelect
+                scope={scope}
+                clients={clients}
+                value={client}
+                onChange={setClient}
+              />
+              <Input
+                iconLeft="search"
+                placeholder={
+                  scope === 'platform'
+                    ? 'Filter by client, route, passenger or status'
+                    : 'Filter by route, passenger or status'
+                }
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                style={{ width: 280 }}
+              />
+              <Button iconLeft="plus" onClick={() => setCreating(true)}>
+                New booking
+              </Button>
+            </>
+          }
+          /*
           The cursor now belongs to the *searched* query, so "load more"
           continues the search rather than escaping it — which is why the
           in-browser filter had to go first. Paging a client-side filter
@@ -348,32 +375,34 @@ export function BookingsPage() {
           In the card's footer rather than after the table, so it stays put
           while the rows scroll.
         */
-        footer={
-          <LoadMore
-            hasMore={next !== null}
-            loading={loadingMore}
-            onLoadMore={() => void loadMore()}
-          />
-        }
-      >
-        <DataTable<Booking>
-          columns={columns}
-          rows={rows}
-          dense
-          fill
-          emptyMessage={
-            bookings === null
-              ? 'Loading…'
-              : query
-                ? 'No bookings match your filter'
-                : 'No bookings yet'
+          footer={
+            <LoadMore
+              hasMore={next !== null}
+              loading={loadingMore}
+              onLoadMore={() => void loadMore()}
+            />
           }
-        />
-      </Card>
+        >
+          <DataTable<Booking>
+            columns={columns}
+            rows={rows}
+            dense
+            fill
+            emptyMessage={
+              bookings === null
+                ? 'Loading…'
+                : query
+                  ? 'No bookings match your filter'
+                  : 'No bookings yet'
+            }
+          />
+        </Card>
       </PageFill.Flex>
 
       {creating && (
         <NewBookingDialog
+          categories={categories}
+          categoriesError={categoriesError}
           onClose={() => setCreating(false)}
           onCreated={async () => {
             setCreating(false)
@@ -398,9 +427,17 @@ export function BookingsPage() {
 }
 
 function NewBookingDialog({
+  categories,
+  categoriesError,
   onClose,
   onCreated,
 }: {
+  /**
+   * Lifted from the page (ADR-0051 §3), so the table's Vehicle column and
+   * this form's select share one request. Null while it is still loading.
+   */
+  categories: VehicleCategory[] | null
+  categoriesError: string | null
   onClose: () => void
   onCreated: () => Promise<void>
 }) {
@@ -422,6 +459,10 @@ function NewBookingDialog({
     passenger_name: '',
     passenger_phone: '',
     passenger_count: '1',
+    // ADR-0051. Empty means "no preference", which is the ordinary case and
+    // a real answer — never defaulted to a category, because a preselected
+    // vehicle is a request nobody made.
+    vehicle_category: '',
     origin: '',
     destination: '',
     scheduled_for: '',
@@ -454,6 +495,10 @@ function NewBookingDialog({
         passenger_name: form.passenger_name,
         passenger_phone: form.passenger_phone,
         passenger_count: Number(form.passenger_count) || 1,
+        // Null, not '': the column stores "no preference stated", and the
+        // office has to be able to tell that apart from a preference the
+        // dispatcher did not honour (ADR-0051 §1).
+        vehicle_category: form.vehicle_category === '' ? null : form.vehicle_category,
         origin: form.origin,
         // Only while the typed text still matches what was picked — the
         // same rule the public order form uses (ADR-0020 §2).
@@ -520,7 +565,8 @@ function NewBookingDialog({
                   // Prefilled from the account, and still editable: the
                   // person raising it may know a better number for today.
                   // Only on picking, so a correction survives typing on.
-                  passenger_phone: picked?.phone ?? (picked === null ? current.passenger_phone : ''),
+                  passenger_phone:
+                    picked?.phone ?? (picked === null ? current.passenger_phone : ''),
                 }))
               }}
             />
@@ -568,6 +614,34 @@ function NewBookingDialog({
               min={1}
               value={form.passenger_count}
               onChange={set('passenger_count')}
+            />
+          </FormField>
+          {/*
+            ADR-0051. What the client wants sent, as distinct from how many
+            seats they need — a bank moving four people to a branch and one
+            moving four people plus a cash escort book identically today.
+
+            The hint is the honest half: this ranks candidates, it does not
+            reserve anything, and promising otherwise on a form is how a
+            dispatcher ends up explaining a sedan on the phone.
+          */}
+          <FormField
+            label="Vehicle type"
+            htmlFor="b-category"
+            hint={
+              categoriesError === null
+                ? 'Optional. Dispatch prefers this kind and says so when none is free.'
+                : categoriesError
+            }
+            error={errors.vehicle_category}
+          >
+            <Select
+              id="b-category"
+              value={form.vehicle_category}
+              disabled={categories === null || categoriesError !== null}
+              placeholder={categories === null ? 'Loading…' : 'No preference'}
+              options={categoryOptions(categories ?? [])}
+              onChange={set('vehicle_category')}
             />
           </FormField>
           <FormField

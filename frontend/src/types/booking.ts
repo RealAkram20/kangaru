@@ -34,6 +34,15 @@ export interface Booking {
   passenger_name: string
   passenger_phone: string
   passenger_count: number
+  /**
+   * The kind of vehicle the client asked for (ADR-0051), or null when they
+   * stated none.
+   *
+   * **Null is a real answer.** "No preference" and "asked for a van, got a
+   * sedan" are different facts, and a client's auditor is entitled to tell
+   * them apart — so this is never rendered as a default or coerced to one.
+   */
+  vehicle_category: string | null
   origin: string
   destination: string
   /** Null for an immediate request. */
