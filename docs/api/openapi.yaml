@@ -165,6 +165,64 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  # Acting as somebody else, for support (ADR-0056)
+  /api/v1/support/act-as:
+    get:
+      summary: >
+        Whether this request is being made by somebody acting as the account,
+        and until when. Null for everybody who is simply themselves.
+      responses:
+        '200':
+          description: The live session, or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string, nullable: true }
+                  data:
+                    nullable: true
+                    type: object
+                    required: [subject_name, expires_at]
+                    additionalProperties: false
+                    properties:
+                      subject_name: { type: string }
+                      expires_at: { $ref: '#/components/schemas/Timestamp' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: >
+        Begins a support session: the caller acts as another user for thirty
+        minutes. Every action taken is recorded against both names.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject_id, reason]
+              additionalProperties: false
+              properties:
+                subject_id: { type: integer }
+                reason: { type: string, minLength: 8, maxLength: 255 }
+      responses:
+        '201':
+          $ref: '#/components/responses/ImpersonationSessionResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: >
+        Ends the caller's support session. Idempotent — ending one that has
+        already lapsed is a success, because stopping must never fail.
+      responses:
+        '204':
+          description: No content.
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/auth/password/forgot:
     post:
       summary: >
@@ -6656,6 +6714,27 @@ components:
               success: { enum: [true] }
               message: { type: string }
               data: { $ref: '#/components/schemas/User' }
+
+    ImpersonationSessionResponse:
+      description: A support session, and when it lapses on its own.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data:
+                type: object
+                required: [id, subject_id, subject_name, expires_at]
+                additionalProperties: false
+                properties:
+                  id: { type: integer }
+                  subject_id: { type: integer }
+                  subject_name: { type: string }
+                  expires_at: { $ref: '#/components/schemas/Timestamp' }
 
     RoleResponse:
       description: One role.

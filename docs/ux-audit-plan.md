@@ -1,5 +1,7 @@
 # UI/UX audit plan
 
+> **See also `docs/platform-plan.md`** — its §2 gate 5 (run it in the real thing) and `docs/screen-rules.md` §9 (a screen carries no explanation) apply to every audit fix.
+
 The plan the audit follows. Written before the audit so the findings cannot be
 shaped to fit whatever was easy to change.
 

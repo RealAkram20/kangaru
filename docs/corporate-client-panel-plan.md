@@ -1,5 +1,7 @@
 # The corporate client panel — plan
 
+> **Amended in one respect by `docs/platform-plan.md`:** a corporate client is now onboarded by a **fleet company**, not by Kangaru, and may be served by more than one (package `K6`, ADR-0060). Everything else in this plan stands.
+
 **For:** Centenary Bank, the anchor client, and every corporate client after
 them.
 **Against:** Centenary Rural Development Bank Ltd, ref **CRDB/CS/F/26**,

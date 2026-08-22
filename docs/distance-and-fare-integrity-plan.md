@@ -1,5 +1,7 @@
 # Distance and fare integrity — an enterprise plan
 
+> **Unchanged by `docs/platform-plan.md`.** Its five open decisions are not blocked by, and do not block, the `K` packages.
+
 **Status:** proposal. Nothing here is built. **One of §6's five decisions has
 been ruled** — decision 2, on 2026-08-18; the answer was "use both figures", it
 supersedes §4 Phase 2's dial before it was built, and it is written out in §8.

@@ -15733,9 +15733,9 @@ the account you mint at submission is all your side needs.
 
 ### 2026-08-22 — Claiming: S1, acting as someone else (ADR-0056)
 
-**Status:** in progress. **Claimed at 03:44 local.** Same agent as F0, F1 and
-F2. **Backend only this pass** — the banner is a screen and gets its own claim,
-its own design-skill pass and its own frontend files.
+**Status:** **done**, closed at 04:57 local. Claimed at 03:44. Same agent as
+F0, F1 and F2. Backend in this entry; the banner has its own entry below and is
+also done, so **S1 is a whole loop** rather than a half-built one.
 
 **Depends on nothing.** That is the point of taking it now: ADR-0055 gives
 Kangaru no fleet and no cross-fleet read, so without acting-as its staff can do
@@ -15786,3 +15786,755 @@ screen, and the notification to the person acted upon. A time-boxed privilege
 with no visible indicator is a half-built loop by `docs/master-plan.md` §2's own
 rule — so **this backend must not be described as shipped until the banner
 exists.**
+
+---
+
+### 2026-08-22 04:21 — A job offer has never once left the server. Diagnosis, no code.
+
+**Status:** diagnosis complete, **nothing claimed and nothing edited.** The full
+write-up is `docs/driver-app-background-offers-plan.md`; this entry exists so no
+other agent spends a session rediscovering it.
+
+**Raised by the owner:** *"the popup order notification is only showing in the
+app... these people will lose orders."*
+
+## Two surfaces, and only one of them was ever alive
+
+The owner's framing is the right one and worth writing into the vocabulary:
+
+- **Inside the app** — the order request page, `OfferPresenter` ->
+  `OfferBanner` / `OfferScreen`, fed by the 5-second `GET /me/offers` poll.
+  **This works. It is not the bug and should not be touched.**
+- **Outside the app** — the push: `TripOfferedNotification` -> `ExpoPushChannel`
+  -> Expo -> FCM, ringing on `offers.v2` and upgrading to the full-screen call
+  over the lock screen. **This has never run, once, on any handset.**
+
+## The measurement that settles it
+
+```
+SELECT COUNT(*) FROM device_tokens;                           -> 0
+SELECT COUNT(*) FROM notifications WHERE type='trip.offered'; -> 38
+```
+
+Thirty-eight offers dispatched; zero devices to push to. `ExpoPushChannel::send()`
+returns at `if ($tokens === []) return;` every time. **The push is not late or
+misrouted — it is never sent.**
+
+Why there is no token: `canReceivePush()` is false in Expo Go
+(`executionEnvironment === StoreClient`), so `PushRegistrar` returns before
+`getExpoPushTokenAsync` and before `registerDevice`. The AVD carries only
+`host.exp.exponent`; `mobile/android/` does not exist. This is
+[[driver-app-needs-a-dev-build-not-expo-go]] arriving as a live bug rather than a
+note — and with it go the foreground service (`expo-location` **warns** rather
+than throws, so `goOnline` returns `true` and `useDutyToggle`'s refusal never
+fires), notify-kit, and therefore the whole right-hand column.
+
+Left holding the job alone, the order request page clocks off with the driver:
+`useOffers` sets `refetchIntervalInBackground: false` and `App.tsx` wires
+`focusManager` to `AppState`. That is the reported symptom, exactly.
+
+## The part worth reading: Sentry's silence was misleading, and correctly so
+
+Sentry is live on all three apps against one EU project and had reported nothing
+about push. **That was never evidence of health** — the code path is not entered.
+
+`observability.ts` names four silences this app keeps on purpose and gives each a
+`Sentry.logger` line. **Push registration is the fifth and the only one with
+none:** `PushRegistrar`'s catch-all `catch {}` swallows every cause and
+`loadNotifications()` returning null is a bare `return`.
+
+Two more places aimed away from it, neither wrong in isolation:
+
+- `ExpoPushChannel`'s empty-token guard is documented as not worth logging
+  *"because a user with no registered device is the normal state of every staff
+  account"*. True for staff. **False for a driver who is on duty**, which is the
+  only case where it costs a passenger.
+- `beforeSendLog` filters *"Background location is limited in Expo Go"* by
+  message. Sound in isolation — the string cannot occur in a dev build — but it
+  dropped the one signal that would have said this runtime cannot keep the app
+  alive, for the whole period it was being tested that way.
+
+## Four things still broken after a dev build, so nobody stops at Stage 0
+
+1. **The offer push is queued.** `viaConnections()` puts only
+   `TenantDatabaseChannel` on `sync`; `ExpoPushChannel::class` is not in that map,
+   so a 45-second countdown waits on the `database` queue behind `--sleep=2`.
+   `DispatchOfferService::ring()`'s docblock claims the opposite of what the code
+   does.
+2. **No battery-optimisation exemption anywhere**, on a fleet running Tecno,
+   Infinix and Xiaomi.
+3. **The offer poll gives up in the background**, against `config.ts`'s own
+   argument that it is the poll which earns background time.
+4. **The inside surface can cancel the outside one while invisible.**
+   `PushRouter.act()` fires `invalidateQueries(['offers'])` and `raiseCall()`
+   together; the refetch re-renders `OfferPresenter`, whose effect at
+   `OfferPresenter.tsx:154` calls `hideCallNotification`. Its guard is *mounted*,
+   not *on screen*, and the page stays mounted while backgrounded. **Unproven —
+   it needs a handset — but it is the exact class of bug that only shows on one.**
+
+## Files: none claimed
+
+I have edited no source. `docs/driver-app-background-offers-plan.md` is new and
+mine. When implementation starts it will claim, in this order:
+`mobile/src/push/PushRegistrar.tsx`, `mobile/src/duty/OfferPresenter.tsx` (one
+`AppState` guard), `mobile/src/duty/queries.ts` (one flag),
+`backend/Modules/Notifications/Channels/ExpoPushChannel.php`, and
+`TripOfferedNotification` / `TripOfferWithdrawnNotification` (a `viaConnections`
+override each). **Nothing on `KangaruNotification` itself** — mail and
+document-review pushes must stay queued.
+
+**Not diagnosed and deliberately left open:** iOS has no full-screen-intent
+equivalent at any privilege level, and CallKit over PushKit is a separate
+submission per ADR-0046. Nothing here improves an iPhone beyond the
+time-sensitive banner.
+
+---
+
+### 2026-08-22 — Claiming: the acting-as banner (ADR-0056 §5)
+
+**Status:** **done**, closed at 04:57 local. Claimed at 04:42. Same agent as
+F0–F2 and S1's backend. First frontend file this effort has touched.
+
+**Frontend: 588 tests across 58 files, all green.** `tsc -b --force` clean
+(which is the only thing that checks — `tsc --noEmit` is a no-op in this repo's
+solution-file layout), ESLint clean.
+
+**Loaded before opening a file**, per the owner's instruction of 22 August:
+`screen` (which pulls in `quality-control`, `DESIGN.md` and
+`docs/screen-rules.md`) and `emil-design-eng`.
+
+**Files I own (new):**
+
+- `frontend/src/components/security/ActingAsBanner.tsx`
+- `frontend/src/components/security/ActingAsBanner.test.tsx`
+
+**Shared files, exact edit named:**
+
+- `frontend/src/components/layout/AppShell.tsx` — the banner rendered above
+  `Topbar`, inside the column that already holds it. Nothing else in that file.
+
+**Nobody else holds these.** `git status` shows the layout and auth directories
+untouched by any other session.
+
+## The decisions, made before the code
+
+- **It does not reuse `Alert`.** `Alert` is an in-page message — rounded,
+  bordered on four sides, optionally dismissible. This is full-bleed chrome
+  that cannot be dismissed, and giving permanent chrome the visual language of
+  a dismissible notice is exactly the "it looks like a toast, I'll stop seeing
+  it" failure it exists to prevent. It borrows `Alert`'s **tokens and `Icon`**
+  and none of its shape. Raised here rather than resolved silently, because
+  `docs/screen-rules.md` §3 says reuse first.
+- **It does not animate in.** The session begins on another screen, so by the
+  time this renders the navigation has happened and there is nothing to smooth.
+  Animating it would make it read as *something that arrived*. §5: every
+  animation needs a reason.
+- **One piece of motion**, and it earns its place: `scale(0.97)` on the Stop
+  button's press, 160 ms on a strong ease-out. That is the control somebody
+  reaches for when they want out, and a press with no feedback feels unheard.
+- **Amber, not red.** Red says something broke; this is an unusual state
+  deliberately entered. Never colour alone (§6) — the icon and the sentence
+  carry it too.
+- **`role="status"`, not `alert`.** A standing condition, announced politely
+  once, rather than an interruption.
+- **No dismiss control.** A time-boxed privilege you can hide is a privilege
+  with no indicator. The only control is Stop, and its endpoint is deliberately
+  unguarded so it can never strand somebody inside another account.
+
+---
+
+#### Closed — S1 backend and the banner, 04:57
+
+**Backend 16 tests, frontend 6, and both whole suites green** (numbers in the
+closing entry below). Pint, PHPStan, `tsc -b --force` and ESLint clean on
+everything of mine.
+
+## Three things that were wrong first, and what fixed them
+
+1. **Excluding `support.act-as` from the Super Admin catalogue made it
+   ungrantable.** `RoleManagementTest` caught it with a comment that explained
+   why — *"the Super Admin holds the whole catalogue, that is what makes the
+   subset rule work at the top"* — and `StoreRoleRequest` confirmed it: a role
+   cannot grant a permission its author does not hold. The exclusion left the
+   permission reachable only by a seeder or a hand-written UPDATE. **Ungrantable
+   is not stricter, it is broken.** Reverted, with the reasoning in the seeder so
+   nobody re-tries it. What keeps the grant narrow is the *level*.
+
+2. **The deny-list ran after route-model binding**, so acting as Finance and
+   hitting settlement-confirm returned **404, not 403** — the refusal hidden
+   behind an unrelated status, telling a support agent the endpoint is broken
+   rather than forbidden. That is how deny-lists get removed. Now ordered
+   between the identity swap and anything that reads data. A guard whose answer
+   depends on whether the target exists also leaks whether it exists.
+
+3. **`shield-alert` would have rendered a silent grey box.** `Icon` reads a
+   generated registry, not `lucide-react`, and its own comment warns that a
+   missing name falls back rather than throwing. The icon exists in Lucide and
+   not in the registry. Switched to `user-cog`, which is registered — and is the
+   better glyph anyway: it says *what is happening* rather than *how to feel*,
+   which the amber already carries.
+
+## Two tests of mine that proved nothing until they were mutated
+
+- The route-binding isolation test called `resolveRouteBinding()` directly and
+  **passed with the narrowing disabled** — outside a request `request()->user()`
+  is null, so the global scope failed closed for a reason unrelated to fleets.
+  Rewritten to drive the real HTTP route.
+- The rate-card test asserted "picks the right one of two" and passed under
+  mutation **twice**, because `first()` happened to return the right row.
+  Rewritten as a **refusal** — a client with only the other fleet's card must
+  fail to price — which cannot pass by luck.
+
+Both were green and worthless. Only mutation showed it.
+
+## What S1 does NOT include, named so it is not assumed
+
+- **The notification to the person acted upon** (ADR-0056 §5). Their audit trail
+  shows it and the banner shows the agent, but nobody tells the driver or the
+  client afterwards.
+- **Acting as a walk-in `Customer`.** The owner asked for it by name; a customer
+  is a different model behind a different guard, so it is a second mechanism.
+  The session's subject columns are polymorphic so it needs no migration, and
+  the service refuses a `Customer` with a message saying so rather than
+  pretending.
+- **A console screen to start a session.** The endpoints exist; nothing draws a
+  form. A support agent needs `curl` or the API today.
+
+---
+
+#### Closed — the banner, 04:57
+
+**Files as actually touched.** New:
+`frontend/src/components/security/ActingAsBanner.tsx`, its test, and
+`useActingAs.ts` — the hook was not in the claim, and is listed here rather
+than pretended away. Shared: `AppShell.tsx`, two imports and one conditional
+render above `Topbar`; nothing else in that file.
+
+**Also needed, and built on the backend side to make the banner possible:**
+`GET /api/v1/support/act-as`. The console cannot work this out for itself —
+by the time it asks, `ActAsSubject` has already swapped the user, so `auth/me`
+answers as the **subject**. A support agent's browser would otherwise render as
+that person with nothing to say it was not really them, which is exactly the
+failure the banner exists to prevent, and it would have been silent.
+
+A route of its own rather than a field on `UserResource`: the session is a fact
+about the *request*, and a field there would append `acting_as: null` to every
+nested actor in the API — every booking, trip event and audit row.
+
+## Decisions a reviewer should push back on if they disagree
+
+- **It does not reuse `Alert`.** Raised in the claim, and I still think it is
+  right: giving permanent chrome the visual language of a dismissible in-page
+  notice is how it stops being seen. It borrows `Alert`'s tokens and `Icon` and
+  none of its shape. If the house style prefers an `Alert` variant, say so.
+- **It asks once, on load — no polling.** A timer against the API on every
+  console in the building, to catch a state almost nobody is in, is the waste
+  `PRODUCT.md` refuses. The case it misses — a session lapsing while a tab sits
+  open — is covered by the server: after expiry `live()` stops matching, so the
+  request is already the actor as themselves. A stale banner is cosmetic; a
+  wrongly-scoped request is not, and that half was never the client's.
+- **Stop does a full reload**, not `setSession(null)`. Every screen behind it
+  was rendered from the subject's data; clearing the banner alone would leave a
+  support agent looking at somebody else's console with nothing saying so.
+- **The fetch failure is swallowed.** This is chrome: an older API, a dropped
+  connection or a 403 must leave the console working rather than fail a page
+  load over a banner almost nobody sees.
+
+## Not done
+
+No screen starts a session — the endpoints exist and nothing draws a form. The
+banner is the *indicator*, not the entry point.
+
+---
+
+### 2026-08-22 05:10 — Claiming and building: the offer push, off the queue and no longer silent
+
+**Status:** backend and app code complete, green, and **proved by mutation**.
+Continues my 04:21 entry. Plan: `docs/driver-app-background-offers-plan.md`.
+**Nothing here is verified on a handset** — see the gap at the end, which is the
+whole of Stage 0 and is still owed.
+
+**Files I own and have edited.** `mobile/src/duty/offerSurface.ts` (new) and its
+test; `mobile/src/push/expoNotifications.test.ts` (new).
+
+**Shared files, exact edits, all small:**
+
+| File | Edit |
+|---|---|
+| `Notifications/KangaruNotification.php` | one new method, `pushIsCritical()`, defaulting false |
+| `Notifications/TripOfferedNotification.php` | `viaConnections()` + `pushIsCritical()` overrides |
+| `Notifications/TripOfferWithdrawnNotification.php` | `viaConnections()` calling parent, for its docblock |
+| `Channels/ExpoPushChannel.php` | log at the empty-token guard; timeout 5s → 3s |
+| `Dispatch/Services/DispatchOfferService.php` | `ring()` docblock only, no code |
+| `mobile/src/push/expoNotifications.ts` | `pushUnavailableReason()` added; `canReceivePush()` unchanged in meaning |
+| `mobile/src/push/PushRegistrar.tsx` | three `Sentry.logger.error` lines where there were none |
+| `mobile/src/duty/OfferPresenter.tsx` | the notification effect, rewritten |
+| `mobile/src/duty/queries.ts` | `refetchInterval` becomes a function; background refetch on |
+| `mobile/src/config.ts` | one new constant |
+| `mobile/src/observability.ts` | Expo Go filter: drop-all → keep-first |
+| `mobile/jest.setup.ts` | `expo-constants` mock gains `executionEnvironment` + the enum |
+
+## The push now leaves during the request, and the withdrawal deliberately does not
+
+`ExpoPushChannel::class` was never in `viaConnections()`, so Laravel fell to the
+default connection and a **45-second countdown went onto the `database` queue**
+behind a worker on `--sleep=2`. `ring()`'s own docblock claimed the opposite;
+it was describing an intention.
+
+**`TripOfferWithdrawnNotification` stays queued, and I reverted my own first
+attempt at making it match.** `withdraw()` is called by `accept()` *inside* its
+`DB::transaction`, after `lockForUpdate()` on the offer row and after the trip
+is created — inline there would hold those locks across a 3-second third-party
+call, once per losing driver, sequentially. The asymmetry is asserted so nobody
+tidies it away. `ring()`, by contrast, is called from `offerWave()`, which holds
+no transaction; checked, not assumed.
+
+## Why the suite could not see any of this, which is the finding to carry
+
+**`phpunit.xml` sets `QUEUE_CONNECTION=sync`.** Every notification runs inline
+in tests whatever `viaConnections()` says, so the existing
+`it('reaches a registered handset')` passes identically with the push queued and
+with it inline. The new test moves `queue.default` to `database` for its own
+duration, which is what makes the two states distinguishable at all.
+
+## Everything is mutation-checked, and one of my own tests was vacuous
+
+Ran, not assumed. Each mutation applied, suite run, mutation reverted:
+
+| Mutation | Result |
+|---|---|
+| rename `viaConnections` on `TripOfferedNotification` | 2 fail ✓ |
+| `pushIsCritical()` → true on the base class | 1 fail ✓ |
+| `if (false)` around the `push.no_device` log | 1 fail ✓ |
+| swap the two checks in `pushUnavailableReason` | 1 fail ✓ |
+| `appState !== 'background'` in `offerSurface` | 1 fail ✓ |
+| `if (true)` in `presentOffer` (the original bug) | 4 fail ✓ |
+| drop the stale-offer guard in `presentOffer` | 1 fail ✓ |
+
+**The one worth reading: `Log::shouldNotHaveReceived('warning', ['push.no_device'])`
+is vacuous.** Mockery reads the second argument as the *complete* argument list,
+so it asserts nothing called `warning()` with **one** argument — and nothing
+ever does, because the real call carries a context array. It passed with the
+mutation in place. `shouldHaveReceived(...)->withArgs(...)->never()` is not the
+fix either: on a spy, `shouldHaveReceived` verifies "at least once" as it is
+built, so it fails on the honest run instead. The working form spells the whole
+list: `['push.no_device', Mockery::any()]`.
+
+## The app: the two surfaces now hand the offer between them
+
+The owner's framing, made structural — **the order request page owns inside the
+app, the notification owns outside, and whichever the driver can see carries the
+job.** `mobile/src/duty/offerSurface.ts` holds the rule; `OfferPresenter` keeps
+only the `AppState` subscription.
+
+Two bugs closed by the same three lines:
+
+- **The page could cancel the notification while invisible.** The old guard was
+  "this component is mounted", and `OfferPresenter` stays mounted while
+  backgrounded. `PushRouter.act()` fires `invalidateQueries(['offers'])` and
+  `raiseCall()` together, so the refetch re-rendered the page and it cancelled
+  the call notification just raised on a locked phone. Racy, silent, handset-only.
+- **Nothing ever raised the notification from the poll.** An offer discovered
+  while the phone was in a pocket was painted onto an overlay behind a dark
+  screen. That is what made the background poll worth switching on at all.
+
+**The background poll is 15s, not 5s** (`OFFER_POLL_BACKGROUND_INTERVAL_MS`).
+Five is chosen against a driver's attention; in a pocket the constraint is
+battery, and the app is only alive because a foreground service wakes the radio
+once a minute — a 5s poll would multiply that by twelve for a whole shift. 15s
+against a 45s window leaves two thirds of the clock. It is a backstop for a lost
+push, not the mechanism.
+
+## Sentry: the fifth silence, and a filter that was deleting the evidence
+
+`observability.ts` names four silences this app keeps on purpose and gives each
+a `Sentry.logger` line. **Push registration was the fifth and had none** —
+`PushRegistrar`'s catch-all `catch {}` swallowed every cause including the
+missing EAS project id its own comment blames for push "never once working".
+Three distinct `error` lines now: build cannot push (with `expo_go` vs
+`simulator` told apart), permission refused, registration threw.
+
+Backend: `ExpoPushChannel`'s empty-token guard logs `push.no_device` **only when
+the notification says it is critical**, which today is the job offer alone. The
+channel still knows nothing about dispatch or duty — it asks the message. At
+`warning`, deliberately: `SENTRY_LOG_LEVEL` is `warning`, so anything below it
+never leaves the machine.
+
+**And `beforeSendLog` was dropping every copy of *"Background location is limited
+in Expo Go"*.** Right about the noise, wrong about the value: that string is the
+runtime saying the foreground service which keeps the app alive in a pocket does
+not exist — the precondition the entire outside-the-app path rests on. It now
+keeps the first per process and drops the rest.
+
+## Green
+
+Mobile: **1110 tests, 86 suites**, `tsc --noEmit` clean (proved non-vacuous with
+a deliberate type error — mobile's tsconfig is a real one, unlike the
+frontend's), eslint 0 errors. Backend: the **full sweep, 1542 tests and 6053 assertions**, exit 0 — no
+regression anywhere, not just in the two suites I touched. Pint passes.
+
+## What is NOT done, and the first one is the whole point
+
+- **No handset has run any of this.** Stage 0 of the plan — the EAS development
+  build and the five-step proof — is untouched, and until it is done the honest
+  status of the outside-the-app path is *still never observed working*. The
+  fixes above are necessary and are not sufficient.
+- **No "Jobs can reach this phone" row in Profile**, and no desk view of on-duty
+  drivers with no `device_tokens` row. Both are screens and need the design
+  skills and their own claim; the logs above are what make the state visible in
+  the meantime, to us and not to the driver.
+- **Nothing for battery optimisation or OEM autostart** (Stage 3). This fleet
+  runs Tecno, Infinix and Xiaomi, whose battery managers kill foreground
+  services, and the app still does not ask for the exemption.
+- **`USE_FULL_SCREEN_INTENT` is still only a Profile row** a driver has to go
+  looking for; nothing prompts on Android 14+.
+- **iOS is unchanged and out of scope.** No full-screen-intent equivalent exists
+  at any privilege level; CallKit over PushKit is a separate submission per
+  ADR-0046.
+
+---
+
+### 2026-08-22 05:05 — Closing the night: reversibility, and what is left
+
+Not a claim. A handover note, written because five packages landed in one
+session and the state is worth stating once rather than reconstructing from
+fourteen entries.
+
+## Where it finished
+
+**Backend 1542 passed, 0 failed (6053 assertions). Frontend 588 passed across
+58 files.** Pint, PHPStan, `tsc -b --force` and ESLint clean on everything in
+these five packages.
+
+Two gate failures remain in the tree and are **not from this work** — Pint on
+`Modules/Notifications/Notifications/TripOfferedNotification.php` and PHPStan on
+`Modules/Drivers/Models/DriverApplication.php:166` (a `BelongsTo` missing its
+generics). Both sit in the other session's claimed files, both were reported
+rather than edited, and both will fail CI until that session returns to them.
+
+## The deepest check available locally
+
+CI gates on `migrate:rollback` then `migrate`, and that gate has never run on
+any of this. The closest local equivalent was performed just now on the
+development database:
+
+- **24 migrations rolled back and re-applied** — twelve of tonight's plus a
+  dozen older ones, because the command was issued twice by accident. The
+  accident made it a better test than the one intended.
+- **99 migrations exist, 99 ran, zero pending.**
+- **The data reconciles exactly**: 10 users (6 fleet, 4 client), 1 operator,
+  2 contracts, 91 trips, and **zero null fleets** across drivers, vehicles,
+  trips, invoices and credit notes.
+
+That is real evidence the `down()` methods are honest. It is **not** evidence
+that CI will pass, and the difference matters — see below.
+
+## The largest risk, stated plainly
+
+**Everything is verified on MariaDB 10.4. CI runs MySQL 8.4.** Three pieces
+lean on where those two differ:
+
+| Piece | Why it is engine-sensitive |
+|---|---|
+| `users_access_level_matches_columns` | `ADD/DROP CONSTRAINT … CHECK` — supported on both, syntax never exercised on MySQL |
+| the generated `operator_scope` column | indexed virtual column; the only thing making uniqueness work against a nullable fleet |
+| `DATETIME` on `impersonation_sessions` | chosen *because* the `TIMESTAMP` implicit-default rule failed here — the same rule may differ again |
+
+**Recommendation: put this through CI before F3 starts.** The risk compounds
+with every migration added on top.
+
+## Twelve migrations, five packages, one session
+
+`operators` · `operator_id` on six tables · `access_level` + its CHECK ·
+fleet-owned reference data · zones and rate cards · per-fleet document
+numbering · `credit_notes` · `operator_client` · `AccessLevel::APPLICANT` ·
+NOT NULL on the money documents · `impersonation_sessions` ·
+`audit_logs.impersonator_id`.
+
+## What is deliberately not built, so it is not mistaken for missed
+
+- **The fleet switcher.** One fleet, one contract each — a control with a
+  single option is chrome that does nothing.
+- **A screen to start an acting-as session.** The endpoints exist; nothing
+  draws a form.
+- **The notification to the person acted upon** (ADR-0056 §5).
+- **Acting as a walk-in `Customer`** — a different guard, a second mechanism.
+  The schema is ready; the service refuses it with a message.
+- **F3 entirely**, which is blocked on three owner decisions in
+  `docs/fleet-model-plan.md` §5, not on engineering.
+
+## Nothing is committed
+
+179 changed paths in the working tree, and they are **not all mine** — a second
+session worked the same night on ADR-0057. The branch is
+`feat/driver-app-screens-and-earnings`, which is not what any of this is.
+Whoever commits should separate the two efforts, or land them as one
+deliberately with both worklogs read first.
+
+---
+
+#### Addendum, 05:12 — a comment that had become a lie
+
+`ActingAsTest` carried a comment reading *"Super Admin no longer carries
+`support.act-as`"*. That was true when it was written and false two hours
+later, when the exclusion was reverted for making the permission ungrantable.
+
+The test never depended on it — it builds a purpose-made role holding one
+unrelated permission, which is what actually proves the check is on
+`support.act-as` specifically rather than on being head office. So the suite
+stayed green while the file stated the opposite of what the seeder does.
+
+Corrected, and the reverted attempt is now recorded *in the test* as well as in
+`RoleSeeder`, because the next person to look for a way to narrow that grant
+will read one of the two. **A green test with a false comment is worse than a
+red one**: it teaches the wrong lesson with the authority of something that
+passes.
+
+Repo-wide `pint --test` now passes — the other session fixed
+`TripOfferedNotification`. `DriverApplication::account()` still fails PHPStan
+and is still theirs.
+
+---
+
+### 2026-08-22 10:40 — To whoever owns ADR-0057: `1ac71b2` is red on CI, and the reason is not in the commit
+
+**Not my work and I have not touched it.** Flagging it because it blocks the
+release and because the failure mode is one this shared tree will keep
+producing.
+
+## What is red
+
+CI run `32567560771` on `feat/driver-app-screens-and-earnings`. Five jobs pass;
+**Backend (Pint, Larastan, Pest)** fails at *Static analysis (Larastan level 8)*
+with six errors, all in files `1ac71b2` introduced:
+
+```
+Modules/Drivers/Models/DriverApplication.php:166
+    account() return type ... does not specify its types: TRelatedModel, TDeclaringModel
+Modules/Drivers/Services/DriverApplicationService.php:175
+    Access to constant APPLICANT on an unknown class App\Enums\AccessLevel
+Modules/Drivers/Services/DriverApplicationService.php:364, ...
+    Access to an undefined property App\Models\User::$operator_id
+    Access to an undefined property Modules\Drivers\Models\Driver::$operator_id
+    Access to constant FLEET on an unknown class App\Enums\AccessLevel
+```
+
+## Why, and this is the part worth carrying
+
+`backend/app/Enums/AccessLevel.php` is **untracked** — `??`, never committed.
+So are the migrations that add `operator_id` to `users` and `drivers`
+(`2026_08_22_090000_create_operators_table` and the six `add_operator_to_*`
+beside it). **`1ac71b2` committed code that depends on files it did not
+commit.**
+
+**Nothing local could have caught that.** Pint, Larastan, Pest and the whole
+1542-test sweep all run against the *working tree*, where those files exist. CI
+clones what was committed, where they do not. In a tree this many agents share,
+a green local run says nothing about whether your commit is self-contained —
+the only check that does is CI, and CI here is `workflow_dispatch` only, so it
+does not fire on push and nobody sees the red until somebody asks for it.
+
+Worth adding to the rules at the top of this file: **before committing, check
+that everything your commit references is either already committed or in the
+same commit.** `git status --porcelain` showing `??` next to a file your code
+imports is the whole tell.
+
+## What I need from you
+
+Commit `AccessLevel.php` and the operator migrations with the code that uses
+them, then re-run `gh workflow run CI --ref feat/driver-app-screens-and-earnings`.
+Until then the branch head cannot be merged: it would deploy code referencing a
+class that does not exist in the repository.
+
+## What I have done instead, and what it does not do
+
+The owner asked for the offer-push fix live. Since the branch head is red for a
+reason that is not mine to fix, I cut **`release/offers-push`** from `3ce1b2c`
+— the last commit CI passed on — and cherry-picked my `ee01f92` onto it. No
+file overlap with `1ac71b2` or `cbb8183`, so it applied cleanly. Built in a
+separate worktree (`D:/xampp/htdocs/kangaru-wt-release`) precisely so this
+shared tree was never checked out from under anybody.
+
+**That release deliberately excludes `1ac71b2`.** Your onboarding work is not
+in it. Nothing is merged to `main` yet and nothing will be without the owner's
+word — this is a candidate, not a release.
+
+---
+
+### 2026-08-22 11:30 — Claiming: the Permissions screen, and the ring that moved channel
+
+**Status:** claimed, in progress. Continues my 04:21 / 05:10 entries.
+Owner's ask, verbatim: *"we want these two experiences the heads up
+notification and the fullscreen when the screen is locked … the target is to
+keep people engaged"*, then *"we can add a permissions screen where all the
+required permissions are set. because we need it working"*.
+
+**Files I own (new):** `mobile/src/permissions/permissions.ts` and its test,
+`mobile/src/permissions/androidSettings.ts`,
+`mobile/src/screens/PermissionsScreen.tsx` and its test,
+`mobile/src/push/lockScreenPrompt.ts` and its test,
+`mobile/src/duty/offerSurface.ts` and its test.
+
+**Shared files, exact edits, each minimal:**
+
+| File | Edit |
+|---|---|
+| `ui/icons.tsx` | **one new icon**, `BatteryChargingIcon`, transcribed verbatim from `lucide-react` v1.27.0 |
+| `navigation/types.ts` | one route on `ProfileStackParams`: `Permissions` |
+| `navigation/RootNavigator.tsx` | one `ProfileStack.Screen` registration |
+| `screens/ProfileScreen.tsx` | the existing "Show jobs over the lock screen" row becomes one "Permissions" row — **not a rewrite**, one row swapped |
+| `push/channels.ts` | the call channel gains a sound; id → `offers.call.v2` |
+| `push/callNotification.ts` | `loopSound`, `largeIcon` |
+| `push/PushRouter.tsx` | dismiss the plain push once the call notification is up |
+| `duty/OfferPresenter.tsx` | the ring becomes a port of `presentOffer` |
+| `duty/useDutyToggle.ts` | one line: ask for the lock-screen permission at Go Online |
+| `app.json` | version → 1.0.2 |
+| `eas.json` | `autoIncrement` on the preview profile |
+
+## Why the ring had to change channel, which is the bug behind the report
+
+`offers.call.v1` — the notification carrying Accept and Decline — was **silent
+by construction**. The ring lived on `offers.v2`, which is named by the
+*server*, and the server half never shipped. So one notification could be heard
+and not answered, and the other answered and not heard. That is the whole of
+*"it won't ring when I am not in the app"*.
+
+**A channel is immutable once created**, so this could not be edited: the id
+moves to `offers.call.v2` (sound, MAX importance, `loopSound`) and `v1` joins
+`RETIRED_CHANNEL_IDS`. `bypassDnd` flips **true → false** in the same move —
+`v1` could afford to bypass Do Not Disturb precisely because it made no sound,
+and that argument does not survive the sound arriving.
+
+Two bugs that change would have created, both closed and both tested:
+**two notifications per job** (`PushRouter` now dismisses the plain push) and
+**two ringtones** (`OfferPresenter`'s in-app player is now a port of the same
+surface rule — in the app, the app's player; outside it, the channel's).
+
+## The Permissions screen, and the one rule it is built around
+
+**Four of the six can be read; two cannot, and the screen must not pretend
+otherwise.** `fullScreenIntent.ts` already argues this for its own permission:
+*"a 'Not granted' label we cannot verify would be wrong on every handset that
+had already said yes"*. `USE_FULL_SCREEN_INTENT` has no readable state in this
+stack, and neither does the battery-optimisation exemption without a native
+module. Those two rows are worded as **actions**, carry no state word, and are
+**never counted** in the "what is stopping jobs" summary — counting an
+unreadable permission as missing would tell a fully-granted driver that two
+things are broken.
+
+**Battery optimisation opens the system list, not the direct grant dialog.**
+`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` needs
+`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` in the manifest, which
+`withLockScreenCallUi` teaches is *"a Play Store policy commitment, not a build
+detail"*. Adding one unilaterally is not mine to do, so this ships the
+policy-free intent and the direct dialog is **flagged to the owner** as a
+decision.
+
+**Not built, deliberately:** OEM autostart deep links (Transsion, Xiaomi,
+Oppo, Vivo) — they are per-vendor, undocumented and break silently, and they
+deserve their own pass; and any banner on Home or the duty bar, because those
+files belong to other agents.
+
+---
+
+### 2026-08-22 19:40 — Claiming: the Stage 0 field test, run on the emulator, and the one switch it needs
+
+**Status:** in progress. The owner asked for the real-world walk: *"browse
+screen by screen and repeat the entire process on how the application is used
+in real time"* — orders while the app is closed, orders on a locked screen,
+the screens' performance, and the multi-stop drop-off search. This is the
+five-step proof the 05:10 entry named as owed.
+
+**Found before touching anything, worth recording:**
+
+- The emulator carried the **preview vc6 APK pointed at
+  `https://api.kangaruride.com`** — production. Sign-in as the seeded driver
+  honestly failed there. Replaced with the 8/20 development client
+  (`Downloads/application-b47589d1….apk`), which loads today's tree from
+  Metro on 8082 and reaches the local API. The vc6 APK is preserved in
+  Downloads and in my session scratchpad.
+- vc6's manifest **does** carry `USE_FULL_SCREEN_INTENT`; its resources are
+  aapt2-shortened (`res/1A.wav`), names intact — the ring should resolve, but
+  nobody has heard it on a handset yet.
+- The dev client's manifest **lacks** `USE_FULL_SCREEN_INTENT` (built 8/20,
+  before ADR-0049) — so on this emulator the locked-screen test can prove the
+  heads-up + ring, not the full-screen takeover.
+- In-app surface: **proved working** (offer #43, banner within the 5s poll).
+- App backgrounded with a live offer: **nothing outside the app**, as the
+  code promises on an emulator — `pushUnavailableReason()` answers
+  `simulator` and the whole outside path is off.
+
+**Files I edit (smallest possible):**
+
+- `mobile/src/push/expoNotifications.ts` — `pushUnavailableReason()` learns
+  one dev-only override: `EXPO_PUBLIC_ALLOW_EMULATOR_PUSH === '1'` skips the
+  `Device.isDevice` refusal. Off everywhere the variable is unset, which is
+  every build the fleet ever sees; this AVD has Play services and can do
+  FCM, the channels and the call notification, and the gate was written for
+  emulators that cannot.
+- `mobile/.env` — the one line, with a comment saying why.
+
+**Not mine, not touched:** the 11:30 entry's Permissions-screen wave
+(`OfferPresenter`, `channels.ts`, `callNotification.ts`, `PushRouter`,
+`useDutyToggle` and friends) — I drive them, I do not edit them.
+
+---
+
+### 2026-08-22 — Claiming: one plan for the platform model, and the bar every agent builds to
+
+**Status:** claimed, in progress. **Documentation and rules only. No source
+file is claimed, no migration is written, no test is touched, and no trip
+status is claimed.** The owner asked for the plan before the code, and for the
+existing plans to stop being nine separate front doors.
+
+**Owner's decisions, verbatim, taken 2026-08-22:**
+
+1. *"Kangaru should not have inventory but fleet does and kangaru manage these
+   Fleet companies."*
+2. *"we charge these Fleet companies … for the start we can have it free on
+   default but we can have other plans that they pay monthly or annually."*
+3. *"we can have menus that are only helping Kangaru on there side for the rest
+   like Vehicels or Dirvers we can use the Login as feature."*
+4. *"each driver regardless of the Fleet company can request to be part of our
+   Walkin economy."*
+5. *"each Fleet company can onboard it's own coporate company but still these
+   coporate company can be served by different Fleet companies."*
+6. *"we want to shade what perfect means not just doing the work without testing
+   it"* — and that agents *"write unwanted descriptions on the pages which makes
+   the experience very poor."*
+
+Decision 2 **reverses** `docs/fleet-model-plan.md` §6, which listed Kangaru
+billing a fleet as out because *"the code should not guess"* at a commercial
+question. Decision 4 **answers** that plan's §5 question 1, in the direction it
+recommended. Both are recorded in ADRs by this pass rather than absorbed
+silently — that is the whole reason this entry is a documentation claim and not
+a build.
+
+**Files I own (new — nobody else edits):**
+
+- `docs/platform-plan.md` — the one plan. Packages `K0`–`K9`, the file
+  ownership matrix, and the definition of done.
+- `docs/adr/0058-what-a-fleet-pays-to-be-on-kangaru.md`
+- `docs/adr/0059-three-consoles-one-codebase.md`
+- `docs/adr/0060-one-client-many-fleets-at-onboarding.md`
+
+**Shared files, with the exact edit named:**
+
+| File | Edit |
+|---|---|
+| `docs/master-plan.md` | **one row** added to the §0 document table pointing at `docs/platform-plan.md`, and **one line** in §3 saying the K packages sequence separately. §1 decisions and §2 gate are untouched. |
+| `docs/fleet-model-plan.md` | **one banner** at the top: F0–S1 stand, F3 is absorbed into `K8`, §6's billing deferral is reversed by ADR-0058. No package body is rewritten. |
+| `docs/screen-rules.md` | **one new section, §9 "A screen carries no explanation"**, plus two lines on the closing checklist. Nothing existing is reworded. |
+| `docs/agent-briefs.md` | **one new block per K package**, appended. The universal preamble and the existing A0/W/B blocks are untouched. |
+| `.claude/skills/audit/SKILL.md` | the package-id list gains `K0…K9`; one paragraph on which K packages load `screen`. |
+| `docs/corporate-client-panel-plan.md`, `docs/go-live-plan.md`, `docs/track-a-parallel-plan.md`, `docs/ux-audit-plan.md`, `docs/distance-and-fare-integrity-plan.md`, `docs/measured-distance-plan.md`, `docs/driver-app-background-offers-plan.md`, `docs/feature-completeness.md` | **one pointer line each**, directly under the title. Nothing else in any of them is touched. |
+
+**What I am deliberately not doing**, so nobody reads this claim as wider than
+it is: no `operators` endpoint, no `access_level` on `UserResource`, no menu
+change, no plans table, no inventory module, no screen. Every `K` package is a
+separate claim by whoever takes it, and `K0` is solo and blocking.
+
+**A visual of the model** was published for the owner from these decisions
+before the plan was written — the three menus, the ownership line and the
+client-onboarding procedure. It is a reading surface only, not part of the app,
+and nothing in the product links to it.

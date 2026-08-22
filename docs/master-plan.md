@@ -10,6 +10,8 @@ The top-level plan. Everything else hangs off this.
 | `docs/go-live-plan.md` | Track A / Track B split and release plumbing |
 | `docs/agent-worklog.md` | Who is building what, right now. Binding. |
 | `docs/corporate-client-panel-plan.md` | The corporate client's panel, against Centenary Bank's letter CRDB/CS/F/26 |
+| `docs/fleet-model-plan.md` | Kangaru above the fleets (ADR-0055, ADR-0056). Sequenced separately; does not reorder §3 below |
+| **`docs/platform-plan.md`** | **The front door for the `K0`–`K9` packages**: the three consoles, what a fleet pays, one client on many fleets — and **§2, what "done" means**. Sequenced separately; does not reorder §3 below. §1 and §2 of *this* file still outrank it. |
 
 ---
 

@@ -1,5 +1,7 @@
 # Feature completeness census
 
+> **Its rule is now gate 1 of `docs/platform-plan.md` §2** — a loop has four parts, and a feature missing any one is half-built. The census itself is unchanged.
+
 **Package W1-f.** Owner: this document. **Edits no source, hides nothing,
 deletes nothing.** It reports so the owner can choose.
 

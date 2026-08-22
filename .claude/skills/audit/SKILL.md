@@ -1,6 +1,6 @@
 ---
 name: audit
-description: The single entry point for any agent joining the KangaruRide go-live or driver-app audit effort. Reads the worklog, claims an unclaimed work package, loads the skills and documents that package needs, and carries the shared-tree rules that keep parallel agents from overwriting each other. Use with no argument to be assigned the next package, or with a package id (A0, W1-a…W1-f, W2-a, B0…B3) to take a specific one.
+description: The single entry point for any agent joining the KangaruRide go-live or driver-app audit effort. Reads the worklog, claims an unclaimed work package, loads the skills and documents that package needs, and carries the shared-tree rules that keep parallel agents from overwriting each other. Use with no argument to be assigned the next package, or with a package id (A0, W1-a…W1-f, W2-a, B0…B3, or K0…K9 for the platform plan) to take a specific one.
 ---
 
 # Join the effort
@@ -36,7 +36,7 @@ took an hour ago is already stale.
 gate, the sequence and the go/no-go list. It is the single source of truth and
 outranks anything in your prompt.
 
-**If a package id was given** (`A0`, `W1-a`…`W1-f`, `W2-a`, `B0`…`B3`), that is
+**If a package id was given** (`A0`, `W1-a`…`W1-f`, `W2-a`, `B0`…`B3`, or `K0`…`K9`), that is
 yours. Check the worklog first: if someone already holds it, say so and stop.
 
 **If no id was given**, take the next package that is (a) unclaimed in the
@@ -45,6 +45,13 @@ Announce which one you took and why, before starting.
 
 **`A0` is solo and blocking.** If `A0` is unfinished, no other package may start
 — say so and stop rather than working around it.
+
+**If your package is a `K`, read `docs/platform-plan.md` in full as well.** It
+is the front door for that work: the model, the ten packages, the file
+ownership matrix that keeps you off other agents' files, and **§2, what "done"
+means here** — seven gates, of which gate 6 (it says so when it breaks, proved
+by triggering it) is the one most likely to be new to you. `K0` is solo and
+blocking for the K packages exactly as `A0` is for everything.
 
 ### Claiming, without racing another agent
 
@@ -71,13 +78,13 @@ master plan amends it, the master plan wins.** Then `AGENTS.md` and
 `PRODUCT.md`.
 
 **If your package touches any screen, page, form, modal or component** —
-`W1-e`'s privacy notice, and every Track B package — **load the `screen` skill
-now.** It pulls in `quality-control`, `DESIGN.md` and `docs/screen-rules.md`,
+`W1-e`'s privacy notice, every Track B package, and `K3`, `K4`, `K6`, `K7` —
+**load the `screen` skill now.** It pulls in `quality-control`, `DESIGN.md` and `docs/screen-rules.md`,
 and those rules outrank any mockup. For a Track B audit phase, also read
 `docs/ux-audit-plan.md` in full; its thresholds are fixed in advance so a
 finding cannot be shaped to fit whatever was easy to change.
 
-**If your package touches no UI** — `A0`, `W1-a`…`W1-d`, `W1-f`, `W2-a` — do
+**If your package touches no UI** — `A0`, `W1-a`…`W1-d`, `W1-f`, `W2-a`, `K0`, `K2`, `K5` — do
 not load `screen`. It loads the wrong context and buries the brief.
 
 **The ADR for anything you touch** lives in `docs/adr/`. Find it before you
