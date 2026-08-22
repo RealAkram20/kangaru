@@ -5234,6 +5234,36 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/operators/{operator}/accounts:
+    parameters:
+      - { name: operator, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: Who head office can act as at this fleet.
+      description: >
+        ADR-0056 acts as a **person**, not an organisation — there is no "act
+        as Shanitah", there is "act as Shanitah's fleet owner" — so Log in as
+        needs somebody to name. Separate from the fleet resource, which is
+        counts-only on purpose (ADR-0055 §2); the disclosure is explicit here
+        rather than smuggled in as one more useful field. Kangaru-level only:
+        a fleet reads its own people through /users, correctly scoped.
+      responses:
+        '200':
+          description: Accounts at this fleet, by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/User' }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/zones:
     get:
       summary: The geofences this caller may see.

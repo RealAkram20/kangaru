@@ -247,3 +247,64 @@ it('keeps the slug unique so two fleets cannot share an address', function () {
         ->assertStatus(422)
         ->assertJsonValidationErrors(['slug']);
 });
+
+/**
+ * Who head office can act as at a fleet (`K3`, ADR-0056, ADR-0059 §5).
+ *
+ * Acting as assumes a **person's** identity — there is no "act as Shanitah",
+ * there is "act as Shanitah's fleet owner" — so the Log in as button needs
+ * somebody to name. This is the one endpoint that reaches inside a fleet and
+ * returns people, and it is separate from `OperatorResource` precisely so the
+ * disclosure is explicit rather than smuggled in as one more useful field.
+ */
+it('names the people head office could act as at a fleet', function () {
+    $operator = Operator::query()->findOrFail(Operator::SHANITAH);
+
+    $someone = User::factory()->create([
+        'role' => UserRole::DISPATCHER,
+        'tenant_id' => null,
+        'operator_id' => $operator->id,
+        'access_level' => AccessLevel::FLEET,
+    ]);
+
+    $this->actingAs(headOffice(), 'sanctum')
+        ->getJson("/api/v1/operators/{$operator->id}/accounts")
+        ->assertOk()
+        ->assertJsonFragment(['email' => $someone->email]);
+});
+
+/**
+ * The scoping that makes it safe to return people at all. A cross-fleet leak
+ * here would hand head office — and anybody who ever reaches this route — the
+ * staff list of every operator on the platform in one request.
+ */
+it('names nobody from another fleet', function () {
+    $shanitah = Operator::query()->findOrFail(Operator::SHANITAH);
+
+    $rival = Operator::create(['name' => 'Rival Transport Ltd', 'slug' => 'rival-transport-k3', 'status' => 'active']);
+
+    $theirs = User::factory()->create([
+        'role' => UserRole::DISPATCHER,
+        'tenant_id' => null,
+        'operator_id' => $rival->id,
+        'access_level' => AccessLevel::FLEET,
+    ]);
+
+    $this->actingAs(headOffice(), 'sanctum')
+        ->getJson("/api/v1/operators/{$shanitah->id}/accounts")
+        ->assertOk()
+        ->assertJsonMissing(['email' => $theirs->email]);
+});
+
+/**
+ * Gated on the register's own policy, which is the level. A fleet's Super
+ * Admin reads their own people through `/users`, correctly scoped to them —
+ * this route is head office's cross-fleet read and the only one.
+ */
+it("refuses a fleet's own super admin the account list, even their own", function () {
+    $operator = Operator::query()->findOrFail(Operator::SHANITAH);
+
+    $this->actingAs(fleetSuperAdmin(), 'sanctum')
+        ->getJson("/api/v1/operators/{$operator->id}/accounts")
+        ->assertForbidden();
+});

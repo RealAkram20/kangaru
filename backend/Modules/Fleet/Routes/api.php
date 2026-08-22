@@ -5,6 +5,7 @@ use Modules\Fleet\Controllers\AvailabilityBlockController;
 use Modules\Fleet\Controllers\DriverAvailabilityController;
 use Modules\Fleet\Controllers\DriverPresenceController;
 use Modules\Fleet\Controllers\OnDutyDriverController;
+use Modules\Fleet\Controllers\OperatorAccountController;
 use Modules\Fleet\Controllers\OperatorController;
 use Modules\Fleet\Controllers\VehicleAllocationController;
 use Modules\Fleet\Controllers\ZoneController;
@@ -20,6 +21,12 @@ Route::get('operators', [OperatorController::class, 'index'])->name('operators.i
 Route::post('operators', [OperatorController::class, 'store'])->name('operators.store');
 Route::get('operators/{operator}', [OperatorController::class, 'show'])->name('operators.show');
 Route::patch('operators/{operator}', [OperatorController::class, 'update'])->name('operators.update');
+
+// Who head office can act as at this fleet (ADR-0056). A person, never an
+// organisation — so Log in as needs somebody to name. Separate from
+// `OperatorResource`, which is counts-only on purpose.
+Route::get('operators/{operator}/accounts', [OperatorAccountController::class, 'index'])
+    ->name('operators.accounts.index');
 
 // `Modules/Fleet`'s first routes (ADR-0009). Nested under nothing: an
 // allocation is about one vehicle and one client but belongs to neither

@@ -200,6 +200,35 @@ const OPENED_BY_CAPABILITY: Record<string, string[]> = {
   manages_staff: ['staff'],
 }
 
+/**
+ * Nav ids that exist at one **level** and not the others (ADR-0059 §1).
+ *
+ * Separate from `VISIBLE_TO`, which is a role map, because these are not the
+ * same question. A role is something an account can be given; a level is not.
+ * `fleets` is the register of a fleet's competitors — a fleet company has no
+ * business in it whatever role it holds, and `OperatorPolicy` gates on
+ * `access_level` for exactly that reason.
+ *
+ * Answering this with a role list would mean denying every Kangaru-only entry
+ * to six fleet roles individually, forever, and one forgotten entry is a fleet
+ * reading Kangaru's plans. That fails toward exposure; this fails toward a
+ * refusal.
+ */
+const LEVEL_ONLY: Record<string, string[]> = {
+  fleets: ['kangaru'],
+}
+
+export function canUseNavLevel(level: string | undefined, id: string): boolean {
+  const allowed = LEVEL_ONLY[id]
+  if (allowed === undefined) return true
+
+  // An account whose level the API did not send is refused a level-gated
+  // entry. `menuFor` defaults an unknown level to the *fleet* menu so nobody
+  // is left without navigation; that leniency is for chrome, and it does not
+  // extend to a door that only head office may open.
+  return level !== undefined && allowed.includes(level)
+}
+
 export function canUseNavItem(role: string | undefined, id: string, capabilities: string[] = []): boolean {
   if (role === undefined) return false
 
@@ -224,7 +253,11 @@ export function filterSections<S extends { items?: { id: string; label: string }
     .map((section) => ({
       ...section,
       items: (section.items ?? [])
-        .filter((item) => canUseNavItem(user?.role, item.id, user?.capabilities ?? []))
+        .filter(
+          (item) =>
+            canUseNavLevel(user?.access_level, item.id) &&
+            canUseNavItem(user?.role, item.id, user?.capabilities ?? []),
+        )
         .map((item) => ({ ...item, label: navLabel(user?.role, item.id, item.label) })),
     }))
     .filter((section) => section.items.length > 0)

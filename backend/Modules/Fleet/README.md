@@ -65,6 +65,26 @@ rather than defaulting when nothing is flagged default. Everything that makes
 a plan commercial (price, period, limits, Kangaru's invoice to a fleet) is
 `K7`'s, and nothing here presumes its shape.
 
+### A new permission does nothing until `RoleSeeder` runs — and re-running it has a side effect
+
+Found the hard way while verifying `K3` in a browser. `fleets.view` and
+`fleets.manage` were added to `App\Enums\Permission` and `RoleSeeder` grants
+Super Admin `P::cases()`, so both looked granted. They were not: **role rows
+hold a snapshot of the permission list**, and the seeded row still carried the
+39 permissions that existed when it was written, against 42 in the enum. Every
+`/operators` request answered 403 to a Kangaru Super Admin, and nothing in the
+code said why.
+
+`php artisan db:seed --class=RoleSeeder --force` fixes it, and it is a
+**deployment step for this change**, not a local convenience.
+
+**The side effect, which cost more than the bug.** `RoleSeeder` also sets
+`roles.requires_mfa`, so re-running it switched MFA back **on** for Super Admin
+and Finance — an environment where it had been deliberately turned off. Three
+console accounts went to "must enrol" at the next sign-in with no warning. If
+you re-seed roles on an environment where MFA has been relaxed, check
+`roles.requires_mfa` on `super_admin` and `finance` afterwards and put it back.
+
 ## Responsibilities
 
 - Record that a vehicle is allocated to a corporate account from a date,

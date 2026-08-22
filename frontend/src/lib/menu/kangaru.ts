@@ -42,6 +42,15 @@ export const KANGARU_MENU: SidebarSection[] = [
     ],
   },
   {
+    // ADR-0055 / ADR-0059: the fleet companies Kangaru manages. **The first
+    // entry that exists at one level and not the others** — a fleet has no
+    // register of its competitors, and a client has no view of the operators
+    // at all. `menu.test.ts` names it in LEVEL_ONLY so the divergence is
+    // declared in a diff rather than drifting.
+    label: 'The network',
+    items: [{ id: 'fleets', label: 'Fleet companies', icon: 'building-2' }],
+  },
+  {
     label: 'Fleet',
     items: [
       { id: 'vehicles', label: 'Vehicles', icon: 'truck' },

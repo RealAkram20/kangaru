@@ -17,6 +17,7 @@ const NAV_PATHS: Partial<Record<string, string>> = {
   // `/` now belongs to the public landing page (ADR-0012 §5); the
   // dashboard lives at its own path and `/` redirects signed-in users here.
   dashboard: '/dashboard',
+  fleets: '/fleets',
   bookings: '/bookings',
   dispatch: '/dispatch',
   'walk-ins': '/order-requests',
@@ -41,6 +42,7 @@ const NAV_PATHS: Partial<Record<string, string>> = {
 
 const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
   '/dashboard': { id: 'dashboard', title: 'Dashboard' },
+  '/fleets': { id: 'fleets', title: 'Fleet companies' },
   '/bookings': { id: 'bookings', title: 'Bookings' },
   '/dispatch': { id: 'dispatch', title: 'Dispatch board' },
   '/order-requests': { id: 'walk-ins', title: 'Walk-in orders' },
@@ -91,6 +93,9 @@ export function AppShell() {
   const found =
     PAGE_BY_PATH[location.pathname] ??
     (location.pathname.startsWith('/trips/') ? { id: 'trips', title: 'Trip record' } : undefined) ??
+    // `/fleets/3` is one fleet company, and lights the register the way
+    // a trip record lights Trips.
+    (location.pathname.startsWith('/fleets/') ? { id: 'fleets', title: 'Fleet company' } : undefined) ??
     // `/routes/12` is the builder editing an existing circuit, and lights
     // the Routes entry the way `/routes/new` does.
     (location.pathname.startsWith('/routes/') ? { id: 'routes', title: 'Route' } : undefined)

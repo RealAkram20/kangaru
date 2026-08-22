@@ -21,6 +21,8 @@ const AuditLogPage = page(() => import('../pages/AuditLogPage'), 'AuditLogPage')
 const BookingsPage = page(() => import('../pages/BookingsPage'), 'BookingsPage')
 const CompaniesPage = page(() => import('../pages/CompaniesPage'), 'CompaniesPage')
 const CustomersPage = page(() => import('../pages/CustomersPage'), 'CustomersPage')
+const FleetCompaniesPage = page(() => import('../pages/FleetCompaniesPage'), 'FleetCompaniesPage')
+const FleetRecordPage = page(() => import('../pages/fleets/FleetRecordPage'), 'FleetRecordPage')
 const DashboardPage = page(() => import('../pages/DashboardPage'), 'DashboardPage')
 const DispatchPage = page(() => import('../pages/DispatchPage'), 'DispatchPage')
 const DriverApplicationsPage = page(
@@ -123,6 +125,27 @@ export const router = createBrowserRouter([
     ),
     children: [
       { path: 'dashboard', element: <DashboardPage /> },
+      // ADR-0055 / ADR-0059. Behind RequireNavAccess like Staff rather than
+      // unguarded like Roles: `fleets` is not a permission a custom role is
+      // expected to carry — OperatorPolicy gates on the account's LEVEL, and
+      // a level is not something a role can be given. The safer side to err
+      // on, and the server refuses regardless.
+      {
+        path: 'fleets',
+        element: (
+          <RequireNavAccess id="fleets">
+            <FleetCompaniesPage />
+          </RequireNavAccess>
+        ),
+      },
+      {
+        path: 'fleets/:id',
+        element: (
+          <RequireNavAccess id="fleets">
+            <FleetRecordPage />
+          </RequireNavAccess>
+        ),
+      },
       { path: 'bookings', element: <BookingsPage /> },
       // Deliberately not behind RequireNavAccess, like Roles: a custom role
       // holding `order_requests.manage` is invisible to a slug list. The

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CLIENT_MENU, FLEET_MENU, KANGARU_MENU, menuFor } from './index'
-import { filterSections } from '../navigation'
+import { canUseNavLevel, filterSections } from '../navigation'
 import { makeUser } from '../../test/harness'
 
 /**
@@ -48,17 +48,44 @@ describe('the menu a level gets', () => {
 
 describe('K1 changes nothing anybody can see', () => {
   /**
-   * The binding constraint on this package. A change to the file every other
-   * package wants to touch must not also change what people see, or a
-   * regression in either is indistinguishable from the other.
+   * The three lists agree **except** where a level genuinely owns something.
    *
-   * `K4` deletes twelve entries from `KANGARU_MENU` and this turns red. That
-   * is the point: it should have to be deleted deliberately, in the commit
-   * that makes the levels differ, rather than drifting apart unnoticed.
+   * `K1` asserted they were identical, full stop. `K3` broke that on purpose
+   * by giving Kangaru the fleet-company register — a fleet has no register of
+   * its competitors, and a client has no view of the operators at all — so
+   * the guard narrows rather than dies.
+   *
+   * The point it keeps: a divergence has to be **declared here**, in the
+   * commit that creates it. `K4` removes twelve entries from `KANGARU_MENU`
+   * and this turns red until they are named, which is the conversation that
+   * should happen.
    */
-  it('offers the same destinations at every level', () => {
-    expect(ids(FLEET_MENU)).toEqual(ids(KANGARU_MENU))
-    expect(ids(CLIENT_MENU)).toEqual(ids(KANGARU_MENU))
+  const LEVEL_ONLY = ['fleets']
+
+  const shared = (sections: { items: { id: string }[] }[]) =>
+    ids(sections).filter((id) => !LEVEL_ONLY.includes(id))
+
+  it('offers the same destinations at every level, bar the ones a level owns', () => {
+    expect(shared(FLEET_MENU)).toEqual(shared(KANGARU_MENU))
+    expect(shared(CLIENT_MENU)).toEqual(shared(KANGARU_MENU))
+  })
+
+  it('gives the fleet register to head office and to nobody else', () => {
+    expect(ids(KANGARU_MENU)).toContain('fleets')
+    expect(ids(FLEET_MENU)).not.toContain('fleets')
+    expect(ids(CLIENT_MENU)).not.toContain('fleets')
+  })
+
+  /**
+   * The menu and the route must agree. A level that is offered the entry and
+   * refused the page — or worse, hidden from the entry and served the page —
+   * is the drift `canUseNavLevel` exists to prevent.
+   */
+  it('refuses the register to every level but head office, by URL as well', () => {
+    expect(canUseNavLevel('kangaru', 'fleets')).toBe(true)
+    expect(canUseNavLevel('fleet', 'fleets')).toBe(false)
+    expect(canUseNavLevel('client', 'fleets')).toBe(false)
+    expect(canUseNavLevel(undefined, 'fleets')).toBe(false)
   })
 
   it('leaves role filtering exactly where it was', () => {

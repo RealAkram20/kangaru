@@ -42,6 +42,16 @@ export interface User {
    */
   capabilities?: string[]
   books_without_approval?: boolean
+  /**
+   * Whether this account may sign in (`UserStatus`). Declared in the contract
+   * and served on every user payload; the type simply never listed it, so
+   * every surface that wanted to show whether an account was live had to
+   * reach for `types/staff.ts` instead.
+   *
+   * Optional because a response from an API older than the field still types.
+   */
+  status?: 'active' | 'suspended'
+  is_active?: boolean
   created_at: string
   /**
    * Whether this account has a second factor set up (ADR-0008).

@@ -16807,3 +16807,54 @@ new `plans` migration.
   independently fleet-scoped.** They are reached through a trip and the trip
   is the gate. Sound today; it stops being sound the moment somebody adds a
   route that reaches them without resolving a trip first.
+
+---
+
+### 2026-08-22 — Claiming: K3, the fleet console — and the first thing anybody can see
+
+**Status:** claimed, in progress. Continues my `K0`/`K1`/`K2` entries.
+
+**Why now, out of plan order.** The owner, looking at `localhost:5173`:
+*"what are you doing, i don't see any visual changes"* — and they are right.
+`K1` shipped all three menus identical **on purpose**, so it is invisible by
+design; `K2` is an API with no page. Three packages in, the product looks
+untouched. `K3` is the package that makes the fleet register real, so it goes
+before `K5`.
+
+**One addition to `K2`'s surface, and it is required rather than convenient:**
+`GET /operators/{operator}/accounts`. ADR-0056 acts as a **person**, not an
+organisation, so a Log in as button needs somebody to name. `OperatorResource`
+is deliberately counts-only (ADR-0055 §2), so this is a separate, separately
+policed endpoint rather than a field on it — names and roles of a fleet's
+accounts, which is exactly what picking a subject needs and no more.
+
+**Files I own (new):**
+
+- `backend/Modules/Fleet/Controllers/OperatorAccountController.php` + test
+- `frontend/src/types/operator.ts`
+- `frontend/src/pages/FleetCompaniesPage.tsx` + test
+- `frontend/src/pages/fleets/FleetRecordPage.tsx` + test
+- `frontend/src/pages/fleets/OnboardFleetDialog.tsx`
+- `frontend/src/pages/fleets/ActAsDialog.tsx`
+
+**Shared files, exact edits:**
+
+| File | Edit |
+|---|---|
+| `Modules/Fleet/Routes/api.php` | one route |
+| `docs/api/openapi.yaml` | `/operators/{operator}/accounts` only |
+| `tests/Feature/Ci/RoutePolicyCensusTest.php` | one row, three counts `+1` |
+| `frontend/src/lib/menu/kangaru.ts` | **one entry** — and this is the moment the three menus stop being identical |
+| `frontend/src/lib/menu/menu.test.ts` | the parity guard narrows to *shared* entries plus a named allow-list |
+| `frontend/src/routes/router.tsx` | one route block |
+| `frontend/src/components/layout/AppShell.tsx` | `NAV_PATHS` + `PAGE_BY_PATH` entries |
+
+**The parity guard changes rather than dies.** `K1` asserted the three menus
+offer identical destinations. Adding Fleet companies to Kangaru's alone breaks
+that — correctly. It becomes: the lists agree **except** for entries named in
+`LEVEL_ONLY`, so a divergence still has to be declared in a diff rather than
+drifting.
+
+**Not touched:** `mobile/`, and the three files another agent holds for
+place-suggestions (`Trips/Routes/api.php` is shared — my one route goes in
+`Fleet/Routes/api.php`, so no overlap).
