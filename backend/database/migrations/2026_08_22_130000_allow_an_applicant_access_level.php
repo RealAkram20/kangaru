@@ -45,32 +45,59 @@ return new class extends Migration
 {
     private const CONSTRAINT = 'users_access_level_matches_columns';
 
+    /**
+     * Widened in place. `2026_08_22_090200` explains why this invariant is a
+     * trigger pair rather than a `CHECK` — MySQL 8.4 refuses a `CHECK` naming
+     * a column that carries a foreign key with a referential action, and
+     * `users.tenant_id` is `ON DELETE SET NULL`.
+     */
+    private const TRIGGERS = [
+        'users_access_level_bi' => 'INSERT',
+        'users_access_level_bu' => 'UPDATE',
+    ];
+
     private const CLAUSES = [
-        "(access_level = 'kangaru'   AND operator_id IS NULL     AND tenant_id IS NULL)",
-        "(access_level = 'applicant' AND operator_id IS NULL     AND tenant_id IS NULL)",
-        "(access_level = 'fleet'     AND operator_id IS NOT NULL AND tenant_id IS NULL)",
-        "(access_level = 'client'    AND operator_id IS NULL     AND tenant_id IS NOT NULL)",
+        "(NEW.access_level = 'kangaru'   AND NEW.operator_id IS NULL     AND NEW.tenant_id IS NULL)",
+        "(NEW.access_level = 'applicant' AND NEW.operator_id IS NULL     AND NEW.tenant_id IS NULL)",
+        "(NEW.access_level = 'fleet'     AND NEW.operator_id IS NOT NULL AND NEW.tenant_id IS NULL)",
+        "(NEW.access_level = 'client'    AND NEW.operator_id IS NULL     AND NEW.tenant_id IS NOT NULL)",
     ];
 
     public function up(): void
     {
-        DB::statement('ALTER TABLE users DROP CONSTRAINT '.self::CONSTRAINT);
-        DB::statement('ALTER TABLE users ADD CONSTRAINT '.self::CONSTRAINT.' CHECK ('
-            .implode(' OR ', self::CLAUSES).')');
+        self::rebuild(self::CLAUSES);
     }
 
     public function down(): void
     {
-        // Rolling back while an applicant account exists would fail on the
-        // narrower constraint, which is correct: reversing a schema that
-        // permitted something is not a way to delete the rows created under
-        // it. CI rolls back an empty database, where the question does not
-        // arise.
-        DB::statement('ALTER TABLE users DROP CONSTRAINT '.self::CONSTRAINT);
-        DB::statement('ALTER TABLE users ADD CONSTRAINT '.self::CONSTRAINT.' CHECK ('
-            .implode(' OR ', array_values(array_filter(
-                self::CLAUSES,
-                fn (string $clause) => ! str_contains($clause, 'applicant'),
-            ))).')');
+        // Rolling back while an applicant account exists does not delete it —
+        // the narrower rule simply refuses the next write to that row.
+        // Reversing a schema that permitted something is not a way to remove
+        // the rows created under it. CI rolls back an empty database, where
+        // the question does not arise.
+        self::rebuild(array_values(array_filter(
+            self::CLAUSES,
+            fn (string $clause) => ! str_contains($clause, 'applicant'),
+        )));
+    }
+
+    /**
+     * A trigger cannot be altered, only replaced, so both directions drop and
+     * recreate the pair. `IF EXISTS` because `down()` may run against a
+     * database where `up()` never did.
+     *
+     * @param  list<string>  $clauses
+     */
+    private static function rebuild(array $clauses): void
+    {
+        foreach (self::TRIGGERS as $name => $event) {
+            DB::unprepared("DROP TRIGGER IF EXISTS {$name}");
+            DB::unprepared(
+                "CREATE TRIGGER {$name} BEFORE {$event} ON users FOR EACH ROW BEGIN "
+                .'IF NOT ('.implode(' OR ', $clauses).') THEN '
+                ."SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '".self::CONSTRAINT."'; "
+                .'END IF; END'
+            );
+        }
     }
 };
