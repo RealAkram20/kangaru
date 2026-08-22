@@ -32,6 +32,17 @@ class UserResource extends JsonResource
             // exists to catch. `/auth/*` and `/users*` load it; a nested
             // actor does not carry it and does not need to.
             'tenant_name' => $this->whenLoaded('tenant', fn () => $this->tenant?->name),
+            // Which level this account belongs to (ADR-0055 §4). The console
+            // chooses **which menu exists** from this before role narrows it
+            // (ADR-0059 §1) — a fleet's dispatch board is not a thing in
+            // Kangaru's world, and answering that with a role deny-list means
+            // never forgetting one of six roles, forever.
+            //
+            // Unconditional rather than `whenLoaded`: it is a column on the
+            // row, not a relation, so it costs no query wherever this resource
+            // is nested. It is not a secret either — it is a fact about the
+            // caller that the caller's own menu already reveals.
+            'access_level' => $this->access_level->value,
             'name' => $this->name,
             'email' => $this->email,
             // The work number, so a booking raised for this person can be

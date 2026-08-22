@@ -16669,3 +16669,36 @@ the same lesson the census itself exists to teach one level up.
   including the live permissions-screen claim. Not mine to land.
 - **`tools/dev-backend-pool.ps1`** left untracked — dev tooling, not mine.
 - **Nothing merged.** PR #9 is not touched; this is the branch only.
+
+---
+
+### 2026-08-22 — Claiming: wave 1 — K1, K2 and K5, in sequence
+
+**Status:** claimed, in progress. `K0` is closed and green
+([32589168154](https://github.com/RealAkram20/kangaru/actions/runs/32589168154)),
+so wave 1 is clear per `docs/platform-plan.md` §5.
+
+**All three taken by one agent, in sequence, on purpose.** The plan sizes them
+for three agents running at once; taken serially the collision question does
+not arise at all, and `openapi.yaml` — the only file wave 1 shares — gets one
+writer instead of two.
+
+**K1 · files I own:**
+`backend/Modules/Administration/Resources/UserResource.php` (one field),
+`frontend/src/types/auth.ts` (one field), `frontend/src/lib/navigation.ts` +
+its test, and **new** `frontend/src/lib/menu/{kangaru,fleet,client,index}.ts`.
+**Shared:** `frontend/src/components/layout/AppShell.tsx` — `SECTIONS` deleted
+and replaced by a level lookup, nothing else in that file.
+
+**K2 · files I own:** `backend/Modules/Fleet/{Controllers,Policies,Requests,
+Resources,Services}/Operator*`, `backend/app/Models/Operator.php`, their tests.
+**Shared:** `Modules/Fleet/Routes/api.php` one block, `openapi.yaml`
+`/operators*` only, `RoleSeeder` one permission, `Modules/Fleet/README.md`.
+
+**K5 · files I own:** the `registration_number` migration,
+`Modules/Clients/Controllers/ClientLookupController.php`, its tests.
+**Shared:** `Modules/Clients/Routes/api.php` one route, `openapi.yaml`
+`/clients/lookup` only.
+
+**Not touched:** `mobile/` — the permissions screen is another agent's live
+claim. `K3`, `K4`, `K6`, `K7` remain unclaimed.

@@ -7361,10 +7361,20 @@ components:
         - mfa_enabled
         - must_enrol_mfa
         - mfa_recovery_codes_low
+        - access_level
       additionalProperties: false
       properties:
         id: { type: integer }
         tenant_id: { type: ['integer', 'null'] }
+        access_level:
+          enum: [kangaru, fleet, client, applicant]
+          description: >
+            Which level this account belongs to (ADR-0055 §4). Stated on the
+            row, never inferred from tenant_id and operator_id being null —
+            "no client and no fleet" describes Kangaru, the most privileged
+            level, and inference would promote every driver to it. The console
+            chooses which menu exists from this before role narrows it
+            (ADR-0059 §1). Always present.
         tenant_name:
           type: ['string', 'null']
           description: The client's display name ("Centenary Bank"); null for platform staff, who have none (ADR-0006). Present on /auth/* and /users* responses; a nested actor (a booking's requester, an audit row's user) omits it.

@@ -8,6 +8,20 @@ export interface User {
    * from an API older than the field still types.
    */
   tenant_name?: string | null
+  /**
+   * Which of the levels this account belongs to (App\Enums\AccessLevel,
+   * ADR-0055 §4) — `kangaru`, `fleet`, `client` or `applicant`.
+   *
+   * The menu is chosen by this before role narrows it (ADR-0059 §1). Stated
+   * on the row and never worked out from `tenant_id` and `operator_id` being
+   * null: inference would have promoted six accounts to head office silently.
+   *
+   * Optional because a response from an API older than the field still types.
+   * `menuFor` treats an absent level as `fleet` rather than as nothing — see
+   * the note there for why that exception to failing closed is the safe
+   * direction in this one place.
+   */
+  access_level?: 'kangaru' | 'fleet' | 'client' | 'applicant'
   name: string
   email: string
   role: string
