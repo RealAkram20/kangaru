@@ -49,6 +49,41 @@ class TripOfferWithdrawnNotification extends KangaruNotification
     }
 
     /**
+     * **Stays on the queue, and this is the deliberate half of a pair.**
+     *
+     * `TripOfferedNotification` took its push off the queue: a 45-second
+     * countdown cannot wait for a worker, and `ring()` is called from
+     * `offerWave()`, which holds no transaction — so an inline HTTP call there
+     * costs a slower response and nothing else.
+     *
+     * **This one is the opposite case and the symmetry is a trap.** The
+     * withdrawal is sent from `withdraw()`, which `accept()` calls *inside* its
+     * `DB::transaction` — after a `lockForUpdate()` on the offer row and after
+     * the trip has been created. Put on `sync`, this would run a three-second
+     * HTTP call to a third party while holding those locks, once per losing
+     * driver in the wave, sequentially. A push service having a slow minute
+     * would become lock contention on `dispatch_offers` and `trips` for every
+     * ride being accepted at the time.
+     *
+     * That is a worse failure than the one it would fix, and the reason it is
+     * worse is what the class docblock already argues: **this notification is
+     * an accelerator, not a guarantee.** `Ringtone` arms its own deadline from
+     * the offer's window, so the handset falls silent shortly after the offer
+     * could still have been live whether this arrives promptly, late, or never.
+     * Nothing depends on its latency. The offer push has a passenger standing
+     * at the end of it; this has a sound that was going to stop anyway.
+     *
+     * Written down rather than left as an absence, because the obvious next
+     * edit to this file is to make it match its sibling.
+     *
+     * @return array<string, string|null>
+     */
+    public function viaConnections(): array
+    {
+        return parent::viaConnections();
+    }
+
+    /**
      * Never rendered — `pushIsSilent()` keeps both this and `body()` off the
      * wire. They exist because the base class requires them, and they are
      * written as though they might be shown rather than left as empty

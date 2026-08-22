@@ -137,6 +137,39 @@ abstract class KangaruNotification extends LaravelNotification implements Should
     }
 
     /**
+     * Whether a push that reached nobody is worth telling the office about.
+     *
+     * False for everything except a job offer, and the default has to be false
+     * because **a recipient with no registered device is the ordinary state of
+     * this platform**: every staff account, every driver who declined the OS
+     * permission, everyone who has never installed the app.
+     * `ExpoPushChannel` says so at its own guard, and logging there
+     * unconditionally would produce a warning per notification per office
+     * worker, which is a stream nobody reads and therefore a stream that hides
+     * the one line that matters.
+     *
+     * **The one line that matters is this, and it went unlogged for the whole
+     * life of the feature.** A driver who is on duty, whose handset has no push
+     * token, is a driver the matcher is about to offer a job to and who will
+     * never hear it. That is not a quiet normality — it is a passenger on a
+     * kerb. `device_tokens` was empty for the entire fleet and nothing anywhere
+     * said so, because the only code that could have noticed was documented as
+     * having nothing worth saying.
+     *
+     * ## Why the notification answers this and not the channel
+     *
+     * Same argument `pushOptions()` makes, and it is the one that keeps
+     * `ExpoPushChannel` a transport: the channel must not learn what dispatch
+     * is, what duty is, or which types have a passenger waiting at the end of
+     * them. It asks the message *"does it matter that this went nowhere?"* and
+     * the message — which knows what it is — answers.
+     */
+    public function pushIsCritical(): bool
+    {
+        return false;
+    }
+
+    /**
      * Channels for this type, from configuration.
      *
      * Config decides, the enum only supplies the fallback (AGENTS.md
