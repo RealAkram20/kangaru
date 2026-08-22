@@ -16858,3 +16858,107 @@ drifting.
 **Not touched:** `mobile/`, and the three files another agent holds for
 place-suggestions (`Trips/Routes/api.php` is shared — my one route goes in
 `Fleet/Routes/api.php`, so no overlap).
+
+---
+
+#### K3 closed — green on
+[32597944586](https://github.com/RealAkram20/kangaru/actions/runs/32597944586)
+
+`3f663bc`. `/fleets` and `/fleets/:id` exist, under a new **The network**
+section that appears for a `kangaru` account and nobody else.
+
+## Three bugs that only a browser found
+
+All three typed clean, unit-tested clean, and would have shipped. This is the
+entry to point at when somebody asks why gate 5 is not satisfied by green
+tests.
+
+**1. A 403 for a Kangaru Super Admin, and nothing said why.** Adding
+`fleets.view` to `App\Enums\Permission` grants it to nobody: **role rows hold
+a snapshot of the permission list**, and the seeded `super_admin` row still
+carried the 39 that existed when it was written, against 42 in the enum.
+`php artisan db:seed --class=RoleSeeder --force` is therefore a **deployment
+step for `K2`**, not a local convenience. Recorded in `Modules/Fleet/README.md`.
+
+**And re-running that seeder has a side effect that cost more than the bug.**
+`RoleSeeder` also writes `roles.requires_mfa`, so it switched MFA back **on**
+for Super Admin and Finance on a dev database where it had been deliberately
+relaxed — three console accounts went to *must enrol* at next sign-in, with
+nothing about the symptom resembling MFA. Restored both roles to
+`requires_mfa = false` and verified `mustEnrolInMfa()` is false on
+`superadmin@`, `finance@` and the new head-office account. The memory note on
+this had predicted exactly this ("back on 08-21 via a re-seed") and I hit it
+anyway.
+
+**2. The act-as picker rendered completely empty.** `Select` takes an
+`options` prop and **silently drops children** — no error, no warning. `tsc -b
+--force` passed, the unit tests passed, and the dialog was unusable. Found by
+opening it.
+
+**3. `types/auth.ts` never declared `status`**, though the contract has always
+sent it, so any surface wanting to show whether an account was live had to
+reach for `types/staff.ts` instead.
+
+## The menus stop being identical here
+
+`K1`'s parity guard asserted the three lists offer the same destinations.
+`fleets` breaks that correctly — a fleet has no register of its competitors,
+and a client has no view of the operators at all — so the guard **narrows
+rather than dies**: they must agree except for entries named in `LEVEL_ONLY`.
+`K4` removing twelve entries still turns it red until they are declared, which
+is the conversation that should happen.
+
+`canUseNavLevel` joins `canUseNavItem`, and `RequireNavAccess` consults both,
+so the menu and the URL cannot disagree about who may open a page.
+
+## One addition to K2's surface, and why it is not scope creep
+
+`GET /operators/{operator}/accounts`. Acting as assumes a **person's**
+identity, so Log in as has nothing to send without a list of names. Separate
+from `OperatorResource` — which is counts-only on purpose — so the disclosure
+is explicit and separately policed rather than smuggled in as one more useful
+field.
+
+## Mutations, all restored
+
+| Mutation | Result |
+|---|---|
+| the suspend confirm removed | "asks before suspending" red |
+| `canUseNavLevel` returns `true` | the by-URL refusal red |
+| the accounts endpoint's `operator_id` scope removed | "names nobody from another fleet" red |
+
+## Verified
+
+Driven in a real browser as a `kangaru` account (playwright-core + system
+Chrome): sidebar entry, register showing Shanitah on **Founding fleet**,
+record page with 19 drivers / 20 vehicles / 2 clients / 6 accounts, and the
+act-as dialog listing all six people. **No console errors, no 4xx.**
+Screenshots taken. Backend Fleet + Ci 197 passed; frontend **602 passed**;
+`tsc -b --force`, Pint and Larastan level 8 clean; CI green on every job.
+
+## A dev-database change other agents should know about
+
+`headoffice@kangaruride.test` now exists — the **first `kangaru`-level
+account**, created with `php artisan kangaru:create-staff`. Before it there
+were zero, so nothing could reach a head-office surface at all. Every existing
+console login is `fleet`-level and will **not** see Fleet companies; that is
+correct, not a bug.
+
+The `plans` migration has been run on the dev database. Shanitah is on
+**Founding fleet**, not Free (ADR-0058 §3).
+
+## Not done
+
+- **`K5` is still open** under my earlier claim — `registration_number`
+  unique, and the lookup that answers a boolean and nothing else.
+- **`K4` is unclaimed.** Kangaru's menu still carries the twelve entries that
+  belong to a fleet, and its dashboard is still the three-company stub.
+- **No onboarding was performed end to end.** The dialog posts and the API
+  creates, both tested — but no second fleet has actually been created on the
+  dev database, deliberately: `CrossFleetIsolationTest` builds its rival in a
+  transaction, and a real second fleet on a shared dev database is a change
+  other agents have not agreed to.
+- **Owner asked for a 2FA toggle in Settings** during this package. Not built;
+  it is the next thing, and it needs a decision recorded because `AGENTS.md`
+  currently states MFA for Super Admin and Finance as a requirement rather
+  than a setting.
