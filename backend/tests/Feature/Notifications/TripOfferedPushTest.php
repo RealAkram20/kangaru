@@ -4,6 +4,7 @@ use App\Enums\UserRole;
 use App\Models\User;
 use App\Support\Auth\ClientScope;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Modules\Dispatch\Models\DispatchOffer;
 use Modules\Dispatch\Services\DispatchOfferService;
 use Modules\Notifications\Channels\ExpoPushChannel;
@@ -86,10 +87,166 @@ it('sends nothing for a driver with no registered device', function () {
 
     $user->notify(TripOfferedNotification::for($offer));
 
-    // Not an error and not a log line worth reading: it is the normal state
-    // of every staff account, and of any driver who declined the permission.
-    // ADR-0025 §3 requires the app to work for them.
+    // Not an error: it is the normal state of every staff account, and of any
+    // driver who declined the permission. ADR-0025 §3 requires the app to work
+    // for them, so nothing goes out and nothing fails.
+    //
+    // It *is* a log line, which it was not until this was found — see
+    // 'says so when an offer reaches a driver with no handset' below.
     Http::assertNothingSent();
+});
+
+// -- Which connection the push rides, which is not cosmetic (ADR-0024 §5) --
+
+it('takes the offer push off the queue, so a 45-second window is not spent waiting', function () {
+    /*
+     * **The bug this closes, and why nothing here saw it for so long.**
+     *
+     * `KangaruNotification::viaConnections()` puts only `TenantDatabaseChannel`
+     * on `sync`. `ExpoPushChannel` was not in that map, so Laravel fell through
+     * to the default connection and the offer push went to the `database`
+     * queue — a 45-second countdown behind a worker on `--sleep=2`, and behind
+     * nothing at all on a machine where `queue:work` was not running. The
+     * in-app row was still written, so from every other angle it looked sent.
+     *
+     * **`phpunit.xml` sets `QUEUE_CONNECTION=sync`, which is exactly why this
+     * suite could not see it.** Every notification runs inline here whatever
+     * `viaConnections()` says, so `it('reaches a registered handset')` above
+     * passes identically with the push queued and with it inline. A test that
+     * cannot distinguish the two states is not a test of this.
+     *
+     * So the default is moved for the length of this test. With `database` as
+     * the default connection, a queued channel writes a `jobs` row and sends
+     * nothing; only a channel named `sync` in `viaConnections()` reaches
+     * `exp.host` during the call.
+     *
+     * Mutation check: delete `viaConnections()` from `TripOfferedNotification`
+     * and this fails on `assertSent` — verified, not assumed.
+     */
+    config(['queue.default' => 'database']);
+
+    Http::fake(['exp.host/*' => Http::response(['data' => []])]);
+
+    [$user] = driverWithDevice();
+    $offer = DispatchOffer::factory()->create();
+    $offer->load('orderRequest');
+
+    $user->notify(TripOfferedNotification::for($offer));
+
+    Http::assertSent(fn ($request) => $request['0']['to'] === 'ExponentPushToken[test-handset]');
+});
+
+it('keys the connection by the same name Laravel looks it up with', function () {
+    /*
+     * The half the test above cannot fail on, and the one that would break
+     * silently. `NotificationSender` reads
+     * `$notification->viaConnections()[$channel]`, where `$channel` is whatever
+     * `via()` returned — which is `NotificationChannel::driver()`, a class-string.
+     *
+     * Key the map on `'push'`, or on `'expo'`, or on any name that reads better
+     * than a fully-qualified class, and the lookup misses, `?? $connection`
+     * takes the default, and the push is quietly back on the queue with the
+     * override still sitting in the file looking correct.
+     *
+     * Asserted through `NotificationChannel::PUSH->driver()` rather than by
+     * repeating the class name, so this compares the two halves rather than
+     * comparing one half with a copy of itself.
+     */
+    $offer = DispatchOffer::factory()->create();
+    $offer->load('orderRequest');
+
+    expect(TripOfferedNotification::for($offer)->viaConnections())
+        ->toHaveKey(NotificationChannel::PUSH->driver(), 'sync');
+});
+
+it('leaves the withdrawal on the queue, because it is sent under a row lock', function () {
+    /*
+     * **The deliberate asymmetry, asserted so nobody tidies it away.**
+     *
+     * The obvious next edit to `TripOfferWithdrawnNotification` is to make it
+     * match its sibling. It must not. `withdraw()` is called by `accept()`
+     * *inside* its `DB::transaction`, after `lockForUpdate()` on the offer row
+     * and after the trip has been created — so an inline push there would hold
+     * those locks across a three-second call to a third party, once per losing
+     * driver, sequentially. A slow minute at Expo would become lock contention
+     * on `dispatch_offers` and `trips` for every ride being accepted.
+     *
+     * The withdrawal can afford the queue and the offer cannot: `Ringtone`
+     * arms its own deadline from the offer's window, so the handset falls
+     * silent whether this arrives promptly, late or never. Nothing depends on
+     * its latency.
+     */
+    expect(TripOfferWithdrawnNotification::for(DispatchOffer::factory()->create())->viaConnections())
+        ->not->toHaveKey(NotificationChannel::PUSH->driver());
+});
+
+// -- Saying so when a push reaches nobody (the failure that hid this) ------
+
+it('says so when an offer reaches a driver with no handset', function () {
+    /*
+     * **The line that would have caught all of this on day one.**
+     *
+     * `device_tokens` was empty for the entire fleet while thirty-eight offers
+     * were dispatched. `ExpoPushChannel` returned at its empty-token guard
+     * every time, documented as not worth logging — correctly, for staff
+     * accounts, and catastrophically for a driver who is about to be offered a
+     * job they will never hear.
+     *
+     * `warning` and not `info`: `SENTRY_LOG_LEVEL` is `warning`, so anything
+     * below it never leaves the machine, and a log nobody receives is the same
+     * silence this replaces.
+     */
+    Log::spy();
+    Http::fake();
+
+    $user = User::factory()->create(['tenant_id' => null, 'role' => UserRole::DRIVER]);
+    $offer = DispatchOffer::factory()->create();
+    $offer->load('orderRequest');
+
+    $user->notify(TripOfferedNotification::for($offer));
+
+    Log::shouldHaveReceived('warning')
+        ->withArgs(fn (string $message, array $context = []) => $message === 'push.no_device'
+            && $context['user_id'] === $user->id
+            && $context['type'] === NotificationType::TRIP_OFFERED->value)
+        ->once();
+});
+
+it('stays quiet when an ordinary notification reaches a user with no handset', function () {
+    /*
+     * The other half, and the reason `pushIsCritical()` exists rather than the
+     * channel simply logging every empty-token return. Every staff account in
+     * the platform is in this state permanently. Logging it unconditionally
+     * would produce a warning per notification per office worker — a stream
+     * nobody reads, which is precisely how the line above would get lost.
+     *
+     * Mutation check: make `pushIsCritical()` return true on the base class and
+     * this fails. **Verified by doing it** — and the first spelling of this
+     * assertion did not fail, which is why it reads the way it does now.
+     *
+     * `Log::shouldNotHaveReceived('warning', ['push.no_device'])` was the
+     * obvious form and is vacuous: Mockery reads the second argument as *the
+     * complete argument list*, so it asserts that nothing called
+     * `warning('push.no_device')` with **one** argument — and nothing ever
+     * does, because the real call carries a context array as its second. It
+     * passed with the mutation in place, which is the definition of a guard
+     * that is not one. The fix is to spell the **whole** argument list —
+     * message and context — with a wildcard for the half that varies.
+     *
+     * `shouldHaveReceived('warning')->withArgs(...)->never()` was tried in
+     * between and is not the answer either: on a spy, `shouldHaveReceived`
+     * verifies "at least once" as it is built, so it fails on the honest run
+     * rather than on the mutated one.
+     */
+    Log::spy();
+    Http::fake();
+
+    $user = User::factory()->create(['tenant_id' => null, 'role' => UserRole::DRIVER]);
+    $offer = DispatchOffer::factory()->create();
+
+    $user->notify(TripOfferWithdrawnNotification::for($offer));
+
+    Log::shouldNotHaveReceived('warning', ['push.no_device', Mockery::any()]);
 });
 
 it('never lets a failing push break the dispatch that raised it', function () {

@@ -3,6 +3,7 @@
 namespace Modules\Notifications\Notifications;
 
 use Modules\Dispatch\Models\DispatchOffer;
+use Modules\Notifications\Channels\ExpoPushChannel;
 use Modules\Notifications\Enums\NotificationType;
 
 /**
@@ -89,6 +90,59 @@ class TripOfferedNotification extends KangaruNotification
             'expires_in_seconds' => $this->expiresInSeconds,
             'pickup_distance_km' => $this->distanceKm,
         ];
+    }
+
+    /**
+     * **The push goes out during the request, not from a worker.**
+     *
+     * The base class queues every channel but the in-app row, and for
+     * everything else in the platform that is right — mail crosses a network
+     * and nothing waiting on it has a clock.
+     *
+     * This does. `dispatch.offer_ttl_seconds` is 45, and until this override
+     * the one message in the platform with a countdown on it was the one that
+     * waited in a queue: `database` connection, a worker on `--sleep=2`, behind
+     * whatever report export or mail batch happened to be in front of it. A
+     * driver would be rung for a job with half its window already spent, or —
+     * when `queue:work` was not running at all — never, while the in-app row
+     * appeared normally and made it look as though the notification had been
+     * sent.
+     *
+     * ## Why this is safe to run inline, stated rather than assumed
+     *
+     * Three things, and all three were already true before this line:
+     *
+     * - `ExpoPushChannel` swallows its own transport errors and is documented
+     *   as never allowed to throw;
+     * - `DispatchOfferService::ring()` wraps the `notify()` call in its own
+     *   catch, for the express purpose of keeping a passenger's ride alive
+     *   when push fails;
+     * - `ring()` is called from `offerWave()`, which is **not** inside a
+     *   transaction — so a slow Expo service delays a response, it does not
+     *   hold a lock.
+     *
+     * The HTTP timeout is 3 seconds, which is the ceiling this adds to a
+     * dispatch. `ring()`'s own docblock already claimed this connection; it was
+     * describing an intention the code did not carry out.
+     *
+     * @return array<string, string|null>
+     */
+    public function viaConnections(): array
+    {
+        return parent::viaConnections() + [ExpoPushChannel::class => 'sync'];
+    }
+
+    /**
+     * True, and this is the only notification in the platform that says so.
+     *
+     * A driver on duty with no registered handset will be offered this job and
+     * will not hear it. See `KangaruNotification::pushIsCritical()` for why
+     * that one case is worth a log line when every other empty-device case is
+     * not.
+     */
+    public function pushIsCritical(): bool
+    {
+        return true;
     }
 
     /**
