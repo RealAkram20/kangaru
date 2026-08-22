@@ -2,6 +2,7 @@
 
 namespace Modules\Administration\Services;
 
+use App\Models\Operator;
 use Illuminate\Contracts\Mail\Mailer;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
@@ -645,6 +646,8 @@ This is a short-form notice. Ask the office for the full safety policy.",
             throw ValidationException::withMessages(['group' => ["Unknown settings group '$group'."]]);
         }
 
+        $operatorId = Setting::actingFleetId();
+
         foreach ($values as $key => $value) {
             $spec = $keys[$key] ?? null;
 
@@ -652,8 +655,17 @@ This is a short-form notice. Ask the office for the full safety policy.",
                 throw ValidationException::withMessages([$key => ["Unknown setting '$group.$key'."]]);
             }
 
+            // A fleet editing a setting writes **its own override**, beside
+            // Kangaru's default rather than over it (ADR-0055 §5). Reads
+            // resolve the override first, so the fleet sees what it chose and
+            // every other fleet keeps the default.
+            //
+            // Kangaru itself has a null fleet here, so head office editing a
+            // setting edits the default — which is exactly the asymmetry the
+            // ADR asks for: one party can change what everybody inherits, and
+            // it is not a fleet.
             Setting::query()->updateOrCreate(
-                ['group' => $group, 'key' => $key],
+                ['operator_id' => $operatorId, 'group' => $group, 'key' => $key],
                 [
                     'value' => ($spec['secret'] ?? false) && $value !== null
                         ? Crypt::encryptString((string) $value)
@@ -663,7 +675,23 @@ This is a short-form notice. Ask the office for the full safety policy.",
             );
         }
 
-        Cache::forget(self::CACHE_KEY);
+        Cache::forget(self::cacheKeyFor($operatorId));
+
+        // A change to a **default** changes what every fleet inherits, so each
+        // fleet's entry is stale too — and forgetting only the writer's key
+        // would leave them serving the old value indefinitely, because these
+        // entries are remembered forever.
+        //
+        // Enumerated rather than tagged: the cache driver here is `database`,
+        // which does not support tags, and a fleet count that makes this loop
+        // expensive is a fleet count this platform does not have. It cannot
+        // fire today — F0 created no Kangaru accounts, so nothing can reach
+        // this branch — which is precisely why it is written now rather than
+        // discovered later by a fleet reading a price nobody set.
+        if ($operatorId === null) {
+            Operator::query()->pluck('id')
+                ->each(fn ($id) => Cache::forget(self::cacheKeyFor((int) $id)));
+        }
     }
 
     /**
@@ -674,7 +702,17 @@ This is a short-form notice. Ask the office for the full safety policy.",
      */
     public function secret(string $group, string $key): ?string
     {
-        $row = Setting::query()->where(['group' => $group, 'key' => $key])->first();
+        // Resolved the same way `stored()` resolves a value: the acting
+        // fleet's own row first, Kangaru's default behind it. Ordering by
+        // `operator_id` descending puts the fleet's row ahead of the null,
+        // because a secret a fleet has set is the one that fleet's mailer or
+        // gateway must use — reading everybody's default here would sign a
+        // fleet's traffic with somebody else's key.
+        $row = Setting::query()
+            ->visibleToFleet(Setting::actingFleetId())
+            ->where(['group' => $group, 'key' => $key])
+            ->orderByDesc('operator_id')
+            ->first();
 
         if ($row === null || ! $row->is_secret || $row->value === null) {
             return null;
@@ -692,9 +730,24 @@ This is a short-form notice. Ask the office for the full safety policy.",
      */
     private function stored(): array
     {
+        $operatorId = Setting::actingFleetId();
+
         /** @var array{values: array<string, mixed>, secrets: array<int, string>} */
-        return Cache::rememberForever(self::CACHE_KEY, function () {
-            $rows = Setting::query()->get();
+        return Cache::rememberForever(self::cacheKeyFor($operatorId), function () use ($operatorId) {
+            // Kangaru's defaults plus this fleet's overrides, with the fleet's
+            // own row winning (ADR-0055 §5).
+            //
+            // The sort is what implements "winning" and it is doing real work:
+            // `keyBy` keeps the **last** row it sees for a repeated key, so
+            // putting the defaults first means a fleet's row overwrites the
+            // default it shadows. Reverse the sort and every override silently
+            // stops applying — which is why `FleetReferenceDataTest` asserts
+            // the resolved value rather than the presence of two rows.
+            $rows = Setting::query()
+                ->visibleToFleet($operatorId)
+                ->get()
+                ->sortBy(fn (Setting $s) => $s->operator_id === null ? 0 : 1)
+                ->keyBy(fn (Setting $s) => "{$s->group}.{$s->key}");
 
             return [
                 'values' => $rows->where('is_secret', false)
@@ -707,5 +760,19 @@ This is a short-form notice. Ask the office for the full safety policy.",
                     ->all(),
             ];
         });
+    }
+
+    /**
+     * One cache entry per fleet, because one entry for everybody would serve
+     * Shanitah's overrides to every other fleet (ADR-0055 §5).
+     *
+     * Follows ADR-0001's own convention for the client axis — *"cache keys are
+     * prefixed `tenant:{id}:`"* — one level up. Kangaru gets a named key rather
+     * than a bare `settings.all`, so a key that resolves to the defaults is
+     * visibly the defaults and not a fleet's entry somebody forgot to scope.
+     */
+    private static function cacheKeyFor(?int $operatorId): string
+    {
+        return self::CACHE_KEY.':'.($operatorId === null ? 'kangaru' : "operator:{$operatorId}");
     }
 }

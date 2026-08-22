@@ -1,11 +1,13 @@
 <?php
 
 use App\Enums\ErrorCode;
+use App\Http\Middleware\ActAsSubject;
 use App\Http\Middleware\AssignRequestId;
 use App\Http\Middleware\BindSubjectTenant;
 use App\Http\Middleware\EnforceTokenScope;
 use App\Http\Middleware\EnsureMfaEnrolled;
 use App\Http\Middleware\IdentifyTenant;
+use App\Http\Middleware\RefuseWhileActingAs;
 use App\Support\Api\ApiResponse;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
@@ -17,6 +19,7 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Validation\ValidationException;
+use Modules\Administration\Console\CreateKangaruStaff;
 use Modules\Dispatch\Console\AdvanceDispatchOffers;
 use Modules\Drivers\Console\AwardWeeklyBonuses;
 use Modules\Drivers\Console\PruneAbandonedApplicationDocuments;
@@ -45,6 +48,7 @@ return Application::configure(basePath: dirname(__DIR__))
         AwardWeeklyBonuses::class,
         CloseStaleDutySessions::class,
         PruneAbandonedApplicationDocuments::class,
+        CreateKangaruStaff::class,
     ])
     ->withMiddleware(function (Middleware $middleware): void {
         // ---------------------------------------------------------------------
@@ -140,6 +144,10 @@ return Application::configure(basePath: dirname(__DIR__))
         // `$request->user()` is null and this would wave everything
         // through. That ordering is the whole of its correctness.
         $middleware->api(append: [
+            // ADR-0056. Swaps the authenticated user for whoever they are
+            // acting as, so every scope and policy downstream sees the
+            // subject without knowing anything about support sessions.
+            ActAsSubject::class,
             // ADR-0022. Must run *after* `auth:sanctum` has resolved the
             // token, which the priority list below arranges — before it,
             // `currentAccessToken()` is null on every request and the
@@ -151,6 +159,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'tenant' => IdentifyTenant::class,
             'subject-tenant' => BindSubjectTenant::class,
+            // ADR-0056 §3. Attached to the routes it guards rather than
+            // matching their names, so the guard travels with the route.
+            'not-acting-as' => RefuseWhileActingAs::class,
         ]);
 
         // Laravel's default middleware priority runs SubstituteBindings
@@ -162,8 +173,35 @@ return Application::configure(basePath: dirname(__DIR__))
         // so TenantScope's fail-closed default made every such lookup 404 —
         // including for the resource's own tenant. Force `tenant` to run
         // immediately after authentication and before model binding.
+        // **Before `IdentifyTenant`, and that ordering is the whole of its
+        // correctness** (ADR-0056). `IdentifyTenant` builds `AccessContext`
+        // from `$request->user()`; if the swap happened after it, a support
+        // session would carry the *actor's* fleet — a Kangaru account's, which
+        // is none — and every scoped read would come back empty while looking
+        // like it had worked. Inserted immediately after authentication, so it
+        // lands ahead of the entry appended below it.
         $middleware->appendToPriorityList(
             after: AuthenticatesRequests::class,
+            append: ActAsSubject::class,
+        );
+
+        // Between the swap and everything that reads data (ADR-0056 §3).
+        //
+        // It must run **after** `ActAsSubject`, which is what sets the context
+        // it reads, and **before** `SubstituteBindings`, which would otherwise
+        // resolve the route's model first and answer 404 for a record that does
+        // not exist — hiding the refusal behind an unrelated status and telling
+        // a support agent the endpoint is broken rather than forbidden.
+        //
+        // A guard whose answer depends on whether the target exists is also a
+        // guard that leaks whether it exists.
+        $middleware->appendToPriorityList(
+            after: ActAsSubject::class,
+            append: RefuseWhileActingAs::class,
+        );
+
+        $middleware->appendToPriorityList(
+            after: RefuseWhileActingAs::class,
             append: IdentifyTenant::class,
         );
 

@@ -4,6 +4,7 @@ namespace Modules\Billing\Models;
 
 use App\Concerns\Auditable;
 use App\Concerns\BelongsToTenant;
+use App\Concerns\InheritsKangaruDefaults;
 use App\Models\Tenant;
 use Database\Factories\RateCardFactory;
 use Illuminate\Database\Eloquent\Factories\Factory;
@@ -33,7 +34,7 @@ use Modules\Vehicles\Models\Vehicle;
 class RateCard extends Model
 {
     /** @use HasFactory<RateCardFactory> */
-    use Auditable, BelongsToTenant, HasFactory, SoftDeletes;
+    use Auditable, BelongsToTenant, HasFactory, InheritsKangaruDefaults, SoftDeletes;
 
     /**
      * @see Vehicle::newFactory() for why this is explicit.
@@ -47,6 +48,10 @@ class RateCard extends Model
 
     protected $fillable = [
         'tenant_id',
+        // The fleet whose price this is. Null on the walk-in tariff, which
+        // is Kangaru's: Kangaru owns the walk-in customer, so Kangaru sets
+        // what the walk-in pays (ADR-0055 §5).
+        'operator_id',
         'name',
         'description',
         'status',

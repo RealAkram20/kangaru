@@ -3,6 +3,7 @@
 namespace Modules\Vehicles\Models;
 
 use App\Concerns\Auditable;
+use App\Concerns\BelongsToOperator;
 use Database\Factories\VehicleFactory;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -33,7 +34,7 @@ use Modules\Fleet\Models\VehicleAllocation;
  */
 class Vehicle extends Model
 {
-    use Auditable, HasFactory, SoftDeletes;
+    use Auditable, BelongsToOperator, HasFactory, SoftDeletes;
 
     /**
      * **No longer the validation source — see ADR-0050.** The categories a
@@ -110,6 +111,11 @@ class Vehicle extends Model
     }
 
     protected $fillable = [
+        // The fleet that owns this vehicle (ADR-0055). ADR-0005 removed
+        // `tenant_id` from this table because a client owns no vehicle; that
+        // stays true. What changed is that "the platform" is now one fleet
+        // among several, so the owner has a name instead of being implied.
+        'operator_id',
         'registration_number',
         'make',
         'model',

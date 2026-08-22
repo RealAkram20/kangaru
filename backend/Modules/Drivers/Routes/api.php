@@ -104,8 +104,10 @@ Route::delete('me/photo', [DriverPhotoController::class, 'destroy'])->name('me.p
 Route::get('me/payout-account', [DriverPayoutAccountController::class, 'show'])
     ->name('me.payout-account.show');
 Route::put('me/payout-account', [DriverPayoutAccountController::class, 'update'])
+    ->middleware('not-acting-as')
     ->name('me.payout-account.update');
 Route::delete('me/payout-account', [DriverPayoutAccountController::class, 'destroy'])
+    ->middleware('not-acting-as')
     ->name('me.payout-account.destroy');
 
 // The office half, and the loop is not closed without it: a payout destination
@@ -125,6 +127,7 @@ Route::get('drivers/{driver}/payout-account', [PayoutAccountController::class, '
 Route::get('me/closure-request', [DriverClosureRequestController::class, 'show'])
     ->name('me.closure-request.show');
 Route::post('me/closure-request', [DriverClosureRequestController::class, 'store'])
+    ->middleware('not-acting-as')
     ->name('me.closure-request.store');
 Route::delete('me/closure-request', [DriverClosureRequestController::class, 'destroy'])
     ->name('me.closure-request.destroy');
@@ -206,8 +209,10 @@ Route::post('me/settlement-requests', [DriverSettlementRequestController::class,
 Route::get('settlement-requests', [SettlementRequestController::class, 'index'])
     ->name('settlement-requests.index');
 Route::post('settlement-requests/{settlementRequest}/confirm', [SettlementRequestController::class, 'confirm'])
+    ->middleware('not-acting-as')
     ->name('settlement-requests.confirm');
 Route::post('settlement-requests/{settlementRequest}/decline', [SettlementRequestController::class, 'decline'])
+    ->middleware('not-acting-as')
     ->name('settlement-requests.decline');
 
 // The office side of a driver's papers (ADR-0033 §4). `drivers.manage` for

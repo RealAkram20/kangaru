@@ -69,6 +69,16 @@ class RateCardController extends Controller
 
         $paginator = RateCard::query()
             ->forActor($user)
+            // A fleet prices its own clients and reads Kangaru's public
+            // tariff; it does not read another fleet's prices (ADR-0055 §5).
+            // `forActor` answers the *client* axis and drops the scope
+            // entirely for fleet staff, which before this line meant every
+            // fleet's commercial terms in one list.
+            //
+            // A client reader is left to `forActor` alone: which fleet serves
+            // them is the contract F2 introduces, and filtering on their own
+            // null fleet would hide the cards that price their own trips.
+            ->visibleToActor($user)
             ->with($this->versionsFor($user))
             ->orderByDesc('is_default')
             ->orderBy('name')

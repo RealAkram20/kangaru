@@ -4,6 +4,7 @@ namespace Modules\Bookings\Models;
 
 use App\Concerns\Auditable;
 use App\Concerns\BelongsToTenant;
+use App\Concerns\RecordsActingFleet;
 use App\Models\Tenant;
 use App\Models\User;
 use Database\Factories\BookingFactory;
@@ -41,7 +42,7 @@ use Modules\Vehicles\Models\Vehicle;
 class Booking extends Model
 {
     /** @use HasFactory<BookingFactory> */
-    use Auditable, BelongsToTenant, HasFactory, SoftDeletes;
+    use Auditable, BelongsToTenant, HasFactory, RecordsActingFleet, SoftDeletes;
 
     /**
      * @see Vehicle::newFactory() for why this is explicit.

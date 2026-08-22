@@ -3,6 +3,7 @@
 namespace Modules\Dispatch\Services;
 
 use App\Models\User;
+use App\Support\Observability\Trace;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -75,6 +76,40 @@ class DispatchOfferService
      */
     public function dispatch(OrderRequest $request): Collection
     {
+        /*
+         * Traced (ADR-0054 §4). This is the method behind *"why is the
+         * passenger still watching a spinner"*, and the auto-instrumentation
+         * cannot answer it: the search is a run of SELECTs against duty,
+         * rosters, allocations and vehicles, and on the waterfall it is
+         * indistinguishable from the listing that renders alongside it.
+         *
+         * `offers` is the half that makes the timing readable. A 700 ms
+         * search that opened three offers is the platform working; a 700 ms
+         * search that opened none is a fleet with nobody on duty, and the
+         * two are the same row without it.
+         */
+        return Trace::span('dispatch.search', 'find a driver', function () use ($request) {
+            $offers = $this->search($request);
+
+            Trace::annotate(['offers' => $offers->count()]);
+
+            return $offers;
+        }, ['order_request_id' => $request->id]);
+    }
+
+    /**
+     * The search itself.
+     *
+     * Split from {@see dispatch()} so that the span above has a body to wrap
+     * and this one keeps its shape — every early return below is a *reason*
+     * the search stopped, and folding them into a closure would have meant
+     * either restructuring them or nesting the whole method one level deeper
+     * for a monitoring call.
+     *
+     * @return Collection<int, DispatchOffer>
+     */
+    private function search(OrderRequest $request): Collection
+    {
         // Lapsed-but-open offers are settled first, so "is anything live"
         // is asked of a table that has been brought up to date with the
         // clock. Skipping this is how an order sits forever behind an offer
@@ -134,7 +169,19 @@ class DispatchOfferService
      */
     public function accept(DispatchOffer $offer, User $actor): Trip
     {
-        return DB::transaction(function () use ($offer, $actor) {
+        /*
+         * Traced (ADR-0054 §4), and of everything instrumented on this
+         * platform this is the one a driver feels directly: the gap between
+         * their thumb landing on Accept and the pickup screen appearing,
+         * with a passenger watching them.
+         *
+         * The whole span sits **inside** one `lockForUpdate` transaction, so
+         * its duration is also how long every other driver racing for this
+         * job is held at the lock. That makes it the number to watch when
+         * the fleet grows — a figure the request's own transaction cannot
+         * show, because the request contains more than the lock.
+         */
+        return Trace::span('dispatch.accept', 'driver takes the job', fn () => DB::transaction(function () use ($offer, $actor) {
             // Lock and re-read before deciding, exactly as
             // `DispatchService::assign` does with its booking: the status on
             // the model passed in was read outside this transaction and may
@@ -257,7 +304,7 @@ class DispatchOfferService
             ])->save();
 
             return $trip;
-        });
+        }), ['offer_id' => $offer->id]);
     }
 
     /**
@@ -318,9 +365,23 @@ class DispatchOfferService
         // until they gave up.
         //
         // Found by watching exactly that happen on a live server.
-        $this->retryUnoffered();
+        //
+        // Traced on its own (ADR-0054 §4). The scheduler already opens a
+        // `console.command.scheduled` transaction around this whole command,
+        // so the command's duration is recorded without any help — what that
+        // transaction cannot say is which of its two halves spent the time,
+        // and this half runs a query per unfulfilled order in the retry
+        // window. At `everyTenSeconds()` a slow half is a sweep that starts
+        // overlapping itself, which `withoutOverlapping()` then silently
+        // turns into skipped ticks.
+        Trace::span('dispatch.retry_unoffered', 'orders nobody could take', fn () => $this->retryUnoffered());
 
         $lapsed = DispatchOffer::query()->lapsed()->get();
+
+        // Onto the command's own transaction, not a new span: a count is not
+        // a duration, and this is the number that says whether a tick did
+        // anything at all.
+        Trace::annotate(['lapsed' => $lapsed->count()]);
 
         if ($lapsed->isEmpty()) {
             return 0;

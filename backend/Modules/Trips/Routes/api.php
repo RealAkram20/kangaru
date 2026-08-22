@@ -7,11 +7,19 @@ use Modules\Trips\Controllers\TripController;
 use Modules\Trips\Controllers\TripEventController;
 use Modules\Trips\Controllers\TripLocationController;
 use Modules\Trips\Controllers\TripRouteController;
+use Modules\Trips\Controllers\TripStopCandidateController;
+use Modules\Trips\Controllers\TripStopController;
 
 Route::apiResource('trips', TripController::class)->only(['index', 'show', 'store']);
 Route::post('trips/{trip}/transitions', [TripController::class, 'transition'])->name('trips.transitions.store');
 Route::get('trips/{trip}/events', [TripEventController::class, 'index'])->name('trips.events.index');
 Route::get('trips/{trip}/route', [TripRouteController::class, 'show'])->name('trips.route.show');
+
+// ADR-0045: a driver extending a live run (§4), and the bounded search over
+// the client's own place register that feeds it (§10). Stops are read back
+// on the trip payload itself, so there is no index route to leak one.
+Route::post('trips/{trip}/stops', [TripStopController::class, 'store'])->name('trips.stops.store');
+Route::get('trips/{trip}/stop-candidates', [TripStopCandidateController::class, 'index'])->name('trips.stop-candidates.index');
 
 // The dashboard photo captured with each odometer reading (PROJECT.md's
 // anchor-client requirement). Streamed behind auth rather than served from

@@ -162,6 +162,8 @@ class DriverApplication extends Model implements HoldsDocuments
      * known, so an application on a taken address carries no account and is
      * refused at approval in front of a human — as does every application
      * submitted before accounts moved to submission time.
+     *
+     * @return BelongsTo<User, $this>
      */
     public function account(): BelongsTo
     {

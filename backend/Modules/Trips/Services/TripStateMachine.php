@@ -25,6 +25,7 @@ class TripStateMachine
         private readonly OdometerPhotoStore $photos,
         private readonly SettingsService $settings,
         private readonly TripDistanceResolver $distances,
+        private readonly TripStopService $stops,
     ) {}
 
     /**
@@ -66,10 +67,27 @@ class TripStateMachine
             return DB::transaction(function () use ($trip, $from, $to, $actor, $payload, $photoPath) {
                 $remark = $this->applySideEffects($trip, $from, $to, $payload, $photoPath);
 
+                // ADR-0045 §2: arrive/continue ride the very transitions
+                // billing derives waiting from, so a stop's dwell and the
+                // billable pause can never disagree about when the vehicle
+                // stood still. Both null on every point-to-point trip.
+                [$stopRemark, $stopId] = $this->stops->applyTransition(
+                    $trip,
+                    $to,
+                    isset($payload['stop_id']) ? (int) $payload['stop_id'] : null,
+                );
+
                 $trip->status = $to;
                 $trip->save();
 
-                TripEvent::record($trip, $from, $to, $actor, $this->note($payload['notes'] ?? null, $remark));
+                TripEvent::record(
+                    $trip,
+                    $from,
+                    $to,
+                    $actor,
+                    $this->note($payload['notes'] ?? null, $remark, $stopRemark),
+                    $stopId,
+                );
 
                 // Announced, not acted on. `trip_completed` is the
                 // transition that captures the closing odometer and computes
@@ -140,11 +158,11 @@ class TripStateMachine
      * empty note renders as a blank line on the timeline and reads as
      * something having failed to save.
      */
-    private function note(?string $written, ?string $remark): ?string
+    private function note(?string $written, ?string ...$remarks): ?string
     {
         $parts = array_filter([
             is_string($written) && trim($written) !== '' ? trim($written) : null,
-            $remark,
+            ...$remarks,
         ]);
 
         return $parts === [] ? null : implode("\n\n", $parts);

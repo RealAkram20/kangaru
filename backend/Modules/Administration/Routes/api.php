@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use Modules\Administration\Controllers\AuditLogController;
 use Modules\Administration\Controllers\AuthController;
 use Modules\Administration\Controllers\ColleagueController;
+use Modules\Administration\Controllers\ImpersonationController;
 use Modules\Administration\Controllers\PasswordResetController;
 use Modules\Administration\Controllers\PublicLegalController;
 use Modules\Administration\Controllers\PublicSettingsController;
@@ -58,7 +59,7 @@ Route::get('/auth/me', [AuthController::class, 'me'])
 // Changing your own password needs authentication but not a tenant: a
 // Super Admin has none, and every other route below would 404 for them.
 Route::patch('/auth/password', [AuthController::class, 'changePassword'])
-    ->middleware(['auth:sanctum', 'throttle:5,1'])
+    ->middleware(['auth:sanctum', 'throttle:5,1', 'not-acting-as'])
     ->name('auth.password.change');
 
 /*
@@ -87,16 +88,17 @@ Route::post('/auth/mfa/verify', [AuthController::class, 'verifyMfa'])
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/auth/mfa/enrol', [AuthController::class, 'beginMfaEnrolment'])
+        ->middleware('not-acting-as')
         ->name('auth.mfa.enrol');
     Route::post('/auth/mfa/enrol/confirm', [AuthController::class, 'confirmMfaEnrolment'])
-        ->middleware('throttle:10,1')
+        ->middleware(['throttle:10,1', 'not-acting-as'])
         ->name('auth.mfa.enrol.confirm');
 
     // Not on the forced-enrolment allowlist: you cannot regenerate codes
     // you do not have yet, and the enrolment response is where the first
     // set comes from.
     Route::post('/auth/mfa/recovery-codes', [AuthController::class, 'regenerateRecoveryCodes'])
-        ->middleware('throttle:5,1')
+        ->middleware(['throttle:5,1', 'not-acting-as'])
         ->name('auth.mfa.recovery-codes');
 
     // ADR-0010 decision 2: voluntary means voluntary in both directions.
@@ -153,4 +155,34 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::post('/roles', [RoleController::class, 'store'])->name('roles.store');
     Route::patch('/roles/{role}', [RoleController::class, 'update'])->name('roles.update');
     Route::delete('/roles/{role}', [RoleController::class, 'destroy'])->name('roles.destroy');
+
+    /*
+    |----------------------------------------------------------------------
+    | Acting as somebody else (ADR-0056)
+    |----------------------------------------------------------------------
+    |
+    | Two verbs and no listing: `impersonation_sessions` is the evidence and
+    | the audit log is where it is read, so a reader here would be a second
+    | answer to one question.
+    |
+    | `POST` is throttled because it is the one act on this platform that
+    | hands an account somebody else's reach, and a loop of start/stop against
+    | different subjects is what enumeration would look like.
+    |
+    | `DELETE` deliberately carries **no** `not-acting-as` guard. Stopping is
+    | the one thing a support agent must always be able to do; a guard that
+    | refused it would strand them inside somebody else's account until the
+    | thirty minutes ran out.
+    */
+    // Read first: the console asks this on every load to know whether to draw
+    // the banner. Unthrottled and ungated beyond authentication — it answers
+    // `null` for everybody who is simply themselves, which is almost every
+    // request, and telling somebody they are themselves reveals nothing.
+    Route::get('/support/act-as', [ImpersonationController::class, 'show'])
+        ->name('support.act-as.show');
+    Route::post('/support/act-as', [ImpersonationController::class, 'store'])
+        ->middleware('throttle:10,1')
+        ->name('support.act-as.store');
+    Route::delete('/support/act-as', [ImpersonationController::class, 'destroy'])
+        ->name('support.act-as.destroy');
 });

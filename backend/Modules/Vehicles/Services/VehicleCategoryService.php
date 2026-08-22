@@ -36,7 +36,14 @@ class VehicleCategoryService
      */
     public function list(User $actor): Collection
     {
-        $categories = VehicleCategory::query()->ordered()->get();
+        // Kangaru's defaults plus this fleet's own (ADR-0055 §5). Keyed off
+        // the actor rather than the ambient context: this method already has
+        // them in hand, and F0 learned that ambient reads break the moment a
+        // service is called from a command or a test with no request.
+        $categories = VehicleCategory::query()
+            ->visibleToActor($actor)
+            ->ordered()
+            ->get();
 
         $vehicles = VehicleCategoryPolicy::mayReadFleetCounts($actor)
             ? $this->vehicleCountsByCategory()
@@ -68,7 +75,14 @@ class VehicleCategoryService
     /** @param  array<string, mixed>  $data */
     public function create(array $data): VehicleCategory
     {
-        return VehicleCategory::create($data);
+        // A fleet creating a category creates **its own**, never another
+        // Kangaru default that every other fleet would inherit (ADR-0055
+        // §5). Kangaru itself has a null fleet here, so head office does
+        // author the shared defaults — the asymmetry is the point.
+        return VehicleCategory::create([
+            ...$data,
+            'operator_id' => VehicleCategory::actingFleetId(),
+        ]);
     }
 
     /** @param  array<string, mixed>  $data */

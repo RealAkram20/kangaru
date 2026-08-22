@@ -76,6 +76,17 @@ function routeCensus(): array
         'POST api/v1/auth/mfa/enrol/confirm' => 'C',
         'POST api/v1/auth/mfa/recovery-codes' => 'C',
         'POST api/v1/auth/mfa/verify' => 'D',
+        // ADR-0056. Idiom A: `Gate::allows('act-as-another-user')` in
+        // `BeginImpersonationRequest::authorize()`, checked before the rules
+        // run so a refusal never depends on who was about to be named.
+        // Idiom C: answers from the request's own session and nothing else.
+        // `null` for everybody who is themselves, which reveals nothing.
+        'GET api/v1/support/act-as' => 'C',
+        'POST api/v1/support/act-as' => 'A',
+        // Idiom C: keyed off the live session on the token's own actor and
+        // nothing else. Deliberately ungated beyond authentication — stopping
+        // is the one act a support agent must always be able to perform.
+        'DELETE api/v1/support/act-as' => 'C',
         'PATCH api/v1/auth/password' => 'C',
         'POST api/v1/auth/password/forgot' => 'D',
         'POST api/v1/auth/password/reset' => 'D',
@@ -402,7 +413,7 @@ it('has a census row for every API route and a route for every census row', func
     // 199: the office's read-only view of an applicant's documents, 2026-08-22.
     // 201: ADR-0057 added accept and refuse for one applicant document.
     // 203: ADR-0057 §5's two applicant self-service routes.
-    expect(count($router))->toBe(203);
+    expect(count($router))->toBe(206);
 });
 
 it('uses only the four idioms, and files sixteen routes as public', function () {
@@ -455,7 +466,7 @@ it('authenticates every route that is not filed as public, and throttles every o
     // somebody's identity document, so being counted here is the point.
     // 185: the same two, both authenticated.
     // 187: the same two, both authenticated.
-    expect($guarded)->toBe(187);
+    expect($guarded)->toBe(190);
 });
 
 it('binds the actor\'s tenant on every staff route, so TenantScope has something to scope by', function () {
@@ -496,5 +507,5 @@ it('binds the actor\'s tenant on every staff route, so TenantScope has something
     // hand and only with a reason - that is the whole point of counting.
     // 171: and both are staff routes (ADR-0057).
     // 173: and both bind the actor's tenant like every other `me/` route.
-    expect($staff)->toBe(173);
+    expect($staff)->toBe(176);
 });

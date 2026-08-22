@@ -67,6 +67,9 @@ permission catalogue, and the audit log.
 | POST | `/api/v1/auth/mfa/recovery-codes` | Sanctum | Regenerates the set, invalidating the old one. Own account only |
 | DELETE | `/api/v1/auth/mfa` | Sanctum | Rate limited 10/min/IP. Removes your own factor against a current TOTP **or recovery** code (ADR-0010). `403` if your role requires one |
 | POST | `/api/v1/auth/logout` | Sanctum | Revokes the current access token |
+| GET | `/api/v1/support/act-as` | Sanctum | Whether this request is being made by somebody acting as the account, and until when. **`null` for everybody who is simply themselves**, which is almost every request. A route of its own rather than a field on `UserResource`, because the session is a fact about the *request* — and a field there would append `acting_as: null` to every nested actor in the API |
+| POST | `/api/v1/support/act-as` | Sanctum | Begins a support session (ADR-0056). `support.act-as` **and** `access_level = kangaru`; a reason is required and recorded. Rate limited 10/min. Refuses chaining, a second open session, and acting as yourself |
+| DELETE | `/api/v1/support/act-as` | Sanctum | Ends it. **Idempotent, and deliberately unguarded** — stopping is the one act a support agent must always be able to perform, and a guard here would strand them inside somebody else's account until the thirty minutes ran out |
 | GET | `/api/v1/auth/me` | Sanctum | Returns the authenticated user. `UserResource` carries `tenant_name` (additive) — the client's own name for the console's chrome, null for platform staff |
 | PATCH | `/api/v1/auth/password` | Sanctum | Own password only. Rate limited 5/min. Revokes every token, including the caller's |
 | POST | `/api/v1/auth/password/forgot` | none | Rate limited 3/min/IP. ADR-0028 §2: emails a 6-digit code, hashed at rest, 15-min TTL. **Identical 202 whether or not the email exists.** 409 `AUTH_METHOD_DISABLED` until the owner enables it and SMTP is configured |
@@ -234,6 +237,55 @@ not themselves hold. Enforced twice — when a role is *defined*
 (`StoreRoleRequest`/`UpdateRoleRequest`) and when it is *assigned*
 (`UserPolicy::assignRole`) — because an administrator who sets the new
 account's password could otherwise sign in as it.
+
+## Acting as somebody else (ADR-0056)
+
+Reverses a position this module states twice — `AuthController::changePassword`
+calls an admin resetting somebody's password *"the one act an audit trail
+cannot tell apart from impersonation"*, and `Modules/Customers/Routes/staff.php`
+says *"no impersonation"* outright.
+
+**The objection was never to impersonation. It was to impersonation the trail
+cannot distinguish from the person's own hand.** So that is what was built:
+
+- `audit_logs.impersonator_id`. **`user_id` stays the subject**, so a client's
+  own trail reads chronologically as their account's activity; the new column
+  names who was holding it. Never one without the other when rendered.
+- `impersonation_sessions` — the evidence that a session *happened*. Start and
+  end are audited in their own right, because reading a bank's trip history is
+  the act whether or not anything was written.
+- Thirty minutes, enforced as a **predicate, not a cron**. Nothing sweeps the
+  table, so a scheduler that stops running cannot leave a session standing.
+- `ActAsSubject` middleware swaps the user **before `IdentifyTenant`**. That
+  ordering is the whole of its correctness: after it, a session would carry the
+  *actor's* fleet — a Kangaru account's, which is none — and every scoped read
+  would come back empty while looking like it had worked.
+- The deny-list (§3) is **attached to routes, never matched against route
+  names**. A name-matching deny-list is one rename away from silently
+  permitting what it was written to refuse. It guards the password, MFA, payout
+  destinations, account closure and settlement decisions — the acts whose whole
+  purpose is to prove it was the person.
+- It **never mints a client-app token**. A driver token handed to a support
+  agent would let them register a push device and take a real job off a driver
+  on the road.
+
+### What keeps the grant narrow
+
+Not the permission catalogue — the **level**. Only a `kangaru` account may act
+as anybody, and one can only be created with a shell on the server
+(`php artisan kangaru:create-staff`).
+
+Holding `support.act-as` out of the Super Admin catalogue was tried and
+reverted the same hour: `StoreRoleRequest` refuses to let anybody author a role
+carrying a permission they do not hold themselves, so the exclusion made the
+permission **ungrantable by any screen**. Ungrantable is not stricter; it is
+broken. A fleet Super Admin holds the permission and cannot use it.
+
+### Not built, and it matters
+
+The **notification to the person acted upon** (§5). Their own audit trail shows
+it, and the banner shows the agent — but nobody tells the driver or the client
+afterwards. Named here rather than left to be discovered.
 
 ## What's explicitly deferred
 

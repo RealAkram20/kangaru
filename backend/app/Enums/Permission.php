@@ -25,6 +25,17 @@ enum Permission: string
     case AUDIT_VIEW = 'audit.view';
     case STAFF_VIEW = 'staff.view';
     case STAFF_MANAGE = 'staff.manage';
+    /**
+     * Becoming somebody else, for support (ADR-0056 §6).
+     *
+     * Held only by Kangaru accounts, and **implied by nothing** — not by
+     * `staff.manage`, not by being a Super Admin. ADR-0006 said creating a
+     * platform account should be Super Admin's alone; ADR-0055 then took
+     * almost all of that account's reach away, and this is the single grant
+     * that gives it back. An account holding it can become anybody on the
+     * platform, so it is granted deliberately or not at all.
+     */
+    case SUPPORT_ACT_AS = 'support.act-as';
     /** Creating and editing roles themselves. The keys to the building. */
     case ROLES_MANAGE = 'roles.manage';
     /**
@@ -142,7 +153,7 @@ enum Permission: string
     public function group(): string
     {
         return match (explode('.', $this->value)[0]) {
-            'audit', 'staff', 'roles', 'settings' => 'Administration',
+            'audit', 'staff', 'roles', 'settings', 'support' => 'Administration',
             'bookings', 'order_requests' => 'Bookings',
             'trips' => 'Trips',
             'invoices', 'ratecards' => 'Billing',
@@ -159,6 +170,7 @@ enum Permission: string
             self::AUDIT_VIEW => 'Read the audit log',
             self::STAFF_VIEW => 'See the staff list',
             self::STAFF_MANAGE => 'Add, edit and suspend staff',
+            self::SUPPORT_ACT_AS => 'Act as another user, for support',
             self::ROLES_MANAGE => 'Create and edit roles',
             self::SETTINGS_MANAGE => 'Change platform settings',
             self::BOOKINGS_VIEW_ALL => "See everyone's bookings",

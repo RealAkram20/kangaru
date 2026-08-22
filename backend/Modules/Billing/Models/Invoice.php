@@ -4,6 +4,7 @@ namespace Modules\Billing\Models;
 
 use App\Concerns\Auditable;
 use App\Concerns\BelongsToTenant;
+use App\Concerns\RecordsActingFleet;
 use App\Exceptions\FinancialRecordImmutableException;
 use App\Models\Tenant;
 use App\Models\User;
@@ -43,11 +44,14 @@ use Modules\Trips\Models\Trip;
  */
 class Invoice extends Model
 {
-    use Auditable, BelongsToTenant;
+    use Auditable, BelongsToTenant, RecordsActingFleet;
 
     protected $fillable = [
         'uuid',
         'tenant_id',
+        // Which fleet issued it — taken from the trip being billed, so the
+        // document and its number belong to the same series (ADR-0055 §6).
+        'operator_id',
         'invoice_number',
         'trip_id',
         'rate_card_version_id',

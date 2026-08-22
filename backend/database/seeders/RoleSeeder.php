@@ -101,6 +101,24 @@ class RoleSeeder extends Seeder
                 // rates." These two and no others; PROJECT.md puts MFA for
                 // everyone else out of Phase 1.
                 'requires_mfa' => true,
+                // Every permission, `support.act-as` included.
+                //
+                // **Excluding it was tried and reverted within the hour.**
+                // ADR-0056 §6 asks that the grant be "not implied by any
+                // other", and holding it out of this list looked like the way
+                // to honour that. It is not: `StoreRoleRequest` enforces that
+                // *a role cannot grant permissions you do not hold yourself*,
+                // so a Super Admin without it could never author a role
+                // carrying it — and the permission would be reachable only by
+                // a seeder or a hand-written UPDATE. Ungrantable is not
+                // stricter, it is broken.
+                //
+                // What actually keeps it narrow is the **level**: only a
+                // `kangaru` account may act as anybody (`ImpersonationService`
+                // and the `act-as-another-user` Gate both check it), and a
+                // Kangaru account can only be created with a shell on the
+                // server. A fleet Super Admin holds this permission and cannot
+                // use it.
                 'permissions' => P::cases(),
             ],
 

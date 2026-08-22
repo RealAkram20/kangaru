@@ -86,22 +86,45 @@ class InvoiceService
             throw new WalkInTripNotInvoiceableException($trip);
         }
 
+        // The fleet that did the work, and therefore the fleet whose invoice
+        // series this document belongs to (ADR-0055 §6).
+        //
+        // Taken from the trip, which `TripService` stamps from the assigned
+        // driver — not from the Finance officer generating the invoice, who
+        // could belong to a different fleet once Kangaru can act as one
+        // (ADR-0056), and not from the request context, which is unbound on
+        // any queued or scheduled path.
+        $operatorId = $trip->operator_id;
+
+        if ($operatorId === null) {
+            // A corporate trip with no fleet is a row F0 backfilled and
+            // nothing has since stamped, or one created down a path that
+            // never named a driver. Either way the honest answer to "whose
+            // invoice series is this?" is that nobody knows, and guessing
+            // would put a number in one fleet's ledger and the work in
+            // another's.
+            throw new \RuntimeException(
+                "Trip {$trip->id} names no fleet, so no invoice series can be chosen for it "
+                .'(ADR-0055 §6). It predates the fleet model or was created without a driver.'
+            );
+        }
+
         $issuedAt = now();
 
         // Outside the transaction, deliberately: creating the counter row
         // inside it makes two simultaneous first-ever invoices deadlock on
         // its unique index. Observed, not theorised — see
         // DocumentNumberSequenceRepository.
-        $this->numbers->ensureSeries($tenantId, DocumentType::INVOICE, $issuedAt);
+        $this->numbers->ensureSeries($operatorId, $tenantId, DocumentType::INVOICE, $issuedAt);
 
-        return DB::transaction(function () use ($trip, $tenantId, $idempotencyKey, $actor, $rateCard, $issuedAt) {
+        return DB::transaction(function () use ($trip, $tenantId, $operatorId, $idempotencyKey, $actor, $rateCard, $issuedAt) {
             // The serialisation point, and the first statement in the
             // transaction. Everything below reads or writes rows that do
             // not exist yet, and locking reads on absent rows take gap
             // locks that two concurrent generators deadlock on as soon as
             // both insert. Holding the tenant's counter first means only
             // one generation per tenant is ever in flight.
-            $this->numbers->lockSeries($tenantId, DocumentType::INVOICE, $issuedAt);
+            $this->numbers->lockSeries($operatorId, $tenantId, DocumentType::INVOICE, $issuedAt);
 
             // Serialises every generator working on this trip specifically.
             /** @var Trip $locked */
@@ -117,7 +140,7 @@ class InvoiceService
                 throw new TripNotInvoiceableException($locked);
             }
 
-            return $this->issue($locked, $tenantId, $idempotencyKey, $actor, $rateCard, $issuedAt);
+            return $this->issue($locked, $tenantId, $operatorId, $idempotencyKey, $actor, $rateCard, $issuedAt);
         });
     }
 
@@ -163,12 +186,16 @@ class InvoiceService
      *                         caller's walk-in guard (ADR-0024) — passed rather
      *                         than re-read off the trip so that proof travels
      *                         with it instead of having to be repeated here
+     * @param  int  $operatorId  the fleet whose driver ran the trip, proved
+     *                           non-null by the caller for the same reason and
+     *                           passed the same way (ADR-0055 §6)
      *
      * @throws RateCardNotConfiguredException
      */
     private function issue(
         Trip $trip,
         int $tenantId,
+        int $operatorId,
         string $idempotencyKey,
         User $actor,
         ?RateCard $rateCard,
@@ -179,7 +206,8 @@ class InvoiceService
 
         $invoice = Invoice::create([
             'tenant_id' => $tenantId,
-            'invoice_number' => $this->numbers->next($tenantId, DocumentType::INVOICE, $issuedAt),
+            'operator_id' => $operatorId,
+            'invoice_number' => $this->numbers->next($operatorId, $tenantId, DocumentType::INVOICE, $issuedAt),
             'trip_id' => $trip->id,
             'rate_card_version_id' => $version->id,
             'currency' => $version->currency,

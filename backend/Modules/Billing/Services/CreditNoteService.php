@@ -49,17 +49,36 @@ class CreditNoteService
     ): CreditNote {
         $issuedAt = now();
 
+        // The credit note belongs to the **same fleet's series as the invoice
+        // it corrects** (ADR-0055 §6). Anything else would file a correction in
+        // one company's ledger and the document it corrects in another's.
+        //
+        // `invoices.operator_id` is nullable — F0 backfilled it and F2 is the
+        // pass that starts filling it in — so an invoice raised before this
+        // model existed has none. Refused rather than guessed, exactly as
+        // `InvoiceService` refuses a trip with no fleet: a credit note is a
+        // legal correction to a numbered document, and putting it in the wrong
+        // series is worse than not issuing it.
+        $operatorId = $invoice->operator_id;
+
+        if ($operatorId === null) {
+            throw new \RuntimeException(
+                "Invoice {$invoice->id} names no fleet, so no credit-note series can be chosen "
+                .'for it (ADR-0055 §6). It predates the fleet model.'
+            );
+        }
+
         // Outside the transaction — see DocumentNumberSequenceRepository:
         // creating a counter row inside one deadlocks two simultaneous
         // first-ever documents on its unique index.
-        $this->numbers->ensureSeries($invoice->tenant_id, DocumentType::CREDIT_NOTE, $issuedAt);
+        $this->numbers->ensureSeries($operatorId, $invoice->tenant_id, DocumentType::CREDIT_NOTE, $issuedAt);
 
-        return DB::transaction(function () use ($invoice, $lines, $reason, $idempotencyKey, $actor, $issuedAt) {
+        return DB::transaction(function () use ($invoice, $operatorId, $lines, $reason, $idempotencyKey, $actor, $issuedAt) {
             // The serialisation point, taken first. Beyond the counter
             // itself, the replay check below is a locking read of a credit
             // note that usually does not exist, and concurrent gap locks on
             // absent rows deadlock the moment both sides insert.
-            $this->numbers->lockSeries($invoice->tenant_id, DocumentType::CREDIT_NOTE, $issuedAt);
+            $this->numbers->lockSeries($operatorId, $invoice->tenant_id, DocumentType::CREDIT_NOTE, $issuedAt);
 
             // Locks the invoice for the duration. Every credit note against
             // it queues behind this, which is what makes the running-total
@@ -76,7 +95,7 @@ class CreditNoteService
             $total = $this->totalOf($lines);
             $this->assertWithinInvoice($locked, $total);
 
-            return $this->write($locked, $lines, $total, $reason, $idempotencyKey, $actor, $issuedAt);
+            return $this->write($locked, $operatorId, $lines, $total, $reason, $idempotencyKey, $actor, $issuedAt);
         });
     }
 
@@ -137,10 +156,15 @@ class CreditNoteService
     }
 
     /**
+     * @param  int  $operatorId  the invoice's fleet, proved non-null by the
+     *                           caller and passed rather than re-read, so the
+     *                           note and its number cannot end up in different
+     *                           series (ADR-0055 §6)
      * @param  array<int, array{description: string, amount_minor: int, invoice_line_id?: int|null}>  $lines
      */
     private function write(
         Invoice $invoice,
+        int $operatorId,
         array $lines,
         Money $total,
         string $reason,
@@ -150,8 +174,10 @@ class CreditNoteService
     ): CreditNote {
         $note = CreditNote::create([
             'tenant_id' => $invoice->tenant_id,
+            'operator_id' => $operatorId,
             'invoice_id' => $invoice->id,
             'credit_note_number' => $this->numbers->next(
+                $operatorId,
                 $invoice->tenant_id,
                 DocumentType::CREDIT_NOTE,
                 $issuedAt,

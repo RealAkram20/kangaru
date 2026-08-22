@@ -3,6 +3,7 @@
 namespace Modules\Drivers\Models;
 
 use App\Concerns\Auditable;
+use App\Concerns\BelongsToOperator;
 use App\Models\User;
 use Database\Factories\DriverFactory;
 use Illuminate\Database\Eloquent\Factories\Factory;
@@ -33,7 +34,7 @@ use Modules\Vehicles\Models\Vehicle;
  */
 class Driver extends Model implements HoldsDocuments
 {
-    use Auditable, HasFactory, SoftDeletes;
+    use Auditable, BelongsToOperator, HasFactory, SoftDeletes;
 
     /**
      * @see Vehicle::newFactory() for why this is explicit.
@@ -47,6 +48,14 @@ class Driver extends Model implements HoldsDocuments
 
     protected $fillable = [
         'user_id',
+        // The fleet this driver drives for (ADR-0055). Same reasoning as
+        // `Vehicle::$fillable` — ADR-0005 was right that a client owns no
+        // driver, and what changed is that the owner is now nameable.
+        //
+        // A driver may *also* contract with Kangaru directly to work walk-ins
+        // (ADR-0055 §7). That is a separate record, not a second value here:
+        // the fleet still employs them.
+        'operator_id',
         'name',
         'phone',
         // The vehicle this driver actually drives — theirs, in most cases,

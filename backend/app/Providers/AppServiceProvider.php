@@ -2,10 +2,14 @@
 
 namespace App\Providers;
 
+use App\Enums\AccessLevel;
 use App\Enums\Permission;
 use App\Models\AuditLog;
 use App\Models\Customer;
+use App\Models\ImpersonationSession;
 use App\Models\User;
+use App\Support\Access\AccessContext;
+use App\Support\Access\ImpersonationContext;
 use App\Support\Tenancy\TenantContext;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Eloquent\Relations\Relation;
@@ -101,6 +105,18 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(TenantContext::class);
+        // The fleet axis, bound by IdentifyTenant from the actor's own
+        // access_level (ADR-0055 §2). A singleton for the same reason
+        // TenantContext is one: it is set once per request and read by every
+        // owned model, so two instances would be two different answers to
+        // "who is asking".
+        $this->app->singleton(AccessContext::class);
+        // Who is really behind the request when it is not the person it looks
+        // like (ADR-0056). A singleton beside the two above, and read by the
+        // audit trail and the banner only — never by anything that builds a
+        // query, or an acting-as session would see the union of two people's
+        // reach.
+        $this->app->singleton(ImpersonationContext::class);
 
         // ADR-0024 §7: how the driver and the passenger reach each other.
         //
@@ -264,6 +280,20 @@ class AppServiceProvider extends ServiceProvider
         // Drivers and Corporate Employees do not hold `reports.view` — a
         // report spans the whole tenant's fleet, which is more than either
         // should see.
+        // ADR-0056 §6. A Gate rather than a policy, because the thing being
+        // authorised is an *act* with no model behind it — there is no
+        // `ImpersonationSession` yet when the question is asked.
+        //
+        // The level is checked here as well as in the service. That is not
+        // belt-and-braces for its own sake: the Gate is what makes this an
+        // idiom-A route in the census, and a support agent who is refused
+        // should be refused before a request body is read.
+        Gate::define(
+            'act-as-another-user',
+            fn (User $user) => $user->access_level === AccessLevel::KANGARU
+                && $user->hasPermission(Permission::SUPPORT_ACT_AS),
+        );
+
         Gate::define('viewReports', fn (User $user) => $user->hasPermission(Permission::REPORTS_VIEW));
 
         // Per-report, because "may run a report" and "may see this report's
@@ -333,6 +363,12 @@ class AppServiceProvider extends ServiceProvider
             'client_place' => ClientPlace::class,
             'client_route' => ClientRoute::class,
             'user' => User::class,
+            // ADR-0056. In the map because `Relation::enforceMorphMap` is
+            // enforced here: a morph type with no alias throws rather than
+            // writing a class name into a column, which is the behaviour that
+            // keeps a rename from silently orphaning every row that points at
+            // it.
+            'impersonation_session' => ImpersonationSession::class,
             'vehicle' => Vehicle::class,
             // ADR-0050. Renaming or retiring a category changes what the
             // fleet may record next and what a tariff may price; the office

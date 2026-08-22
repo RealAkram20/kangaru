@@ -127,6 +127,28 @@ enum NotificationType: string
      */
     case DRIVER_APPLICATION_DOCUMENT_REJECTED = 'driver_application.document.rejected';
 
+    /**
+     * Kangaru support held this person's account for a while (ADR-0056 §5).
+     *
+     * **The half of the disclosure the person actually reads.** Their audit
+     * trail already records it, and a trail nobody is told to look at deters
+     * nothing — ADR-0056 exists because an admin resetting a password is *"the
+     * one act an audit trail cannot tell apart from impersonation"*, and the
+     * answer to that is only complete when the person on the other end knows
+     * it happened.
+     *
+     * Sent to **individuals**, which the ADR names as drivers and walk-in
+     * customers. A client's transport officer and a fleet's dispatcher act in
+     * a corporate capacity and their organisation reads the same event in its
+     * own audit log; a driver's account is their livelihood and they have no
+     * compliance office reading anything on their behalf.
+     *
+     * Mail as well as the in-app row, and the reason is the whole point: a
+     * notice about somebody else using your account has to reach you
+     * **without** you signing in to the thing they were using.
+     */
+    case ACCOUNT_ACCESSED_BY_SUPPORT = 'account.accessed_by_support';
+
     public function label(): string
     {
         return match ($this) {
@@ -143,6 +165,7 @@ enum NotificationType: string
             self::DRIVER_SUPPORT_ANSWERED => 'Report answered',
             self::DRIVER_DOCUMENT_REVIEWED => 'Document checked',
             self::DRIVER_APPLICATION_DOCUMENT_REJECTED => 'Document needs resending',
+            self::ACCOUNT_ACCESSED_BY_SUPPORT => 'Support opened your account',
         };
     }
 
@@ -252,6 +275,13 @@ enum NotificationType: string
             // Mail alone. See the case's own note: an applicant has no account
             // to notify and no device to push to.
             self::DRIVER_APPLICATION_DOCUMENT_REJECTED => [NotificationChannel::MAIL],
+            // Both, deliberately. The in-app row is the record they can go
+            // back to; the mail is what reaches them without signing in to the
+            // account somebody else was just holding.
+            self::ACCOUNT_ACCESSED_BY_SUPPORT => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::MAIL,
+            ],
             self::DRIVER_DOCUMENT_REVIEWED => [
                 NotificationChannel::DATABASE,
                 NotificationChannel::PUSH,

@@ -44,6 +44,10 @@ class UserAdminService
      */
     private function insert(array $attributes, User $actor): User
     {
+        $tenantId = $actor->isPlatformLevel()
+            ? ($attributes['tenant_id'] ?? null)
+            : $actor->tenant_id;
+
         return User::create([
             'name' => $attributes['name'],
             'email' => $attributes['email'],
@@ -62,9 +66,25 @@ class UserAdminService
             // it is Super Admin's to do — `staff.manage` is the gate, and
             // the escalation rule (ADR-0004) is what keeps a Corporate
             // Admin from reaching it.
-            'tenant_id' => $actor->isPlatformLevel()
-                ? ($attributes['tenant_id'] ?? null)
-                : $actor->tenant_id,
+            'tenant_id' => $tenantId,
+            // The mirror of the line above, and it has to be said rather than
+            // left out (ADR-0055 §4). A new colleague with neither a client nor
+            // a fleet is **Kangaru** — head office — and `User::saving` refuses
+            // to infer that. The suite found this the moment the guard landed:
+            // 36 failures, every one of them this line missing.
+            //
+            // A colleague pinned to a client is that client's and has no fleet.
+            // Everyone else joins whichever fleet the administrator making the
+            // appointment belongs to.
+            //
+            // **A Kangaru actor throws here, deliberately.** They have no fleet
+            // to pass on, so this produces two nulls and the guard refuses
+            // them. Creating head office staff is the "serious act" ADR-0006
+            // describes, made more so by ADR-0056 — it wants its own path, with
+            // `access_level` named out loud by somebody who meant it, and that
+            // path arrives with S1. Until then a loud 500 beats a quiet
+            // promotion, and the exception says exactly that.
+            'operator_id' => $tenantId === null ? $actor->operator_id : null,
         ]);
     }
 

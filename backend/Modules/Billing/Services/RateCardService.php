@@ -2,9 +2,11 @@
 
 namespace Modules\Billing\Services;
 
+use App\Models\OperatorClient;
 use App\Models\User;
 use App\Support\Money\Shillings;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Modules\Billing\Enums\RateCardStatus;
 use Modules\Billing\Enums\RoundingMode;
 use Modules\Billing\Models\RateCard;
@@ -37,6 +39,25 @@ class RateCardService
         return DB::transaction(function () use ($data, $actor) {
             $card = RateCard::create([
                 'tenant_id' => $actor->tenant_id,
+                // Which fleet's prices these are (ADR-0055 §5), and the
+                // answer follows the client rather than the actor.
+                //
+                // **A card with no client is the public tariff, and the public
+                // tariff is Kangaru's** — Kangaru owns the walk-in customer, so
+                // Kangaru sets what a walk-in pays. That is true no matter who
+                // types it in, and the first version of this line got it wrong
+                // by reading the actor: a platform Super Admin has had a fleet
+                // since F0, so it stamped Shanitah onto the public tariff and
+                // `walkInTariff()` — which requires a null fleet — stopped
+                // finding it. Twelve tests went red, all of them walk-in
+                // pricing.
+                //
+                // **A client's card belongs to the fleet serving that client**,
+                // read from the contract. The actor cannot answer it: these
+                // cards are written by the *client's* own Finance officer, who
+                // has no fleet at all, and taking their null would file every
+                // negotiated rate as a Kangaru default readable by every fleet.
+                'operator_id' => $this->fleetPricingFor($actor->tenant_id),
                 'name' => $data['name'],
                 'description' => $data['description'] ?? null,
                 'status' => RateCardStatus::ACTIVE,
@@ -63,6 +84,40 @@ class RateCardService
             // read side of that same fact.
             return RateCard::forActor($actor)->findOrFail($card->id);
         });
+    }
+
+    /**
+     * Which fleet's prices a card written for this client is (ADR-0055 §6).
+     *
+     * Null for a client-less card, which is the public tariff and Kangaru's.
+     *
+     * Otherwise the client's contracted fleet. **Refused rather than guessed**
+     * when a client has more than one: with two fleets serving them there are
+     * two sets of negotiated terms, and picking either would silently file one
+     * fleet's prices under the other's name — the exact failure a per-fleet
+     * rate card exists to prevent. Nothing reaches that branch today, because
+     * every client has one contract; it is written now because the moment it
+     * can be reached is the moment somebody is looking at a screen and not at
+     * this file.
+     */
+    private function fleetPricingFor(?int $tenantId): ?int
+    {
+        if ($tenantId === null) {
+            return null;
+        }
+
+        $fleets = OperatorClient::serving($tenantId)->pluck('operator_id');
+
+        if ($fleets->count() > 1) {
+            throw ValidationException::withMessages([
+                'operator_id' => [
+                    'This client is served by more than one fleet, so a rate card has to say '
+                    .'which fleet it prices. Choose the fleet and try again.',
+                ],
+            ]);
+        }
+
+        return $fleets->first();
     }
 
     /**

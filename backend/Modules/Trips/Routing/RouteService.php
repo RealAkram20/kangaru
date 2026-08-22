@@ -2,6 +2,7 @@
 
 namespace Modules\Trips\Routing;
 
+use App\Support\Observability\Trace;
 use Illuminate\Support\Facades\Cache;
 
 /**
@@ -65,23 +66,49 @@ class RouteService
             return null;
         }
 
-        $key = $this->cacheKey($points);
+        /*
+         * Traced, because this is the one place in a request where the
+         * platform spends somebody else's money and waits on somebody else's
+         * server (ADR-0054 §4).
+         *
+         * The SDK already records the outbound HTTP call as a span. What it
+         * cannot record is the **hit rate** — a cached answer makes no HTTP
+         * call, so on the waterfall it is invisible, and "we ask Google far
+         * too often" and "the cache is working perfectly" look identical.
+         * `cache` below is the number the class docblock's whole
+         * snapped-origin argument turns on, and it has never been measured.
+         */
+        return Trace::span('route.lookup', 'road through '.count($points).' points', function () use ($points) {
+            $key = $this->cacheKey($points);
 
-        // A miss that the provider also declines is cached as a miss for a
-        // short while, deliberately: without it, a trip whose coordinates have
-        // no road between them re-asks Google on every heartbeat and is billed
-        // for every refusal.
-        $cached = Cache::get($key);
+            // A miss that the provider also declines is cached as a miss for a
+            // short while, deliberately: without it, a trip whose coordinates have
+            // no road between them re-asks Google on every heartbeat and is billed
+            // for every refusal.
+            $cached = Cache::get($key);
 
-        if ($cached !== null) {
-            return $cached === false ? null : $this->fromCache($cached);
-        }
+            if ($cached !== null) {
+                Trace::annotate(['cache' => 'hit', 'has_route' => $cached !== false]);
 
-        $route = $this->provider->via($points);
+                return $cached === false ? null : $this->fromCache($cached);
+            }
 
-        Cache::put($key, $route === null ? false : $route->toArray(), self::TTL_SECONDS);
+            $route = $this->provider->via($points);
 
-        return $route;
+            Cache::put($key, $route === null ? false : $route->toArray(), self::TTL_SECONDS);
+
+            Trace::annotate([
+                'cache' => 'miss',
+                'has_route' => $route !== null,
+                // Which of the two providers answered, on the span rather than
+                // only in config: ADR-0031's switch has been flipped in
+                // production before, and once by accident.
+                'provider' => $route?->provider,
+                'distance_km' => $route?->distanceKm,
+            ]);
+
+            return $route;
+        }, ['points' => count($points)]);
     }
 
     /**

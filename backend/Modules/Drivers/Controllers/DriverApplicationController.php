@@ -18,6 +18,7 @@ use Modules\Drivers\Resources\DriverApplicationResource;
 use Modules\Drivers\Resources\DriverResource;
 use Modules\Drivers\Services\DriverAccountConflictException;
 use Modules\Drivers\Services\DriverApplicationClosedException;
+use Modules\Drivers\Services\DriverApplicationDocumentsPendingException;
 use Modules\Drivers\Services\DriverApplicationService;
 
 /**
@@ -129,6 +130,17 @@ class DriverApplicationController extends Controller
             );
         } catch (DriverApplicationClosedException $e) {
             return ApiResponse::error(ErrorCode::DRIVER_APPLICATION_CLOSED, $e->getMessage(), [], 409);
+        } catch (DriverApplicationDocumentsPendingException $e) {
+            // 409 like its neighbours: the request was understood and the
+            // state refuses it. Not 422 — nothing in the *body* is wrong, and
+            // a field-shaped error would send the console looking for a form
+            // input to hang it on.
+            return ApiResponse::error(
+                ErrorCode::DRIVER_APPLICATION_DOCUMENTS_PENDING,
+                $e->getMessage(),
+                [],
+                409,
+            );
         } catch (DriverAccountConflictException $e) {
             // The duplicate ADR-0027 §5 deliberately let through at
             // submission, surfacing here where a human can act on it.

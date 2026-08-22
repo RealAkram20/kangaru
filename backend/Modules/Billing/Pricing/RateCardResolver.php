@@ -33,7 +33,7 @@ class RateCardResolver
         // through `TenantScope` and find nothing at all — the reason
         // ADR-0024 had to defer pricing. The platform's own tariff is what
         // applies (ADR-0026 §1).
-        $card ??= $trip->isWalkIn() ? $this->walkInTariff() : $this->defaultCardForTenant();
+        $card ??= $trip->isWalkIn() ? $this->walkInTariff() : $this->defaultCardForTenant($trip);
 
         // `started_at` is the moment the journey commenced — the Bank's
         // first acceptance criterion, and the only date a client would
@@ -116,6 +116,13 @@ class RateCardResolver
     {
         $card = RateCard::allTenants()
             ->whereNull('tenant_id')
+            // ...and no fleet either. Kangaru owns the walk-in customer, so
+            // Kangaru sets what the walk-in pays (ADR-0055 §5). Without this
+            // the first fleet to mark a client-less card as its default would
+            // start pricing every walk-in on the platform, including other
+            // fleets'. Nothing can do that today; the line costs nothing and
+            // the failure would be invisible.
+            ->whereNull('operator_id')
             ->where('is_default', true)
             ->where('status', RateCardStatus::ACTIVE)
             ->first();
@@ -133,14 +140,33 @@ class RateCardResolver
     /**
      * @throws RateCardNotConfiguredException
      */
-    private function defaultCardForTenant(): RateCard
+    private function defaultCardForTenant(Trip $trip): RateCard
     {
         // TenantScope (ADR-0001) restricts this to the caller's tenant, so
         // "the default card" can never resolve to another client's prices.
         // Callers outside a request must have bound TenantContext first.
+        //
+        // ## …and to the fleet that ran the trip (ADR-0055 §6)
+        //
+        // "The default card" stopped being a single row the moment a client
+        // could contract two fleets: each prices its own work, so Centenary
+        // Bank has one default per fleet serving it. Without this filter the
+        // resolution is `first()` over both — which means **a trip could be
+        // billed at a competitor's negotiated rate**, in whichever direction
+        // that happened to be wrong, and the invoice would look perfectly
+        // ordinary.
+        //
+        // Taken from the trip rather than the actor or the context, for the
+        // reason `TripZoneResolver` gives: invoicing runs from queues and
+        // from Finance officers who need not be in the fleet that did the
+        // work.
         $card = RateCard::query()
             ->where('is_default', true)
             ->where('status', RateCardStatus::ACTIVE)
+            ->when(
+                $trip->operator_id !== null,
+                fn ($query) => $query->visibleToFleet($trip->operator_id),
+            )
             ->first();
 
         if ($card === null) {

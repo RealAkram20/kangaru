@@ -148,6 +148,13 @@ it('leaves no me route unreachable by the app that owns it', function () {
     expect($unreachable)->toBe([]);
 });
 
+it('names the stop routes on the driver scope, so add-a-drop-off is not the eighth dead screen', function () {
+    // `trips.*`, so the reflective `me.*` guard above cannot see them —
+    // pinned by name instead (ADR-0045 §4, §10).
+    expect(ClientScope::permits([ClientScope::DRIVER], 'trips.stops.store'))->toBeTrue();
+    expect(ClientScope::permits([ClientScope::DRIVER], 'trips.stop-candidates.index'))->toBeTrue();
+});
+
 // ── The console is untouched ─────────────────────────────────────────────
 
 it('leaves a console token holding everything it held before', function () {

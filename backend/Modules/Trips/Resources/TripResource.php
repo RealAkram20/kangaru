@@ -69,6 +69,26 @@ class TripResource extends JsonResource
                 $this->order()?->dropoff_longitude,
             ),
             /*
+             * The run's itinerary, in order (ADR-0045). Empty for every
+             * point-to-point trip, which is every trip that existed before
+             * stops did — an empty list, not an absence, so a client can
+             * render "no stops" without a null branch.
+             *
+             * `whenLoaded`, and `show()` loads it where `index()` does not —
+             * the same bound `orderRequest` and `ledgerEntries` carry. A
+             * dispatch board of fifty trips must not pay fifty itinerary
+             * queries for a column nobody renders there.
+             */
+            'stops' => TripStopResource::collection($this->whenLoaded('stops')),
+            // §4's flag: how many stops were added mid-run rather than
+            // planned. A note, not a charge — the client sees the run
+            // deviated and where; nobody bills for the deviation.
+            //
+            // Cast, because a model that was just create()d has never read
+            // the column's database default back and would serve null for a
+            // count that is honestly zero.
+            'unplanned_stop_count' => (int) $this->unplanned_stop_count,
+            /*
              * What kind of job this was — `ride`, `delivery` or `self_drive`.
              *
              * A real column on the order request, not a key inside `details`,

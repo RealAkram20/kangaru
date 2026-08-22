@@ -3,6 +3,7 @@
 namespace Modules\Vehicles\Models;
 
 use App\Concerns\Auditable;
+use App\Concerns\InheritsKangaruDefaults;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
@@ -38,9 +39,12 @@ use Illuminate\Support\Collection;
  */
 class VehicleCategory extends Model
 {
-    use Auditable;
+    use Auditable, InheritsKangaruDefaults;
 
     protected $fillable = [
+        // Null is Kangaru's default, which every fleet inherits and only
+        // Kangaru edits (ADR-0055 §5).
+        'operator_id',
         'key',
         'name',
         'description',

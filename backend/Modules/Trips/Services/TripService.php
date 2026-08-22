@@ -4,6 +4,7 @@ namespace Modules\Trips\Services;
 
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Modules\Drivers\Models\Driver;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Events\TripStatusChanged;
 use Modules\Trips\Models\Trip;
@@ -40,6 +41,21 @@ class TripService
             $trip = Trip::create([
                 ...$attributes,
                 'status' => TripStatus::ASSIGNED,
+                // Which fleet ran it (ADR-0055), taken from the driver rather
+                // than from `$actor` or the request's `AccessContext`.
+                //
+                // The driver is the truthful source and the only one that is
+                // always right. A dispatcher assigning the job may belong to a
+                // different fleet once Kangaru can act as one (ADR-0056), and
+                // this path also runs from `AdvanceDispatchOffers` on the
+                // scheduler, where there is no request and the ambient context
+                // is unbound. `drivers.operator_id` is NOT NULL, so this cannot
+                // come back empty.
+                //
+                // It is also what ADR-0055 §7 says for a walk-in: a job run by
+                // Fleet A's driver carries Fleet A, which is how the fleet sees
+                // its own vehicle's mileage without any grant.
+                'operator_id' => Driver::whereKey($attributes['driver_id'])->value('operator_id'),
             ]);
 
             TripEvent::record($trip, null, TripStatus::ASSIGNED, $actor, null);

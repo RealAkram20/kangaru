@@ -4,6 +4,8 @@ import { useAuth } from '../../auth/useAuth'
 import { IconButton } from '../core/IconButton'
 import { RouteFallback } from '../feedback/RouteFallback'
 import { filterSections, navLabel, navPath } from '../../lib/navigation'
+import { ActingAsBanner } from '../security/ActingAsBanner'
+import { useActingAs } from '../security/useActingAs'
 import { SidebarNav, type SidebarSection } from '../navigation/SidebarNav'
 import { useSidebarState } from '../navigation/useSidebarState'
 import { Topbar } from '../navigation/Topbar'
@@ -151,6 +153,9 @@ export function AppShell() {
   const location = useLocation()
   const sidebar = useSidebarState()
   const theme = useTheme()
+  // Whether somebody is holding this account for support. Null for everybody
+  // who is simply themselves, which is almost every session.
+  const actingAs = useActingAs()
 
   // Exact match first; `/trips/29` is the record page and lights the Trips
   // entry the way any trip does.
@@ -214,6 +219,19 @@ export function AppShell() {
         }}
       />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        {/*
+          Above the topbar and inside the column, so it pushes the console down
+          rather than floating over it (ADR-0056 §5). An overlay would let
+          content hide behind it and would read as a notification that arrived
+          — which is the one thing a permanent indicator must not do.
+        */}
+        {actingAs.session && (
+          <ActingAsBanner
+            session={actingAs.session}
+            onStop={() => void actingAs.stop()}
+            stopping={actingAs.stopping}
+          />
+        )}
         <Topbar
           title={page.title}
           onOpenProfile={() => navigate('/profile')}

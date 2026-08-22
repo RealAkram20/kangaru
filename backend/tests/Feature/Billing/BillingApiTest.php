@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Operator;
 use Modules\Billing\Enums\DocumentType;
 use Modules\Billing\Models\Invoice;
 use Modules\Billing\Repositories\DocumentNumberSequenceRepository;
@@ -217,7 +218,7 @@ it('refuses to allocate a document number outside a transaction', function () {
     ['tenant' => $tenant] = BillingFixtures::tenantWithRateCard();
 
     $sequences = app(DocumentNumberSequenceRepository::class);
-    $sequences->ensureSeries($tenant->id, DocumentType::INVOICE, 2026);
+    $sequences->ensureSeries(Operator::SHANITAH, $tenant->id, DocumentType::INVOICE, 2026);
 
     // lockForUpdate() outside a transaction is released immediately and
     // buys nothing, so a caller that forgets is told rather than silently
@@ -229,7 +230,7 @@ it('refuses to allocate a document number outside a transaction', function () {
     DB::rollBack();
 
     try {
-        expect(fn () => $sequences->lockSeries($tenant->id, DocumentType::INVOICE, 2026))
+        expect(fn () => $sequences->lockSeries(Operator::SHANITAH, $tenant->id, DocumentType::INVOICE, 2026))
             ->toThrow(LogicException::class);
     } finally {
         // Hand RefreshDatabase back the transaction it expects to roll back.
@@ -286,6 +287,6 @@ it('refuses to allocate a number for a series that was never created', function 
     // would mean allocating outside the insert-before-transaction ordering
     // that keeps two simultaneous first invoices from deadlocking.
     expect(fn () => app(DocumentNumberSequenceRepository::class)
-        ->lockSeries($tenant->id, DocumentType::INVOICE, 2099))
+        ->lockSeries(Operator::SHANITAH, $tenant->id, DocumentType::INVOICE, 2099))
         ->toThrow(RuntimeException::class);
 });

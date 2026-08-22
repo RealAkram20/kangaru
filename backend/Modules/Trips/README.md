@@ -62,6 +62,8 @@ deleting a trip would break the audit trail, so it isn't exposed.
 | POST | `/api/v1/trips` | `create` — Super Admin, Operations Manager, Dispatcher, Fleet Owner, Branch Manager, Depot Manager |
 | POST | `/api/v1/trips/{id}/transitions` | `transition` — role- and target-status-dependent, see `TripPolicy` |
 | GET | `/api/v1/trips/{id}/events` | `view` (on the parent trip) — the append-only timeline, cursor-paginated |
+| POST | `/api/v1/trips/{id}/stops` | `addStop` — the trip's driver, or `trips.transition.any`; journey statuses only (409 otherwise) |
+| GET | `/api/v1/trips/{id}/stop-candidates` | `viewStopCandidates` — the trip's driver alone, live trip only (ADR-0045 §10) |
 
 ### What `TripResource` serves beyond the columns
 
@@ -121,6 +123,44 @@ ever genuinely needs the figure, memoise the tariff version per request inside
 Billing rather than removing this guard — and note that making
 `RateCardResolver` `scoped` is not free, because a version held across an
 invoice run could be a stale one.
+
+### Stops — the itinerary as evidence (ADR-0045)
+
+`trip_stops` is the evidence side of multi-stop journeys: a run's stops, in
+order, never edited after the fact. Every pre-existing trip and every
+point-to-point trip carries an empty list, and nothing backfilled.
+
+**Adding** (§4): the trip's driver appends the next drop-off mid-run —
+`source = added_by_driver`, counted on `trips.unplanned_stop_count`, which is
+a note and never a charge. An office using the same endpoint is stamped
+`added_by_dispatch` and not counted. A saved-place pick copies the label and
+pin from the client's register (`client_place_id` rides along for report
+grouping only); free text may carry a coordinate pair or none.
+
+**Arrive/continue** (§2): no new statuses and no new edges. A `waiting`
+transition carrying `stop_id` stamps `arrived_at`; the `trip_resumed` closes
+whichever stop is open with `departed_at`. Both stamps are written inside the
+state machine's transaction, and the `trip_events` row carries the `stop_id`
+— so per-stop dwell and billable waiting derive from the same instants and
+cannot disagree. An arrived stop cannot survive to `trip_completed`, because
+the graph's only exit from `waiting` is the resume that closes it; a
+*pending* stop survives completion as evidence the run ended early.
+
+**Search** (§10): `stop-candidates` serves the client's own active places —
+name, address, pin, twelve at most — to the trip's driver, only while the
+trip runs. Dispatchers are 403 here and read `/places`; a walk-in trip
+answers an empty list. `TripRouteController` routes the fare leg to the next
+located pending stop when one exists, which is also what first gives a
+corporate circuit (no order request) a drawable road.
+
+**Pricing is untouched** (§3, owner's ruling): one base fare, total distance,
+total waiting. The waiting at every ATM was already billed before stops
+existed, because it derives from the same `waiting ⇄ trip_resumed` cycle.
+
+`TripStopService` is the only writer. Skipping (§6) is first-class in the
+schema (`skipped`, `skip_reason`) and has no surface yet; the copy-on-booking
+path from client routes (§1) is still open. `TripStopTest` covers the add,
+the stamps, the bounds and the isolation.
 
 ## Trip lifecycle
 
@@ -284,6 +324,15 @@ halves of a job anywhere, it must distinguish them here too.
 `to=pickup` with no origin answers `null` rather than a route: the approach
 has no sensible origin but the driver, and routing from the pickup to the
 pickup is a zero-length line.
+
+**`to=dropoff` with no origin is load-bearing rather than a convenience.** It
+answers the road for the *whole* leg, from the pickup, and the driver app asks
+for it alongside the from-here road so its map can show how much of the journey
+is behind the driver. Being origin-free is the entire cost argument: the
+question never changes for the length of a trip, so it is one cache key on the
+client, one on the server, and one shared answer across every driver on that
+pair — against the ten or twenty billed requests §5's deviation trigger spends
+on the road ahead.
 
 **`route: null` is a 200 and is the ordinary answer** — no key, routing off,
 no network, a quota rejection, no road between two points, or a trip taken

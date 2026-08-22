@@ -2,6 +2,7 @@
 
 namespace Modules\Vehicles\Rules;
 
+use App\Models\User;
 use Closure;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Modules\Vehicles\Models\VehicleCategory;
@@ -59,10 +60,31 @@ class ActiveVehicleCategory implements ValidationRule
             return;
         }
 
-        $exists = VehicleCategory::query()
+        // A fleet may price and book against its own categories and against
+        // Kangaru's defaults, and against nobody else's (ADR-0055 §5).
+        //
+        // Keyed off the actor, not off the fleet id: a **client's** Finance
+        // officer pricing their own rate card has a null `operator_id`, and
+        // filtering them as though that meant "Kangaru" hid every category the
+        // office had created. `VehicleCategoryRateCardSyncTest` caught it —
+        // the version POST came back 422 saying the fleet did not offer a
+        // category it had created seconds earlier.
+        // An `if` rather than `->when()`, because the caller may be a
+        // `Customer` (a walk-in, ADR-0013) or nobody at all on a public route,
+        // and a closure hides that from static analysis. Both are left
+        // unfiltered on the fleet axis: a walk-in books through Kangaru's own
+        // surface, and which fleet takes the job is F3's question.
+        $actor = request()->user();
+
+        $query = VehicleCategory::query()
             ->active()
-            ->where('key', $value)
-            ->exists();
+            ->where('key', $value);
+
+        if ($actor instanceof User) {
+            $query->visibleToActor($actor);
+        }
+
+        $exists = $query->exists();
 
         if ($exists) {
             return;

@@ -62,6 +62,28 @@ export function startObservability(): void {
     tracesSampleRate: Number(import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE ?? 0.1),
 
     /*
+     * **The one line that makes a browser trace and an API trace the same
+     * trace** (ADR-0054 §4).
+     *
+     * The SDK's default is same-origin only — `localhost` and relative URLs.
+     * The console is served from `kangaruride.com` and calls an API on a
+     * different origin, so by default it attaches `sentry-trace` and
+     * `baggage` to *nothing*, and the two halves of every request arrive in
+     * Sentry as two unrelated traces. A slow page then says "the XHR took
+     * 900 ms" and the API says "the request took 200 ms", with nothing
+     * joining them and no way to tell which is lying.
+     *
+     * The API's own origin is the whole list, deliberately. These headers are
+     * a trace id and a sampling decision — not a credential — but they should
+     * still go to this platform's server and nowhere else, and a wildcard
+     * here would attach them to every third party the console ever calls.
+     *
+     * Safe against CORS, which is the way this normally breaks: `config/cors.php`
+     * sets `allowed_headers` to `*`, so the preflight already permits both.
+     */
+    tracePropagationTargets: [import.meta.env.VITE_API_BASE_URL],
+
+    /*
      * The browser's own noise, which is not this application's.
      *
      * Left deliberately short. A long ignore list is how a real defect gets
