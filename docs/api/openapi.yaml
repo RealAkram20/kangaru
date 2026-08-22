@@ -5140,6 +5140,100 @@ paths:
   # ------------------------------------------------------------------
   # Zones (Modules/Fleet) — the geofencing engine, ADR-0021
   # ------------------------------------------------------------------
+  /api/v1/operators:
+    get:
+      summary: The register of fleet companies.
+      description: >
+        Head office's, and nobody else's. Every method here needs
+        `access_level = kangaru` on top of `fleets.view` — a fleet's own Super
+        Admin holds the permission and is refused (ADR-0059, OperatorPolicy).
+        Counts only: head office counts what a fleet has and reads none of it
+        (ADR-0055 §2). To look at a fleet's trips, drivers or clients, act as
+        somebody there (ADR-0056).
+      responses:
+        '200':
+          description: Fleet companies, by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Operator' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Onboards a fleet company, with its first account.
+      description: >
+        The fleet and its owner account are created together or not at all.
+        ADR-0056 acts as a **person**, not an organisation, so a fleet with no
+        account is permanently unreachable to support — `owner_name` and
+        `owner_email` are required for that reason, not for completeness
+        (ADR-0059 §5). Refused with 500 if no plan is flagged default: an
+        unpriced fleet is a configuration error, not a state (ADR-0058 §1).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, owner_name, owner_email]
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                slug:
+                  type: ['string', 'null']
+                  description: Generated from the name when absent. Unique across the platform.
+                owner_name: { type: string, maxLength: 255 }
+                owner_email: { type: string, format: email }
+      responses:
+        '201':
+          $ref: '#/components/responses/OperatorResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/operators/{operator}:
+    parameters:
+      - { name: operator, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: One fleet company.
+      responses:
+        '200':
+          $ref: '#/components/responses/OperatorResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    patch:
+      summary: Edits or suspends a fleet company.
+      description: >
+        There is no delete. Six operational tables carry `operator_id` and
+        `operator_client` restricts on delete, so removing a fleet would
+        either fail against its own history or orphan it. A fleet that leaves
+        the platform is suspended, which keeps its trips explicable and its
+        invoices reconcilable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                status: { enum: [active, suspended] }
+                plan_id:
+                  type: integer
+                  description: Which plan this fleet is on. What a plan *means* — limits, price, period — is K7's.
+      responses:
+        '200':
+          $ref: '#/components/responses/OperatorResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/zones:
     get:
       summary: The geofences this caller may see.
@@ -6853,6 +6947,19 @@ components:
               message: { type: string }
               data: { $ref: '#/components/schemas/Zone' }
 
+    OperatorResponse:
+      description: One fleet company.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/Operator' }
+
     CustomerProfileResponse:
       description: One customer, as staff see them.
       content:
@@ -8022,6 +8129,35 @@ components:
           type: integer
         active: { type: boolean }
         notes: { type: ['string', 'null'], maxLength: 255 }
+
+    Operator:
+      type: object
+      description: >
+        A fleet company — the outer axis of ADR-0055. Shanitah is row 1.
+        Counts only: nothing here is a fleet's operational data, and the
+        easiest way to breach ADR-0055 §2 is to add "one more useful field".
+      required: [id, name, slug, status, is_active, created_at]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        slug: { type: string }
+        status: { enum: [active, suspended] }
+        is_active: { type: boolean }
+        plan:
+          type: object
+          description: What this fleet pays to be on Kangaru (ADR-0058). Present when the relation was loaded; never null on a loaded fleet.
+          required: [id, name, is_default]
+          additionalProperties: false
+          properties:
+            id: { type: integer }
+            name: { type: string }
+            is_default: { type: boolean }
+        users_count: { type: integer, description: Staff and drivers both — every account whose fleet this is. }
+        drivers_count: { type: integer }
+        vehicles_count: { type: integer }
+        clients_count: { type: integer, description: Corporate clients under contract (operator_client). }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
 
     Zone:
       type: object

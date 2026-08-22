@@ -21,6 +21,50 @@ ADR-0009 (3 August 2026) then answered what an allocation *does*. Until it
 landed, this module was a record nothing consulted. It now constrains
 dispatch.
 
+## The register of fleet companies (K2, ADR-0055 / ADR-0059)
+
+Added 22 August 2026, and it removes a rail that was up on purpose.
+
+`Operator` carried a docblock saying *"There is deliberately no way to create
+a second one"* — no endpoint, no policy, no factory, no seeder — because
+between `F0` and `F2` the operational tables carried `operator_id` and nothing
+filtered on it, so a second fleet's dispatcher would have read Shanitah's
+trips. `F2` closed that gap and `K0` proved the schema on MySQL 8.4, so
+creation is offered here. This was blocker number one in
+`docs/fleet-model-plan.md` §4b.
+
+**Four things a reader should not have to rediscover:**
+
+1. **The level is the control, not the permission.** Every Super Admin holds
+   `fleets.manage`, a fleet's own included — `StoreRoleRequest` refuses to let
+   anybody grant a permission they do not hold, so withholding it would make
+   it ungrantable rather than strict. `OperatorPolicy` requires
+   `access_level = kangaru` on every method. Same shape as `support.act-as`.
+2. **A fleet and its first account are created together or not at all.**
+   ADR-0056 acts as a *person*, not an organisation, so a fleet with no
+   account is permanently unreachable to support — and it fails when "the last
+   administrator left" and "we need support" coincide. `owner_name` and
+   `owner_email` are required for that reason.
+3. **Counts, never operational data.** `OperatorResource` carries four counts
+   and no trips, drivers by name, clients by name or revenue. ADR-0055 §2 is
+   easiest to breach by adding one more useful field, so
+   `OperatorRegisterTest` pins the key list rather than trusting review.
+4. **There is no delete.** Six operational tables carry `operator_id` and
+   `operator_client` restricts on delete; a removal would either fail against
+   its own history or orphan it. A fleet that leaves is suspended.
+
+**Still true, and carried here so it is not discovered:** `trip_events`,
+`trip_locations` and `trip_stops` are not independently fleet-scoped. They are
+reached through a trip and the trip is the gate. Sound today because no route
+reaches them without resolving a trip first; it stops being sound the moment
+somebody adds one.
+
+**Plans.** `K2` created the `plans` table and `operators.plan_id` to hold one
+invariant — ADR-0058 §1, no fleet exists without a plan, and creation *fails*
+rather than defaulting when nothing is flagged default. Everything that makes
+a plan commercial (price, period, limits, Kangaru's invoice to a fleet) is
+`K7`'s, and nothing here presumes its shape.
+
 ## Responsibilities
 
 - Record that a vehicle is allocated to a corporate account from a date,

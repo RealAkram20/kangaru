@@ -5,8 +5,21 @@ use Modules\Fleet\Controllers\AvailabilityBlockController;
 use Modules\Fleet\Controllers\DriverAvailabilityController;
 use Modules\Fleet\Controllers\DriverPresenceController;
 use Modules\Fleet\Controllers\OnDutyDriverController;
+use Modules\Fleet\Controllers\OperatorController;
 use Modules\Fleet\Controllers\VehicleAllocationController;
 use Modules\Fleet\Controllers\ZoneController;
+
+// The register of fleet companies (ADR-0055, ADR-0059) — head office's, and
+// nobody else's. `OperatorPolicy` requires `access_level = kangaru` on every
+// method, so a fleet's own Super Admin holds the permission and is refused.
+//
+// No destroy route: six operational tables carry `operator_id` and
+// `operator_client` restricts on delete, so a fleet that leaves is suspended
+// rather than removed — which keeps its trips explicable.
+Route::get('operators', [OperatorController::class, 'index'])->name('operators.index');
+Route::post('operators', [OperatorController::class, 'store'])->name('operators.store');
+Route::get('operators/{operator}', [OperatorController::class, 'show'])->name('operators.show');
+Route::patch('operators/{operator}', [OperatorController::class, 'update'])->name('operators.update');
 
 // `Modules/Fleet`'s first routes (ADR-0009). Nested under nothing: an
 // allocation is about one vehicle and one client but belongs to neither

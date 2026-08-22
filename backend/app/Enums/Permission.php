@@ -105,6 +105,23 @@ enum Permission: string
     case RATECARDS_VIEW = 'ratecards.view';
     case RATECARDS_MANAGE = 'ratecards.manage';
 
+    // ── Fleet companies ───────────────────────────────────────────────
+    /**
+     * Read the register of fleet companies (ADR-0055, ADR-0059).
+     *
+     * **The permission is not the control here — the level is.** Every Super
+     * Admin holds this, including a fleet's own, because `StoreRoleRequest`
+     * refuses to let anybody grant a permission they do not hold themselves,
+     * and an ungrantable permission is broken rather than strict. What keeps
+     * the register to head office is `OperatorPolicy`, which requires
+     * `access_level = kangaru` on top of this — the same shape as
+     * `support.act-as` (see `RoleSeeder`'s note on the Super Admin role).
+     */
+    case FLEETS_VIEW = 'fleets.view';
+
+    /** Onboard, edit and suspend a fleet company. Kangaru-level only. */
+    case FLEETS_MANAGE = 'fleets.manage';
+
     // ── Clients ───────────────────────────────────────────────────────
     case COMPANIES_VIEW = 'companies.view';
     case COMPANIES_CREATE = 'companies.create';
@@ -200,6 +217,8 @@ enum Permission: string
             self::RATECARDS_VIEW => 'See rate cards',
             self::RATECARDS_MANAGE => 'Create rate cards and versions',
             self::COMPANIES_VIEW => 'See client companies',
+            self::FLEETS_VIEW => 'See the fleet companies on the platform',
+            self::FLEETS_MANAGE => 'Onboard, edit and suspend a fleet company',
             self::COMPANIES_CREATE => 'Onboard a client company',
             self::COMPANIES_UPDATE => 'Edit a client company',
             self::COMPANIES_DELETE => 'Remove a client company',

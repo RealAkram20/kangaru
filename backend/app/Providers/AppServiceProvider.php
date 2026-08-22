@@ -7,6 +7,7 @@ use App\Enums\Permission;
 use App\Models\AuditLog;
 use App\Models\Customer;
 use App\Models\ImpersonationSession;
+use App\Models\Operator;
 use App\Models\User;
 use App\Support\Access\AccessContext;
 use App\Support\Access\ImpersonationContext;
@@ -67,6 +68,7 @@ use Modules\Fleet\Models\DriverShiftWindow;
 use Modules\Fleet\Models\VehicleAllocation;
 use Modules\Fleet\Models\Zone;
 use Modules\Fleet\Policies\AvailabilityBlockPolicy;
+use Modules\Fleet\Policies\OperatorPolicy;
 use Modules\Fleet\Policies\VehicleAllocationPolicy;
 use Modules\Fleet\Policies\ZonePolicy;
 use Modules\Fleet\Support\DatabaseDriverPresenceStore;
@@ -254,6 +256,9 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(ClientPlace::class, ClientPlacePolicy::class);
         Gate::policy(ClientRoute::class, ClientRoutePolicy::class);
         Gate::policy(AuditLog::class, AuditLogPolicy::class);
+        // ADR-0059: the register of fleet companies. Kangaru-level only,
+        // enforced in the policy rather than by the permission alone.
+        Gate::policy(Operator::class, OperatorPolicy::class);
         Gate::policy(Vehicle::class, VehiclePolicy::class);
         Gate::policy(VehicleCategory::class, VehicleCategoryPolicy::class);
         Gate::policy(Driver::class, DriverPolicy::class);

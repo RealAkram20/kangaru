@@ -3,9 +3,11 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Modules\Drivers\Models\Driver;
 use Modules\Vehicles\Models\Vehicle;
+use RuntimeException;
 
 /**
  * A fleet company — the outer axis of ADR-0055.
@@ -36,6 +38,7 @@ use Modules\Vehicles\Models\Vehicle;
  * @property string $name
  * @property string $slug
  * @property string $status
+ * @property int $plan_id
  */
 class Operator extends Model
 {
@@ -54,6 +57,49 @@ class Operator extends Model
      * was asking to be typed.
      */
 
+    /**
+     * No fleet exists without a plan (ADR-0058 §1).
+     *
+     * **On the model rather than in `OperatorService`, and that placement is
+     * the whole point.** The service is one creation path; a seeder, a
+     * console command, a future import and `Operator::create()` in a fixture
+     * are others, and every one of them would otherwise be a way to make an
+     * unpriced fleet. That is the same lesson `access_level` learned the hard
+     * way — an invariant a caller has to remember is an invariant that
+     * eventually ships broken.
+     *
+     * It **throws rather than defaulting to free** when nothing is flagged
+     * default. ADR-0058 §1 is explicit: an unpriced fleet is a configuration
+     * error, and it should say so at creation rather than be discovered at
+     * the first billing run months later. Falling back to free would be
+     * giving something away silently, which is the failure direction this
+     * codebase keeps refusing.
+     */
+    protected static function booted(): void
+    {
+        static::creating(function (self $operator): void {
+            // `getAttribute` rather than `$operator->plan_id`: the property
+            // docblock describes a **saved** row, where the column is not
+            // null, and this hook runs before there is one. Reading it
+            // through the declared property makes the check look like dead
+            // code to a static analyser, and it would be — after the save.
+            if ($operator->getAttribute('plan_id') !== null) {
+                return;
+            }
+
+            $plan = Plan::default();
+
+            if (! $plan instanceof Plan) {
+                throw new RuntimeException(
+                    'No plan is flagged as the default, so a fleet cannot be priced. '
+                    .'Flag one in `plans` before creating an operator (ADR-0058 §1).'
+                );
+            }
+
+            $operator->plan_id = $plan->id;
+        });
+    }
+
     /** Shanitah, and the target of every F0 backfill. */
     public const SHANITAH = 1;
 
@@ -61,6 +107,7 @@ class Operator extends Model
         'name',
         'slug',
         'status',
+        'plan_id',
     ];
 
     /**
@@ -73,6 +120,19 @@ class Operator extends Model
     public function users(): HasMany
     {
         return $this->hasMany(User::class);
+    }
+
+    /**
+     * What this fleet pays to be on Kangaru (ADR-0058).
+     *
+     * Never null. A fleet with no plan is a configuration error that
+     * `OperatorService` refuses at creation, not a state to be rendered.
+     *
+     * @return BelongsTo<Plan, $this>
+     */
+    public function plan(): BelongsTo
+    {
+        return $this->belongsTo(Plan::class);
     }
 
     /**
