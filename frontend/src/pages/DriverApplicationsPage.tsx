@@ -8,6 +8,7 @@ import { Badge } from '../components/core/Badge'
 import { Button } from '../components/core/Button'
 import { Card } from '../components/core/Card'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
+import { ApplicationDocuments } from './ApplicationDocuments'
 import { Alert } from '../components/feedback/Alert'
 import { Dialog } from '../components/feedback/Dialog'
 import { FormField } from '../components/forms/FormField'
@@ -304,6 +305,15 @@ function DecisionDialog({
           <dt style={{ color: 'var(--text-secondary)' }}>Terms accepted</dt>
           <dd style={{ margin: 0 }}>{formatTimestamp(application.terms_accepted_at)}</dd>
         </dl>
+
+        {/*
+          Above the licence-number field on purpose. That field's hint reads
+          "From the licence you checked, not the applicant's form" — an
+          instruction the console gave with no way to follow it, because
+          nothing here could show the licence. The evidence now sits directly
+          above the box that is transcribed from it.
+        */}
+        <ApplicationDocuments applicationId={application.id} />
 
         {mode === 'approve' ? (
           <>

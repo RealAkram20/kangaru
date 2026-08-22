@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { apiClient } from '../../lib/apiClient'
 import { Button } from '../core/Button'
 import { IconButton } from '../core/IconButton'
@@ -95,10 +96,26 @@ export interface MediaPreviewBrowse {
 export function MediaPreview({
   source,
   browse,
+  actions,
   onClose,
 }: {
   source: MediaPreviewSource
   browse?: MediaPreviewBrowse
+  /**
+   * Controls for the document on screen, rendered between the browse arrows
+   * and Close.
+   *
+   * **Optional, and the default is still none.** A previewer is a viewer
+   * first; a caller that only shows a file passes nothing and gets exactly
+   * the chrome it had before.
+   *
+   * It exists because judging a document and acting on it are the same
+   * moment. Reviewing six applicant documents meant opening one, deciding,
+   * closing it, finding the row again and pressing a button — five steps for
+   * a decision made in the first. The arrows are already here, so the whole
+   * set can be worked through without the dialog closing once.
+   */
+  actions?: ReactNode
   onClose: () => void
 }) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null)
@@ -294,6 +311,8 @@ export function MediaPreview({
               />
             </div>
           )}
+          {actions !== undefined && <div className="kr-media__actions">{actions}</div>}
+
           <Button variant="secondary" onClick={onClose}>
             Close
           </Button>

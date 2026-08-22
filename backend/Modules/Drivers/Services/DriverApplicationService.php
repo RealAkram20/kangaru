@@ -2,12 +2,14 @@
 
 namespace Modules\Drivers\Services;
 
+use App\Enums\AccessLevel;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 use Modules\Drivers\Enums\DriverApplicationStatus;
+use Modules\Drivers\Enums\DriverDocumentStatus;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverApplication;
 use Modules\Vehicles\Models\Vehicle;
@@ -53,6 +55,129 @@ class DriverApplicationService
      * `Str::random(64)` draws from a CSPRNG. It is not the application id, is
      * not derived from it, and cannot be walked to a neighbouring row.
      */
+    /**
+     * A fresh claim ticket, so a refused document can be answered
+     * (ADR-0057 §3).
+     *
+     * **Mints rather than extends, and the old one stops working.**
+     * `mintUploadToken` overwrites the hash, so whatever the applicant held
+     * before is dead the moment this runs. That is the property worth having:
+     * a ticket emailed today does not sit alongside three older ones from
+     * three earlier refusals, each still able to reach the same documents.
+     *
+     * Public where the minting is private, because only one caller outside
+     * submission may cause a ticket to exist and it is a reviewer refusing a
+     * document. Nothing unauthenticated reaches this.
+     */
+    public function reissueUploadToken(DriverApplication $application): string
+    {
+        return $this->mintUploadToken($application);
+    }
+
+    /**
+     * The documents standing between an application and approval
+     * (ADR-0057 §2).
+     *
+     * Returns the type labels of everything the office has **looked at and
+     * not accepted** — `pending` because nobody has decided, `rejected`
+     * because somebody did.
+     *
+     * **A slot with no document is not in this list.** Every document is
+     * optional at submission (ADR-0048 §6) and the KYC screen says so in as
+     * many words; a rule that demanded all six would make them mandatory
+     * through the back door and contradict the screen. The same line
+     * `complianceFor()` draws between `action_needed` and `incomplete`.
+     *
+     * @return list<string>
+     */
+    public function documentsBlockingApproval(DriverApplication $application): array
+    {
+        $blocking = [];
+
+        foreach ($this->documents->forApplication($application) as $slot) {
+            $document = $slot['document'];
+
+            if ($document === null) {
+                continue;
+            }
+
+            if ($document->status !== DriverDocumentStatus::VERIFIED) {
+                $blocking[] = $slot['type']->label();
+            }
+        }
+
+        return $blocking;
+    }
+
+    /**
+     * The applicant's sign-in, created when they apply rather than when they
+     * are approved (ADR-0057 §5).
+     *
+     * ## This is not the "pending user" ADR-0027 §1 refused
+     *
+     * §1 rejected a third `UserStatus`, because *"the cost of missing one is
+     * a login that works before anybody approved it"*. There is no third
+     * status here: the account is plainly `active`, and it is **inert**.
+     * Every driver-facing controller resolves the actor with
+     * `Driver::where('user_id', ...)` and answers "not a driver" on null, and
+     * nothing in the platform grants anything for holding the role alone.
+     * Approval creates the *link*, and the link is what grants — ADR-0016 §2,
+     * untouched.
+     *
+     * ## `AccessLevel::APPLICANT`, declared and never inferred
+     *
+     * This was blocked for an evening on ADR-0055 §4: an applicant belongs to
+     * no fleet and no client, and *"no fleet and no client"* is the column
+     * shape of **head office**. Assigning it by omission would have filed
+     * every stranger who fills in the form as Kangaru, which is precisely the
+     * silent promotion that guard exists to prevent.
+     *
+     * The fourth level answers it. `APPLICANT` shares KANGARU's two nulls on
+     * purpose — *"the column says which, never the two nulls"* — and both must
+     * be **declared**, which is why this is a `forceFill` and not a
+     * `create()` argument: `access_level` is deliberately absent from
+     * `$fillable` so it can never arrive in a request payload.
+     * `BelongsToOperator` and `InheritsKangaruDefaults` already answer
+     * `1 = 0` for it, so every scoped read returns nothing.
+     *
+     * ## Why it can still be skipped
+     *
+     * **ADR-0027 §5 outranks the convenience.** The public endpoint must
+     * *"answer identically whether or not the email is already known to the
+     * platform"*, against a population whose whereabouts *"are worth money to
+     * the wrong people"*. Creating a user for a taken address would fail on
+     * `users_email_unique` and hand a stranger exactly that oracle.
+     *
+     * So a duplicate is stored with no account and refused at approval in
+     * front of a human, and the stranger's response is byte-identical either
+     * way. Those applicants — and every application submitted before this —
+     * answer a refused document through the emailed claim ticket instead.
+     */
+    private function mintAccountIfEmailIsFree(DriverApplication $application): void
+    {
+        if (User::query()->where('email', $application->email)->exists()) {
+            return;
+        }
+
+        $account = new User;
+
+        $account->forceFill([
+            'name' => $application->name,
+            'email' => $application->email,
+            // The hash the applicant's own choice produced, moved rather than
+            // re-made: `User`'s `hashed` cast passes a hash through, so it is
+            // never hashed twice and never re-typed. ADR-0027 §3 stands — the
+            // password is chosen once, by the person who will type it.
+            'password' => $application->password,
+            'phone' => $application->phone,
+            'role' => 'driver',
+            'status' => 'active',
+            'access_level' => AccessLevel::APPLICANT,
+        ])->save();
+
+        $application->forceFill(['user_id' => $account->getKey()])->save();
+    }
+
     private function mintUploadToken(DriverApplication $application): string
     {
         $plain = Str::random(64);
@@ -120,6 +245,19 @@ class DriverApplicationService
             'terms_accepted_at' => now(),
         ]);
 
+        /*
+            **Before the ticket is put on the model, and the order is
+            load-bearing.**
+
+            `upload_token` is an in-memory attribute — the column is
+            `upload_token_hash` — so once it is set, any `save()` on this
+            instance tries to persist a field that does not exist and dies
+            with `Unknown column 'upload_token'`. Minting the account writes
+            `user_id` back through this same model, so it has to happen while
+            the model is still clean. Found by running it.
+        */
+        $this->mintAccountIfEmailIsFree($application);
+
         // Minted in a second write rather than in the `create()` above, so
         // that the plaintext is produced by exactly one method and the row is
         // never constructed with a half-set ticket.
@@ -157,13 +295,44 @@ class DriverApplicationService
                 throw DriverApplicationClosedException::alreadyDecided($locked);
             }
 
+            /*
+                **Nothing is approved past its evidence (ADR-0057 §2).**
+
+                The owner's words: *"all their Documents should be accepted."*
+                So a document the office has looked at and not accepted blocks
+                the button — `pending` because nobody decided, `rejected`
+                because somebody did.
+
+                A slot with *no* document does not block, and that asymmetry is
+                the point. Every document is optional at submission (ADR-0048
+                §6) and the KYC screen says "Nothing here is required" in as
+                many words; demanding all six here would make them mandatory
+                through a back door and turn that sentence into a lie.
+            */
+            $blocking = $this->documentsBlockingApproval($locked);
+
+            if ($blocking !== []) {
+                throw DriverApplicationDocumentsPendingException::notAccepted($locked, $blocking);
+            }
+
             // The duplicate ADR-0027 §5 deliberately accepted at submission
             // is refused here, in front of a human. Checked in the service
             // rather than left to the users_email_unique index, because
             // ADR-0016's own path catches this in its form request — a rule
             // this path does not pass through — and an integrity violation
             // mid-transaction tells the reviewer nothing about what to do.
-            if (User::query()->where('email', $locked->email)->exists()) {
+            // **Excluding the account this application minted itself.** Before
+            // accounts were created at submission this was simply "does an
+            // account exist"; now the common case is that one does, and it is
+            // ours. What is still refused is a *stranger's* account on the
+            // same address, which is the duplicate ADR-0027 §5 deliberately
+            // accepted at submission so that a script could not read it.
+            $clash = User::query()
+                ->where('email', $locked->email)
+                ->when($locked->user_id !== null, fn ($query) => $query->whereKeyNot($locked->user_id))
+                ->exists();
+
+            if ($clash) {
                 throw DriverAccountConflictException::emailAlreadyHasAccount($locked->email);
             }
 
@@ -190,7 +359,10 @@ class DriverApplicationService
                     );
                 }
 
-                $vehicleId = Vehicle::create($attributes['vehicle'])->getKey();
+                $vehicleId = Vehicle::create([
+                    ...$attributes['vehicle'],
+                    'operator_id' => $reviewer->operator_id,
+                ])->getKey();
             }
 
             $driver = Driver::create([
@@ -202,6 +374,25 @@ class DriverApplicationService
                 'vehicle_id' => $vehicleId,
                 'owns_vehicle' => (bool) ($attributes['owns_vehicle'] ?? false),
                 'status' => 'active',
+                // Which fleet the applicant joins (ADR-0055): the reviewer's.
+                //
+                // Taken from the actor rather than left to
+                // `BelongsToOperator`'s auto-fill, which reads the request's
+                // `AccessContext`. That fill is real and correct over HTTP, but
+                // it is ambient — and this service is also called directly, by
+                // `DriverPromotionsTest` among others, where no middleware has
+                // run and the context is unbound. The column is NOT NULL, so
+                // the ambient version fails at the database with an SQLSTATE
+                // instead of doing the right thing.
+                //
+                // Wherever the actor is already in hand, ask them. It survives
+                // being called from a queue, a command or a test, none of which
+                // have a request.
+                //
+                // **Which fleet a self-registering driver joins when Kangaru
+                // sends them** is a real question and F3's to answer — today
+                // there is one fleet, and the reviewer is in it.
+                'operator_id' => $reviewer->operator_id,
             ]);
 
             // ADR-0016's endpoint, unchanged and unbypassed: the link is
@@ -211,12 +402,57 @@ class DriverApplicationService
             // The password travels as the hash the applicant's own choice
             // produced. `User`'s `hashed` cast recognises it and passes it
             // through, so it is never hashed twice and never re-typed.
-            $this->accounts->open($driver, [
-                'name' => $locked->name,
-                'email' => $locked->email,
-                'password' => $locked->password,
-                'role' => $attributes['role'] ?? 'driver',
-            ]);
+            /*
+                Two ways in, and `DriverAccountService::open()` already knew
+                both: `user_id` adopts an account, anything else mints one. So
+                ADR-0016's endpoint is still the only thing that makes the
+                link, under the same permissions and the same exclusive index
+                — this change did not touch it.
+
+                The second branch is not dead code. An application whose email
+                was already taken carries no account (see
+                `mintAccountIfEmailIsFree`), and so does every application
+                submitted before this change. Both are approved through the
+                path that existed.
+            */
+            /*
+                **The account stops being an applicant's here.**
+
+                It was minted `AccessLevel::APPLICANT` with no operator, which
+                is what kept it inert while nobody had decided about the
+                person. Approval decides, and the account has to join the
+                fleet the driver just joined — otherwise
+                `InheritsKangaruDefaults` keeps answering `1 = 0` for them and
+                a freshly approved driver signs in to an app that shows
+                nothing and 404s their own trip. Found exactly that way, by
+                the end-to-end test below.
+
+                `operator_id` alone: `User::levelFor` derives FLEET from it on
+                save, and deriving is the safe direction — the value that
+                cannot be inferred is `kangaru`, and this is not it.
+            */
+            if ($locked->user_id !== null) {
+                // **Both columns in one statement.** Writing `operator_id`
+                // alone leaves `access_level` reading `applicant`, which
+                // requires two nulls — and the `users_access_level_matches_
+                // columns` CHECK rejects the row mid-approval with an
+                // SQLSTATE. That constraint is the second copy of the rule
+                // `AccessLevel::permits()` holds, and it caught this exact
+                // raw update, which is what its docblock says it is for.
+                User::query()->whereKey($locked->user_id)->update([
+                    'operator_id' => $driver->operator_id,
+                    'access_level' => AccessLevel::FLEET->value,
+                ]);
+            }
+
+            $this->accounts->open($driver, $locked->user_id !== null
+                ? ['user_id' => $locked->user_id]
+                : [
+                    'name' => $locked->name,
+                    'email' => $locked->email,
+                    'password' => $locked->password,
+                    'role' => $attributes['role'] ?? 'driver',
+                ]);
 
             // ADR-0037 §5. Inside the same transaction, so a referral and the
             // driver it concerns are written together or not at all.

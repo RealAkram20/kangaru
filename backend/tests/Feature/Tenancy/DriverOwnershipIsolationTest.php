@@ -65,6 +65,11 @@ function meRoutes(): array
         'me.closure-request.destroy' => ['DELETE', '/api/v1/me/closure-request', []],
         'me.devices.store' => ['POST', '/api/v1/me/devices', ['token' => 'ExponentPushToken[w1c]', 'provider' => 'expo']],
         'me.devices.destroy' => ['DELETE', '/api/v1/me/devices/ExponentPushToken[w1c]', []],
+        // ADR-0057 §5: the applicant's own application, before they are a
+        // driver. Both resolve from the token, so like the rest of `/me`
+        // there is no id here to attempt somebody else's with.
+        'me.application.documents.index' => ['GET', '/api/v1/me/application/documents', []],
+        'me.application.documents.store' => ['POST', '/api/v1/me/application/documents', ['type' => 'driving_licence', 'file' => '{image}', 'expires_at' => now()->addYear()->toDateString()]],
         'me.documents.index' => ['GET', '/api/v1/me/documents', []],
         'me.documents.store' => ['POST', '/api/v1/me/documents', ['type' => 'driving_licence', 'file' => '{image}', 'expires_at' => now()->addYear()->toDateString()]],
         'me.documents.file' => ['GET', '/api/v1/me/documents/{document}/file', []],
@@ -115,6 +120,22 @@ function meRoutesOpenToNonDrivers(): array
         'me.devices.store' => 204,
         'me.devices.destroy' => 204,
         'me.documents.file' => 200,
+
+        /*
+            **These two are not driver routes at all** (ADR-0057 §5). They
+            serve an *applicant* — somebody with an account and deliberately
+            no driver profile — so `NOT_A_DRIVER` would be the wrong refusal
+            in both directions: it is not what they are being refused for,
+            and the driver this suite signs in as gets the same 404 because a
+            driver has no open application either.
+
+            404 is the honest answer for both: the subject is the token, and
+            neither of them has an application waiting. A decided or absent
+            one reads the same, which is ADR-0048 §4's rule about not
+            reporting a rejection through an HTTP status.
+        */
+        'me.application.documents.index' => 404,
+        'me.application.documents.store' => 404,
     ];
 }
 
@@ -214,8 +235,11 @@ it('lists every /me route exactly once, so a new one cannot skip this file', fun
     sort($inTable);
 
     expect($inTable)->toBe($inRouter);
-    expect(count($inTable))->toBe(35);
-    expect(count(meRoutesOpenToNonDrivers()))->toBe(3);
+    // 37: ADR-0057 §5 added the applicant's own two.
+    expect(count($inTable))->toBe(37);
+    // 5: the applicant's own two joined the three that are not driver gates
+    // (ADR-0057 §5). Pinned so a fourth kind of exception is a decision.
+    expect(count(meRoutesOpenToNonDrivers()))->toBe(5);
 });
 
 it('refuses a console user who is not a driver on every /me route but the three that are the user\'s own', function () {
@@ -242,7 +266,9 @@ it('refuses a console user who is not a driver on every /me route but the three 
     }
 
     expect($refused)->toBe(32);
-    expect($open)->toBe(3);
+    // 5: ADR-0057 §5 added the applicant's own two, which refuse everybody
+    // here with a 404 rather than NOT_A_DRIVER.
+    expect($open)->toBe(5);
 });
 
 it('lets the driver through the same 32 gates, so the refusals above are the gate and not the fixture', function () {
@@ -266,7 +292,10 @@ it('lets the driver through the same 32 gates, so the refusals above are the gat
         $reached++;
     }
 
-    expect($reached)->toBe(35);
+    // 37: the two ADR-0057 §5 routes are walked here too. A driver gets a
+    // plain 404 from them — they have no open application — which is exactly
+    // what this test permits: anything but `NOT_A_DRIVER`.
+    expect($reached)->toBe(37);
 });
 
 it('answers 404 when driver A names driver B\'s offer, availability request, or trip', function () {
@@ -357,5 +386,7 @@ it('names no route in the driver allow-list that the router does not have', func
     $phantom = array_values(array_diff(ClientScope::routesFor(ClientScope::DRIVER), $known));
 
     expect($phantom)->toBe([]);
-    expect(count(ClientScope::routesFor(ClientScope::DRIVER)))->toBe(52);
+    // 54: ADR-0045 added `trips.stops.store` and `trips.stop-candidates.index`.
+    // 56: ADR-0057 §5 added the applicant's own two.
+    expect(count(ClientScope::routesFor(ClientScope::DRIVER)))->toBe(56);
 });

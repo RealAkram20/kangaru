@@ -55,6 +55,7 @@ Home ─────── duty, the live trip, today's figures, the day's finis
         └── Pickup               ← accepted, driver_en_route
         └── Waiting for passenger ← driver_arrived
         └── Trip in progress     ← trip_started, waiting, trip_resumed
+        └── Add a drop-off       ← ADR-0045 §4; pushed from Trip in progress, no status
         └── Trip map             ← full-screen, from Navigate
         └── Trips history        ← finished work, by day; All/Rides/Deliveries
         └── Trip detail          ← the record: rail from trip_events, ledger rows,
@@ -193,11 +194,28 @@ While a trip is held, **End trip is withdrawn**: `TripStatus::WAITING` allows
 only `TRIP_RESUMED`, and offering completion there would 422 through the
 outbox minutes after the driver walked away.
 
-Two of those live screens draw a distance and neither draws a duration to go.
-There is no routing engine here, and ADR-0020 §3 declined to derive minutes
-from a straight line by name — so every distance says "straight line" on the
-screen in words, and the driver's own maps app answers the part this platform
-cannot (`src/trips/directions.ts`).
+Those live screens draw a distance, and **what kind of distance is always said
+on the screen in words.** Since ADR-0031 there is a routing engine behind the
+server, so the figure is usually a road; with no key, no signal or no pins it
+falls back to the straight line it always was, and the caption changes with it.
+Minutes appear only when the provider sent them — ADR-0020 §3's refusal to
+derive a duration locally still stands, and ADR-0031 §6 restates it. The
+driver's own maps app still answers the part this platform does not do at all,
+which is turn-by-turn guidance (`src/trips/directions.ts`).
+
+**The map draws the whole leg, not just the road ahead.** `PickupMap` takes two
+polylines: `routePolyline`, the road from where the driver is, and
+`legPolyline`, the same leg from the pickup. It frames the camera on the second
+and refits only when *that* changes — because framing the first re-fitted every
+hundred metres, so the road left always filled the screen and a driver could not
+tell a job nearly finished from one just begun. What stays visible of the muted
+whole leg is the road already driven; the driver sits at the seam, drawn as
+their own vehicle (`src/trips/vehicleSprites.ts`, the console's own top-down
+silhouettes) and turned to the handset's heading when it reported one.
+
+`TripMapScreen`'s footer states how far is left, how far the leg is, and a bar
+between them — `src/trips/journey.ts`, which is a ratio of two *measured* road
+distances and refuses to become anything else.
 
 `isPickupPhase`, `isWaitingForPassenger` and `isTripInProgress` in
 `src/trips/transitions.ts` implement the split and are defined next to each
@@ -547,6 +565,69 @@ duty toggle and from both sign-out paths.
 
 ---
 
+## What the office can see when this goes wrong
+
+Sentry, EU region, set up in `src/observability.ts` and started from
+`index.ts` before React (ADR-0054). Three signals: **errors**, **tracing** at
+a tenth of transactions, and **logs**.
+
+**All of it is inert without `EXPO_PUBLIC_SENTRY_DSN`** — `startObservability()`
+returns before touching the native module, which is how development and the
+Jest environment run. It is also the one app where switching it on is a
+**rebuild and a fresh signed APK**, not a config change: `@sentry/react-native`
+is native and has a config plugin.
+
+### What tracing measures, and why it produced nothing until now
+
+`tracesSampleRate` decides how many transactions are sent, not whether any
+exist — and a React Native app creates none on its own. `src/tracing.ts` is
+what makes the handset produce them: `Sentry.wrap` in `index.ts` for app
+start, and a React Navigation integration registered from the navigator's
+`onReady` for screen changes, with **time to initial display** — the interval
+between tapping a job and the screen being drawn, which is what a driver means
+by "it hangs".
+
+Two things are traced by hand, and only because nothing else could see them:
+
+| Where | Span | Why not automatic |
+|---|---|---|
+| `offline/outbox.ts` | `outbox.drain` | Fires on a reconnect from no screen, so no navigation transaction brackets it. Becomes a transaction of its own. |
+| `duty/OnlineService.ts` | `duty.go_online` | The **native** half of going online — the foreground service, not the HTTP call the SDK already times. `refused` says the OS declined while the driver was told nothing. |
+
+Every API call is already traced by the SDK, so wrapping one by hand would
+only duplicate it.
+
+### Why logs, on top of errors
+
+Errors report what crashed and tracing reports what was slow. The commonest
+production failure on a handset upcountry is neither: nothing crashed, nothing
+was slow, and the job still did not happen. Four places swallow exactly that,
+each for a reason written beside it — and each now says so to the office while
+staying silent to the driver, who cannot act on any of it mid-shift.
+
+| Where | Level | What it means |
+|---|---|---|
+| `push/offerAnswer.ts` | `error` | A lock-screen Accept the network lost. The driver believes they have the job. |
+| `offline/SyncProvider.tsx` | `error` | An outbox item parked: a transition or leave request the server refused for good. Needs a person. |
+| `offline/SyncProvider.tsx` | `fatal` | The outbox database would not open. No queueing and no GPS for the rest of the session. |
+| `offline/SyncProvider.tsx` | `warn` | The queue is stalled — trying, getting nowhere, while NetInfo insists the phone is online. Once per stall, not per tick. |
+| `duty/useDutyToggle.ts` | `error` | On duty, but the phone refused the online service. The matcher is offering work to a handset that has gone deaf. |
+| `duty/useDutyToggle.ts` | `info` | The shift boundary, from the server's answer rather than the tap. |
+| `auth/AuthProvider.tsx` | `warn` | A sign-in refused, or a session that expired mid-shift and paused the queue. |
+
+`console.warn` and `console.error` are forwarded too, which is what picks up
+`GpsPingBuffer` and `HttpOutboxTransport` — both announce their one diagnostic
+through an injected `warn` port and nowhere else. The native log stream is
+**not** forwarded (`logsOrigin: 'js'`): a driver's data bundle should not carry
+every library's Logcat chatter.
+
+**Attributes are ids, never people.** Trip ids, offer ids, error codes, counts,
+durations. ADR-0054 §2 permits full request data on an *error*; that is not
+extended to log attributes. `Sentry.setUser` in `AuthProvider` attaches
+`user.id`, which is the one identifier a report is joined on.
+
+---
+
 ## Testing
 
 ```bash
@@ -823,6 +904,7 @@ than backing off on its own schedule.
 ## Related decisions
 
 - **ADR-0023** — this app's offline outbox
+- ADR-0054 — error, performance and log reporting, and what it is allowed to see
 - ADR-0022 — token scope per client app
 - ADR-0017 — resource availability, §6 for the driver's own requests
 - ADR-0016 — driver sign-in accounts

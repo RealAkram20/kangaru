@@ -34,6 +34,15 @@ enum ErrorCode: string
     case EXPORT_EXPIRED = 'EXPORT_EXPIRED';
 
     /**
+     * The trip is not in a journey status, so its itinerary cannot grow and
+     * the place search is closed (ADR-0045 §4, §10 — a driver's reach is
+     * bounded to the run they are *currently driving*). A conflict rather
+     * than a validation failure: the request was well-formed, the trip has
+     * simply moved on — or not started.
+     */
+    case TRIP_NOT_ACTIVE = 'TRIP_NOT_ACTIVE';
+
+    /**
      * An exclusive allocation cannot share a vehicle with another contract
      * over the same days (ADR-0009). A conflict rather than a validation
      * failure: the request was well-formed, the world already holds
@@ -146,6 +155,13 @@ enum ErrorCode: string
      * one person.
      */
     case DRIVER_APPLICATION_CLOSED = 'DRIVER_APPLICATION_CLOSED';
+
+    /**
+     * Approval was attempted while a document was still unaccepted
+     * (ADR-0057 §2). Distinct from CLOSED, which means somebody already
+     * decided: this application is open and there is one more step.
+     */
+    case DRIVER_APPLICATION_DOCUMENTS_PENDING = 'DRIVER_APPLICATION_DOCUMENTS_PENDING';
 
     /**
      * The sign-in method the caller asked for is switched off, or its

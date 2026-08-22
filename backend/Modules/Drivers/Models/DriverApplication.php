@@ -29,6 +29,7 @@ use Modules\Drivers\Enums\DriverApplicationStatus;
  * @property string|null $password
  * @property DriverApplicationStatus $status
  * @property Carbon $terms_accepted_at
+ * @property int|null $user_id
  * @property int|null $reviewed_by_user_id
  * @property Carbon|null $reviewed_at
  * @property string|null $rejection_reason
@@ -145,6 +146,26 @@ class DriverApplication extends Model implements HoldsDocuments
     public function reviewedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'reviewed_by_user_id');
+    }
+
+    /**
+     * The sign-in this application minted, if it minted one.
+     *
+     * **Deliberately not `$fillable`.** It is written by
+     * `DriverApplicationService` with `forceFill`, and by nothing else: an
+     * attribute that decides which account an approval adopts must not be
+     * reachable from a request body, however well the form request is
+     * validated today.
+     *
+     * Null is ordinary rather than exceptional. ADR-0027 §5 requires the
+     * public endpoint to answer identically whether or not the email is
+     * known, so an application on a taken address carries no account and is
+     * refused at approval in front of a human — as does every application
+     * submitted before accounts moved to submission time.
+     */
+    public function account(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'user_id');
     }
 
     /**

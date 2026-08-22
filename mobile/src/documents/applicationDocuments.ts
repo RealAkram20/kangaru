@@ -108,6 +108,24 @@ export async function uploadApplicationDocument(
 ): Promise<void> {
   const form = new FormData();
 
+  /*
+   * **In the body, and the header below is not enough.**
+   *
+   * `StoreApplicationDocumentRequest` has
+   * `'upload_token' => ['required', 'size:64', ...]`, and a FormRequest is
+   * validated *before* the controller runs — so although
+   * `ApplicationDocumentController::resolve()` reads
+   * `input('upload_token') ?? header('X-Upload-Token')` and would happily
+   * accept the header, the request never reaches it. Sending only the header
+   * fails validation and the applicant gets a flat 422 on every attempt.
+   *
+   * `openapi.yaml` has said `required: [upload_token, type, file]` all along
+   * and `DriverOnboardingDocumentTest` posts it in the body, so the contract
+   * and the server were always agreed; this client was the odd one out. The
+   * header is kept because the GET above has no body to carry it in.
+   */
+  form.append('upload_token', token);
+
   form.append('type', input.type);
 
   if (input.expiresAt !== null) {
@@ -148,4 +166,54 @@ export async function withdrawApplicationDocument(
       headers: { [TOKEN_HEADER]: token },
     }),
   );
+}
+
+/*
+ * The same two questions, asked with a session instead of a claim ticket
+ * (ADR-0057 §5).
+ *
+ * An applicant has held an account since submission, so the ordinary path is
+ * now "sign in and send it again" and no credential travels by email. The
+ * ticket functions above stay for the applicants who never got an account —
+ * a duplicate address, which ADR-0027 §5 requires to be indistinguishable at
+ * submission, and everybody who applied before this shipped.
+ *
+ * No `guard()` here: `UploadTicketSpentError` is about a ticket, and there
+ * isn't one. A decided or absent application answers 404 like any other
+ * missing resource, and the screen says so in one line.
+ */
+
+/** The six slots for the signed-in applicant's own application. */
+export async function listMyApplicationDocuments(api: ApiClient): Promise<DriverDocumentSlot[]> {
+  const response = await api.request<DriverDocumentSlot[]>('/me/application/documents');
+
+  return response.data;
+}
+
+/**
+ * Send one again. Replaces whatever was held of that type.
+ *
+ * The same 60-second allowance the other uploads take: one photograph over a
+ * weak connection with a person watching it, and the client's 15-second
+ * default would abandon an upload that was making progress.
+ */
+export async function uploadMyApplicationDocument(
+  api: ApiClient,
+  input: { type: DriverDocumentType; uri: string; expiresAt: string | null },
+): Promise<void> {
+  const form = new FormData();
+
+  form.append('type', input.type);
+
+  if (input.expiresAt !== null) {
+    form.append('expires_at', input.expiresAt);
+  }
+
+  form.append('file', formFile(input.uri));
+
+  await api.request('/me/application/documents', {
+    method: 'POST',
+    form,
+    timeoutMs: 60_000,
+  });
 }

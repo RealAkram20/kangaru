@@ -145,7 +145,7 @@ it('will not let one applicant reach another application', function () {
 
 /* ------------------------------------------------------------------ 2 --- */
 
-it('carries the documents onto the driver at approval, still pending', function () {
+it('carries the documents onto the driver at approval, without re-reviewing them', function () {
     [$application, $token] = submitApplication();
 
     $this->post('/api/v1/driver-applications/documents', [
@@ -156,7 +156,23 @@ it('carries the documents onto the driver at approval, still pending', function 
 
     $path = DriverDocument::sole()->file_path;
 
-    $this->actingAs(officeReviewer())
+    /*
+        Accepted first, because ADR-0057 §2 will not approve over a document
+        nobody has decided about. Before that, this test approved with the
+        document still `pending` and asserted it stayed that way — the state
+        is now unreachable, and the *reason* it existed is asserted below
+        instead.
+    */
+    $reviewer = officeReviewer();
+    $document = DriverDocument::sole();
+
+    $this->actingAs($reviewer)
+        ->postJson("/api/v1/driver-applications/{$application->id}/documents/{$document->id}/verify")
+        ->assertOk();
+
+    $acceptedAt = $document->refresh()->reviewed_at;
+
+    $this->actingAs($reviewer)
         ->postJson("/api/v1/driver-applications/{$application->id}/approve", [
             'license_number' => 'UG-DL-77123',
             'license_expiry' => now()->addYears(2)->toDateString(),
@@ -169,11 +185,19 @@ it('carries the documents onto the driver at approval, still pending', function 
     expect($document->driver_application_id)->toBeNull();
 
     /**
-     * **Approval is not review** (ADR-0048 §5). Nobody has looked at this
-     * file; marking it verified because a different decision went the
-     * applicant's way is ADR-0033 §4's auto-verification by another route.
+     * **Approval is still not review** (ADR-0048 §5), and this is the shape
+     * that claim takes after ADR-0057.
+     *
+     * The status is `verified` because a reviewer looked at the file and said
+     * so, in a separate act with its own audit row — not because a different
+     * decision went the applicant's way. What must never happen is approval
+     * *writing* a verdict, and the assertion that catches it is the
+     * timestamp: `reviewed_at` is the one the acceptance wrote, untouched by
+     * everything approval did afterwards. An approval that re-stamped the row
+     * would fail here even though the status looks right.
      */
-    expect($document->status)->toBe(DriverDocumentStatus::PENDING);
+    expect($document->status)->toBe(DriverDocumentStatus::VERIFIED);
+    expect($document->reviewed_at?->equalTo($acceptedAt))->toBeTrue();
 
     // The file did not move — re-pointing a row is atomic, moving bytes is
     // not, and a half-moved document is a licence the office cannot open.

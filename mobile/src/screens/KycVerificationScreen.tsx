@@ -1,4 +1,3 @@
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -6,6 +5,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { DriverDocumentSlot, DriverDocumentType } from '../api/endpoints';
 import { useAuth } from '../auth/AuthProvider';
 import { DocumentSlotList } from '../documents/DocumentSlotList';
+import { ExpiryDatePicker } from '../documents/ExpiryDatePicker';
 import { submitFootnote } from '../documents/grouping';
 import { MediaPickerSheet, type PickedMedia } from '../documents/MediaPickerSheet';
 import {
@@ -13,7 +13,7 @@ import {
   uploadApplicationDocument,
   UploadTicketSpentError,
 } from '../documents/applicationDocuments';
-import { isoDate, warnsAboutReplacing } from '../profile/presentation';
+import { pickerSheetNote } from '../profile/presentation';
 import { Button, Notice, Screen } from '../ui/components';
 import { SkeletonCards } from '../ui/Skeleton';
 import { ChevronLeftIcon, LockIcon, ShieldCheckIcon } from '../ui/icons';
@@ -290,7 +290,7 @@ export function KycVerificationScreen({
       {picking !== null && (
         <MediaPickerSheet
           title={picking.type_label}
-          note={warnsAboutReplacing(picking) ? 'A new photo is checked again.' : null}
+          note={pickerSheetNote(picking)}
           onPicked={(media) => picked(picking, media)}
           onClose={() => setPicking(null)}
           onRefused={setProblem}
@@ -298,38 +298,19 @@ export function KycVerificationScreen({
       )}
 
       {staged !== null && (
-        <DateTimePicker
-          // The picker is a native module with no text and no accessible name
-          // of its own, so there is nothing else a test can find it by — the
-          // convention `DocumentsScreen` and `TransactionsScreen` both use.
-          testID="expiry-picker"
-          value={new Date()}
-          mode="date"
-          // A document cannot expire in the past and still be worth sending;
-          // the server refuses it, and a control that simply cannot ask the
-          // question is better than a validation error.
-          minimumDate={new Date()}
-          /*
-            `onValueChange` + `onDismiss`, not the deprecated single `onChange`.
-            Cancelling on Android fired `onChange` with `dismissed` *and the
-            value unchanged*, so every call site had to hand-check
-            `event.type` — and getting that wrong uploads a document against a
-            date the driver rejected. The library decides which happened now.
-          */
-          onValueChange={(_event, selected) => {
+        <ExpiryDatePicker
+          onPicked={(expiresAt) => {
             const pending = staged;
 
             // Dropped with the date. Retaking a photo is cheap; holding it
             // would leave the row in a state nobody asked for.
             setStaged(null);
 
-            if (pending === null) {
-              return;
+            if (pending !== null) {
+              void send(pending.type, pending.uri, expiresAt);
             }
-
-            void send(pending.type, pending.uri, isoDate(selected));
           }}
-          onDismiss={() => setStaged(null)}
+          onCancelled={() => setStaged(null)}
         />
       )}
     </Screen>

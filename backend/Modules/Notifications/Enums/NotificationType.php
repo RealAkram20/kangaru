@@ -110,6 +110,23 @@ enum NotificationType: string
      */
     case DRIVER_DOCUMENT_REVIEWED = 'driver.document.reviewed';
 
+    /**
+     * One of an *applicant's* documents was refused (ADR-0057 §3).
+     *
+     * **Mail only, and not by preference.** The recipient holds no account and
+     * no registered device by construction (ADR-0027 §1), so there is no row
+     * to write a database notification against and nothing to push to. This is
+     * delivered to an address with `Notification::route('mail', ...)`, and the
+     * database channel would fail on a notifiable that is not a model.
+     *
+     * The message carries a **fresh claim ticket**, which is the whole reason
+     * it exists: a refusal the applicant cannot answer costs them the job
+     * while they wait for a call. ADR-0057 §3 records why that is not the
+     * enumeration oracle ADR-0027 §5 refuses — the trigger is a signed-in
+     * reviewer, not a stranger.
+     */
+    case DRIVER_APPLICATION_DOCUMENT_REJECTED = 'driver_application.document.rejected';
+
     public function label(): string
     {
         return match ($this) {
@@ -125,6 +142,7 @@ enum NotificationType: string
             self::DRIVER_CLOSURE_ANSWERED => 'Account closure',
             self::DRIVER_SUPPORT_ANSWERED => 'Report answered',
             self::DRIVER_DOCUMENT_REVIEWED => 'Document checked',
+            self::DRIVER_APPLICATION_DOCUMENT_REJECTED => 'Document needs resending',
         };
     }
 
@@ -231,6 +249,9 @@ enum NotificationType: string
              * six documents, one message per human decision, and nothing here
              * fires on a schedule.
              */
+            // Mail alone. See the case's own note: an applicant has no account
+            // to notify and no device to push to.
+            self::DRIVER_APPLICATION_DOCUMENT_REJECTED => [NotificationChannel::MAIL],
             self::DRIVER_DOCUMENT_REVIEWED => [
                 NotificationChannel::DATABASE,
                 NotificationChannel::PUSH,

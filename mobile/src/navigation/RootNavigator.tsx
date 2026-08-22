@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../auth/AuthProvider';
 import { OfferPresenter } from '../duty/OfferPresenter';
 import { navigationRef } from './navigationRef';
+import { registerNavigationForTracing } from '../tracing';
 import { PresenceController } from '../duty/PresenceController';
 import { PushRegistrar } from '../push/PushRegistrar';
 import { PushRouter } from '../push/PushRouter';
@@ -38,6 +39,7 @@ import { CloseAccountScreen } from '../screens/CloseAccountScreen';
 import { SyncQueueScreen } from '../screens/SyncQueueScreen';
 import { TimeOffScreen } from '../screens/TimeOffScreen';
 import { WelcomeScreen } from '../screens/WelcomeScreen';
+import { AddDropoffScreen } from '../screens/AddDropoffScreen';
 import { TripDetailScreen } from '../screens/TripDetailScreen';
 import { TripInProgressScreen } from '../screens/TripInProgressScreen';
 import { TransactionsScreen } from '../screens/TransactionsScreen';
@@ -46,6 +48,7 @@ import { WaitingForPassengerScreen } from '../screens/WaitingForPassengerScreen'
 import { WalletScreen } from '../screens/WalletScreen';
 import { HouseIcon, ReceiptIcon, UserIcon, WalletIcon } from '../ui/icons';
 import { colors } from '../ui/theme';
+import { ApplicantGate } from './ApplicantGate';
 import { TripsHistoryScreen } from '../screens/TripsHistoryScreen';
 import type {
   EarningsStackParams,
@@ -198,6 +201,12 @@ function TripsNavigator() {
       screenOptions={{
         headerStyle: { backgroundColor: colors.surface },
         headerTintColor: colors.text,
+        // With `enableFreeze(true)` in index.ts, a screen this stack has
+        // navigated past stops rendering. This stack is the one that earns
+        // it: Home keeps a map WebView at the bottom of the stack for a
+        // whole trip, and TripInProgress ticks a clock every second — work
+        // that was all still running behind the screen on display.
+        freezeOnBlur: true,
       }}
     >
       {/* Home has its own top bar — brand, notifications, avatar — so the
@@ -226,6 +235,12 @@ function TripsNavigator() {
       <TripsStack.Screen
         name="TripInProgress"
         component={TripInProgressScreen}
+        options={{ headerShown: false }}
+      />
+      {/* The next drop-off, searched and added mid-run (ADR-0045 §4). */}
+      <TripsStack.Screen
+        name="AddDropoff"
+        component={AddDropoffScreen}
         options={{ headerShown: false }}
       />
       <TripsStack.Screen
@@ -456,11 +471,26 @@ export function RootNavigator() {
   }
 
   return (
-    <NavigationContainer ref={navigationRef} theme={theme}>
+    /* `onReady` is Sentry's, and it is the only moment it can be done:
+      the SDK reads `navigationRef.current` when it is handed the container,
+      and that is null until this fires (ADR-0054 §4, `src/tracing.ts`). */
+    <NavigationContainer
+      ref={navigationRef}
+      theme={theme}
+      onReady={() => registerNavigationForTracing(navigationRef)}
+    >
       {user === null ? (
         <AuthScreens />
       ) : (
-        <>
+        /*
+          An account is not yet a driver (ADR-0057 §5). Since accounts are
+          minted at application time, somebody can sign in while the office is
+          still reading their papers — and the four controllers below all
+          assume a driver profile that does not exist yet. `ApplicantGate`
+          answers the one question that separates them and shows the waiting
+          screen instead, rather than a home screen where every panel 404s.
+        */
+        <ApplicantGate>
           {/* All four render nothing, and all four are mounted here rather
             than on a screen for the same reason: a driver who switches tabs
             must not silently stop being tracked, stop being findable, or
@@ -481,7 +511,7 @@ export function RootNavigator() {
             is doing — including a modal — so it is painted above the tabs
             rather than pushed into one of them. See `OfferPresenter`. */}
           <OfferPresenter />
-        </>
+        </ApplicantGate>
       )}
     </NavigationContainer>
   );

@@ -1,3 +1,5 @@
+import * as Sentry from '@sentry/react-native';
+
 import { handleOfferEvent } from './offerAnswer';
 import { loadNotifyKit } from './notifyKit';
 
@@ -55,6 +57,23 @@ export function registerOfferBackgroundHandler(): void {
           notificationId: detail.notification?.id,
           pressActionId: detail.pressAction?.id,
         });
+
+        // **Logs are batched, and this runtime does not outlive the press.**
+        //
+        // Android built this JavaScript context for one button and tears it
+        // down when the handler resolves. `handleOfferEvent` records the
+        // outcome of the answer — including the failure it deliberately hides
+        // from the driver — and without a flush that record sits in the SDK's
+        // buffer inside a process about to disappear. The one log in this app
+        // most worth having would be the one least likely to arrive.
+        //
+        // The result is ignored: this is a report about a job, not the job.
+        // The React Native `flush()` takes no timeout — it uses the client's
+        // own `shutdownTimeout` — so the `catch` is what keeps a flush that
+        // fails on a dead connection from rejecting inside a headless task,
+        // which is the one thing this handler may never do. Resolves
+        // immediately when no DSN is configured.
+        await Sentry.flush().catch(() => false);
       });
     } catch {
       // Registering twice, or a module that is present but not linked. The

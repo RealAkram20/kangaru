@@ -375,7 +375,32 @@ it('warns about replacing only where there is a verification to lose', async () 
     under the *pending* one, where there is no review to restart.
   */
   await fireEvent.press(screen.getByLabelText(/^Driving licence\./i));
-  expect(await screen.findByText('A new photo is checked again.')).toBeTruthy();
+  // A substring match, because the note now composes two facts: this one, and
+  // the expiry question that follows the photo. Pinning the whole string would
+  // fail the next time either sentence is added to, which is not what this
+  // test is about.
+  expect(await screen.findByText(/A new photo is checked again\./)).toBeTruthy();
+});
+
+/*
+  The expiry half of the same note.
+
+  A driving licence cannot be sent without a date, and the calendar arrives
+  unannounced the instant the camera closes — reported from a handset as not
+  realising the date being asked for *was* the expiry. `DocumentSlotList` says
+  it on the row, but that is two screens behind by then, and the native dialog
+  cannot carry a title (`datetimepicker` gates `title` behind Material 3).
+*/
+it('warns that an expiry date is coming, before the camera opens', async () => {
+  const screen = await renderDocuments(
+    <DocumentsScreen navigation={navigation} route={{} as never} />,
+  );
+
+  await fireEvent.press(screen.getByLabelText(/^Driving licence\./i));
+
+  expect(
+    await screen.findByText(/you will be asked for the date this expires/i),
+  ).toBeTruthy();
 });
 
 it('does not warn about replacing a document the office refused', async () => {

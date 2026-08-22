@@ -371,3 +371,72 @@ jest.mock('react-native-notify-kit', () => ({
 jest.mock('expo-intent-launcher', () => ({
   startActivityAsync: jest.fn(async () => ({ resultCode: -1 })),
 }));
+
+/*
+ * `@sentry/react-native` is mocked for a different reason from everything
+ * else in this file, and the reason is worth stating: it is not that the
+ * native module is missing, it is that **the package ships ESM and is not in
+ * `transformIgnorePatterns`**. Any module a suite touches that imports it
+ * fails the whole file with `SyntaxError: Unexpected token 'export'` — which
+ * is why, until logs were wired in, the SDK was imported only from
+ * `index.ts`, a file no test loads.
+ *
+ * Adding it to `transformIgnorePatterns` was the alternative. It would make
+ * every suite transform `@sentry/react-native`, `@sentry/core`,
+ * `@sentry/browser` and `@sentry/react` for the sake of an SDK that is inert
+ * without a DSN — which is exactly what it is in this runner.
+ *
+ * The functions are listed rather than proxied: a call to something the real
+ * SDK does not have should fail here too, not silently record.
+ */
+/*
+ * `mock`-prefixed because `jest.mock` factories are hoisted above it and
+ * babel-plugin-jest-hoist refuses any other out-of-scope reference.
+ */
+const mockSentryGlobalScope = { setAttributes: jest.fn() };
+
+jest.mock('@sentry/react-native', () => ({
+  __esModule: true,
+  init: jest.fn(),
+  wrap: <T>(component: T): T => component,
+  captureException: jest.fn(),
+  // Awaited by the notification background handler before its runtime is torn
+  // down. Resolves true, like a real flush with nothing queued.
+  flush: jest.fn(async () => true),
+  captureMessage: jest.fn(),
+  setUser: jest.fn(),
+  setTag: jest.fn(),
+  setContext: jest.fn(),
+  // One scope object for the whole run, not a fresh one per call: a test that
+  // asserts what was attached globally has to be able to reach the same
+  // `setAttributes` the code under test called.
+  getGlobalScope: jest.fn(() => mockSentryGlobalScope),
+  consoleLoggingIntegration: jest.fn(() => ({ name: 'ConsoleLogs' })),
+  // The tracing half (`src/tracing.ts`), which is reached from `outbox.ts`
+  // and therefore from the suite this app trusts most. `startSpan` runs the
+  // callback rather than swallowing it: the spans are instrumentation, and a
+  // mock that dropped the work would silently disable everything wrapped in
+  // one.
+  addIntegration: jest.fn(),
+  reactNavigationIntegration: jest.fn(() => ({
+    name: 'ReactNavigation',
+    registerNavigationContainer: jest.fn(),
+  })),
+  startSpan: jest.fn((_options: unknown, callback: (span: unknown) => unknown) =>
+    callback({ setAttributes: jest.fn(), setAttribute: jest.fn() }),
+  ),
+  getActiveSpan: jest.fn(() => null),
+  logger: {
+    trace: jest.fn(),
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    fatal: jest.fn(),
+    // The real `fmt` is a tagged template that keeps the interpolated values
+    // as searchable parameters. Under test the flattened string is what an
+    // assertion wants to read.
+    fmt: (strings: TemplateStringsArray, ...values: unknown[]): string =>
+      strings.reduce((text, part, index) => text + part + (index < values.length ? String(values[index]) : ''), ''),
+  },
+}));

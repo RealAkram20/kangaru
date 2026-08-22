@@ -12855,7 +12855,9 @@ mobile 1022 tests / 78 suites green, `tsc --noEmit` clean, eslint 0 errors,
 Pint clean, PHPStan clean on `Modules/Trips`, `app/Enums`, `app/Support/Auth`.
 Migration proved reversible up→down→up against the testing DB. Five guards
 proved by mutation, including the cross-client one, and all five restored
-(listed below). Both screens
+(listed below). **Driven end to end on the emulator against the running dev
+API** — see "Driven on the emulator" below, which is also where the one real
+blocker this turned up is recorded. Both screens
 rendered and their outlines read — which is what caught the two defects in
 "Found by rendering" below.
 
@@ -13037,10 +13039,9 @@ below), and an itinerary the driver works through.
 - **Skip this stop (§6).** First-class in the schema (`skipped` +
   `skip_reason` exist from day one) and absent from the UI; it needs a reason
   sheet and its own endpoint, and nothing in this slice writes it.
-- **Nothing was driven against a running server.** Both suites and both
-  rendered screens are the evidence here; no real handset, no real API call,
-  no APK. The endpoints are on the driver token's allow-list and covered by
-  16 feature tests, but the first end-to-end proof is still owed.
+- **No real handset and no APK.** The emulator run below is the evidence;
+  a physical device is still owed, and the duty/offer/push path still needs
+  an EAS dev build per [[driver-app-needs-a-dev-build-not-expo-go]].
 - **Copy-on-booking from client routes (§1)** and **the driver picking a
   route (§10)** — the itinerary here is built stop by stop by the driver.
 - **Dispatch/console surfaces** — the endpoint accepts
@@ -13051,6 +13052,83 @@ below), and an itinerary the driver works through.
 - **The record screen's per-stop rail and the web trip record** — the
   evidence lands and is served; the two read surfaces still draw what they
   drew.
+
+## Driven on the emulator, and what that found (2026-08-21, later)
+
+**The whole ADR-0045 §2 + §4 cycle is now proved against the running dev
+API**, with a real driver-scoped token — not a test double:
+
+```
+TOKEN_OK=True                       (client: driver, so ClientScope is real)
+TRIP=91 STATUS=trip_started
+CANDIDATES=0                        walk-in trip has no register -> empty list, not an error
+ADDED id=1 seq=1 label=Jinja Main Market source=added_by_driver status=pending lat=
+TRIP_STOPS=1 UNPLANNED=1
+AFTER_ARRIVE  status=waiting        stop -> arrived, arrived_at set
+AFTER_RESUME  status=trip_resumed   stop -> done, departed_at set
+```
+
+So the add, the §4 flag, the §10 walk-in case, and both §2 stamps all behave
+on real data through the real HTTP surface. **The demo trip 91 now carries
+one stop and sits at `trip_resumed`** — that is a deliberate state change to
+seeded demo data, recorded here so nobody reads it as drift.
+
+**The blocker this found, and it is the important one: `php artisan migrate`
+had never run on the dev database.** `TripController::show()` eager-loads
+`stops`, so with `trip_stops` absent **every** `GET /trips/{id}` 500'd and
+the driver app showed *"This trip is not on this phone, and the office is
+unreachable"* on every live-leg screen. Not a code fault — the migration
+simply had not been applied outside the testing DB — but it means **this
+change is deploy-order-sensitive: the migration must land before the code.**
+Applied with plain `migrate --force` (never `migrate:fresh`; see
+[[dev-db-has-hand-made-state]]), after which every screen loaded.
+
+**Expo Go still runs the trips path.** ADR-0046 needs a dev build for duty,
+offers, push and the ringtone, and that is unchanged — but sign-in, the trip
+list, the live-leg screens and both new endpoints work in Expo Go on the
+`kadson_dev` AVD, which makes this feature checkable without an EAS build.
+Metro on 8082, `adb reverse tcp:8082`, `10.0.2.2:8000` reaches the host API
+with no extra forwarding.
+
+**Screens confirmed on the device:** the trip-in-progress screen renders
+*Add a drop-off* below *End trip*; the search screen opens with the walk-in
+placeholder *"Type the next drop-off"*, shows the *"Type where you are going
+next."* prompt, and offers *Add "…" / As typed — no map pin*. Screenshots
+were read, not assumed.
+
+### To the agent building journey progress — nothing for you to fix
+
+Noted only so the symptom is not re-diagnosed by somebody else. While I was
+driving the app, `TripInProgressScreen.tsx` and `PickupMap.tsx` were being
+edited live (`vehicleSprites.ts` and `journey.ts` are new and untracked). For
+one hot reload the in-progress screen used `pickupIsLegOrigin` while the
+import beside it still read `nextPendingStop` alone, and the device showed
+*"Render Error: Cannot convert undefined value to object"* pointing into
+`PickupMap`'s `initial.here` spread — which also interrupted a tap I was
+mid-way through.
+
+**It was a half-saved second, not a missing import: I re-checked minutes
+later and line 23 imports both.** Nothing is wrong and nothing needs doing.
+**I changed nothing in either file** — mid-mutation belongs to whoever is
+mutating it (rule 6 at the top of this log). My `nextPendingStop` /
+`arrivedStop` / `inRunOrder` are untouched, and your `pickupIsLegOrigin` sits
+beside them in `stops.ts` exactly as you left it.
+
+The one thing worth knowing from it: **a red box during a hot reload can eat
+a tap**, so a UI verification run against a tree another agent is actively
+saving into is not trustworthy on its own. The API-level proof above is why
+this entry can claim the cycle works at all.
+
+**State of the emulator as I leave it (19:17 UTC): the app does not boot**,
+on *"useAuth must be used inside an AuthProvider"* out of
+`auth/AuthProvider.tsx:321` via `duty/OnlineService.ts:125` (`goOffline`).
+Both are yours and both are uncommitted; `duty/{CountdownRing,OfferPresenter,
+queries,useDutyToggle}.tsx` and `trips/journey.ts` are in the same wave. **I
+have not touched any of them.** Almost certainly another half-saved second
+like the one above — flagging it only because the emulator is left running
+and the next person to glance at it will see a red box that is not theirs.
+Everything is still installed and wired: AVD `kadson_dev`, Metro on 8082,
+`adb reverse tcp:8082`, signed in as `driver@kangaruride.test`.
 
 ---
 
@@ -13358,3 +13436,2353 @@ is parsed, which is exactly what tracing will now say.
 - **`traces_sample_rate` is 0.1, not 1.0.** Tracing bills per transaction and
   a 1.4 s page load is as visible in a tenth of samples as in all of them.
 
+
+
+---
+
+### 2026-08-21 — Claiming: where the driver is *on the whole route*, and the vehicle they are driving
+
+**Status: claimed.** The owner, from a handset: *"the driver can not see where
+he is from the entire route so they find it hard to tell the progress
+visually"* — then four reference shots (Google Maps' heading chevron, two
+navigation views with a top-down car on the road), and two instructions:
+*"let us use the vehicle elements we already built"* and *"so we can use
+different vehicles respectively"*.
+
+## The diagnosis, which is two bugs wearing one complaint
+
+1. **The map only ever draws the road *ahead*.** `useTripRoute` routes from
+   the driver's own fix, so the polyline starts under their feet. The road
+   already covered has never been on the map, and the pickup pin leaves the
+   frame early in the trip.
+
+2. **The camera refits to that shrinking road** — `addRoute`'s `fitBounds`
+   fires on every changed geometry, which is every ~100 m of movement. So the
+   remaining road *always fills the screen*. At 10% done and at 90% done the
+   picture is very nearly identical: a line from your dot to a pin, edge to
+   edge. This is the bigger culprit, because it actively cancels the one cue
+   that would otherwise have worked — a shrinking line.
+
+**A frame that holds still is what makes a moving dot read as progress.**
+That is the whole fix, and everything below serves it.
+
+3. And the driver is a **blue dot**, on a platform that decided against dots.
+   `FleetMap` already replaced a dot-and-arrow scheme with the top-down
+   sprite family after the owner read the green dot as *"a dot where the
+   vehicle should be"*. The driver app never got that decision.
+
+## What I am building
+
+- **The whole leg, drawn underneath the live road.** Muted where it has been
+  covered, brand green where it has not, the vehicle sitting at the seam.
+- **The camera framed on the whole leg**, refit only when the *leg* changes
+  (a stop added), never on a position tick.
+- **A progress bar**, filled from `1 − remaining_km ÷ leg_km`. Both operands
+  are provider-measured road distances to the same destination, so nothing is
+  derived — see the honesty note below.
+- **The driver drawn as their own vehicle**, the same four top-down sprites
+  `FleetMap` draws, picked from `vehicle.category` and rotated to the
+  reported heading.
+
+## It costs zero extra routing requests on the normal flow
+
+ADR-0031 §5's arithmetic is the reason to say this out loud. The whole leg is
+`useTripRoute(tripId, null, 'dropoff')` — **the request
+`WaitingForPassengerScreen` already makes**, with a constant query key
+(no driver position in it). `staleTime` 5 min, `gcTime` 1 hour. A driver
+reaches the trip screen *through* the waiting screen on every job, so the
+answer is already in React Query's cache when the map asks. Off that path it
+is one request per trip against the ~10–20 the deviation trigger already
+spends, and the server's own cache (`RouteService`, fixed origin *and* fixed
+destination) collapses it across every driver on that pair.
+
+## The honesty note, because a progress bar is exactly the shape §1 forbids
+
+`Handover.tsx` states the rule: *"a progress bar that fills at a rate somebody
+chose is the same lie in a friendlier shape."* This one does not fill at a
+chosen rate — it is a ratio of **two measured road distances to the same
+point**, and it is worded in kilometres throughout. **No percentage is
+printed and no minutes are derived from it**; the only minutes on the screen
+are still the provider's own, still prefixed "about" (ADR-0031 §6).
+
+It also self-corrects rather than lying: a driver who detours sees remaining
+*grow*, and the bar retreat, which is true.
+
+## Where it deliberately does nothing
+
+- **The approach leg has no whole-route to draw.** Its origin is wherever the
+  driver happened to be when they accepted, which this platform does not
+  record. No bar, no muted line, no second request — `enabled` is false.
+- **Mid-circuit, once any stop is no longer `pending`.** The pickup has
+  stopped being the origin of the leg being driven, so `pickup → next stop`
+  is not the road the driver is on and the ratio would be nonsense. Suppressed
+  by `pickupIsLegOrigin`. A plain A→B trip — very nearly all of them — is
+  unaffected.
+- **A client circuit with no order request** already answers `null` for a
+  route with no `from`. It degrades to today's map.
+- **The fare leg is still never drawn on the approach map.** `PickupMap`'s
+  `leg` prop exists because that shipped once and the owner caught it:
+  *"i should be seeing where the client is and where i am going"*. Drawing it
+  muted alongside would be the same mistake wearing a lighter colour.
+
+## Files I intend to own — do not edit
+
+- `mobile/src/trips/vehicleSprites.ts` + test — the four top-down SVGs and
+  the category→silhouette table.
+- `mobile/src/trips/journey.ts` + test — the progress ratio and its spoken
+  form.
+- `mobile/src/trips/JourneyProgress.tsx` + test — the bar.
+
+## Shared files I touch, with the exact edit
+
+- `mobile/src/trips/PickupMap.tsx` — `legPolyline` + `heading` + `vehicle`
+  props; a `leg-route` source drawn under the live route; the camera framed
+  on the leg; the `here` marker becomes the sprite. **No call site loses
+  behaviour**: every new prop defaults to today's picture.
+- `mobile/src/trips/stops.ts` — one added reader, `pickupIsLegOrigin`.
+- `mobile/src/location/usePosition.ts` — the return widens from
+  `Coordinates` to `Coordinates & { heading }`. Structurally assignable, so
+  no existing caller changes.
+- `mobile/src/api/types.ts` — `category` on `Vehicle`. **Already on the wire
+  and already in `openapi.yaml`** (`VehicleResource` emits it, `TripController`
+  eager-loads `vehicle`); the mobile type simply never declared it. No
+  backend change and no contract change in this entry.
+- `mobile/src/screens/TripMapScreen.tsx` + test — the leg query, the footer.
+- `mobile/src/screens/TripInProgressScreen.tsx` + test — the leg query, the
+  bar in the stat badge.
+- `mobile/README.md` — the map's description.
+
+**The duplication I am knowingly adding:** the four sprites are copied into
+`mobile/` as inline SVG source. `frontend/public/assets/vehicles/*-top.svg`
+stays the source of truth and the new file says so. They cannot be shared —
+two bundles, and the driver's map is an inline WebView document with no asset
+pipeline, which is also what keeps it working in a dead zone.
+
+
+---
+
+### 2026-08-21 — Claiming: Sentry **Logs** in the driver app, and the silences worth breaking
+
+The Sentry claim two entries up left the driver app with errors and tracing
+and nothing else. This one adds the third signal — **structured logs** — and
+nothing else with it.
+
+**Why logs and not more tracing.** The app already reports what *crashed* and
+how long a screen took. What it cannot report is the far commoner production
+failure on a handset upcountry: nothing crashed, nothing was slow, and the
+job still did not happen. Four places in this app deliberately swallow that,
+each for a good reason written next to it:
+
+- `offerAnswer.ts` — *"Deliberately silent, and the silence is load-bearing"*.
+  A lock-screen Accept that fails costs the driver the job and tells nobody.
+- `SyncProvider`'s bootstrap `catch` — a corrupt outbox database puts one
+  sentence on the banner and no evidence anywhere.
+- `useDutyToggle` — `goOnline()` answering false means the server is offering
+  work to a handset that has gone deaf.
+- `AuthProvider.signIn` — an `OFFLINE` refusal and a rejected credential look
+  identical from the office.
+
+Each stays silent *to the driver* — none of the user-facing behaviour changes.
+They stop being silent to the office.
+
+**Attributes are ids, never people.** ADR-0054 §2 permits full request data on
+errors, and that decision is not extended here by accident: a log line carries
+trip ids, offer ids, error codes, counts and durations. No passenger name,
+number or address goes into a log attribute. `Sentry.setUser` is set from the
+session so `user.id` is attached automatically — that is the one identifier
+worth having, and it is already in every error event under §2.
+
+## Files I own
+
+`mobile/src/observability.ts` (continuing the claim above), and this entry.
+
+## Shared files, with the exact edit
+
+- `mobile/jest.setup.ts` — **one `jest.mock('@sentry/react-native', …)`.**
+  Not decoration: the SDK ships ESM and is not in `transformIgnorePatterns`,
+  so *any* module a test touches that imports it fails the whole suite with
+  `SyntaxError: Unexpected token 'export'`. Proved with a throwaway probe
+  before writing a line of the real change. That is also why the SDK has so
+  far been imported only from `index.ts`.
+- `mobile/src/auth/AuthProvider.tsx` — sign-in outcome logs, `setUser` on
+  sign-in/restore and `null` on sign-out.
+- `mobile/src/offline/SyncProvider.tsx` — the storage failure, a parked item,
+  and the queue going stalled.
+- `mobile/src/duty/useDutyToggle.ts` — on duty, off duty, and the refused
+  foreground service.
+- `mobile/src/push/offerAnswer.ts` — the outcome of a lock-screen answer.
+
+Four of those five are dirty in the shared tree right now (the route/vehicle
+agent's claim above). Every edit here is additive and made by exact-string
+patch, not a rewrite.
+
+## Still true, and the reason nothing will arrive yet
+
+**Inert until a DSN is set.** `startObservability()` returns before touching
+the native module without `EXPO_PUBLIC_SENTRY_DSN`, and that is unchanged —
+logs ride the same switch as errors and tracing. The org is `armgenius-kl`
+(the slug in the console URL; the entry above records it as `armgenius`, which
+is the display name); the DSN is still owed. And this is the app that needs a **rebuild and a fresh
+signed APK**, not a redeploy.
+
+
+---
+
+### 2026-08-21 — Claiming: tracing, which ADR-0054 paid for and nothing yet uses
+
+**Status: claimed.** ADR-0054 §4 set `traces_sample_rate` to 0.1 on all three
+apps and production has been sending at that rate since the deploy. What it
+has been sending is **the SDKs' own default instrumentation and nothing
+else** — on the API a transaction per route with SQL and HTTP-client spans
+underneath it, in the console page loads and navigations, and **on the driver
+app not one transaction**, because a React Native app produces none until
+something creates one.
+
+So the bill is being paid and the question the owner asked — *"the system gets
+errors, sluggish"* — is still answered at the granularity of "the request took
+1.4 s". Which part of it did is not recorded anywhere.
+
+**Another agent is setting up Sentry Logs and is live in
+`mobile/src/observability.ts` and `frontend/src/lib/observability.ts` right
+now. I do not touch either file.** That is the reason for two decisions below
+that would otherwise look odd.
+
+## What is actually missing, in the order it costs
+
+1. **The driver app has no transactions at all.** `Sentry.init` runs, tracing
+   is switched on, and nothing calls `Sentry.wrap` or registers a navigation
+   container — so the RN SDK has nothing to hang the app-start measurement or
+   a screen change on. The worklog entry on *frozen screens and dead buttons*
+   is exactly the complaint this would have made measurable, and it was
+   written from anecdote because there was no measurement.
+
+2. **No span marks a business operation on the API.** SQL spans say "47
+   queries"; they do not say "finding a driver took 900 ms of the 1.2 s".
+   The auto-instrumentation cannot know which of those queries were the
+   dispatch search, because nothing told it the search was happening.
+
+## What I am building
+
+**A helper per app and about a dozen call sites. No new dependency, no new
+service, no config change.**
+
+- `App\Support\Observability\Trace` — `span()` over `\Sentry\trace()`, which
+  runs the callable and creates *nothing* when there is no sampled
+  transaction. That is what makes it free in CI, free in development without a
+  DSN, and free in the nine requests out of ten that are not sampled.
+- `mobile/src/tracing.ts` — `traced()` over `Sentry.startSpan`, plus the two
+  registrations the RN SDK needs before it can produce a transaction.
+
+## Where the spans go, and why those and not others
+
+**The rule I am applying: a span earns its place where the auto-instrumentation
+cannot name the operation.** A span around pure arithmetic
+(`TripPricingEngine`) is noise; a span around a billed external call, a search,
+or a driver's tap is a measurement somebody will read.
+
+| call site | what the span answers |
+|---|---|
+| `RouteService::via` | routing: cache hit or a billed provider call, and how much of the request it was |
+| `DispatchOfferService::dispatch` | how long finding a driver takes, and how many offers came out |
+| `DispatchOfferService::accept` | the driver's tap — the platform's most latency-sensitive mutation |
+| `DispatchOfferService::advance` | the scheduled sweep, which has no route and so no transaction today |
+| `OutboxProcessor.drain` (mobile) | the background sync, which is where a completed trip goes to reach the office |
+| `goOnline` (mobile) | which native call the Go Online button was waiting on |
+
+## Files I own — do not edit
+
+- `backend/app/Support/Observability/Trace.php` + `backend/tests/Feature/Observability/TraceTest.php`
+- `mobile/src/tracing.ts` + `mobile/src/tracing.test.ts`
+
+## Shared files I touch, with the exact edit
+
+- `mobile/index.ts` (clean at claim time) — `registerRootComponent(Sentry.wrap(App))`, and one `startTracing()` beside the existing `startObservability()`.
+- `mobile/src/navigation/RootNavigator.tsx` (**dirty — the whole-route agent has it**) — **one prop**: `onReady` on the existing `<NavigationContainer>`, plus its import. The SDK reads `ref.current` at registration time, so it cannot be done from a module and this is the only line in the app that can do it.
+- `mobile/src/offline/outbox.ts`, `mobile/src/duty/OnlineService.ts` — one wrapper each.
+- `backend/Modules/Trips/Routing/RouteService.php`, `backend/Modules/Dispatch/Services/DispatchOfferService.php` — both clean at claim time; wrappers only, no logic moved.
+
+## Deliberately not doing
+
+- **`mobile/src/observability.ts` and `frontend/src/lib/observability.ts` are not opened.** Everything mobile goes through `Sentry.addIntegration` after init, which is why there is no `integrations:` line to add to the logs agent's file.
+- **No frontend call sites.** `browserTracingIntegration` already times the console's page loads and fetches, and the measured defect there is TTFB on a 2 KB static file — a span inside the bundle cannot see it.
+- **No sample-rate change.** 0.1 is ADR-0054 §4's decision and turning it up is for a hunt, not a default.
+
+---
+
+### 2026-08-21 — Sentry Logs in the driver app: **done**, and the one log that would not have arrived
+
+Closing the claim above. Driver app **1086 passed / 84 suites**, `tsc` clean,
+eslint clean (9 pre-existing warnings, none in the new code). The single red
+suite in the tree is `src/screens/__probe.test.tsx`, another session's live
+throwaway probe, which fails on an unset `PROBE_OUT` before and after this
+change.
+
+**Nine log calls, in four modules, plus the switch that makes them do
+anything.** `enableLogs: true`, `logsOrigin: 'js'`, `consoleLoggingIntegration`
+at `warn`/`error`, and a `beforeSendLog` that drops `trace`/`debug` outside
+development. The table of what is logged and why is now in `mobile/README.md`.
+
+## The part worth reading: batched logs and a runtime that does not outlive the press
+
+The whole change is motivated by one silence — `offerAnswer.ts`'s catch, where
+a lock-screen Accept lost to a dead zone costs the driver the job and tells
+nobody. So the log went in, the guard went in, the mutation bit, and it was
+very nearly still useless.
+
+**Logs are batched and sent asynchronously.** Android creates that JavaScript
+runtime *for the button press* and tears it down when the handler resolves.
+The log this change exists for would have sat in the SDK's buffer inside a
+process about to disappear — on a lock screen, in a dead zone, which is
+precisely the case it was written for. Nothing would have failed. Sentry would
+simply have shown fewer of them than happened, and the count would have looked
+like good news.
+
+`await Sentry.flush()` at the end of `registerOfferBackgroundHandler`'s event
+callback. React Native's `flush()` takes no timeout — the client's
+`shutdownTimeout` governs it — and the `catch` is load-bearing: a rejection
+escaping a headless task is the one thing that handler may never do.
+
+## Guards proved by mutation, all restored
+
+| guard | mutation | bites |
+|---|---|---|
+| logs are switched on | `enableLogs: false` | ✅ 1 fails |
+| JS logs only | `logsOrigin: 'all'` | ✅ 1 fails |
+| console warn *and* error are captured | dropped `'error'` from `levels` | ✅ 1 fails |
+| debug/trace dropped in production | `beforeSendLog` waved everything through | ✅ 1 fails |
+| the platform is attached globally | removed `setAttributes` | ✅ 5 fail |
+| a failed lock-screen answer is reported | deleted the log | ✅ 2 fail |
+| grouped on the code, not the message | `error.code` → `error.message` | ✅ 1 fails |
+| a successful answer is timed | deleted the log | ✅ 1 fails |
+
+## Two things proved by running rather than assumed
+
+- **The SDK cannot be imported under Jest.** `@sentry/react-native` ships ESM
+  and is absent from `transformIgnorePatterns`; a throwaway probe failed with
+  `SyntaxError: Unexpected token 'export'` before a line of the real change was
+  written. That is *why* the SDK had lived only in `index.ts`, and why the mock
+  in `jest.setup.ts` is a prerequisite for logging from anywhere else — not a
+  convenience.
+- **`integrations: []` merges with the defaults, it does not replace them.**
+  Checked in `@sentry/core`'s `getIntegrationsToSetup`
+  (`[...defaultIntegrations, ...userIntegrations]` when the option is an
+  array). Worth checking rather than assuming: the replace semantics would
+  have silently switched off native crash handling in exchange for a console
+  integration.
+
+## Files I own
+
+`mobile/src/observability.ts`, `mobile/src/observability.test.ts`,
+`mobile/src/push/offerAnswer.test.ts`.
+
+## Shared files touched, with the exact edit
+
+- `mobile/jest.setup.ts` — one `jest.mock('@sentry/react-native', …)`. It also
+  carries `reactNavigationIntegration`, `addIntegration`, `startSpan` and
+  `getActiveSpan` for the **tracing** work another session landed in
+  `src/tracing.ts` mid-change: `outbox.ts` now imports it, so without those
+  four the suite this app trusts most fails to load. `startSpan` runs its
+  callback rather than swallowing it.
+- `mobile/src/auth/AuthProvider.tsx` — three logs and `identify()`
+  (`Sentry.setUser`) on every session boundary.
+- `mobile/src/offline/SyncProvider.tsx` — the parked item, the storage failure,
+  the stall.
+- `mobile/src/offline/outbox.ts` — `onParked` gains a second argument, the code
+  the item was *just* parked with. The item handed alongside it carries the
+  *previous* attempt's code, which is null on the first — a log built from it
+  would have been quietly wrong. One-argument callers are unaffected.
+- `mobile/src/duty/useDutyToggle.ts` — four logs around the shift boundary.
+- `mobile/src/push/offerAnswer.ts` — the answered/failed pair.
+- `mobile/src/push/offerBackgroundHandler.ts` — the flush above.
+- `mobile/README.md` — a section on what the office can see when this goes
+  wrong, and ADR-0054 in the decisions list.
+
+## Not built, deliberately
+
+- **No log for the presence heartbeat, the GPS flush, or any per-tick event.**
+  Four handsets in a depot on a 15-second tick is 23,000 log lines a day
+  saying "still fine". The stall log fires once per stall for the same reason
+  — the run passes through the threshold exactly once.
+- **No `Sentry.logger.debug` or `.trace` anywhere.** Nothing emits them, and
+  `beforeSendLog` drops them outside development, so a future one has to be a
+  deliberate act.
+- **The native log stream is not forwarded.** `logsOrigin: 'js'`. Every
+  library's Logcat chatter, off a phone on a Ugandan data bundle, is not worth
+  what it costs.
+- **No alerting on any of it.** Same reason as the parent claim: nobody has
+  been asked who gets woken up.
+
+## Still owed, and unchanged by this
+
+**A DSN.** Everything here is inert without `EXPO_PUBLIC_SENTRY_DSN`, and the
+driver app needs a **rebuild and a fresh signed APK**, not a redeploy. Org is
+`armgenius-kl` — the slug, not `armgenius` as the parent claim recorded; that
+is the display name (`ArmGenius`). Organisation id `4511950563704832`. A
+project exists, `4511950569734224`, holding Sentry's own onboarding sample
+error and nothing from this platform.
+
+**The region is confirmed European Union**, read off Organisation Settings →
+Data Storage Region on 21 August 2026. That is ADR-0054 §1 satisfied, and it
+is the half of this setup that could not have been corrected later: an
+organisation's region is fixed at creation, so a US org would have needed a
+new organisation rather than a new project. Every DSN from this org will
+therefore be `o4511950563704832.ingest.de.sentry.io`, and a DSN that is not is
+a DSN from somewhere else.
+
+### Later the same day: the DSN arrived, and the pipe is proved
+
+`SENTRY_LARAVEL_DSN`, `VITE_SENTRY_DSN` and `EXPO_PUBLIC_SENTRY_DSN` are set in
+the three local `.env` files, all three of which are gitignored. Production
+still reads `<<OWNER>>` in `.env.production.example`; nothing here touches it.
+
+**Proved rather than assumed**, because "the SDK returned an id" and "Sentry
+has the event" are different claims:
+
+- A hand-built envelope POSTed straight at
+  `o4511950563704832.ingest.de.sentry.io` answered **HTTP 200 with the event id
+  echoed back**, in 0.7 s. That is the DSN valid, the key authenticating,
+  Frankfurt reachable from this machine and the project ingesting — four
+  things, none of which a local return value can tell you.
+- Laravel's own resolved config was read back after `config:clear`:
+  `enable_logs` true, `logs_channel_level` warning, environment `local`,
+  `send_default_pii` true, stack `single,sentry_logs`, and a bound client.
+- A real `Log::warning` through the facade flushed envelope
+  `962bfd15a0fa43db8fccb663a06af129`. A non-null id means the envelope had
+  something in it; an empty queue returns null.
+
+**The backend needed no code and no config file edited.** `enable_logs` was
+already in `config/sentry.php` (defaulting false), and the package registers
+its own `sentry_logs` channel, which `stack` picks up from `LOG_STACK` — an
+environment variable. So the whole backend wiring is five env keys, and
+`config/logging.php` is untouched.
+
+**`SENTRY_LOG_LEVEL=warning`, and this is the line that matters for the bill.**
+The package falls through to `LOG_LEVEL` when it is unset — `debug` on this
+machine, `info` in production — which would bill every request this API logs
+as a Sentry log line. It is the same judgement the driver app makes when it
+captures `console.warn` and `console.error` and nothing below them.
+
+### The open question, now that events are landing
+
+**All three apps point at one project, `4511950569734224`.** That is not what
+ADR-0054 decided, because the ADR never decided it — it names three SDKs and
+speaks of "the project", singular. So this is a live choice, not a drift from
+one:
+
+- **One project** is what is set up now. One retention setting to keep, one
+  DPA, one quota. A Laravel stack trace, a React render error and a React
+  Native crash share an issue stream and an alert rule.
+- **Three projects** separate them: per-app alerting, per-platform debug
+  artifacts (source maps for two of them, ProGuard/dSYM for the third), and a
+  driver-app quota that a chatty API cannot eat. Three retention settings to
+  remember, and `data-inventory.md` section 8 already records the *one* as an
+  obligation nothing in this repo will notice going unmet.
+
+Switching later is one line per app. Not decided here.
+
+### Correcting myself: Expo Go **does** report. I said it did not.
+
+I told the owner the driver app could not be verified until an EAS build was
+cut. That is wrong, and it is wrong in the direction that costs a day of not
+looking at data you already have.
+
+Read out of the SDK rather than assumed, because I had already asserted the
+opposite once:
+
+- `sdk.js` builds its transport as `passedOptions.transport ||
+  makeNativeTransportFactory(...) || makeFetchTransport`, and
+  `makeNativeTransportFactory` returns **null** when the native module is
+  absent. So without native, the SDK sends over plain `fetch`.
+- `init()` runs to completion inside Expo Go. All it does differently is log
+  *"Offline caching, native errors features are not available in Expo Go"*.
+
+So the line is not "Expo Go, no" but this:
+
+| runtime | JS errors and `Sentry.logger.*` | native crashes | offline queue on disk |
+|---|---|---|---|
+| Expo Go, emulator or handset | yes | no | no |
+| dev build / release APK | yes | yes | yes |
+
+**Every one of the nine log calls added here is JavaScript**, so all nine work
+in Expo Go today. What Expo Go cannot give is the two things
+`src/observability.ts` argues are the point on a Ugandan network: a native
+crash handler, and the on-disk queue that holds events until a driver comes
+back into coverage. Those still need a build. The report of a lock-screen
+Accept that failed is a JS log, and it will arrive; the report of the app
+being killed by the OS is native, and will not.
+
+### The "network error" on the emulator, and my part in it
+
+The owner hit a network error in Expo Go while this work was going on.
+Investigated, and **it does not reproduce** — captured a screenshot of the
+running app: signed in, on duty, an active trip loaded from the API, map
+rendered, ratings and rates populated. All of that is API data.
+
+Measured from inside the emulator with `nc`, since the image has no curl:
+
+| target | answer |
+|---|---|
+| `10.0.2.2:8000/api/v1/auth/login` | `HTTP/1.1 405 Method Not Allowed` — the API, correctly refusing GET |
+| `10.0.2.2:8082/status` | `HTTP/1.1 200 OK` — Metro |
+| `10.0.2.2:8081/status` | `HTTP/1.0 500` from **Apache** — the XAMPP collision this worklog already records |
+| `127.0.0.1:8082` via `adb reverse` | nothing. The reverse rules listed are stale, bound to a dead transport |
+
+**The likeliest cause is mine.** `mobile/.env` was edited at 23:04 to add the
+DSN; Metro restarted at 23:09 to inline it. Expo inlines `EXPO_PUBLIC_*` at
+bundle time, so that restart was necessary — and an app reloading against a
+Metro that is restarting reports exactly one thing: a network error. Worth
+saying plainly rather than leaving as an unexplained ghost.
+
+Two red herrings chased and dismissed rather than reported as findings:
+`No space left on device` repeating in logcat is Binder transaction buffer,
+not storage (`df` says 3.8 GB free of 5.8 GB), and the Chromium disk-cache
+errors are WebView noise.
+
+**There is no free smoke test, and that is a consequence of the design.** All
+nine log calls sit on consequential moments — a shift starting, an answer
+failing, a queue parking — so an idle app logs nothing, which is the whole
+point. Seeing a first event from a handset takes one deliberate action.
+
+**And then one arrived on its own, which settles the argument above
+empirically.** Signing out in Expo Go produced a LogBox warning from
+`expo-location` — "Background location is limited in Expo Go: on Android, it
+is not available at all" — raised by `stopPresenceUpdates` on the way through
+`goOffline`. The owner's own call stack contains the frame that matters:
+
+```
+console.warn (LogBox.js:113)
+<anonymous> (@sentry/core/build/esm/instrument/console.js:36)   <- the integration
+_validate (expo-location/build/Location.js:391)
+```
+
+That is `consoleLoggingIntegration` wrapping `console.warn` inside Expo Go. So
+the integration is live, the warning was captured as a `warn` log, and it
+carries `user.id`: `goOffline()` runs before `identify(null)` in `signOut`, so
+the driver is still on the scope when it fires. Not deduced from the docs
+— observed in a stack trace the owner pasted.
+
+**A consequence to weigh rather than a defect.** In Expo Go that warning fires
+on every sign-out and every duty-off, so it will be the noisiest log in the
+project while anyone is testing that way. It disappears in a dev build and in
+release, where the background-location API actually exists, and it is tagged
+`environment: development` either way. Left in place: filtering it in
+`beforeSendLog` would add a rule for something that does not exist in the two
+runtimes that matter.
+
+### A documented fact that was wrong: the firewall is not blocking port 8000
+
+`mobile/.env` carried a long note saying Windows Firewall blocks 8000, that a
+handset therefore cannot reach the API, and that `EXPO_PUBLIC_API_BASE_URL`
+must stay commented out so the emulator falls back to `10.0.2.2`. Acting on
+that is what leaves a **real phone** pointed at `10.0.2.2` — an address that
+means nothing off an emulator — so every request fails as a NetworkError and
+the app says "Could not reach the office".
+
+It is not true on this machine, and the reason it looked true is worth
+keeping: **the rules are application rules, not port rules.** A search for an
+inbound rule naming port 8000 finds nothing, which reads as a block. Apache
+and node each hold `Allow` on the Private and Public profiles, and the WiFi
+adapter is Private.
+
+Probed from inside the emulator, which has its own network namespace, so this
+is not a host talking to itself:
+
+```
+192.168.1.138:8000/api/v1/auth/login -> HTTP/1.1 405 Method Not Allowed
+192.168.1.138:8082/status            -> HTTP/1.1 200 OK
+```
+
+`EXPO_PUBLIC_API_BASE_URL` is now set to the LAN address and the note above it
+rewritten. **One address serves both** the emulator and a handset, so there is
+no longer a reason to comment it out when moving between them. The router's
+lease can still move the address; that part of the old note stands.
+
+### `expo start` targets a dev build, not Expo Go, and `expo-dev-client` is why
+
+Two symptoms, reported together and looking unrelated: **scanning the QR opens
+an install page**, and **entering the URL loads something but shows no app**.
+Both came from having *two* Metro servers up at once, each broken in a
+different half.
+
+`expo-dev-client` is in `mobile/package.json`. With it installed, `expo start`
+assumes a **development build**, and the QR it prints encodes the app's own
+scheme, `kangaruride-driver://`. Scan that on a handset with no dev build and
+Android has nothing to open it with — hence the install page. Nothing is
+wrong with the project; the QR is addressed to an app that is not there.
+**`--go` is what makes the QR an `exp://` URL Expo Go can answer**, and on this
+project it is not optional.
+
+The second server turned a clear failure into a confusing one. Port 8082 was
+already held, so the newer one silently moved to **8083**, and the two
+disagreed about the only thing that mattered:
+
+| server | mode | `EXPO_PUBLIC_API_BASE_URL` in its bundle |
+|---|---|---|
+| 8082 | `--go`, right for Expo Go | `10.0.2.2` — started *before* the env was edited |
+| 8083 | dev build, QR unusable | `192.168.1.138` — correct |
+
+Read out of the served bundles with `grep` rather than inferred: fetch
+`/index.ts.bundle?platform=android&dev=true&transform.bytecode=0` and count
+each address. **A dev server started before an `EXPO_PUBLIC_*` edit serves the
+old value for as long as it lives, and nothing on screen says so.**
+
+So whichever one was used, it was half a working setup: the right QR with an
+API address no handset can reach, or the right API address behind a QR that
+offers to install an app.
+
+**Resolved by killing all four processes and starting exactly one:**
+
+```
+npx expo start --go --port 8082 --clear
+```
+
+Verified rather than assumed: Metro logs `export EXPO_PUBLIC_API_BASE_URL`;
+the LAN manifest reports `hostUri: 192.168.1.138:8082`; the served bundle
+contains both the LAN API address and the Sentry DSN; and Expo Go on the
+emulator, opened at `exp://192.168.1.138:8082`, renders the Welcome screen.
+
+Also surfaced at start-up, unrelated to this and still owed:
+
+```
+[@sentry/react-native/expo] Missing config for organization, project.
+```
+
+That is the source-map half of ADR-0054. Without `organization` and `project`
+in the config plugin, a release build's stack traces stay minified — which
+is the difference between a Sentry issue naming a line of `TripInProgressScreen`
+and one naming character 41,088 of a bundle.
+
+### One filter added, after watching the noise arrive twice
+
+`expo-location` writes *"Background location is limited in Expo Go"* to
+`console.warn` from its own `_validate`, and the console integration duly
+forwards it. It fires from `stopPresenceUpdates` on **every duty toggle and
+every sign-out** while anyone is testing in Expo Go. The owner hit it twice in
+an hour — once through `signOut`, once through `toggle` — which is what
+turned it from a curiosity into a decision.
+
+It says nothing about this app. `stopPresenceUpdates` already wraps the call in
+`try`/`catch`, and the `hasStartedLocationUpdatesAsync` guard is there because
+stopping a task that was never started throws on Android. The shift ends
+correctly; Expo Go is announcing a limitation of the runtime.
+
+Dropped in `beforeSendLog`, **matched on the message**, which is normally the
+wrong thing to key on. It is safe here for a reason worth stating: the string
+is Expo Go's own, so it cannot occur in a development build or in release. The
+rule is inert in both runtimes that matter and bites only where the noise is.
+
+Guarded, and the guard asserts both halves — the warning dropped *and* a
+neighbouring warning passing through, so a future widening fails the test
+rather than silently swallowing real logs. Three mutations, all biting:
+
+| mutation | bites |
+|---|---|
+| filter deleted | 1 fails |
+| filter widened to every `warn` | **2 fail** — the neighbour assertion earns its place |
+| `enableLogs: false` | 1 fails |
+
+Driver app **1092 passed / 83 suites**, `tsc` clean.
+
+**What the owner should now see from a duty toggle**, and the reason this was
+worth doing: `Driver went off duty` (`info`, `asked: offline`) with nothing
+buried under it. The call stack the owner pasted ends at
+`useDutyToggle.ts:141`, which is the `goOffline()` two lines below that log —
+so the log had already fired when the warning was raised.
+
+### The KYC upload never worked from a handset, and the screen blamed the network
+
+**Fixed:** `mobile/src/documents/applicationDocuments.ts` now appends
+`upload_token` to the multipart body of `POST /driver-applications/documents`.
+One line. It had only ever been sent as the `X-Upload-Token` header.
+
+`ApplicationDocumentController::resolve()` reads
+`input('upload_token') ?? header('X-Upload-Token')` and would have accepted the
+header quite happily — but `StoreApplicationDocumentRequest` marks
+`upload_token` **required**, and a FormRequest is validated *before* the
+controller runs. The request never reached the resolver. Every attempt died at
+validation, and `kangaru-access.log` shows it plainly:
+
+```
+192.168.1.198 "POST /api/v1/driver-applications/documents HTTP/1.1" 422 166
+192.168.1.198 "POST /api/v1/driver-applications/documents HTTP/1.1" 422 166
+192.168.1.198 "POST /api/v1/driver-applications/documents HTTP/1.1" 422 166
+```
+
+Proved against the running API with one real ticket, the same file and the
+same header, changing only the body field:
+
+| request | result |
+|---|---|
+| header only, as the app sent | `422` `upload_token: "This upload could not be matched to an application."` |
+| header **+ `upload_token` in the body** | **`201` "Document received."** |
+
+**openapi.yaml has said `required: [upload_token, type, file]` since the
+endpoint was written, and `DriverOnboardingDocumentTest` posts it in the body.
+The contract and the server always agreed; this client was the odd one out.**
+ADR-0011's "contract or it does not exist" caught nothing here because nothing
+asserted the shape of *this* request — so `applicationDocuments.test.ts` now
+does, in three cases: the token is in the body, the header is still sent (the
+`GET` on the same resource has no body and depends on it), and the file and
+type survive.
+
+Driver app **1095 passed / 84 suites**, `tsc` clean.
+
+**The `DELETE` looks like the same bug and is not.** `openapi.yaml` requires a
+JSON body carrying `upload_token`, and the client sends only the header — but
+`destroy()` takes a plain `Request` with no FormRequest, so `resolve()` reads
+the header and it works. A contract/implementation divergence worth someone's
+attention; **not touched here**, because it is not broken for anyone and
+"fixing" a working path on the strength of a document is how working paths
+break.
+
+### The second defect, which is why this took an evening
+
+The screen said *"Not sent — documents need a connection. They are not
+queued."* The connection was fine. The catch in `KycVerificationScreen.send()`
+treats **everything** that is not an `UploadTicketSpentError` as a network
+failure, so a 422 — a definitive server refusal, with the field named in the
+body — is reported to the applicant as a dead radio.
+
+That message is a claim about a cause the code never checked, which is the
+same fault `docs/screen-rules.md` §1 forbids in a different costume. And it
+reaches Sentry as nothing at all: Laravel does not report a handled
+`ValidationException`, so **the failure that actually blocked a driver
+generated no Sentry issue**, while three of the five issues in the project at
+the time were artefacts of my own verification. Left as-is for now and written
+down rather than quietly patched: distinguishing a refusal from an outage on
+that screen is a copy change as much as a code one.
+
+
+---
+
+### 2026-08-21 — Tracing: **done and green**, and the driver app was sending none at all
+
+**Status: done.** Two helpers, eleven call sites, one line in the console that
+joins two traces into one. Backend 197 + 67 + 54 + 29 + 14 green, mobile
+1085 green, `tsc -b --force` and both lint runs clean.
+
+## The finding, which was worse than "there are no custom spans"
+
+**The driver app has been producing no transactions at all.** `Sentry.init`
+runs, `tracesSampleRate` is 0.1, and every one of those samples was of
+nothing: a React Native app creates no transaction on its own. Nothing had
+called `Sentry.wrap` and nothing had registered a navigation container, so the
+SDK had nowhere to attach the app-start measurement or a screen change.
+
+That is why the worklog entry on *frozen screens and dead buttons* was written
+from a driver's account of the app rather than from a number. The measurement
+did not exist and nothing said so — the SDK is silent about it, and the
+sample rate being set makes it look configured.
+
+## What is measured now
+
+**Automatic, and the reason the driver app changed most.** App start, every
+screen change, and **time to initial display** — dispatch of the navigation to
+the first frame drawn, which is the interval a driver calls "it hangs when I
+tap the job". Every `fetch` was already covered by the SDK.
+
+**By hand, in six places, on one rule: a span earns its place where the
+auto-instrumentation cannot name the operation.**
+
+| span | what it answers |
+|---|---|
+| `route.lookup` | cache hit or a billed provider call, which provider, how far |
+| `dispatch.search` | how long finding a driver takes — and `offers`, without which the timing is unreadable |
+| `dispatch.accept` | the driver's tap, measured **inside** the `lockForUpdate`, so it is also how long every other driver racing for the job is held |
+| `dispatch.retry_unoffered` | which half of the ten-second sweep spends the time |
+| `outbox.drain` | the background sync — a transaction of its own, because no screen brackets it |
+| `duty.go_online` | the **native** half of going online, and `refused` |
+
+`TripPricingEngine` was considered and refused: it is pure arithmetic over
+values already in memory, and a span there would be noise wearing the same
+shape as a measurement.
+
+## `refused` on `duty.go_online` is the one worth reading twice
+
+`goOnline` swallows an OS refusal **by design** — ADR-0024 §2 keeps a driver
+dispatchable without coordinates, so a refusal must not block the shift. The
+consequence has always been that a driver can be online, invisible to the
+matcher, and nothing anywhere says so. It is now one boolean on a span.
+
+## The console: two traces were arriving as two traces
+
+`tracePropagationTargets` was unset, so it took the SDK's default — same
+origin only. The console is served from one origin and calls an API on
+another, so `sentry-trace` and `baggage` were attached to **nothing**, and
+every request arrived in Sentry as an unrelated pair: the browser saying the
+XHR took 900 ms, the API saying the request took 200 ms, and no way to tell
+which was lying. That is one line, and the measured 0.69–1.69 s TTFB is
+exactly the question it answers.
+
+CORS was checked before it was changed rather than after: `allowed_headers`
+is already `*`, so the preflight permits both headers and no server change was
+needed. The driver app needed none either — the RN SDK's default is `[/.*/]`
+and React Native does not enforce CORS.
+
+## Guards, proved by mutation
+
+| guard | mutation | bites |
+|---|---|---|
+| the wrapped value is returned | `span()` returns null | ✅ backend 1 fails |
+| the operation is on the span | dropped `setOp` | ✅ backend 1 fails |
+| a throw still reaches the caller | swallowed it, returned null | ✅ backend 1 fails |
+| a failed span says so | dropped the `internalError` status | ✅ backend 1 fails |
+| the wrapped value is returned | `traced()` resolves null | ✅ mobile 1 fails |
+| a rejection still reaches the caller | `.catch(() => null)` | ✅ mobile 1 fails |
+
+**One test guards the SDK rather than my code, and it is labelled as such.**
+`annotate()` was written with an `array_merge` around `Span::setData` — and
+the mutation removing it did not bite, because `setData` already merges
+internally. The redundant line is gone; the assertion stays, because an
+upgrade that changed that behaviour would silently drop the inputs recorded
+beside every outcome, and "cache miss" means nothing without knowing what was
+asked for.
+
+## Verified by running, and the part that is not
+
+`RouteService` was driven through a throwaway probe against a real sampled
+transaction, and the recorded spans read exactly as intended — first call
+`cache: miss, provider: osrm, distance_km: 12.5`, second call `cache: hit`
+with no provider on it. The probe was deleted.
+
+**The mobile side is proved by its suite and by reading the SDK, not by a
+handset.** Emission needs a DSN and a dev build, and there is still no live
+Sentry project. Two claims therefore stand unconfirmed against a real device:
+that `traced` opens a root span when nothing is active (it is what
+`startSpan` does with no parent), and that time-to-initial-display resolves on
+this Android build. Both are in `src/tracing.ts` where the next person to hold
+the APK can check them.
+
+## A finding for whoever holds the Sentry bill
+
+`dispatch:advance-offers` runs **every ten seconds** and each run is already a
+`console.command.scheduled` transaction — roughly **26,000 transactions a
+month from that one command**, at §4's 0.1. That is not new and nothing here
+added to it, but it is very likely the largest single consumer of the trace
+budget, and it is a sweep rather than anything a passenger is waiting on. The
+fix is a `traces_sampler` giving scheduled commands their own lower rate. Not
+done here: §4's uniform 0.1 is an ADR decision, and `config/sentry.php` is a
+file another agent is working in.
+
+## Files I own
+
+`backend/app/Support/Observability/Trace.php`;
+`backend/tests/Feature/Observability/TraceTest.php`;
+`mobile/src/tracing.ts`; `mobile/src/tracing.test.ts`.
+
+## Shared files touched, with the exact edit
+
+- `backend/Modules/Trips/Routing/RouteService.php` — the body of `via()` wrapped, no logic moved.
+- `backend/Modules/Dispatch/Services/DispatchOfferService.php` — `dispatch()` became a wrapper over a new private `search()` holding its original body verbatim; `accept()`'s `DB::transaction` wrapped; two lines in `advance()`.
+- `mobile/index.ts` — `startTracing()`, and `registerRootComponent(Sentry.wrap(App))`.
+- `mobile/src/navigation/RootNavigator.tsx` — **one prop**, `onReady`. The SDK reads `ref.current` when handed the container, so no module can do it.
+- `mobile/src/offline/outbox.ts` — `drain()` became a wrapper over a new private `drainOnce()`; the re-entrancy refusal stayed **outside** the span, because a refused pass does no work and two of them land per reconnect.
+- `mobile/src/duty/OnlineService.ts` — same shape, `startPresence()` holds the body.
+- `frontend/src/lib/observability.ts` — `tracePropagationTargets`, and nothing else. The file was seven hours cold; the logs agent's work is in `mobile/src/observability.ts`, which I did not open.
+- `mobile/README.md` — a subsection on what tracing measures, inserted above the logs one.
+
+## Two things the SDKs made me change my mind about
+
+- **`reactNavigationIntegration` cannot be called at module scope.** It is
+  re-exported through two barrel files, and calling it while the module graph
+  is still evaluating finds it undefined — which is what happened the moment
+  `outbox.ts` imported the tracing module in Jest. It is now built inside
+  `startTracing()`. Nothing in that file runs at import time.
+- **The tracing module takes the navigation ref as a parameter** rather than
+  importing it, so that `outbox.ts` — whose suite is deliberately pure
+  TypeScript over injected ports — does not pull `@react-navigation/native`
+  into itself.
+
+## Not done, deliberately
+
+- **No sample-rate or `traces_sampler` change.** See the billing finding above.
+- **No spans in the console's own code.** `browserTracingIntegration` already times page loads, navigations and fetches, and the measured defect there happens before a byte of JavaScript is parsed.
+- **No profiling.** `profiles_sample_rate` is a second product, billed separately, and nobody has been asked.
+
+## Unrelated, and not mine
+
+`mobile/src/screens/__probe.test.tsx` is untracked, fails without a `PROBE_OUT`
+environment variable, and is the only red thing in the mobile suite. It looks
+like a throwaway from whoever is working on the trip screens — left alone.
+
+---
+
+### 2026-08-21 — Closing: the whole route, the driver's place on it, and the vehicle
+
+**Status: done.** Driver app **83 suites / 1088 tests green**, `tsc --noEmit`
+clean, eslint clean over `src/`. Backend `Ci` suite **29 passed / 455
+assertions**, Pint clean on the new file. **Nine guards proved by mutation and
+all nine restored byte-identical** (table below) — plus a control mutation, a
+comment reworded, which the same harness reported as SILENT, because nine
+BITES in a row is exactly what a broken harness also prints.
+
+**Rendered, not just asserted.** The map document is plain HTML, so it was
+opened in system Chrome through playwright-core and the marker elements were
+measured. That is what found the two defects below, neither of which any
+assertion over an HTML string could see.
+
+## What the owner asked for, across five messages
+
+The complaint: *"the driver can not see where he is from the entire route so
+they find it hard to tell the progres visually"* — then four reference shots
+(Google Maps' heading chevron, two navigation views with a top-down car on the
+road, one with the route drawn ahead of the car), and two instructions:
+*"let us use the vehicle elements we already built"* and *"so we can use
+different vehicles respectively"*.
+
+## The diagnosis: one complaint, two causes, and the second was the real one
+
+1. The map only ever drew the road **ahead**. `useTripRoute` routes from the
+   driver's own fix, so the polyline starts under their feet and the road
+   already covered was never on the screen.
+
+2. **The camera re-fitted itself to that shrinking road** — `fitBounds` fired
+   on every changed geometry, which is every ~100 m of movement. So the road
+   left *always filled the screen*, and ten per cent into a job looked like
+   ninety. This is the one that mattered: it actively cancelled the only cue
+   that would otherwise have worked.
+
+**A frame that holds still is what makes a moving vehicle read as progress.**
+Everything else serves that.
+
+## What shipped
+
+- **The whole leg drawn underneath the live road.** What stays visible of it
+  is the part the green no longer covers — the road already driven. The
+  vehicle sits exactly at the seam.
+- **The camera framed on the whole leg**, refit only when *that* geometry
+  changes (a stop added), never on a position tick.
+- **A bar in `TripMapScreen`'s footer**, with the whole leg's length at its
+  far end, because that is where the journey ends.
+- **The driver drawn as their own vehicle** — the console's four top-down
+  silhouettes, picked from `vehicle.category`, turned to the handset's
+  heading when it reported one.
+
+## It costs no extra routing requests on the normal flow
+
+ADR-0031 §5's arithmetic is why this is stated rather than assumed. The whole
+leg is `useTripRoute(tripId, null, 'dropoff')` — **the request
+`WaitingForPassengerScreen` already makes**, with no position in the query
+key. A driver reaches the trip screens *through* the waiting screen on every
+job, so React Query answers from cache. Off that path it is one request per
+trip against the ten or twenty the deviation trigger already spends, and
+`RouteService` collapses it further: fixed origin *and* fixed destination is
+one key shared by every driver on that pair.
+
+**No backend change and no contract change.** `category` was already on the
+wire — `VehicleResource` emits it, `TripController` eager-loads `vehicle`, and
+`openapi.yaml` already requires it. The driver app simply never declared the
+field, so it was arriving and being discarded.
+
+## The honesty argument, because a progress bar is the exact shape §1 forbids
+
+`Handover.tsx` states the rule: *"a progress bar that fills at a rate somebody
+chose is the same lie in a friendlier shape."* This one does not fill at a
+chosen rate — it is `1 − remaining_km ÷ leg_km`, a ratio of **two road
+distances the provider measured to the same destination**. It is worded in
+kilometres throughout, **no percentage is printed or spoken**, and no minutes
+are derived from it; the only minutes on the screen are still the provider's
+own, still prefixed "about" (ADR-0031 §6).
+
+It also fails honestly. A driver who detours sees the remaining road *grow*
+and the bar retreat, which is true — and the opposite of what a bar driven by
+elapsed time would have done.
+
+## Three things only rendering could find
+
+1. **Every pin was drawn ~28 px from the place it marked.** The markers were
+   flex rows — pin, gap, label — and MapLibre centres the *row* on the
+   coordinate, so the pin sat left of its own point at every zoom, on both
+   ends of every job. Seven per cent of a 393 px screen between the pickup
+   marker and the pickup. Pre-existing, but framing the whole leg makes the
+   drop-off's position fixed for the trip, so it stopped being transient.
+   Fixed by taking the label out of the flow, and `pad()` now leaves room for
+   labels the bounding box does not know about — the "Drop-off" pill was
+   ending at 393.7 px in a 393 px viewport.
+
+2. **The vehicle rendered 52 px off the road it was driving on** — my own
+   bug, introduced while fixing the first. Sizing the marker roots meant
+   declaring `position: relative` on them; MapLibre's stylesheet sets
+   `position: absolute` and positions markers with a transform, and this
+   inline `<style>` is parsed *after* that link, so at equal specificity the
+   `relative` won and dropped every marker back into normal flow. The map was
+   otherwise perfect and the vehicle was simply somewhere else. Mirroring
+   MapLibre's own declaration fixes it, and the rule is now pinned by a test
+   with the story attached.
+
+3. **The boda rider disappeared into the road.** The sedan is a pale
+   silhouette and read perfectly well on the brand-green route; the boda's
+   rider is drawn *in* the brand green, so on the one screen a boda rider
+   looks at, the marker merged into the line it was sitting on. Found by
+   swapping the sprite in the rendered document and looking — the census
+   proves the right silhouette is *chosen*, and says nothing about whether it
+   can be seen.
+
+   Fixed with a white disc under the vehicle, which is also what the owner's
+   first reference image shows and which fixes the general case rather than
+   that one sprite: any silhouette, over any line colour, stays a separate
+   object. The disc does not rotate; only the vehicle inside it turns.
+
+## Guards proved by mutation, all restored
+
+| guard | mutation | bites |
+|---|---|---|
+| progress clamps a detour rather than running backwards | dropped the clamp | ✅ |
+| a worked stop stops the pickup being the leg's origin | `return true` | ✅ |
+| the whole leg is asked for with **no** origin | passed `here` | ✅ |
+| the camera frames the whole leg, not the road ahead | disabled the branch | ✅ |
+| the driver is drawn as their own category | forced `sedan` | ✅ |
+| marker roots keep MapLibre's positioning | back to `relative` | ✅ |
+| no dashed guess beside a measured road | dropped the leg from the guard | ✅ |
+| the sprite table cannot drift from the server's | `tricycle → sedan` | ✅ |
+| the artwork cannot drift from the console's | moved one ellipse 1 px | ✅ |
+| *(control)* a reworded comment | — | SILENT, as it must be |
+
+## The census, which is the part the worklog asked for
+
+Checking this file first is what produced it. The 2026-08-21 entry's census
+found `Vehicle::CATEGORIES` mirrored in six places with two of them stale —
+a driver form that *"did not offer `boda`"* — and concluded: *"A hand-mirrored
+list drifts, and this one drifted within 48 hours of its most recent copy
+being made."*
+
+`mobile/src/trips/vehicleSprites.ts` is a **seventh copy**, of the table *and*
+the artwork, and it cannot be avoided: two bundles, and the map is an inline
+WebView document with no asset pipeline — which is also what keeps it drawing
+in a dead zone. So it is generated by reading the console's files rather than
+transcribed, and `backend/tests/Feature/Ci/VehicleSpriteCensusTest.php` now
+censuses all three copies against the server: every category maps, the console
+and the driver app agree with `PublicNearbyVehicleController::KINDS`, and the
+driver app's SVGs are the console's assets byte for byte. **The console's copy
+had no guard against the server before this either; it does now.**
+
+## Files I own
+
+`mobile/src/trips/vehicleSprites.ts` + test; `mobile/src/trips/journey.ts` +
+test; `backend/tests/Feature/Ci/VehicleSpriteCensusTest.php`.
+
+## Shared files touched — corrected to what was actually touched
+
+- `mobile/src/trips/PickupMap.tsx` — `legPolyline`/`heading`/`vehicle` props,
+  the `leg-route` layer under the live road, `addRoute` → `applyRoutes` and
+  the still camera, the vehicle marker, the two marker-positioning fixes.
+  **Every new prop defaults to the previous picture**, so `PickupScreen` and
+  `WaitingForPassengerScreen` are unchanged in behaviour.
+- `mobile/src/trips/stops.ts` — one added reader, `pickupIsLegOrigin`.
+- `mobile/src/location/usePosition.ts` — returns `Fix` (`Coordinates` plus a
+  heading). Structurally a superset, so no existing caller changed.
+- `mobile/src/api/types.ts` — `category` on `Vehicle`.
+- `mobile/src/screens/TripMapScreen.tsx` + test — the leg query and the footer.
+- `mobile/src/screens/TripInProgressScreen.tsx` + test — the leg query and the
+  map props. Its `useTripRoute` mock now forwards arguments instead of
+  swallowing them, for the reason `TripMapScreen.test.tsx` already records.
+- `mobile/src/screens/PickupScreen.test.tsx` — one assertion widened to
+  `objectContaining`, since a fix now carries a heading.
+- `mobile/README.md` — the map section, which still said *"There is no routing
+  engine here"*. Stale since ADR-0031 and this change made it more wrong.
+- `backend/Modules/Trips/README.md` — why `to=dropoff` **with no origin** is
+  load-bearing rather than a convenience.
+
+**No `openapi.yaml` change**, and that is a claim rather than an omission: no
+endpoint, field or shape changed.
+
+## Not built, deliberately
+
+- **No progress bar on `TripInProgressScreen`.** It gets the whole-leg line
+  and the vehicle — the *visual*, which is what the complaint was about. Its
+  stat badge already floats "remaining" and "elapsed" over a 220 pt map, and a
+  third figure in that corner buys less than it costs.
+- **Nothing on the approach leg.** Its whole road starts wherever the driver
+  was when they accepted, which this platform does not record. No bar, no
+  muted line, and the request is not made.
+- **Nothing mid-circuit once a stop is worked.** `pickup → next stop` is not
+  the road the driver is on. Suppressed rather than approximated.
+- **The fare leg is still never drawn on the approach map.** `PickupMap`'s
+  `leg` prop exists because that shipped once and the owner caught it —
+  *"i should be seeing where the client is and where i am going"*. Drawing it
+  muted alongside would be the same mistake in a lighter colour.
+- **No follow-the-driver camera**, which is what the reference shots use.
+  It is the opposite of the fix: a camera that tracks the vehicle answers
+  "what is the next turn", and that question belongs to the maps app this
+  platform hands off to (`TripMapScreen`'s docblock argues the division, and
+  the ADR-0031 costing behind it has not changed).
+- **No route-line animation and no bar animation.** §5 forbids decoration on a
+  surface watched for a whole trip, and there is nothing to see: the fraction
+  moves about one per cent per update.
+
+## Left for whoever is next
+
+- **The map still loads maplibre-gl from unpkg and the style from CARTO on
+  every mount.** Two of the browser renders above raced that and drew nothing
+  at all — a blank map on a working handset. Already on the perf agent's
+  deliberately-deferred list ("bundling maplibre-gl locally instead of unpkg
+  per map mount"); this is a second, independent sighting of it, and on a
+  screen a driver opens with a passenger in the car.
+- **`PickupMap` still duplicates `TripMap`'s document scaffold.** Untouched
+  and now a little larger. Its own docblock has called for folding them since
+  before this change.
+- **Nothing here ran on a handset or an emulator.** The map document was
+  rendered and measured in Chrome, which is the same MapLibre and the same
+  CSS; what that cannot check is `expo-location`'s heading on real hardware —
+  `headingOf` filters the negative "unknown" and leaves everything else, and
+  Android's `hasBearing()` behaviour deserves a look on the next EAS build.
+
+### 2026-08-21 — Addendum: the bug the emulator found, which every green test had agreed was impossible
+
+The owner asked to run the above in Expo Go. It runs — Expo Go 57 bundles and
+boots this app even with `@sentry/react-native` in it — and the first real trip
+it opened showed the new footer reading:
+
+> **83.8 km** to go — of **69.4 km**
+
+A remaining road *longer than the whole journey it was being measured against*,
+with the bar pinned at zero because the clamp was the only thing catching it.
+The trip was a Jinja circuit whose first stop was already worked, which is
+precisely the case this change claims to suppress.
+
+**`enabled` withholds the request. It does not withhold the answer.** A
+disabled `useQuery` still returns whatever its key already holds — and
+`WaitingForPassengerScreen` asks this exact question, same trip, same leg, no
+origin, on **every** job. So by the time a driver is mid-circuit the key is
+always warm, and the road from the pickup went on being served long after the
+leg had moved on. The cache is persisted to AsyncStorage as well, so it
+survives a restart.
+
+**The test that should have caught it is one I wrote, and it passed.** It
+asserted `useTripRoute` was *called with* `enabled: false` — the mechanism —
+which was true the whole time and is not the same claim as "no figure is
+shown". Both screens now have a test that renders with a mock answering
+regardless of the flag (which is what a warm cache does) and asserts the
+**outcome**: no total, no bar, no whole-leg polyline. Both proved by mutation
+(`legRoute = cachedLeg` fails them; restored).
+
+The fix is one line per screen — gate the value where it is used, not only
+where it is fetched:
+
+```ts
+const legRoute = wholeLegKnown ? cachedLeg : undefined;
+```
+
+**Worth generalising:** this app is offline-first with a persisted query cache,
+so `enabled: false` is never a way to make data absent — only a way to avoid
+spending a request. Anywhere a screen must *not show* something, gate the
+value.
+
+Re-verified on the emulator after the fix: the footer reads `83.8 km · by road
+· about 63 min` with no total and no bar, and the boda rider — this driver's
+category — is drawn on the white disc at the head of the green road. Driver app
+**83 suites / 1091 tests** green, tsc and eslint clean.
+
+---
+
+### 2026-08-22 — Claiming: the fleet model, and the two decisions it needs written down
+
+**Status:** **done**, closed at 00:38 local. Claimed at 00:05. No other entry
+claimed ADR **0055** or **0056** — this log has already had one ADR-number
+collision (see the 0036 entry, two agents thirty seconds apart), and the numbers
+were claimed up front for that reason.
+
+**This is a documentation pass. No source file is claimed, no migration is
+written, no test is touched, and no trip status is claimed.** The owner asked
+for the plan before the code, twice and explicitly.
+
+**Why now.** The owner has settled a change the codebase currently contradicts:
+KangaruRide becomes the system, and **Shanitah General Enterprises Ltd becomes
+one fleet company among several**. ADR-0005 says in as many words that this is
+*"not a product sold to fleet operators to run themselves"*, and that sentence
+is now false. It should be retired in a document rather than quietly stop being
+true — which is what this entry exists to produce.
+
+Five decisions were taken with the owner before writing, and they are recorded
+in the ADRs rather than re-derived:
+
+1. **One shared Kangaru**, not a database per fleet.
+2. **A corporate client may contract several fleets** — so `operator_id` and
+   `tenant_id` are two independent axes, not a hierarchy.
+3. **`tenant_id` keeps meaning the corporate client.** The new column is
+   `operator_id`. No rename of the safety-critical column.
+4. **Walk-ins belong to Kangaru**, priced by Kangaru's public tariff. Drivers
+   contract with Kangaru directly for walk-in work; the driver collects the
+   fare and Kangaru takes a commission.
+5. **Kangaru owns no fleet and reads across none.** Its staff are head customer
+   support and work by *acting as* a fleet, a client, a walk-in customer or a
+   driver.
+
+**Files I own (nobody else edits):**
+
+- `docs/adr/0055-fleet-operators-above-the-client.md` — new
+- `docs/adr/0056-acting-as-someone-else.md` — new
+- `docs/fleet-model-plan.md` — new, the sequenced plan the ADRs hang off
+
+**Shared files, with the exact edit named:**
+
+- `docs/agent-worklog.md` — this entry, and its close.
+- `docs/master-plan.md` — **one row** added to the document table at the top,
+  pointing at `docs/fleet-model-plan.md`. Nothing else in that file is touched;
+  its §1 decisions and §2 completeness gate are not mine to edit.
+
+**What I am deliberately not doing**, so nobody reads this claim as wider than
+it is: no `operators` table, no `operator_id` column, no scope class, no change
+to the 35 `isPlatformLevel()` call sites, and no screen. Phase 0 of the plan is
+a separate claim by whoever takes it, and it must not start until the owner has
+read the ADRs.
+
+---
+
+#### Closed — what landed, and what is unproven
+
+**Files touched, corrected to what I actually edited:**
+
+- `docs/adr/0055-fleet-operators-above-the-client.md` — new. Reverses ADR-0005's
+  premise sentence; strikes it here rather than editing that file, per this
+  repo's convention for keeping a reversal legible.
+- `docs/adr/0056-acting-as-someone-else.md` — new.
+- `docs/fleet-model-plan.md` — new. Packages `F0`–`F3` and `S1`, chosen not to
+  collide with the master plan's `A0`/`W*`/`B*`.
+- `docs/master-plan.md` — **one row** added to the document table, as claimed.
+  Nothing else in that file was touched.
+- `docs/agent-worklog.md` — this entry.
+
+**Verified by reading the code, not assumed.** Every number in the ADRs was
+counted, and one was wrong on the first pass and is corrected everywhere it
+appears:
+
+- `isPlatformLevel()` — **35 call sites across 26 files**. My first count said
+  37/27; two of those are docblock mentions in `UserRole.php` and are not call
+  sites. It is quoted as a checklist figure in `F0`, so the difference matters.
+- `audit_logs` carries `tenant_id`, `user_id`, the `auditable` morph, `action`,
+  `changes`, `ip_address` — and **no impersonator column**. ADR-0056 §2 rests on
+  that.
+- **Impersonation was refused, not forgotten.** `Modules/Customers/Routes/staff.php`
+  and `AuthController::changePassword` both say so, and the second gives the
+  reason. ADR-0056 is written to satisfy that reason rather than overrule it —
+  the framing changed once I read it.
+- `companies.tenant_id` is `unique()`, which is where `F2` lands.
+- `drivers.owns_vehicle` already exists (ADR-0048 §7), so the driver-partner case
+  is expressible today.
+- 20 models carry `BelongsToTenant`; 43 of 86 migrations mention `tenant_id`.
+- Five tables already use a null client to mean "the platform's" — the walk-in
+  tariff migration says so itself. That is why "walk-ins belong to Kangaru"
+  needs no migration to express.
+
+**Nothing was run and nothing is proved.** No test, no migration, no server.
+Every exit criterion in `docs/fleet-model-plan.md` is unmet by construction —
+this pass produced the plan, not the thing. In particular the `F0` hazard
+checklist (count null-client users before, reconcile after, against the
+**deployed** database) has not been performed, and the count is not yet known.
+
+**Three questions are open and are the owner's**, listed in the plan's §5 with a
+recommended default each. They block `F3` only; `F0`, `F1`, `F2` and `S1` do not
+depend on any of them.
+
+**A brief for the owner** was published from these three documents, in the
+KangaruRide palette and type from `DESIGN.md` (Sora/Inter, brand green, navy).
+It is a reading surface only — it is not part of the app and nothing links to
+it from the product.
+
+---
+
+### 2026-08-22 — Claiming: F0, the spine (ADR-0055)
+
+**Status:** **done**, closed at 00:59 local. Claimed at 00:20. Nobody else
+claimed `operators`, `operator_id`, `access_level` or `app/Support/Access/*`.
+**No trip status is claimed** and no driver-app file was touched.
+
+**Backend: 1481 passed, 0 failed (5809 assertions).** Pint clean, PHPStan
+clean, `migrate:rollback` + `migrate` round-trips with an identical
+reconciliation. The number reconciles: the run before this pass was 1467
+(1431 passing, 36 broken by the new guard), and 1467 + 14 new tests = 1481.
+
+**A0 is done** (entry of 2026-08-20 23:55 and its close), so F0 is clear to
+start per `docs/fleet-model-plan.md`.
+
+## The hazard count, taken before anything moved
+
+`docs/fleet-model-plan.md` §4 requires this first, and it is worse than the plan
+guessed:
+
+```
+users total                    10
+users WHERE tenant_id IS NULL   6
+  #3  Platform Super Admin    super_admin
+  #4  Dispatch Desk           dispatcher
+  #5  Finance Officer         finance
+  #8  Demo Driver             driver      ← a driver
+  #9  Recruited Rider         driver      ← a driver
+  #10 Demo Driver (free)      driver      ← a driver
+```
+
+**Three of the six are drivers.** The plan anticipated dispatchers and Finance;
+it did not anticipate that a *driver* is also a null-client user, because
+drivers belong to no corporate client. So the naive migration — "no client and
+no fleet means Kangaru" — would have made `driver@kangaruride.test` head office,
+with read access to every fleet on the platform.
+
+This is the ADR-0055 §4 hazard, live, with names. It is the argument for
+`access_level` being **declared** rather than inferred, and it is now evidence
+rather than reasoning.
+
+The split, recorded here so the backfill is auditable — 1 + 5 = 6:
+
+| Account | Becomes |
+|---|---|
+| #3 Platform Super Admin | `kangaru` — no fleet, no client |
+| #4, #5 Dispatch Desk, Finance Officer | `fleet`, operator 1 (Shanitah) |
+| #8, #9, #10 the three drivers | `fleet`, operator 1 (Shanitah) |
+
+## One deliberate widening of F0, and why
+
+`docs/fleet-model-plan.md` puts `operator_id` on users, drivers and vehicles in
+F0, and on trips, bookings and invoices in F2. **I am adding the column and the
+backfill to all six now, in F0**, and leaving the *scope wiring* where the plan
+put it.
+
+The reason is the plan's own deadline argument, which it applied unevenly: a
+backfill is only trivial while every row genuinely is Shanitah's. Trips (90),
+bookings (76) and invoices (48) are in exactly that state today and stop being
+so the moment a second fleet exists. Adding an unread column now costs nothing;
+adding it after fleet two has history is the archaeology F0 exists to avoid.
+
+**The dangerous intermediate state, named so nobody discovers it:** between F0
+and F2, `trips`/`bookings`/`invoices` carry `operator_id` but nothing filters on
+it, so a *second* fleet's dispatcher would read Shanitah's trips. **No second
+operator may be created until F2 is done.** F0 deliberately ships no way to
+create one — no admin screen, no endpoint, no seeder — and Shanitah is inserted
+by the migration itself.
+
+**Files I own (new):**
+
+- `backend/database/migrations/2026_08_22_090000_create_operators_table.php`
+- `backend/database/migrations/2026_08_22_090100_add_operator_to_the_fleet.php`
+- `backend/database/migrations/2026_08_22_090200_add_access_level_to_users_table.php`
+- `backend/app/Models/Operator.php`
+- `backend/app/Support/Access/AccessKind.php`, `AccessContext.php`
+- `backend/app/Concerns/BelongsToOperator.php`
+- `backend/tests/Feature/Tenancy/CrossFleetIsolationTest.php`
+- `backend/tests/Feature/Tenancy/AccessLevelInvariantTest.php`
+
+**Shared files, with the exact edit named:**
+
+- `app/Models/User.php` — `operator_id`/`access_level` on the model, and
+  `isPlatformLevel()` splits into an account-shaped question with a new name.
+- `app/Http/Middleware/IdentifyTenant.php` — binds the `AccessContext`.
+- `app/Support/Tenancy/TenantContext.php`, `TenantScope.php` — read the client
+  axis from the one context instead of holding their own.
+- `app/Concerns/BelongsToTenant.php` — `forActor()` and `resolveRouteBinding()`.
+- **The 35 `isPlatformLevel()` call sites across 26 files.** Mechanical; listed
+  in the close, not here, because the list is the diff.
+- `database/seeders/PlatformStaff.php`, `DatabaseSeeder.php` — stop finding
+  staff by `whereNull('tenant_id')`.
+- `docs/fleet-model-plan.md` — record the widening above in F0's own section.
+
+**Not in F0, unchanged from the plan:** fleet-owned reference data (F1), the
+identity/contract split and the fleet switcher (F2), driver contracts and
+walk-in dispatch (F3), acting-as (S1). No screen, no frontend file, no mobile
+file.
+
+---
+
+## Closed — what the guard found, and what is still open
+
+### The guard earned its place in the first ten minutes
+
+`User::saving` refuses to infer that an account with no client and no fleet is
+head office. On its first run it turned **36 tests red**, and every one was the
+same thing: an application path creating a user account without saying which
+fleet it belongs to.
+
+- `UserAdminService::insert` — appointing any colleague.
+- `DriverAccountService::newAccount` — giving a driver their login.
+- `DriverApplicationService::approve` — a self-registered driver being taken on.
+
+Not one of them would have failed under a migration that inferred the level.
+They would all have quietly produced **head office accounts** — including every
+driver login the office has ever issued.
+
+All three now ask the *actor* (or, for a driver's login, the driver's own row)
+rather than reading the ambient `AccessContext`. That matters more than it
+looks: `BelongsToOperator` does auto-fill from the request context and that is
+correct over HTTP, but `DriverApplicationService` is also called directly, with
+no middleware and no request. **Wherever the actor is already in hand, ask
+them** — it survives a queue, a console command and a test.
+
+### Two real defects found on the way, neither of them mine
+
+1. **`User::scopeForActor` gave a fleet actor an unscoped staff list.** A
+   second fleet's dispatcher would have read Shanitah's entire staff roster —
+   names, emails, roles. Nothing leaks today because there is one fleet, which
+   is exactly how a hole like that ships. Now scoped to *their own fleet's
+   people plus every client's*, which is behaviour-for-behaviour what it
+   replaced while one fleet exists. **Proved by mutation:** restoring the old
+   `$query` fails `it shows a fleet no other fleet staff`; restored.
+2. **`operators` was truncated out from under the concurrency suite.** Seven
+   race tests failed on a `vehicles.operator_id` foreign key rather than on
+   anything they were written to prove. The cause is a decision made earlier in
+   this same pass: Shanitah is inserted by the *migration* (so production
+   `migrate` needs no seeder), and `DatabaseTruncation` — which the
+   `Concurrency` suite must use, because it spawns real OS processes that
+   cannot see an uncommitted transaction — empties every table it is not told
+   to keep. `Tests\TestCase::$exceptTables` now names it. Exempting a table the
+   schema guarantees is the fix that matches the decision; re-seeding it would
+   have been a workaround for a self-inflicted wound.
+
+### Verified by running, not by assuming
+
+| Claim | How |
+|---|---|
+| Backfill is complete and correct | 6 fleet + 4 client = 10 users, matching the pre-count of 6 null-client rows; 253 rows across five tables, **zero nulls** |
+| No account was promoted | **zero `kangaru` rows** exist |
+| The database holds the invariant | raw `UPDATE` setting `access_level='fleet', operator_id=null` is refused by `users_access_level_matches_columns` |
+| The model holds it too | two nulls throw with a sentence naming the fix |
+| Head office is still expressible | explicit `AccessLevel::KANGARU` saves and round-trips |
+| Cross-fleet isolation | a rival fleet, seeded in tests only, sees none of Shanitah's drivers, vehicles or staff |
+| The isolation tests can fail | **two mutations**, both red, both restored — dropping the fleet predicate in `BelongsToOperator`, and restoring the old unscoped `User::scopeForActor` |
+| Migrations reverse | `migrate:rollback` then `migrate`; the reconciliation after the round trip is identical |
+| Assertions are counts, not existence checks | the worklog has caught three lying tests on this branch, all `toContain` where a count was needed |
+
+### One exit criterion was met differently from how it was written
+
+The plan says *"All 35 call sites moved; none reads `tenant_id === null` for
+'the house' any more."* The second half is met — there is one definition and it
+changed. The first half assumed a rename, and **I did not rename
+`isPlatformLevel()`**.
+
+The meaning moved in four words (`tenant_id === null` → `access_level ===
+FLEET`), which is the load-bearing change: a `kangaru` account no longer
+inherits fleet reach. Renaming would have put those four words in the same diff
+as 35 mechanical edits across 26 files, where no reviewer could tell them
+apart. F2 touches those call sites anyway and can carry the rename. The method's
+docblock says all of this at the definition.
+
+### What is NOT done, and what I could not verify
+
+- **No global fleet scope on `drivers`/`vehicles`** — the fourth amendment,
+  with the evidence, in `docs/fleet-model-plan.md`. Cross-fleet isolation on
+  the *operational* tables (trips, bookings, invoices) is therefore **not
+  enforced**, only backfilled. **No second operator may be created until F2.**
+- **ADR-0055 §3 has a gap the code found.** *"No column for the actor's axis →
+  no rows"* is right for a listing and wrong for a relation traversal — a
+  client loading `trip.driver` is not a cross-fleet read. The ADR does not
+  distinguish them. F2 answers it; it is recorded rather than patched around.
+- **The `CHECK` constraint is verified on MariaDB 10.4 only.** CI runs
+  **MySQL 8.4**. `ADD CONSTRAINT … CHECK` and `DROP CONSTRAINT` are supported
+  on both (8.0.16+ and 8.0.19+ respectively) and the syntax is standard, but I
+  have not watched it run there. **First CI run is the real test of the
+  reversibility gate.**
+- **Nothing outside the backend was touched**, and nothing needs to be: no
+  response shape changed, so `docs/api/openapi.yaml` is untouched and the
+  ADR-0011 contract gate has nothing to say about this pass.
+- **Not committed.** The working tree carries a large amount of unrelated
+  in-flight work from other passes, and committing selectively across it is not
+  mine to decide.
+
+### Files, corrected to what was actually touched
+
+**New:** `app/Enums/AccessLevel.php`, `app/Models/Operator.php`,
+`app/Support/Access/AccessContext.php`, `app/Concerns/BelongsToOperator.php`,
+the three `2026_08_22_0900*` migrations,
+`tests/Feature/Tenancy/AccessLevelInvariantTest.php`,
+`tests/Feature/Tenancy/CrossFleetIsolationTest.php`.
+
+**Modified:** `app/Models/User.php`, `app/Http/Middleware/IdentifyTenant.php`,
+`app/Providers/AppServiceProvider.php`,
+`Modules/Administration/Services/UserAdminService.php`,
+`Modules/Drivers/Models/Driver.php`,
+`Modules/Drivers/Services/DriverAccountService.php`,
+`Modules/Drivers/Services/DriverApplicationService.php`,
+`Modules/Vehicles/Models/Vehicle.php`, the `User`/`Driver`/`Vehicle` factories,
+`database/seeders/PlatformStaff.php`, `tests/TestCase.php`,
+`docs/fleet-model-plan.md`.
+
+**Claimed but not needed:** `app/Support/Tenancy/TenantContext.php`,
+`TenantScope.php` and `app/Concerns/BelongsToTenant.php` were listed in the
+claim and are **unchanged**. `AccessContext` sits beside `TenantContext` rather
+than replacing it; folding the client axis into the one object is F2's, where
+the operational tables move together and the change can be tested as a unit.
+
+**Not mine, and left alone:** `app/Enums/ErrorCode.php`,
+`app/Support/Auth/ClientScope.php`, `app/Support/Observability/Trace.php`, the
+`trip_stops` migration, `VehicleSpriteCensusTest`, `TraceTest` and the four
+modified files under `tests/Feature/{Auth,Ci,Tenancy}` were already dirty in the
+working tree when this pass started. **No existing assertion was changed by
+me.**
+
+---
+
+### 2026-08-22 — Claiming: F1, what a fleet owns (ADR-0055)
+
+**Status:** **done**, closed at 01:33 local. Claimed at 01:05. Nobody else
+claimed these four tables. **No trip status was claimed**, no driver-app file,
+no frontend file.
+
+**Backend: 1492 passed, 0 failed (5828 assertions).** Pint clean, PHPStan
+clean, both F1 migrations round-trip. Reconciles: 1481 after F0, plus 11 new
+tests = 1492.
+
+**Depends on F0**, which is done: `operators` exists, Shanitah is row 1, and
+`AccessContext` is bound from the actor.
+
+## What F1 decides: what a null `operator_id` means on reference data
+
+ADR-0055 §5 says Kangaru owns *"the default zones and vehicle categories fleets
+inherit"*. So on these four tables a null fleet means **Kangaru's default,
+readable by every fleet and editable only by Kangaru** — the `Zone::visibleTo`
+pattern generalised rather than a second one invented.
+
+**This is a table-level decision, not an ambient rule about nulls, and the
+difference is load-bearing.** On a walk-in booking a null fleet means
+*Kangaru's, unclaimed*, and if "null means everyone may read" leaked from here
+to there, every fleet would get every walk-in customer's phone number and home
+address. The inheritance lives in an explicit scope on four named models; it is
+never a property of the column.
+
+| Table | A null fleet means | Existing rows backfill to |
+|---|---|---|
+| `settings` | Kangaru default, inherited | **null** — today's values become everyone's defaults, so Shanitah inherits exactly what it has now |
+| `vehicle_categories` | Kangaru default, inherited | **null** — same |
+| `zones` | Kangaru default | **operator 1** — a service area is the fleet's own, and fleet two must not inherit Shanitah's patch |
+| `rate_cards` | the public tariff, Kangaru's | corporate cards → **operator 1**; the walk-in tariff stays **null** |
+
+Zones and rate cards differ from the first two because they already carry a
+client axis, and a client's own zone or card is not a default anybody inherits.
+
+## The uniqueness trap, and the fix, probed before being written
+
+`settings` is `unique(group, key)` and `vehicle_categories` is `unique(key)`.
+Adding `operator_id` to those keys **does not work**: MySQL and MariaDB both
+treat NULLs in a unique index as distinct, so `(NULL, 'dispatch', 'odometer')`
+inserts twice and the constraint silently guarantees nothing — for the Kangaru
+defaults, which are the majority of rows.
+
+This codebase already knows the trap; `create_rate_cards_table` documents it in
+a comment. The fix here is a generated column:
+
+```sql
+ALTER TABLE settings ADD COLUMN operator_scope BIGINT UNSIGNED
+  AS (COALESCE(operator_id, 0)) VIRTUAL;
+ALTER TABLE settings ADD UNIQUE (operator_scope, `group`, `key`);
+```
+
+**Probed on MariaDB 10.4 before committing to it**: a duplicate Kangaru default
+is refused, and a fleet override alongside the default is accepted. Verified on
+MySQL 8.4 only by CI.
+
+**Files I own (new):**
+
+- `backend/database/migrations/2026_08_22_1000*` — three migrations
+- `backend/app/Concerns/InheritsKangaruDefaults.php`
+- `backend/tests/Feature/Tenancy/FleetReferenceDataTest.php`
+
+**Shared files, with the exact edit named:**
+
+- `Modules/Administration/Services/SettingsService.php` — resolution prefers the
+  fleet's row over Kangaru's; three query sites.
+- `Modules/Vehicles/Services/VehicleCategoryService.php`,
+  `Rules/ActiveVehicleCategory.php`, `Requests/StoreVehicleCategoryRequest.php`.
+- `Modules/Fleet/Models/Zone.php` + its three `visibleTo` callers
+  (`ZoneController`, `ZoneResolver`, `StoreRateCardVersionRequest`).
+- `Modules/Billing/Pricing/RateCardResolver.php`,
+  `Modules/Billing/Controllers/RateCardController.php`.
+- `Modules/Administration/Models/Setting.php`,
+  `Modules/Vehicles/Models/VehicleCategory.php`,
+  `Modules/Billing/Models/RateCard.php` — the trait and `operator_id`.
+
+**Not in F1:** the identity/contract split and the fleet switcher (F2), driver
+contracts and walk-ins (F3), acting-as (S1). **Still no second operator may be
+created** — that rail holds until F2.
+
+---
+
+#### Closed — the backfill split three ways, and a test caught my own scope
+
+**Where the rows went**, and the split is the design confirming itself:
+
+| Table | Kangaru default | Shanitah |
+|---|---|---|
+| `settings` | 19 | 0 |
+| `vehicle_categories` | 9 | 0 |
+| `zones` | 0 | 3 |
+| `rate_cards` | **1** | **2** |
+
+Settings and categories became defaults everyone inherits, so Shanitah reads
+exactly what it read before F1 — that is what keeps behaviour identical. Zones
+went to Shanitah because a service area is a fleet's own patch. And
+`rate_cards` splitting 1/2 is the walk-in tariff staying Kangaru's while both
+corporate cards went to the fleet, which is ADR-0055 §5 in one number.
+
+#### The uniqueness fix was the actual work
+
+`unique(operator_id, group, key)` **does not work.** MySQL and MariaDB treat
+NULLs in a unique index as distinct, so two Kangaru defaults both insert — for
+the rows that are currently *all* of them. `create_rate_cards_table` already
+documents this trap from the other side; this is the same trap with the
+nullable column on the left.
+
+A virtual `operator_scope` column — `COALESCE(operator_id, 0)`, and 0 is safe
+because `operators.id` starts at 1 — makes the index see the null. **Probed
+against MariaDB 10.4 before it was written**, not after: a second Kangaru
+default is refused, a fleet override beside it is accepted.
+
+#### A test caught a real flaw in my own scope
+
+`visibleToFleet(null)` conflated two different nulls. Head office has no fleet;
+**a client's user also has no fleet**, and they are not head office.
+`VehicleCategoryRateCardSyncTest` went red because a client's Finance officer
+could no longer price a category the office had created seconds earlier — a 422
+saying the fleet did not offer it.
+
+That is ADR-0055 §4's hazard wearing different clothes: two nulls, two
+meanings, and only `access_level` tells them apart. `visibleToActor()` asks the
+level instead, and a **client is deliberately left unfiltered on the fleet
+axis** — which fleet serves them is the contract F2 introduces, and narrowing
+them before it exists would hide the prices on their own trips.
+
+#### Two more cross-fleet holes closed, both the shape of F0's staff list
+
+- **The zone listing** gave a fleet actor every zone, including a competitor's
+  operating patch. `"A platform reader sees every zone"` was true with one
+  fleet.
+- **The rate-card listing** gave a fleet actor every fleet's commercial terms,
+  because `forActor()` answers the *client* axis and drops the scope entirely
+  for fleet staff.
+- **`walkInTariff()` now requires a null fleet too.** Without it, the first
+  fleet to mark a client-less card as its default would have started pricing
+  every walk-in on the platform, including other fleets'. Nothing can do that
+  today; the line costs nothing and the failure would have been invisible.
+
+#### Proved by mutation, both restored
+
+- Dropping the fleet filter in `visibleToActor` → *"gives a fleet Kangaru
+  defaults plus its own"* and *"scopes zones to the fleet whose operating patch
+  they are"* both fail.
+- Reversing the override precedence in `SettingsService::stored()` — the
+  `sortBy` that makes a fleet's row win — → both settings-resolution tests
+  fail. That sort is one character from silently disabling every override, and
+  the tests assert the resolved value rather than the presence of two rows
+  precisely so it cannot pass vacuously.
+
+#### Settings caching had to change, and one branch cannot fire yet
+
+One `settings.all` key for everybody would serve Shanitah's overrides to every
+other fleet, so the key is now per fleet, following ADR-0001's own
+`tenant:{id}:` convention one level up.
+
+The subtler half: **a change to a Kangaru default changes what every fleet
+inherits**, so forgetting only the writer's key would leave fleets serving a
+stale value *forever* — these entries are `rememberForever`. Every fleet's key
+is now forgotten on a default write. That branch **cannot fire today**, because
+F0 created no Kangaru accounts and only Kangaru writes defaults. It is written
+now rather than discovered later by a fleet reading a price nobody set.
+
+#### Also done in this pass, at the owner's instruction
+
+`IdentifyTenant` now adds **`operator_id`** and **`access_level`** to Laravel
+`Context` beside `tenant_id`, so Sentry events can answer *"one fleet's bug or
+everyone's"* (ADR-0054). `access_level` rides along because an event tagged
+only `operator_id: null` cannot say whether a client or head office was
+looking — the same ambiguity ADR-0055 §4 exists to remove. Neither value is
+personal data, so `ScrubsSecrets` has nothing new to strip.
+
+#### What is NOT done
+
+- **`ZoneResolver::candidates()` is unchanged.** It runs from pricing and
+  dispatch, often with no actor, and filtering it needs the *trip's* fleet
+  rather than the reader's. F2.
+- **`RateCardResolver::defaultCardForTenant()` is unchanged.** With two fleets
+  serving one client there would be two default cards; which one prices a trip
+  is F2's question, not this one's.
+- **The generated column is verified on MariaDB 10.4 only.** CI runs MySQL 8.4,
+  which supports indexed virtual columns equally — but that half is CI's to
+  prove, not mine.
+- **No screen was touched**, so the design skills correctly did not apply to
+  this pass. They bind from F2's fleet switcher onward.
+
+---
+
+### 2026-08-22 — Claiming: F2, a client on more than one fleet (ADR-0055 §6)
+
+**Status:** in progress. **Claimed at 01:30 local.** Same agent as F0 and F1
+above. If another entry claims `operator_client`, `document_number_sequences`
+or `companies` ownership, the later timestamp yields.
+
+**Depends on F0 and F1**, both done and green.
+
+## What the code said before this was scoped
+
+Two findings that changed the shape of the package, both from reading rather
+than assuming:
+
+1. **`credit_limit_minor` and `billing_email` are inert.** They appear in
+   `Company`, `StoreCompanyRequest`, `UpdateCompanyRequest` and
+   `CompanyResource` — and nowhere else. Nothing enforces a credit limit and
+   nothing sends an invoice to that address. So moving them onto the contract
+   is cheap, because no behaviour depends on them; it is also **not the reason
+   to do F2**, and saying so keeps the package honest about what it buys.
+
+   It does mean the split can be done *properly*: those fields move **onto**
+   the contract and **off** `companies`, leaving one source of truth. Leaving
+   copies on both is the mistake this package would otherwise build in.
+
+2. **`document_number_sequences` is keyed `unique(tenant_id, document_type,
+   year)`** and is deliberately not an Eloquent model — *"it is a counter, and
+   the only things that ever touch it are the three statements in this class"*
+   (`DocumentNumberSequenceRepository`). That is the highest-value change in
+   F2: two fleets billing one client would interleave document numbers inside
+   that client's ledger, which is exactly the reproducibility `PRODUCT.md`
+   sells to a bank.
+
+## Order, highest value first
+
+1. `operator_id` on `document_number_sequences`, in the unique key and in the
+   repository's three statements.
+2. `operator_client` — the contract. One row per (fleet, client), carrying
+   `billing_email`, `credit_limit_minor`, `status` and the contract dates.
+   Backfill: every existing client gets a contract with Shanitah.
+3. `companies` sheds the three fields the contract now owns; `CompanyResource`
+   reads them through the acting fleet's contract.
+4. The **fleet switcher** — one login, one fleet in view at a time.
+
+**Files I own (new):**
+
+- `backend/database/migrations/2026_08_22_1100*`
+- `backend/app/Models/OperatorClient.php`
+- `backend/tests/Feature/Tenancy/ClientOnTwoFleetsTest.php`
+
+**Shared files, with the exact edit named:**
+
+- `Modules/Billing/Repositories/DocumentNumberSequenceRepository.php` — the
+  three statements gain the fleet.
+- `Modules/Clients/Models/Company.php`, `Resources/CompanyResource.php`,
+  `Requests/{Store,Update}CompanyRequest.php`, `Services/CompanyService.php`.
+
+**The switcher is UI**, so when it starts it loads `screen` (which pulls in
+`quality-control`, `DESIGN.md` and `docs/screen-rules.md`) and then
+`emil-design-eng`, per the owner's instruction of 22 August — and it ships with
+Sentry breadcrumbs, because a switcher that silently shows the wrong fleet's
+data is this package's worst and least visible failure.
+
+**F2 is what lifts the "no second operator" rail.** Until every one of the four
+steps above is done and green, that rail stays where F0 put it.
+
+---
+
+### 2026-08-22 — Claiming: the office cannot see the documents an applicant sends
+
+The KYC upload was fixed an hour ago (entry above): a driver can now send an
+identity document, a licence and four more against their application. **Nobody
+can look at them.**
+
+`DriverApplicationResource` returns eleven fields and not one of them is a
+document. There is no `driver-applications/{id}/documents` route and no file
+route beside it. So the queue at `/driver-applications` shows a name, a phone
+number and two buttons — Approve and Reject — over an application whose whole
+point is the paperwork attached to it. A reviewer is being asked to decide
+blind, and the decision is whether to let somebody drive.
+
+**Everything needed already exists for the *driver* case** and will be
+mirrored, not reinvented:
+
+- `DriverDocumentReviewController::index/file` serves
+  `GET /drivers/{driver}/documents` and `.../{document}/file`, decrypting
+  through `DriverDocumentService::download()` (ADR-0053).
+- `DriverDocumentSlots::toArray` is the one presenter the driver app, the
+  driver profile and the office already share.
+- `MediaPreview` on the console has zoom and browse, and
+  `DriverDocumentsDialog` already wires it for an approved driver.
+
+The rows are the same table: an application's uploads are `driver_documents`
+with `driver_application_id` set and `driver_id` null, which is exactly what
+`POST /driver-applications/documents` returned when the fix was proved
+(`"driver_id":null,"driver_application_id":5`).
+
+**The path-mismatch guard is the part to copy carefully.**
+`DriverDocumentReviewController::file` 404s when `$document->driver_id` does
+not match the driver in the path, because a reviewer holds `drivers.manage`
+over everyone and the policy alone would happily serve another applicant's
+identity document from a mismatched pair. The application version needs the
+same check against `driver_application_id`, and it is the one line in this
+whole change where a mistake exposes somebody's passport.
+
+## Files I expect to own
+
+`backend/Modules/Drivers/Controllers/ApplicationDocumentReviewController.php`
+and its tests; the console's preview wiring inside
+`frontend/src/pages/DriverApplicationsPage.tsx`.
+
+## Shared files, smallest possible edit
+
+- `backend/Modules/Drivers/Routes/api.php` — two `GET` routes beside the
+  existing `driver-applications` block.
+- `docs/api/openapi.yaml` — the two routes. ADR-0011: contract or it does not
+  exist, and the last thing this branch learned the hard way is what happens
+  when a client and a contract disagree (the KYC `upload_token`).
+
+## Not in this claim
+
+**The redesign of the application page.** Asked for in the same breath and
+deliberately separated: it needs `screen` and `quality-control` loaded and a
+claim of its own, and it should be designed against a page that can actually
+show a document rather than one that cannot. Reviewing real paperwork is what
+will say what the redesign has to solve.
+
+---
+
+### 2026-08-22 — The office can see the documents: **done**
+
+Backend **19 passed** across the new suite, the onboarding suite and the route
+census; console **578 passed / 57 files**; `tsc -b --force` clean (the form CI
+runs — plain `--noEmit` is a no-op on this solution-file tsconfig).
+
+**Two read-only routes and one section in the dialog where the decision is
+made.** Not behind its own button: the licence-number field on that dialog
+already carried the hint *"From the licence you checked, not the applicant's
+form"*, which was an instruction the console gave with no way to follow it.
+The papers now sit directly above the box that is transcribed from them.
+
+## Guards proved by mutation, all restored
+
+| guard | mutation | bites |
+|---|---|---|
+| a document must belong to the application in the path | check removed | ✅ *refuses a document belonging to a different application* |
+| the file route is authorised | `authorize` deleted | ✅ 4 fail |
+| a broken documents payload must not kill the dialog | boundary check removed | ✅ 1 fails |
+| an unsent slot is named, not hidden | filtered the empty slots out | ✅ 1 fails |
+| the documents are fetched for the application opened | hardcoded id 1 | ✅ 1 fails |
+
+Each console mutation fails **exactly one** test, which is the proof worth
+having — a mutation that fails everything has usually just broken the file.
+
+## The failure mode the tests found, which was not in the plan
+
+The first version threw during render when the documents payload was not a
+list, and **took the whole dialog down with it** — so a reviewer who could not
+see the papers also lost Approve and Reject. Worse than the fault that caused
+it. Now checked at the fetch boundary: the section says it could not read
+them, and the decision stays possible. Found because the existing page tests
+used one `mockResolvedValue` for every `get`, so the queue's envelope was
+handed to the documents call.
+
+Those tests are now **routed by URL, not by call order**. A
+`mockResolvedValueOnce` chain encodes how many times a screen fetches, so
+adding one request silently hands the wrong body to the wrong caller — which
+is exactly how they broke.
+
+## Files I own
+
+`backend/Modules/Drivers/Controllers/ApplicationDocumentReviewController.php`,
+`backend/tests/Feature/Drivers/ApplicationDocumentReviewTest.php`,
+`frontend/src/pages/ApplicationDocuments.tsx`.
+
+## Shared files, with the exact edit
+
+- `backend/Modules/Drivers/Routes/api.php` — two `GET`s and one import.
+- `backend/tests/Feature/Ci/RoutePolicyCensusTest.php` — two census rows and
+  three counts (197→199, 181→183, 167→169), each with the reason beside it.
+  The census is meant to be edited by hand; that is what it is for.
+- `docs/api/openapi.yaml` — the two paths. The contract validator refused
+  the tests until they were there, which is ADR-0011 working: three of these
+  four tests failed on the spec before they failed on anything else.
+- `frontend/src/pages/DriverApplicationsPage.tsx` — one import, one mounted
+  section, one comment.
+- `frontend/src/pages/DriverApplicationsPage.test.tsx` — the URL-routed mock,
+  a slot fixture, three tests.
+
+## Known duplication, named rather than hidden
+
+The row in `ApplicationDocuments` is a **read-only cousin of `DocumentRow`** in
+`DriverDocumentsDialog`. Extracting one shared row is the right end state and
+was deliberately not done: that file is another surface's, it is four hundred
+lines, and several agents are in this tree tonight. **The third caller should
+extract it rather than add a third copy.** The `TONE` map is duplicated for
+the same reason and must stay in step — one status has to read the same on
+both screens.
+
+## Not built, deliberately
+
+- **No verify, no reject, no upload on an application's documents.** Those
+  start once a driver exists (ADR-0033 §4). Before that the only decision is
+  the application itself, and `approve`/`reject` own it with the audit trail
+  attached. A per-document verdict here would be a second, quieter way to
+  refuse somebody.
+- **No compliance `meta`.** The driver endpoint returns one; an applicant has
+  no compliance state to summarise, and inventing a denominator would be a
+  number the platform cannot produce.
+- **The redesign is still not done**, and is still the right next claim — now
+  against a page that can show a document.
+
+---
+
+### 2026-08-22 — Claiming: an account at application time, so one document can be refused
+
+The owner asked for two things in one breath: **reject a single document so the
+driver can resubmit it**, and *"let the account be created"*. They turn out to
+be the same request. Rejecting one document only helps if the applicant can
+come back, and today they cannot: there is no account until approval, the
+64-character claim ticket dies after 24 hours and at the decision, and
+ADR-0027 §5 refuses an endpoint that would reissue one.
+
+## Why this is an amendment to ADR-0027 §1 and not a reversal of it
+
+§1 refused a "pending user" on the enum's reasoning: a third `UserStatus`
+would have to be learned by every authorisation path, and *"the cost of
+missing one is a login that works before anybody approved it."*
+
+**That objection is answered rather than overruled, because the authority here
+was never the role.** Checked before designing anything:
+
+- Nine driver-facing controllers resolve the actor with
+  `Driver::query()->where('user_id', $user->id)->first()` and answer
+  *"not a driver"* on null.
+- `grep` for `UserRole::DRIVER` outside the enum's own definition and the
+  seeders finds **nothing**. No policy, no gate, no controller grants a driver
+  anything for holding the role.
+
+So a `users` row with role `driver` and no `drivers` row is already inert.
+**No third status, and no policy learns a new case** — the account is plainly
+`active`, and approval creating the *link* is what grants everything. That is
+ADR-0016 §2 untouched.
+
+## The constraint that shapes the whole change: §5 must not break
+
+`POST /driver-applications` *"answers identically whether or not the email is
+already known to the platform"*. Creating a user at submission would fail on
+`users_email_unique` for a duplicate and hand an unauthenticated stranger the
+oracle §5 exists to refuse — against, in its own words, *"a population whose
+whereabouts are worth money to the wrong people."*
+
+So the account is minted **only when the email is free**. A duplicate is
+stored exactly as today and refused at approval in front of a human, and the
+response to the stranger is byte-identical either way. The cost is that a
+duplicate applicant still cannot sign in; they were never going to be approved
+under that email anyway.
+
+## Files I expect to own
+
+A migration adding `driver_applications.user_id`; the changes to
+`DriverApplicationService::submit/approve`; a new security test asserting an
+applicant's token reaches nothing.
+
+## Shared files, smallest possible edit
+
+- `docs/adr/0027-self-service-driver-registration.md` — an amendment section.
+  §1's argument stays; what changes is where the account is minted.
+- `Modules/Drivers/Services/DriverApplicationService.php` — two methods.
+- `Modules/Drivers/Models/DriverApplication.php` — one relation, one fillable.
+
+## The guard I will not cut
+
+**An applicant's token must reach nothing.** An account that exists before
+anybody has vetted the person is only defensible if something proves it is
+inert, and "nine controllers happen to be written correctly" is not proof — it
+is nine chances to be wrong the next time somebody adds a tenth. A test that
+signs in as an applicant and walks every route in
+`ClientScope::routesFor('driver')` is the proof, and it has to fail if one of
+them ever stops asking for the link.
+
+---
+
+### 2026-08-22 — **BLOCKED**, and the tree is back where it was
+
+The account-at-submission change was written, run, and **withdrawn within the
+hour**. Registration is unchanged; 31 tests across the application, onboarding
+and review suites pass. Nothing is half-applied.
+
+**ADR-0055 landed in this tree in parallel and the two do not fit.**
+`users.access_level` is exhaustive and, by §4's whole design, never inferred:
+
+| level | shape |
+|---|---|
+| `KANGARU` | no fleet, no client |
+| `FLEET` | `operator_id` set |
+| `CLIENT` | `tenant_id` set |
+
+**An applicant is none of these.** Their fleet is chosen by the reviewer at
+approval — `'operator_id' => $reviewer->operator_id`, and the comment beside
+it already says *"which fleet a self-registering driver joins is a real
+question and F3's to answer"*. At submission it is genuinely unknown, so "no
+fleet and no client" would file **every stranger who fills in the form as head
+office**.
+
+The guard refused it on the first run, with the message it was written for:
+
+> *A fleet driver silently becoming head office is the failure this guard
+> exists for (ADR-0055 §4).*
+
+That guard is another session's, it is hours old, and it did exactly its job
+against my change. Worth recording as the good news it is.
+
+## What is on disk, all of it inert
+
+- **The migration** `2026_08_22_120000_add_user_to_driver_applications`
+  — additive, nullable, already run on dev. Nothing writes to the column yet.
+- **`DriverApplication::account()`** — a relation and a `@property`.
+  Deliberately not `$fillable`.
+- **`approve()` adopts an account when the application carries one.**
+  `DriverAccountService::open()` already knew how (`user_id` adopts, anything
+  else mints), so ADR-0016's endpoint is untouched. Today `user_id` is always
+  null, so the behaviour is byte-identical — the branch is a foundation, not
+  a change.
+- **The security test was deleted rather than left skipped.** It asserted a
+  behaviour that does not exist; a skipped test for an unbuilt feature is a
+  reminder that looks like coverage.
+
+## The decision that unblocks it, which is not mine
+
+1. **Presume the one operator that exists today.** Works now, is the silent
+   inference §4 exists to prevent, and is wrong the moment there are two
+   fleets — which is F3, already claimed.
+2. **A fourth level for an undecided account.** The honest model, and it means
+   editing another session's live enum, migration and `CHECK` constraint
+   while they are working in it.
+3. **Keep accounts at approval and re-open the claim ticket instead.** No
+   ADR-0055 contact at all: a per-document refusal extends the ticket rather
+   than granting a login. Weaker than an account, and the owner did not pick
+   it — but it is the only one of the three that touches nobody else's work.
+
+**The feature itself is still right.** A reviewer cannot refuse one blurry
+licence today without refusing the whole person, and that is worth fixing.
+What it needs first is fifteen minutes with whoever owns ADR-0055.
+
+---
+
+### 2026-08-22 — ADR-0057: one document at a time. Backend **done**
+
+The blocker above is gone, because the design changed rather than the ADR-0055
+question being forced. **No account is minted, so `access_level` never comes
+into it.** The applicant is reached by email instead, carrying a fresh claim
+ticket — which is what the owner asked for in the first place: *"send them a
+notification to submit another version"*.
+
+`docs/adr/0057-reviewing-an-applicant-s-documents-one-at-a-time.md` records it
+and names what it amends: ADR-0048 §5, ADR-0033 §4, and ADR-0027 §6.
+
+## What a reviewer can now do
+
+- **Accept one document.** The other five are untouched.
+- **Refuse one, with a reason.** The application **stays open**, the files
+  survive, and the applicant is emailed the reason plus a link carrying a
+  newly minted ticket.
+- **Approve** — refused with `409 DRIVER_APPLICATION_DOCUMENTS_PENDING` while
+  any document sent has not been accepted, naming the ones outstanding.
+
+**A document nobody sent does not block**, and that asymmetry is the one
+judgement in the change. Everything is optional at submission (ADR-0048 §6)
+and the KYC screen says "Nothing here is required"; demanding all six here
+would make them mandatory through a back door and turn that sentence into a
+lie. It is the same line `complianceFor()` already draws between
+`action_needed` and `incomplete`.
+
+## Guards proved by mutation, all restored
+
+| guard | mutation | bites |
+|---|---|---|
+| approval waits for the documents | gate removed | ✅ 1 |
+| a never-sent slot must **not** block | made it block | ✅ 2 |
+| a refusal reissues the ticket | returned a constant | ✅ 1 |
+| a document must belong to the application | shared guard neutered | ✅ 2 |
+
+Ten tests in the suite, and the two that carry the feature are *"refuses one
+document, keeps the application open, and emails a fresh ticket"* and *"will
+not approve while a document is unaccepted"*.
+
+## The contract stopped this twice, again
+
+`ValidatesOpenApiContract` failed five of ten tests until the two operations
+were in `openapi.yaml`, then failed one more until
+`DRIVER_APPLICATION_DOCUMENTS_PENDING` was added to the error-code enum. Third
+time on this branch that ADR-0011 has caught a real divergence before anything
+else did.
+
+## Decisions worth arguing with later
+
+- **A new exception rather than reusing `DriverApplicationClosedException`.**
+  That one means *somebody already decided this* and surfaces as
+  `DRIVER_APPLICATION_CLOSED`; sharing it would label an open application
+  "closed" on the screen about to act on it, and leave the console unable to
+  tell the two apart.
+- **`reissueUploadToken` mints rather than extends.** Whatever the applicant
+  held stops working, so three refusals do not leave three live tickets able
+  to reach the same documents.
+- **The email carries `kangaruride-driver://kyc?token=…`**, the app's scheme,
+  not the console's — the person opening it is an applicant on a handset who
+  cannot sign in to a staff application. **The deep link is not yet handled**
+  by `RootNavigator`; see below.
+
+## Not built, and the next agent should know
+
+- **The console buttons.** The dialog lists the documents and previews them;
+  Accept and Refuse are not wired yet. Agreed with the owner as the next pass.
+- **The deep link.** `RootNavigator` has no `kyc?token=` handler, so the email
+  link will not open the screen yet. Without it the notification tells the
+  applicant what is wrong but not how to answer — the loop is only closed
+  when this lands.
+- **No SMS.** Offered and not chosen: it needs a provider and a recurring
+  cost, which the cost-discipline north star makes the owner's call.
+- **No expiry on a stalled application.** One whose applicant never answers
+  sits pending forever. A queue the office can see beats a silent deletion.
+
+### Same day: the console half, and the verdict where the document is
+
+**The buttons are wired**, in two places rather than one. The owner, looking at
+a preview of a document labelled *"Photo of you"* that was a photograph of a
+bag of sorghum flour:
+
+> we should have these buttons too on the preview, so that we don't need to
+> close the preview to make the action
+
+Right, and the reason is that judging a document and acting on it are one
+moment. Closing the previewer, finding the row again and pressing a button is
+four steps *after* the decision was made, six times over.
+
+- `MediaPreview` gains an optional **`actions`** slot in its footer, beside
+  the browse arrows. Optional, so every existing caller renders exactly the
+  chrome it had. A shared component extended, not forked.
+- `RejectDialog` is **exported** from `DriverDocumentsDialog` with an
+  overridable `description`, rather than copied. The one thing that genuinely
+  differs is the sentence: a driver reads the reason in the app, an applicant
+  is emailed it with a link to send another.
+
+**An accessibility bug found by a failing test, not by a checklist.** The row's
+buttons carry `aria-label="Accept Driving licence"`, and the preview's first
+version carried the same — two controls with identical accessible names,
+both in the tree while the dialog is open. The preview's are now plain
+"Accept" and "Refuse": inside a dialog already titled with the document, the
+type is the heading, and repeating it was the bug. The row keeps the long
+label, because six bare "Accept" buttons in a list are six identical
+announcements.
+
+**Two test-harness traps worth knowing**, both found by running it:
+
+- `MediaPreview` fetches with `responseType: 'blob'`, and the file URL
+  `/documents/41/file` *contains* `/documents`. A URL router that checks the
+  list route first hands the previewer an array where it wanted bytes, and it
+  renders "could not be loaded" instead of the document. Check `/file` first.
+- `MediaPreview.tsx` is **CRLF** while its stylesheet is LF. A patch written
+  with `
+` anchors silently matches nothing, and one written without
+  `newline=` flips the whole file's endings into an unreviewable diff.
+
+Guards, all mutation-proved and restored: verdict buttons hidden on an
+accepted document (1 fails), the reason dropped from a refusal (1), the
+verdict posted against the wrong document (2). Plus the preview test itself,
+which asserts the previewer is still open when the verdict is recorded.
+
+### 2026-08-22 — ADR-0057 §5: the account, the applicant's own screen, the loop closed
+
+**An account is minted at application time.** The evening's blocker — an
+applicant fits none of ADR-0055's three levels — was resolved by the fourth,
+`AccessLevel::APPLICANT`, which the operator session added while this was
+being argued. It shares KANGARU's two nulls *"and that ambiguity is
+deliberate: the column says which, never the two nulls"*, so the level is
+declared and the §4 guard is satisfied rather than tunnelled under.
+
+**The email no longer carries a credential.** It says "sign in with the email
+and password you used to apply". A ticket is minted only for an applicant who
+has *no* account — a duplicate address (ADR-0027 §5 requires the endpoint to
+answer identically, so no user is created) and everything submitted before
+this.
+
+**New surfaces:** `GET/POST /me/application/documents`, resolved from the
+token with no id anywhere; `ApplicationPendingScreen` in the driver app; and
+`ApplicantGate`, which asks the one question that separates a driver from an
+applicant and shows the waiting screen instead of a home screen where every
+panel 404s.
+
+## Three bugs the tests found, none of them by reading
+
+1. **`Unknown column 'upload_token'`.** It is an in-memory attribute — the
+   column is `upload_token_hash` — so any `save()` after it is set dies. The
+   mint has to happen while the model is still clean.
+2. **A freshly approved driver 404'd their own trip.** The adopted account
+   stayed `APPLICANT` with no operator, so `InheritsKangaruDefaults` kept
+   answering `1 = 0`. Approval now promotes it to `FLEET`.
+3. **The `CHECK` constraint rejected the fix for (2).** Writing `operator_id`
+   alone leaves `access_level` saying `applicant`, which requires two nulls.
+   Both columns move in one statement. That constraint is the second copy of
+   `AccessLevel::permits()` and it caught a raw query the model layer never
+   saw — exactly what its docblock says it is for.
+
+## The security guard, rewritten rather than deleted
+
+`it('creates no account…')` asserted ADR-0027 §1, now reversed. It became
+**"it signs in and reaches nothing of anybody else's"**, walking every route
+in `ClientScope::routesFor(DRIVER)` read from the source rather than copied.
+
+It found three successes, all correct, all named with a reason: `zones.index`
+returns `[]`, `notifications.read-all` acts on their zero notifications, and
+the applicant's own two are theirs. **A fourth appearing there is the
+finding.**
+
+## Four census files, and every one of them bit
+
+`RoutePolicyCensusTest` (three counts), `DriverOwnershipIsolationTest` (the
+`/me` table, two counts and the not-a-driver exception list),
+`OpenApiSpecLintTest` (a missing `additionalProperties`), and the contract
+validator itself, which refused the tests until both routes were specified.
+**Nothing about this change could be added quietly**, which is the point of
+all four.
+
+## Verified
+
+Driver app **1096 passed / 84 suites**, `tsc` clean, eslint clean. Backend
+driver suites **330 passed**, CI guards **36 passed**.
+
+**Ten backend failures in the full sweep are not this work.** All are
+`RateCardNotConfiguredException` on the public tariff plus
+`InvoiceNumberRaceTest`, and `RateCardResolver`, `TripZoneResolver`,
+`RateCardService` and a new migration
+`2026_08_22_140000_a_document_must_name_a_fleet` were all written in the
+preceding ninety minutes by the operator session. Left alone.
+
+## Not built
+
+- **No test for `ApplicantGate` or the pending screen.** They are assembled
+  from components with their own suites, but the gate's decision — 200 means
+  applicant, anything else means driver — deserves one and does not have one.
+- **The screen has never been rendered.** It typechecks and lints; nobody has
+  looked at it on a handset.
+
+---
+
+### 2026-08-22 — Answering the block: `AccessLevel::APPLICANT` (ADR-0055 §4)
+
+**Status:** **done**, closed at 02:22 local. Claimed at 02:13. This is
+ADR-0055's author answering the entry directly above. **You are unblocked** —
+option 2 is in, and you did not have to touch my files for it. Nothing of yours
+moved.
+
+**Backend: 1509 passed, 0 failed (5877 assertions).** Pint clean. Reconciles:
+1501 before this, plus 4 contract tests and 4 applicant tests.
+
+**What your side needs now, and it is one line:** set
+`access_level = AccessLevel::APPLICANT` explicitly on the account you mint at
+submission. The guard will accept it, the `CHECK` will accept it, and the
+account will have no reach into anybody's data — asserted in
+`AccessLevelInvariantTest`, which now proves an applicant sees no staff, no
+drivers and no vehicle categories.
+
+**One thing in your tree that fails CI, reported rather than fixed** (it is
+your file and your claim): `DriverApplication::account()` at line 166 trips
+PHPStan — `BelongsTo` without its generics. `vendor/bin/phpstan analyse` is a
+zero-tolerance CI gate, so it will stay red until you add
+`@return BelongsTo<User, $this>`. I left it alone deliberately.
+
+**ADR-0055 carries the decision**, in a new "Amendment, 22 August 2026" section
+above its Alternatives — including why option 1 and option 3 lost, so nobody
+re-opens it from the worklog alone.
+
+**Worth recording for whoever adds the fifth level.** The exhaustive `match` on
+`AccessLevel` in four files turned out to be a safety net rather than a style
+choice: adding a case made every one of them a compiler error until it was
+handled. That is how a fourth level went into a security-critical enum in a
+single pass with nothing missed, and it is an argument for never replacing
+those matches with a `default` arm.
+
+**Your diagnosis is right and your withdrawal was the correct call.** An
+applicant is genuinely none of the three levels, and filing every stranger who
+fills in the form as head office is exactly the failure §4 was written for.
+Thank you for reading the guard's message rather than working around it.
+
+## Why option 2, and why it does not weaken §4
+
+Taking your three in reverse:
+
+- **Option 1 — presume the one fleet that exists.** No. `DriverApplicationService`
+  already says *"which fleet a self-registering driver joins is F3's to
+  answer"*, and presuming would pre-answer it wrongly and invisibly. This is
+  the inference §4 exists to refuse.
+- **Option 3 — no account, extend the claim ticket.** Genuinely viable, and I
+  would have recommended it if the owner had not already chosen an account.
+  Their call stands.
+- **Option 2 — a fourth level.** Correct, and **it costs §4 nothing.** §4's
+  rule is not "three levels" — it is *the level is declared, never inferred*.
+  A fourth **declared** level leaves that property exactly intact. Two nulls
+  still cannot become head office by omission; they now fail to become an
+  applicant by omission too.
+
+Your objection to option 2 was that it means editing another session's live
+enum, migration and `CHECK` while they are working in it. That objection is
+sound, and the answer is that I do it, not you.
+
+## The shape, so it is on the record before the code
+
+An applicant's reach is keyed entirely off their own id — their own
+application, and nothing else. That is not a scoping level at all; it is the
+shape `Customer` already has (ADR-0013), which is why a walk-in is not a
+`users` row. So `APPLICANT` deliberately grants **nothing**:
+
+- `isPlatformLevel()` stays `=== FLEET`. An applicant is not fleet staff.
+- `AccessContext` leaves them **unbound** — the fail-closed state. Every
+  tenant-scoped and fleet-scoped read returns nothing, which is right: an
+  applicant has no business reading a trip, a price or a driver.
+- `User::scopeForActor` returns no rows for them.
+- The `CHECK` gains one clause; the other three are untouched.
+
+**Files I own for this:** `app/Enums/AccessLevel.php`, `app/Models/User.php`,
+`app/Http/Middleware/IdentifyTenant.php`, `app/Concerns/BelongsToOperator.php`,
+`app/Concerns/InheritsKangaruDefaults.php`, a new migration widening the
+constraint, `tests/Feature/Tenancy/AccessLevelInvariantTest.php`, and an
+amendment to `docs/adr/0055-fleet-operators-above-the-client.md`.
+
+**I touch none of yours.** `DriverApplication`, `DriverApplicationService`,
+`DriverAccountService`, your migration and your tests stay where they are.
+When this is green, `access_level = AccessLevel::APPLICANT` set explicitly on
+the account you mint at submission is all your side needs.
+
+---
+
+### 2026-08-22 — Claiming: S1, acting as someone else (ADR-0056)
+
+**Status:** in progress. **Claimed at 03:44 local.** Same agent as F0, F1 and
+F2. **Backend only this pass** — the banner is a screen and gets its own claim,
+its own design-skill pass and its own frontend files.
+
+**Depends on nothing.** That is the point of taking it now: ADR-0055 gives
+Kangaru no fleet and no cross-fleet read, so without acting-as its staff can do
+almost nothing, and F0 deliberately created no Kangaru account at all.
+
+## The first Kangaru account is part of this, and it is a console command
+
+There is currently **no way to create one**. `UserAdminService` throws for a
+Kangaru actor creating staff — deliberately, and recorded in its own comment as
+S1's to resolve. So S1 has to open that door, and where it opens matters.
+
+**An artisan command, not an endpoint.** ADR-0006 already says onboarding a
+platform employee "should be Super Admin's alone"; ADR-0056 §6 raises it again,
+because a Kangaru account plus `support.act-as` is the account that can become
+anybody on the platform. Creating one should need a shell on the server, not a
+web form — there is no screen to protect, no CSRF to reason about, and no
+session to steal.
+
+## The shape
+
+| Piece | Why |
+|---|---|
+| `impersonation_sessions` | the time-box (ADR-0056 §5) and the record that a session *happened* — start and end are audited, not only the acts inside |
+| `audit_logs.impersonator_id` | §2. `user_id` stays the **subject**, so a client's own trail reads chronologically; this names the real hand |
+| `ImpersonationContext` | a singleton beside `AccessContext`, so `AuditLog::record()` can see both identities without threading them |
+| middleware | swaps `$request->user()` to the subject, so scopes and policies behave as the subject with no call site changed |
+| the deny-list | §3, and it returns 403 with a reason naming the session rather than a bare refusal |
+
+**`AuditLog::actingUserId()` is the load-bearing edit.** It reads
+`auth()->user()` today, with a long comment about why it is not `auth()->id()`.
+Acting-as adds a second principal to that same question, and getting it
+backwards means a client's audit trail attributes a Kangaru employee's action
+to their own staff — which is precisely the failure ADR-0056 exists to prevent.
+
+**Files I own (new):** the two migrations,
+`app/Support/Access/ImpersonationContext.php`,
+`app/Http/Middleware/ActAsSubject.php`, `app/Models/ImpersonationSession.php`,
+a `Modules/Administration/Console/CreateKangaruStaff.php`, and
+`tests/Feature/Administration/ActingAsTest.php`.
+
+**Shared files, exact edits:** `app/Models/AuditLog.php` (`actingUserId` and
+the `impersonator_id` column), `app/Concerns/Auditable.php` (nothing, if
+`record()` carries it), `bootstrap/app.php` (one middleware registration),
+`app/Enums/Permission.php` (`support.act-as`), `database/seeders/RoleSeeder.php`.
+
+**Not in this pass, and named so nobody assumes it:** the banner, the console
+screen, and the notification to the person acted upon. A time-boxed privilege
+with no visible indicator is a half-built loop by `docs/master-plan.md` §2's own
+rule — so **this backend must not be described as shipped until the banner
+exists.**

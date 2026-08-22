@@ -309,3 +309,61 @@ export function warnsAboutReplacing(slot: DriverDocumentSlot): boolean {
 export function documentAnnouncement(slot: DriverDocumentSlot): string {
   return `${slot.type_label}. ${documentState(slot).label}. ${documentNote(slot)}`;
 }
+
+/**
+ * How far ahead an expiry date may be set.
+ *
+ * **Not a server rule.** `StoreDriverDocumentRequest` says
+ * `['nullable', 'date', 'after_or_equal:today']` and nothing more, so the API
+ * would accept 2099 quite happily. This is the client putting a floor under
+ * a fat finger: no Ugandan driving licence, PSV badge, insurance certificate
+ * or logbook is issued twenty years out, and a year picked by accident from
+ * an unbounded list is a document that silently never triggers a renewal
+ * reminder.
+ *
+ * It also makes the year list finite, which is the difference between a
+ * scrollable control and an infinite one.
+ */
+export const EXPIRY_YEARS_AHEAD = 20;
+
+/**
+ * The furthest date an expiry picker will offer, from a given "now".
+ *
+ * Takes `now` rather than reading the clock, so a test can state the day it
+ * means instead of arranging for one.
+ */
+export function expiryCeiling(now: Date): Date {
+  const ceiling = new Date(now);
+
+  ceiling.setFullYear(ceiling.getFullYear() + EXPIRY_YEARS_AHEAD);
+
+  return ceiling;
+}
+
+/**
+ * What to say in the picker sheet, just before the camera opens.
+ *
+ * Two facts, either of which may apply, composed rather than chosen between:
+ * a replacement restarts a review that was already won, and a document with
+ * an expiry will ask for one the moment the photo is taken.
+ *
+ * **The expiry half exists because the question arrives unannounced.**
+ * `DocumentSlotList` already says "You will be asked when it expires" on the
+ * row, but by the time the camera has closed and a bare calendar has opened,
+ * that sentence is two screens behind. The dialog itself cannot carry a
+ * title — `datetimepicker` gates `title` behind Material 3 — so the last
+ * moment this can honestly be said is here.
+ */
+export function pickerSheetNote(slot: DriverDocumentSlot): string | null {
+  const notes: string[] = [];
+
+  if (warnsAboutReplacing(slot)) {
+    notes.push('A new photo is checked again.');
+  }
+
+  if (slot.requires_expiry) {
+    notes.push('After the photo, you will be asked for the date this expires.');
+  }
+
+  return notes.length === 0 ? null : notes.join(' ');
+}

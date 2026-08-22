@@ -90,6 +90,15 @@ final class ClientScope
                 'trips.route.show',
                 'trips.transitions.store',
                 'trips.odometer-photo.show',
+                // Extending a live run, and the search that feeds it
+                // (ADR-0045 §4, §10). Named here at birth rather than
+                // discovered missing: this list fails closed, every backend
+                // test mints an unscoped console token, and seven endpoints
+                // have already shipped 403 to the only client with a screen
+                // for them by being left off exactly this array. Both are
+                // policy-bounded to the trip's own driver on a live trip.
+                'trips.stops.store',
+                'trips.stop-candidates.index',
 
                 // GPS, which is the whole point of the device being there.
                 'trips.locations.store',
@@ -149,6 +158,13 @@ final class ClientScope
                 'me.documents.index',
                 'me.documents.store',
                 'me.documents.file',
+
+                // The applicant's own application, before they are a driver
+                // (ADR-0057 §5). On the driver list because the driver app is
+                // where an applicant signs in — the same binary serves both,
+                // and the account simply has no driver profile yet.
+                'me.application.documents.index',
+                'me.application.documents.store',
 
                 // The money screens, and **all four of these were missing.**
                 // The routes shipped; the allow-list did not follow, and this

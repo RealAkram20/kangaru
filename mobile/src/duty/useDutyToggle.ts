@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/react-native';
 import * as Location from 'expo-location';
 import { useState } from 'react';
 
@@ -90,15 +91,64 @@ export function useDutyToggle() {
       // driver with an ongoing "You are online" notification for a shift the
       // platform declined to start.
       if (presence.on_duty) {
-        await goOnline({
+        // The shift boundary, from the server's answer rather than the tap.
+        // `dispatchable` is the half that matters and the half a driver
+        // misreads: on duty and not dispatchable is a shift the platform has
+        // started and the matcher will skip.
+        Sentry.logger.info('Driver went on duty', {
+          vehicleId: presence.vehicle_id ?? 0,
+          dispatchable: presence.dispatchable,
+          heartbeatSeconds: presence.heartbeat_seconds,
+        });
+
+        const started = await goOnline({
           onDuty: true,
           vehicleId: presence.vehicle_id,
           heartbeatSeconds: presence.heartbeat_seconds,
         });
+
+        // `goOnline` answers false when the OS refuses the location service —
+        // location switched off, a battery manager saying no. Its docblock
+        // says "the caller reports it and carries on", and this is the
+        // caller. Discarding it (as this line once did) left the worst state
+        // this feature has: the server offering jobs to a handset that has
+        // gone deaf, under a bar reading "Jobs will come to this phone".
+        // The driver *is* on duty — the server said so — so this is a
+        // warning, not a rollback.
+        if (!started) {
+          // The state the comment above calls the worst this feature has —
+          // and until this line, the driver was the only one who knew about
+          // it. `error` rather than `warn`: it produces no crash, no slow
+          // screen and no complaint until somebody asks why they got no work
+          // all morning.
+          Sentry.logger.error('On duty, but the phone refused the online service', {
+            vehicleId: presence.vehicle_id ?? 0,
+          });
+
+          setRefusal(
+            'You are on duty, but your phone refused to start the online service. ' +
+              'Check that Location is switched on, or jobs may not reach you.',
+          );
+        }
       } else {
+        // Both the shift ending and the shift the server declined to start
+        // (ADR-0017: approved leave, a roster, a suspension). `asked` is what
+        // separates them, and it is the pair worth counting: a driver tapping
+        // Go Online and landing here is a refusal they will ring the office
+        // about.
+        Sentry.logger.info('Driver went off duty', { asked: onDuty ? 'offline' : 'online' });
+
         await goOffline();
       }
     } catch (error) {
+      // The tap that did nothing. Same split as sign-in: a refusal the server
+      // issued, or a request that never arrived — one is a rule, the other is
+      // a dead zone, and the driver sees a sentence either way.
+      Sentry.logger.warn('Duty change refused', {
+        code: isApiError(error) ? error.code : 'OFFLINE',
+        asked: onDuty ? 'offline' : 'online',
+      });
+
       setRefusal(
         isApiError(error)
           ? error.message

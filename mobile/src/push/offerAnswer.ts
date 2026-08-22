@@ -1,5 +1,8 @@
+import * as Sentry from '@sentry/react-native';
+
 import { acceptOffer, declineOffer } from '../api/endpoints';
 import { ApiClient } from '../api/client';
+import { isApiError } from '../api/errors';
 import { readSession } from '../auth/tokenStore';
 import { API_BASE_URL } from '../config';
 import { hideCallNotification } from './callNotification';
@@ -104,14 +107,25 @@ export async function handleOfferEvent(event: OfferEvent): Promise<OfferOutcome>
       return { kind: 'ignore' };
     }
 
+    const startedAt = Date.now();
+
     if (outcome.kind === 'accept') {
       await acceptOffer(api, outcome.offerId);
     } else {
       await declineOffer(api, outcome.offerId);
     }
 
+    // The forty-five second window is the whole point of this path existing,
+    // so how long the answer actually took is the number to have. Nothing is
+    // shown to the driver either way.
+    Sentry.logger.info('Offer answered from the notification', {
+      offerId: outcome.offerId,
+      answer: outcome.kind,
+      durationMs: Date.now() - startedAt,
+    });
+
     return outcome;
-  } catch {
+  } catch (error) {
     // **Deliberately silent, and the silence is load-bearing here.**
     //
     // Every failure is one the driver cannot act on from a lock screen: the
@@ -122,6 +136,20 @@ export async function handleOfferEvent(event: OfferEvent): Promise<OfferOutcome>
     //
     // The one thing that must not happen is a rejected promise escaping into
     // a headless task. See the note on this function.
+    //
+    // **Silent to the driver, not to the office.** Nothing above changes:
+    // no screen, no notification, no rethrow. But a lock-screen Accept that
+    // the network lost is the single most expensive silent failure this app
+    // has — the driver believes they have the job, the office gives it to
+    // somebody else — and until this line there was no count of how often it
+    // happens. The code is what to group by; the message is never used to
+    // decide anything (AGENTS.md API Standards).
+    Sentry.logger.error('Offer answer from the notification failed', {
+      offerId: outcome.offerId,
+      answer: outcome.kind,
+      code: isApiError(error) ? error.code : 'OFFLINE',
+    });
+
     return { kind: 'ignore' };
   }
 }

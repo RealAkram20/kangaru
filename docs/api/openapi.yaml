@@ -2256,6 +2256,139 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/driver-applications/{driverApplication}/documents:
+    parameters:
+      - { name: driverApplication, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: What the applicant sent, for the office.
+      description: >
+        The papers uploaded against the applicant's claim ticket (ADR-0048 s4),
+        read back by the people deciding. Gated on the **application's** own
+        policy rather than a document permission: whoever may read the
+        application may read what was attached to it, and a second gate would
+        let the queue list an application whose papers it then refused to show.
+
+
+        The same `DriverDocumentSlot` shape the driver-facing endpoints serve,
+        empty slots included — a reviewer asking "can I decide this yet" is
+        asking what is missing.
+      responses:
+        '200':
+          description: Every document type, with what is held against it.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DriverDocumentSlot' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/driver-applications/{driverApplication}/documents/{document}/file:
+    parameters:
+      - { name: driverApplication, in: path, required: true, schema: { type: integer } }
+      - { name: document, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: The applicant's document file, for the office.
+      description: >
+        Decrypted on the way out (ADR-0053). A document that does not belong to
+        the application in the path is a **404, not a 403** — the same rule and
+        the same reason as the driver route: the reviewer's permission covers
+        every application, so the policy alone would let a mismatched pair
+        address a stranger's national ID, and a 403 would confirm the document
+        id exists.
+      responses:
+        '200':
+          description: The file.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/driver-applications/{driverApplication}/documents/{document}/verify:
+    parameters:
+      - { name: driverApplication, in: path, required: true, schema: { type: integer } }
+      - { name: document, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: Accept one of an applicant's documents (ADR-0057).
+      description: >
+        `drivers.manage` + `staff.manage`, the same pair that decides the
+        application. Writes through the one service that records a review, so
+        there is no second notion of an accepted document.
+
+
+        A document that does not belong to the application in the path is a
+        **404, not a 403** — the reviewer's permission covers every
+        application, so the policy alone would let a mismatched pair address a
+        stranger's national ID.
+      responses:
+        '200':
+          description: The document, now accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DriverDocument' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/driver-applications/{driverApplication}/documents/{document}/reject:
+    parameters:
+      - { name: driverApplication, in: path, required: true, schema: { type: integer } }
+      - { name: document, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: Ask the applicant to send one document again (ADR-0057).
+      description: >
+        **Does not close the application.** The other verdicts stand, the files
+        survive, and the applicant is emailed a fresh claim ticket so they can
+        send a replacement — a refusal they cannot answer costs them the job
+        while they wait. Refusing the *person* is
+        `/driver-applications/{driverApplication}/reject`, which is a different
+        act and still available.
+
+
+        The reason is required, for the reason ADR-0033 gives about a driver's
+        document: a refusal with no reason is how somebody stops using a
+        feature, because they cannot tell whether the photograph was blurred
+        or the document was wrong.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: { type: string, minLength: 3, maxLength: 255 }
+      responses:
+        '200':
+          description: The document, now refused. The applicant has been emailed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DriverDocument' }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/driver-applications/{driverApplication}/approve:
     parameters:
       - { name: driverApplication, in: path, required: true, schema: { type: integer } }
@@ -2268,7 +2401,10 @@ paths:
       description: >
         The reviewer supplies what the applicant could not be trusted to:
         the licence they verified in person, and optionally the vehicle and
-        role. 409 DRIVER_APPLICATION_CLOSED if somebody decided it already;
+        role. 409 DRIVER_APPLICATION_DOCUMENTS_PENDING while any document sent
+        has not been accepted (ADR-0057 §2) — a document nobody sent does not
+        block, because every document is optional at submission.
+        409 DRIVER_APPLICATION_CLOSED if somebody decided it already;
         409 DRIVER_ACCOUNT_CONFLICT if the email turned out to be an
         account after all — the duplicate §5 deliberately let through,
         surfacing in front of a human.
@@ -3542,6 +3678,77 @@ paths:
                     additionalProperties: false
                     properties:
                       photo_url: { enum: [null] }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/me/application/documents:
+    get:
+      summary: The signed-in applicant's own application documents (ADR-0057).
+      description: >
+        For somebody who has applied and not yet been approved. Since
+        ADR-0057 s5 an account is minted at submission, so an applicant can
+        sign in and see what the office said about each document — including
+        the reason a refused one was refused, which is what makes "send it
+        again" actionable.
+
+
+        **The subject is the token.** There is no id in the path or the body,
+        so a caller cannot ask for somebody else's application by changing a
+        number. A decided application answers 404 like an absent one:
+        distinguishing them would report a rejection through an HTTP status.
+
+
+        Distinct from `/me/documents`, which resolves a driver through
+        `drivers.user_id` and answers "not a driver" for an applicant.
+      responses:
+        '200':
+          description: Every document type, with what is held against it.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DriverDocumentSlot' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Send one application document again (ADR-0057).
+      description: >
+        Replaces whatever was held of that type, which is what makes answering
+        a refusal a single photograph rather than a fresh application. Same
+        rules as the driver's own upload: the same types, the same mime list,
+        and an expiry required on the types whose meaning is a date.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [type, file]
+              additionalProperties: false
+              properties:
+                type: { $ref: '#/components/schemas/DriverDocumentType' }
+                file: { type: string, format: binary }
+                expires_at: { type: string, format: date, nullable: true }
+      responses:
+        '201':
+          description: Received. It goes back to the office as pending.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DriverDocument' }
         default:
           $ref: '#/components/responses/Error'
 
@@ -5501,6 +5708,102 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/trips/{trip}/stops:
+    post:
+      summary: Extends a live run with the next drop-off (ADR-0045 §4).
+      description: >
+        The driver standing at a kerb appends a stop without waiting for
+        anyone to tap approve; the deviation is counted on
+        `unplanned_stop_count`, shown, and never billed. An office acting
+        through `trips.transition.any` may use the same endpoint and is
+        stamped `added_by_dispatch`.
+
+
+        Two request shapes: a saved-place pick sends `client_place_id` alone —
+        the label and pin are copied from the client's register, so a handset
+        cannot mislabel an ATM — or free text sends `label`, with an optional
+        coordinate pair (both or neither).
+
+
+        Only while the trip is running (`trip_started`, `waiting`,
+        `trip_resumed`): anything else answers 409 TRIP_NOT_ACTIVE. Evidence
+        does not grow after the run.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                client_place_id: { type: ['integer', 'null'] }
+                label: { type: ['string', 'null'], maxLength: 160 }
+                latitude: { type: ['number', 'null'], minimum: -90, maximum: 90 }
+                longitude: { type: ['number', 'null'], minimum: -180, maximum: 180 }
+      responses:
+        '201':
+          description: The stop, appended to the run.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/TripStop' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}/stop-candidates:
+    get:
+      summary: The add-a-drop-off search over the client's place register (ADR-0045 §10).
+      description: >
+        Bounded exactly as §10 rules: the trip's own driver, the client whose
+        trip they are currently driving, while the run is live — and none at
+        all between jobs (409 TRIP_NOT_ACTIVE) or for anyone else (403,
+        including dispatchers, who read the register through `/places`). A
+        bank's estate in service order is a cash-logistics document
+        (`docs/security-gate.md` F2); this serves name, address and pin,
+        capped at twelve rows.
+
+
+        A walk-in trip has no tenant and therefore no register: the ordinary
+        answer is an empty list, and the app's free-text row carries the rest.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+        - { name: q, in: query, required: false, schema: { type: string, maxLength: 80 } }
+      responses:
+        '200':
+          description: Matching places, by name, at most twelve.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    maxItems: 12
+                    items:
+                      type: object
+                      required: [id, name, address, latitude, longitude]
+                      additionalProperties: false
+                      properties:
+                        id: { type: integer }
+                        name: { type: string }
+                        address: { type: ['string', 'null'] }
+                        latitude: { type: number }
+                        longitude: { type: number }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/trips/{trip}/locations:
     post:
       summary: Accepts a batch of GPS pings. Queued, not yet written (ADR-0003).
@@ -6797,6 +7100,7 @@ components:
         - VEHICLE_CATEGORY_IN_USE
         - DRIVER_ACCOUNT_CONFLICT
         - DRIVER_APPLICATION_CLOSED
+        - DRIVER_APPLICATION_DOCUMENTS_PENDING
         - AUTH_METHOD_DISABLED
         - SOCIAL_TOKEN_INVALID
         - AVAILABILITY_ALREADY_ANSWERED
@@ -6808,6 +7112,9 @@ components:
         - OFFER_HAS_NO_VEHICLE
         - TOKEN_SCOPE_EXCEEDED
         - SETTLEMENT_REQUEST_ALREADY_OPEN
+        # ADR-0045. The itinerary only grows while the trip is running, and
+        # the place search is open exactly as long (§10: "currently driving").
+        - TRIP_NOT_ACTIVE
         # ADR-0043. One open closure request per driver; withdraw it to change it.
         - CLOSURE_REQUEST_ALREADY_OPEN
         # ADR-0043. A second reviewer answering a row a colleague just answered —
@@ -9975,6 +10282,7 @@ components:
         - distance_km
         - gps_distance_km
         - distance_variance_flagged
+        - unplanned_stop_count
         - cancellation_charge_applicable
         - started_at
         - completed_at
@@ -10027,6 +10335,21 @@ components:
             off Ghana — the swap ADR-0020 records this codebase hitting.
           $ref: '#/components/schemas/TripPlace'
         dropoff: { $ref: '#/components/schemas/TripPlace' }
+        stops:
+          description: >
+            The run's itinerary in order (ADR-0045) — an empty array on every
+            point-to-point trip, so no client needs a null branch. Present on
+            `GET /trips/{trip}` and absent on lists, the same bound
+            `estimated_fare` and `earnings` carry: a dispatch board must not
+            pay fifty itinerary queries for a column nobody renders there.
+          type: array
+          items: { $ref: '#/components/schemas/TripStop' }
+        unplanned_stop_count:
+          type: integer
+          description: >
+            How many stops were added mid-run rather than planned (ADR-0045
+            §4). A note, not a charge — the client sees that the run deviated
+            and where; nobody bills for the deviation.
         service_type:
           description: >
             What kind of job this was — `ride`, `delivery` or `self_drive`, from
@@ -10245,6 +10568,53 @@ components:
         accuracy_metres: { type: ['number', 'null'] }
         recorded_at: { $ref: '#/components/schemas/NullableTimestamp' }
 
+    TripStop:
+      description: >
+        One stop on one journey — evidence, never a plan (ADR-0045 §1). The
+        label is frozen at creation and stays right when the register's place
+        is later renamed; `client_place_id` rides along for report grouping
+        only and is never read back to re-derive what the trip did.
+      type: object
+      required:
+        - id
+        - sequence
+        - label
+        - latitude
+        - longitude
+        - source
+        - status
+        - arrived_at
+        - departed_at
+        - skip_reason
+        - client_place_id
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        sequence:
+          type: integer
+          description: 1-based position on the run. Appended, never reordered (§7).
+        label: { type: string }
+        latitude:
+          type: ['number', 'null']
+          description: >
+            Both coordinates present or both null — a label-only stop (typed
+            in a dead zone, or free text with no pin) renders as prose, never
+            as a pin at 0°,0°.
+        longitude: { type: ['number', 'null'] }
+        source:
+          enum: [planned, added_by_driver, added_by_dispatch, added_by_client]
+          description: Who put this stop on the run (§4). Only added_by_driver counts toward unplanned_stop_count.
+        status:
+          enum: [pending, arrived, done, skipped]
+          description: >
+            Moved only by the transitions §2 reuses — a `waiting` carrying
+            `stop_id` marks the arrival, the resume marks the departure.
+            `skipped` is §6's first-class case; no surface writes it yet.
+        arrived_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        departed_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        skip_reason: { type: ['string', 'null'] }
+        client_place_id: { type: ['integer', 'null'] }
+
     TripTransitionRequest:
       type: object
       required: [to]
@@ -10281,6 +10651,14 @@ components:
           description: Required for trip_completed.
         odometer_photo:
           description: Dashboard photo (multipart only). Optional — the reading is an acceptance criterion, the photo is not.
+        stop_id:
+          type: ['integer', 'null']
+          description: >
+            ADR-0045 §2 — which stop this pause is an arrival at. Only
+            meaningful with `to=waiting`; the resume pairs itself with
+            whichever stop is open and carries none. Refused (422) on any
+            other transition, and when the stop is not this trip's or not
+            pending.
         cancellation_charge_applicable: { type: ['boolean', 'null'] }
         vehicle_id:
           type: ['integer', 'null']

@@ -448,14 +448,26 @@ function UploadDocumentDialog({
  * decision on this screen that a driver reads — it lands on their phone as the
  * only explanation they get — and it deserves the pause.
  */
-function RejectDialog({
+/**
+ * "Send this one again", with the reason the office has to give.
+ *
+ * **Exported for ADR-0057.** The same question is asked of an *applicant's*
+ * document on `DriverApplicationsPage`, and a second copy would be a second
+ * place for the minimum length, the placeholder and the destructive tone to
+ * drift from each other. `description` is a prop rather than a constant for
+ * the one thing that genuinely differs: a driver reads the reason in the app,
+ * and an applicant is emailed it along with a link to send a replacement.
+ */
+export function RejectDialog({
   document: doc,
   busy,
+  description = 'The driver sees only this reason.',
   onCancel,
   onConfirm,
 }: {
   document: DriverDocument
   busy: boolean
+  description?: string
   onCancel: () => void
   onConfirm: (reason: string) => void
 }) {
@@ -465,7 +477,7 @@ function RejectDialog({
     <Dialog
       open
       title={`Reject this ${doc.type_label.toLowerCase()}?`}
-      description="The driver sees only this reason."
+      description={description}
       onClose={onCancel}
       width={480}
       tone="destructive"

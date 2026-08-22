@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Drivers\Controllers\ApplicationDocumentReviewController;
 use Modules\Drivers\Controllers\ClosureRequestController;
 use Modules\Drivers\Controllers\DriverAccountController;
 use Modules\Drivers\Controllers\DriverApplicationController;
@@ -18,6 +19,7 @@ use Modules\Drivers\Controllers\DriverPromotionController;
 use Modules\Drivers\Controllers\DriverSettlementRequestController;
 use Modules\Drivers\Controllers\DriverStatsController;
 use Modules\Drivers\Controllers\DriverTripHistoryController;
+use Modules\Drivers\Controllers\MyApplicationController;
 use Modules\Drivers\Controllers\PayoutAccountController;
 use Modules\Drivers\Controllers\SettlementRequestController;
 
@@ -61,6 +63,15 @@ Route::patch('me/profile', [DriverProfileController::class, 'update'])->name('me
 // `store` is deliberately outside the offline outbox (ADR-0023): that queue
 // carries small JSON transitions, and an eight-megabyte photograph is a
 // different problem. The upload needs a connection and the screen says so.
+// An applicant's own application, while they wait (ADR-0057 section 5). The
+// subject is the token: there is no id in the path or the body, so a caller
+// cannot ask for somebody else's by changing a number. Distinct from
+// `me/documents`, which needs a driver profile an applicant does not have.
+Route::get('me/application/documents', [MyApplicationController::class, 'documents'])
+    ->name('me.application.documents.index');
+Route::post('me/application/documents', [MyApplicationController::class, 'store'])
+    ->name('me.application.documents.store');
+
 Route::get('me/documents', [DriverDocumentController::class, 'index'])
     ->name('me.documents.index');
 Route::post('me/documents', [DriverDocumentController::class, 'store'])
@@ -238,3 +249,22 @@ Route::post('driver-applications/{driverApplication}/approve', [DriverApplicatio
     ->name('driver-applications.approve');
 Route::post('driver-applications/{driverApplication}/reject', [DriverApplicationController::class, 'reject'])
     ->name('driver-applications.reject');
+
+// The papers the applicant sent against their claim ticket (ADR-0048 section
+// 4). Read-only, and there is no verify or reject beside them on purpose:
+// before a driver exists the only decision is the application itself, and the
+// two routes above own it. See `ApplicationDocumentReviewController`.
+Route::get('driver-applications/{driverApplication}/documents', [ApplicationDocumentReviewController::class, 'index'])
+    ->name('driver-applications.documents.index');
+Route::get('driver-applications/{driverApplication}/documents/{document}/file', [ApplicationDocumentReviewController::class, 'file'])
+    ->name('driver-applications.documents.file');
+
+// Accepting or refusing one of an applicant's documents (ADR-0057 section 1).
+// Refusing does NOT close the application: the other verdicts stand, the files
+// survive, and the applicant is emailed a fresh claim ticket so they can send
+// that one again. Closing a person is still `reject` above, and still a
+// different act.
+Route::post('driver-applications/{driverApplication}/documents/{document}/verify', [ApplicationDocumentReviewController::class, 'verify'])
+    ->name('driver-applications.documents.verify');
+Route::post('driver-applications/{driverApplication}/documents/{document}/reject', [ApplicationDocumentReviewController::class, 'reject'])
+    ->name('driver-applications.documents.reject');

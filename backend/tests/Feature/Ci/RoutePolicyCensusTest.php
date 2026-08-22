@@ -172,6 +172,17 @@ function routeCensus(): array
         'GET api/v1/driver-applications/{driverApplication}' => 'A',
         'POST api/v1/driver-applications/{driverApplication}/approve' => 'A',
         'POST api/v1/driver-applications/{driverApplication}/reject' => 'A',
+        // ADR-0048 section 4's uploads, read back by the office. 'A' like the
+        // rest of the queue: an authenticated staff route behind a policy, and
+        // the policy is the application's own - whoever may read the
+        // application may read what was attached to it.
+        'GET api/v1/driver-applications/{driverApplication}/documents' => 'A',
+        'GET api/v1/driver-applications/{driverApplication}/documents/{document}/file' => 'A',
+        // ADR-0057: accepting or refusing one document. 'A' like the rest of
+        // the queue. Refusing does not close the application, so these are
+        // not decisions on the *person* and do not join that pair.
+        'POST api/v1/driver-applications/{driverApplication}/documents/{document}/verify' => 'A',
+        'POST api/v1/driver-applications/{driverApplication}/documents/{document}/reject' => 'A',
         'GET api/v1/drivers' => 'A',
         'POST api/v1/drivers' => 'A',
         'GET api/v1/drivers/{driver}' => 'A',
@@ -193,6 +204,11 @@ function routeCensus(): array
         'GET api/v1/me/closure-request' => 'C',
         'POST api/v1/me/closure-request' => 'C',
         'DELETE api/v1/me/closure-request' => 'C',
+        // ADR-0057 §5: an applicant's own application, before they are a
+        // driver. 'C' like the driver's own documents beside them — the
+        // subject is the token, and there is no id to authorise against.
+        'GET api/v1/me/application/documents' => 'C',
+        'POST api/v1/me/application/documents' => 'C',
         'GET api/v1/me/documents' => 'C',
         'POST api/v1/me/documents' => 'C',
         'GET api/v1/me/documents/{document}/file' => 'A',   // DriverDocumentPolicy::view (owner or drivers.manage)
@@ -270,6 +286,12 @@ function routeCensus(): array
         'GET api/v1/trips/{trip}/odometer-photo/{moment}' => 'A',
         'GET api/v1/trips/{trip}/route' => 'A',
         'POST api/v1/trips/{trip}/transitions' => 'A',
+        // ADR-0045. Both A: `TripPolicy::addStop` (the trip's driver, or
+        // `trips.transition.any`) and `TripPolicy::viewStopCandidates` (the
+        // trip's driver alone — §10's bounded release of the client's place
+        // register). Both additionally 409 outside the journey statuses.
+        'POST api/v1/trips/{trip}/stops' => 'A',
+        'GET api/v1/trips/{trip}/stop-candidates' => 'A',
 
         // ── Billing ─────────────────────────────────────────────────────
         'GET api/v1/invoices' => 'A',
@@ -375,7 +397,12 @@ it('has a census row for every API route and a route for every census row', func
      * exists to make impossible, and a total that drifted silently would let
      * a census row be *deleted* alongside its route with nothing to notice.
      */
-    expect(count($router))->toBe(195);
+    // 197: ADR-0045's two stop routes (add, and the driver's bounded place
+    // search) on 2026-08-21, both filed A.
+    // 199: the office's read-only view of an applicant's documents, 2026-08-22.
+    // 201: ADR-0057 added accept and refuse for one applicant document.
+    // 203: ADR-0057 §5's two applicant self-service routes.
+    expect(count($router))->toBe(203);
 });
 
 it('uses only the four idioms, and files sixteen routes as public', function () {
@@ -423,7 +450,12 @@ it('authenticates every route that is not filed as public, and throttles every o
     // ADR-0027 §5's 5/min/IP. `$guarded` is unchanged because all three are
     // public by design, not by omission.
     expect($public)->toBe(16);
-    expect($guarded)->toBe(179);
+    // 181: the two ADR-0045 stop routes, both authenticated.
+    // 183: the two application-document reads, both authenticated. They serve
+    // somebody's identity document, so being counted here is the point.
+    // 185: the same two, both authenticated.
+    // 187: the same two, both authenticated.
+    expect($guarded)->toBe(187);
 });
 
 it('binds the actor\'s tenant on every staff route, so TenantScope has something to scope by', function () {
@@ -458,5 +490,11 @@ it('binds the actor\'s tenant on every staff route, so TenantScope has something
     }
 
     expect($selfService)->toBe(7);
-    expect($staff)->toBe(165);
+    // 167: ADR-0045's stop routes joined the staff surface on 2026-08-21.
+    // 169: the two read-only routes that let a reviewer see an applicant's
+    // documents joined it on 2026-08-22. This number is meant to be edited by
+    // hand and only with a reason - that is the whole point of counting.
+    // 171: and both are staff routes (ADR-0057).
+    // 173: and both bind the actor's tenant like every other `me/` route.
+    expect($staff)->toBe(173);
 });
