@@ -16702,3 +16702,108 @@ Resources,Services}/Operator*`, `backend/app/Models/Operator.php`, their tests.
 
 **Not touched:** `mobile/` — the permissions screen is another agent's live
 claim. `K3`, `K4`, `K6`, `K7` remain unclaimed.
+
+---
+
+#### K1 and K2 closed — green on
+[32593927789](https://github.com/RealAkram20/kangaru/actions/runs/32593927789)
+
+`6cacf43` and its parent. `K5` still open, same claim.
+
+## K1 — the level reaches the console
+
+`UserResource` sends `access_level`; the frontend `User` type declares it;
+`lib/navigation.ts` keys on **level first, then role**; and the single
+`SECTIONS` constant in `AppShell` is now `lib/menu/{kangaru,fleet,client}.ts`.
+
+**All three lists ship identical, deliberately.** `K1` is a provable no-op for
+every existing account — `menu.test.ts` pins that parity, so `K4` has to
+delete it on purpose rather than let the levels drift apart. A change to the
+file every other package touches must not also change what anybody sees.
+
+One exception to failing closed, argued in `menuFor`: an unknown or absent
+level gets the **fleet** menu, not an empty one. `access_level` is served by
+an API that may be older than the field, and this runs in the component that
+renders before anything else — failing closed blanks the console for
+everybody on a stale deployment. Safe only because menu visibility is not
+authorization.
+
+## K2 — a fleet company can be created
+
+Blocker number one in `fleet-model-plan.md` §4b, closed. The rail
+`Operator`'s docblock described — *"deliberately no way to create a second
+one"* — comes down, because `F2` closed the gap it was holding and `K0`
+proved the schema on MySQL.
+
+**The level is the control, not the permission.** Every Super Admin holds
+`fleets.manage`, a fleet's own included, because `StoreRoleRequest` makes an
+ungrantable permission impossible. `OperatorPolicy` requires
+`access_level = kangaru` on every method — the same shape `RoleSeeder` argues
+for `support.act-as`.
+
+**Plans landed here, not in `K7`.** `K2` is what first makes a fleet
+creatable, and ADR-0058 forbids a window where fleets exist with `plan_id`
+null. The invariant is in `Operator::booted()` rather than in the service: a
+seeder, a console command and a fixture are creation paths too. It throws
+rather than defaulting to free. Price, period, limits and Kangaru's invoice
+to a fleet remain `K7`'s and nothing here presumes their shape.
+
+## The test that passed for the wrong reason
+
+Worth carrying, because mutation is the only thing that found it.
+
+The rollback guard posted a duplicate owner email and asserted 422. It passed
+**against a deliberately broken transaction** — `StoreOperatorRequest`
+rejects the duplicate before `OperatorService` is ever called, so the test
+proved the validation rule and said nothing about the rollback. The endpoint
+cannot reach the failure it claimed to guard.
+
+Rewritten to drive the service directly, where the unique index is what
+fails. Both halves are now tested and sit beside each other so neither is
+mistaken for the other.
+
+## Mutations performed, all restored
+
+| Mutation | Result |
+|---|---|
+| `menuFor` returns `[]` instead of `FLEET_MENU` | 3 fallback tests red |
+| `Vehicles` removed from `KANGARU_MENU` | the parity guard red |
+| `access_level` dropped from `UserResource` | all 3 contract tests red |
+| `OperatorPolicy::isHeadOffice()` returns `true` | the fleet-super-admin refusal red |
+| the onboarding transaction removed | rollback guard red — **only after the rewrite** |
+
+## A mistake, and how it was caught
+
+I committed `RoutePolicyCensusTest.php` wholesale, which swept in **another
+agent's uncommitted `place-suggestions` rows** — their route, controller and
+`ClientScope` change are still in flight, so the committed tree would have
+carried a census expecting a route that does not exist.
+
+Amended: the census in `6cacf43` is rebuilt from the committed baseline with
+only my four rows, counts `206→210`, `190→194`, `176→180`. Their edits were
+restored to the working tree untouched, and their pending diff is now a clean
+`+1` on top of mine. Verified by stashing their three files and re-running:
+**195 passed, 0 failed.**
+
+**If you own the place-suggestions work:** your route is still undocumented in
+`openapi.yaml` and your three census counts need `+1`. Nothing of yours was
+landed or lost.
+
+## Verified
+
+Backend **1556 passed** (6113 assertions) locally; the three failures in that
+run were all the in-flight route above, and CI on the committed tree is
+green. Frontend **596 passed**, `tsc -b --force` clean. Pint and Larastan
+level 8 clean. `migrate` and `migrate:rollback` green on MySQL 8.4 with the
+new `plans` migration.
+
+## Not done
+
+- **`K5` is still open** under the same claim — `registration_number` unique,
+  and the lookup that answers a boolean and nothing else.
+- **No screen.** `K3` and `K4` are unclaimed; the fleet register has an API
+  and no console page, so nobody can yet onboard a fleet from the product.
+- **`trip_events`, `trip_locations` and `trip_stops` are still not
+  independently fleet-scoped.** They are reached through a trip and the trip
+  is the gate. Sound today; it stops being sound the moment somebody adds a
+  route that reaches them without resolving a trip first.
