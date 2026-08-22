@@ -16538,3 +16538,134 @@ separate claim by whoever takes it, and `K0` is solo and blocking.
 before the plan was written — the three menus, the ownership line and the
 client-onboarding procedure. It is a reading surface only, not part of the app,
 and nothing in the product links to it.
+
+#### Extension, 21:05 — the owner has made the geocoder decision, and the narration one
+
+Mid-session, verbatim: *"for the Drop off search if the place in not listed
+please use the Google-style geocoder … we are working with techinicians like
+ATM Repair guys … we need to be able to visit and recode all the ATMs we
+visted. at the end of the day we need to know the waiting time and
+destinations overed"* — and *"we need a simple texr fild for the driver to
+narrate"*.
+
+The trip-stops entry recorded exactly this as *"a follow-up decision, not a
+silent addition"*. It is now decided, so I claim the follow-up:
+
+**Files I own (new):**
+
+- `backend/Modules/Trips/Services/PlaceSuggestionService.php` + test —
+  server-side Photon proxy, Kampala-biased, fail-soft, cached. **The
+  handset never talks to a third party and no key ships in the bundle** —
+  the ADR-0045 §10 reasoning survives; what changes is that the *server*
+  asks OSM when the register has no answer.
+- `backend/Modules/Trips/Controllers/TripPlaceSuggestionController.php` +
+  feature test — same policy, same active-trip gate, same shape as the
+  candidates endpoint beside it.
+
+**Shared files, exact edits:**
+
+- `Modules/Trips/Routes/api.php` — one route,
+  `trips.place-suggestions.index`.
+- `app/Support/Auth/ClientScope.php` — that name added beside
+  `trips.stop-candidates.index` (the list fails closed).
+- Census tests (`RoutePolicyCensusTest`, `CrossTenantAnswers404Test`,
+  `DriverOwnershipIsolationTest`) — counts +1, hand lists +1.
+- `mobile/src/api/endpoints.ts` — `fetchPlaceSuggestions`; `addTripStop`
+  input widens to carry the pair `StoreTripStopRequest` already accepts.
+- `mobile/src/screens/AddDropoffScreen.tsx` + test — a debounced
+  "Suggestions" section between the register and the free-text row
+  (the trip-stops claim is closed; taking the file over is recorded here).
+- Narration: `mobile/src/screens/OdometerScreen.tsx` (closing variant) and
+  `TripInProgressScreen.tsx` (odometer-off End) — an optional notes field
+  riding the `trip_completed` transition. `TripEvent.notes`,
+  `TransitionPayload.notes` and the request rule all exist; no backend
+  change.
+
+**Deliberately not:** no reordering of stops, no reverse geocoding, no
+suggestions on the *public* driver form, and the console's Mapbox token is
+not moved server-side — Photon keyless first, the Mapbox upgrade is a
+config decision the office can take later.
+
+---
+
+#### Closed — K0 is done, and CI is green for the first time since `1ac71b2`
+
+**Four commits on `feat/driver-app-screens-and-earnings`, run
+[32589168154](https://github.com/RealAkram20/kangaru/actions/runs/32589168154)
+green on every job.**
+
+| | |
+|---|---|
+| `bfe1be4` | `feat(fleet)` — F0–F2 and S1 landed. 136 files. |
+| `895ce41` | `docs(plan)` — the one plan, three ADRs, screen-rules §9. |
+| `aa593fc` | `fix(fleet)` — the invariant survives MySQL, as a trigger. |
+| `a93cdd0` | `fix(ci)` — the sprite bundle the census test reads. |
+
+## Why CI had been red, which was not in the commit that broke it
+
+`1ac71b2` shipped code referencing `App\Enums\AccessLevel` and `operator_id`.
+**Both symbols were sitting untracked in the working tree** — F0–S1 were built
+and never committed. Larastan reported five `class.notFound` /
+`property.notFound` errors against a repo that genuinely did not contain them.
+Committing the work fixed five of the six; the sixth was real and is fixed
+rather than worked around (`DriverApplication::account()` had no `BelongsTo`
+generics).
+
+## The engine difference, found on the first CI run
+
+`docs/platform-plan.md` `K0` exists because eleven migrations had only ever met
+MariaDB 10.4. MySQL 8.4 refused one immediately:
+
+    SQLSTATE[HY000]: General error: 3823 Column 'tenant_id' cannot be used in
+    a check constraint 'users_access_level_matches_columns': needed in a
+    foreign key constraint 'users_tenant_id_foreign' referential action.
+
+MySQL 8 will not let a `CHECK` name a column carrying a foreign key with a
+referential action. `users.tenant_id` is `ON DELETE SET NULL`, set deliberately
+in `2026_07_27_174305` — *"Deactivated tenant's users aren't destroyed by
+cascade."* MariaDB permits the combination.
+
+**Resolved as a `BEFORE INSERT` / `BEFORE UPDATE` trigger pair that `SIGNAL`s.**
+The two alternatives both cost something the ADRs paid for: dropping
+`nullOnDelete()` trades documented behaviour for syntax, and dropping the
+constraint loses the copy ADR-0055 §4 is explicit about buying — the one that
+catches raw queries and future seeders that never load the model.
+
+Unconditional, not branched on the driver: an engine-specific schema is a
+difference that only ever surfaces in production. The `SIGNAL`'s
+`MESSAGE_TEXT` is the old constraint's name on purpose, so
+`AccessLevelInvariantTest`'s assertion keeps meaning the same thing after the
+mechanism changed underneath it.
+
+Both migrations edited **in place**, not superseded. They have never been
+deployed, and a follow-up migration would leave a `CHECK` in the history that
+still fails on a fresh MySQL migrate.
+
+## Verified
+
+- **Backend 1545 passed** (6056 assertions) locally on MariaDB **and** on CI
+  against MySQL 8.4. Pint clean, Larastan level 8 clean.
+- **Frontend 588 passed**, `tsc -b --force` clean, build clean.
+- **`migrate` and `migrate:rollback` both green on MySQL 8.4** — the gate
+  `docs/fleet-model-plan.md` §4b named as the largest single risk. It is now
+  discharged.
+- Deploy stack, rollback rehearsal and gitleaks green.
+- **Proved by mutation:** widening the fleet clause to permit a fleet account
+  with no fleet turns `AccessLevelInvariantTest` red at line 92; restoring it
+  turns it green. The trigger bites.
+
+## One mistake worth recording
+
+I committed `VehicleSpriteCensusTest` without
+`mobile/src/trips/vehicleSprites.ts`, which it reads. Green locally, two
+failures on CI. **A test and the file it mirrors are one commit** — which is
+the same lesson the census itself exists to teach one level up.
+
+## Not done, and deliberately
+
+- **No `K` package is started.** `K1`–`K9` are unclaimed and the tree is clear
+  for them. Wave 1 (`K1`, `K2`, `K5`) can run three-up.
+- **`mobile/` is otherwise untouched.** 72 files remain uncommitted there,
+  including the live permissions-screen claim. Not mine to land.
+- **`tools/dev-backend-pool.ps1`** left untracked — dev tooling, not mine.
+- **Nothing merged.** PR #9 is not touched; this is the branch only.
