@@ -173,9 +173,29 @@ it('serves the hours a driver was actually online this week', function (): void 
     $timezone = app(DriverEarningsService::class)->timezone();
     $weekStart = CarbonImmutable::now($timezone)->startOfWeek()->startOfDay();
 
+    /*
+     * The clock is pinned to Thursday, and that is the fix rather than the
+     * setup.
+     *
+     * This test opened a shift at `$weekStart->addHours(6)` — 06:00 on Monday
+     * in Africa/Kampala — and asserted seven hours were counted. Between
+     * midnight and 06:00 Kampala **on a Monday**, that instant is in the
+     * *future*: the session is not counted, the assertion gets 0 instead of
+     * 25200, and CI is red for six hours every Monday morning.
+     *
+     * Deterministic, not flaky. Found by kangaru-45, who watched it pass at
+     * 23:0x UTC and fail at 21:1x UTC with nothing touching Drivers in
+     * between — which is 00:1x Monday in Kampala.
+     *
+     * Pinning mid-week keeps the shift inside *this* week (so the boundary
+     * the test is actually about is unchanged) and firmly in the past (so the
+     * hours are countable at any hour the suite runs).
+     */
+    $this->travelTo($weekStart->addDays(3)->addHours(12));
+
     $sessions = app(DutySessionService::class);
 
-    // A closed shift inside this week.
+    // A closed shift inside this week, and now unambiguously behind us.
     $sessions->open($driver->id, null, $weekStart->addHours(6));
     $sessions->close($driver->id, $weekStart->addHours(13));
 

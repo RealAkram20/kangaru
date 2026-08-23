@@ -200,6 +200,13 @@ class WalkInFareService
             'distance_km' => round($distanceKm, 2),
             'origin' => 'Estimate',
             'destination' => 'Estimate',
+            // Said rather than inherited. This service quotes **walk-in**
+            // rides, and `RateCardResolver` picks Kangaru's public tariff off
+            // exactly this (ADR-0063 §5). Leaving it to the model's default
+            // priced a walk-in estimate against a corporate card and failed
+            // with "no default rate card", which reads as a configuration
+            // problem and is not one.
+            'channel' => Trip::CHANNEL_WALK_IN,
         ]);
 
         // `RateCardResolver` picks the version in force on the trip's date,

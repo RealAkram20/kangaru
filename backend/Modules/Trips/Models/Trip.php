@@ -79,6 +79,29 @@ use Modules\Vehicles\Models\Vehicle;
  */
 class Trip extends Model
 {
+    /** Kangaru's own work: no contract, priced by the public tariff. */
+    public const CHANNEL_WALK_IN = 'walk_in';
+
+    /** A client's contracted work. The default, and the safe default —
+     * a row nobody set is not swept into Kangaru's commission. */
+    public const CHANNEL_CORPORATE = 'corporate';
+
+    /**
+     * Set here as well as on the column, for the reason `OperatorClient`
+     * records about its own status: **a database default applies on insert**,
+     * so a `new Trip([...])` that is never saved carries null for it and every
+     * read of that instance sees a trip with no channel.
+     *
+     * That is not hypothetical — `WalkInFareService::quote()` prices an
+     * unsaved Trip through the real engine on purpose, and a null channel made
+     * it resolve a *corporate* tariff for a walk-in estimate. The symptom was
+     * "no default rate card has been set up", which points at configuration
+     * rather than at the model.
+     *
+     * @var array<string, mixed>
+     */
+    protected $attributes = ['channel' => self::CHANNEL_CORPORATE];
+
     /** @use HasFactory<TripFactory> */
     use Auditable, BelongsToTenant, HasFactory, RecordsActingFleet, SoftDeletes;
 
@@ -128,6 +151,7 @@ class Trip extends Model
         // — or, after ADR-0056, a support agent acting as one — is not
         // necessarily in it. Null only on a walk-in nobody has accepted.
         'operator_id',
+        'channel',
         // ADR-0024 §1. The other owner: set on a walk-in trip, where
         // tenant_id is null. TripService is the only writer and asserts
         // that exactly one of the pair is present.
@@ -271,9 +295,24 @@ class Trip extends Model
      * `TripService::assertExactlyOneOwner` only ever refused both, which was
      * right; the ADR's wording and this method were what overstated it.
      */
+    /**
+     * Whether this trip is Kangaru's own walk-in work.
+     *
+     * **Reads the column, not the shape of the row.** `tenant_id === null` was
+     * true of every walk-in and is not the same statement: ADR-0055 §2 refused
+     * the inference because it *"would quietly stop being true the first time a
+     * client-less booking exists for some other reason — and it would stop
+     * being true silently, in the one predicate that decides what head office
+     * reads."*
+     *
+     * ADR-0063 §5 made that urgent rather than tidy. This predicate now also
+     * decides **which fares are split three ways**, so a trip on the wrong side
+     * of it is no longer a display bug — it is money reaching the wrong
+     * parties, with nothing anywhere reporting an error.
+     */
     public function isWalkIn(): bool
     {
-        return $this->tenant_id === null;
+        return $this->channel === self::CHANNEL_WALK_IN;
     }
 
     /**

@@ -18667,3 +18667,98 @@ prevent. It should go.
 `subject()`/`body()`. New emails go through the lang file; migrating the old
 ones is a separate pass and I have not done it, because rewriting other
 agents' copy is exactly the collision this file forbids.
+
+---
+
+### 2026-08-24 — **I introduced a second commission mechanism and did not notice. Stopping before I build on it.**
+
+Reporting this rather than reconciling it at the end of a long session, because
+it is money and the mistake is mine.
+
+## What I found
+
+`DriverLedgerService::recordCompletedTrip()` has taken Kangaru's cut of a
+walk-in fare since **ADR-0029**, from a platform-wide setting:
+
+```
+billing.driver_commission_percent   default 20
+```
+
+Its own docblock says so plainly — *"what the platform keeps from a walk-in
+fare"* — and the rate is written into the ledger entry's description so that
+changing it tomorrow never restates what a driver earned today. It works, it
+is tested, and it has been there all along.
+
+**Yesterday I wrote ADR-0063 §3 introducing `kangaru_commission_bp` on the
+contract, default 1500.** I did not check whether commission already existed.
+
+So there are now **two mechanisms and two different defaults — 20% and 15% —
+for one number**, and `WalkInFareSplit` would have been the third place a fare
+gets divided. Had I wired it in tonight as planned, a walk-in would have had
+commission taken twice.
+
+## Why I am not just picking one
+
+Both readings are defensible and the choice is commercial, not technical:
+
+- **The setting is right, the contract is wrong.** One rate for the whole
+  platform is simpler, already audited into every existing ledger row, and
+  ADR-0063's per-contract rate is a flexibility nobody asked for.
+- **The contract is right, the setting is wrong.** ADR-0063 §3's argument
+  stands on its own — a commission rate is a term between three parties, and a
+  platform-wide setting cannot express "this fleet's drivers on 12%".
+
+They also differ in a way that is not a preference: **existing ledger rows were
+written against the setting.** Whichever wins, the migration story for rows
+already on the books is the owner's call, not mine at 21:00.
+
+## What I have NOT done
+
+No ledger entry for the fleet share. No wiring of `WalkInFareSplit`. The class
+and its tests stand, unreferenced and correct, until the duplication is
+settled — which is the honest state for it to be in, and better than a fare
+divided twice.
+
+## What I did land, which is real and complete
+
+**`Trip::isWalkIn()` finally reads the column.** It was still
+`tenant_id === null` — ADR-0055 §2 refused that inference, ADR-0063 §5 made it
+urgent, I added the column, and then left the predicate reading the old thing.
+The column was decorative until now.
+
+Two traps found while moving it, both worth carrying:
+
+- **`WalkInFareService::quote()` prices an unsaved `new Trip`** through the
+  real engine on purpose. A database default applies **on insert**, so
+  `channel` was null there and a walk-in estimate resolved a *corporate*
+  tariff — surfacing as *"no default rate card has been set up"*, which points
+  at configuration and is not. `Trip` now declares the default in
+  `$attributes`, the way `OperatorClient` already does for its status, and the
+  quote says `CHANNEL_WALK_IN` outright.
+- **`TripFactory` derives `channel` from `tenant_id`**, the shape
+  `UserFactory` uses for `operator_id`. The inference survives *there* on
+  purpose: a factory building a client-less trip is building a walk-in, and
+  saying it once beats editing it into forty fixtures — which is also forty
+  chances to write the wrong one.
+
+## kangaru-45's Monday bug: fixed, and it was not a flake
+
+`DriverPerformanceTest` opened a shift at `$weekStart->addHours(6)` — 06:00
+Monday Kampala — which is in the **future** between midnight and 06:00 on a
+Monday. Reproduced by pinning the clock to 02:00 Monday: **0 instead of
+25200**, exactly as reported. The clock is now pinned mid-week, so the shift
+stays inside the week the test is about and behind whatever hour the suite
+runs at.
+
+That is very likely one of the three "flaky" sightings I logged on 23 August
+and could not diagnose. **It was deterministic and I called it random**, which
+is worth more than the fix: two of those three may also have a window rather
+than a coin.
+
+## Tree note
+
+The suite is not green in this tree right now and **it is not mine** —
+kangaru-45 is mid-flight on the mail work, with Pint and census both moving.
+My own files pass Pint, and `Billing`, `Trips` and `Drivers` pass in isolation;
+the cross-file failures come and go with their edits. I committed by explicit
+path, not by directory.
