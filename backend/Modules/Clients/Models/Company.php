@@ -28,6 +28,25 @@ class Company extends Model
     use Auditable, BelongsToTenant, HasFactory, SoftDeletes;
 
     /**
+     * The client directory is Kangaru's to read, so head office may resolve a
+     * company by id (ADR-0062 §2).
+     *
+     * This model and no other. `CompanyService::list()` already drops the
+     * tenant scope for `kangaru` on the listing; without this the *URL* still
+     * 404'd, so head office could see its directory and not open a single row
+     * of it — and could therefore never correct a name it had typed itself.
+     *
+     * The operations stay unreachable, which is the point of doing this per
+     * model rather than in the trait: a trip, a booking and an invoice belong
+     * to the fleet serving the client, and head office reaches those by acting
+     * as somebody there.
+     */
+    protected function headOfficeResolvesByRoute(): bool
+    {
+        return true;
+    }
+
+    /**
      * @see Vehicle::newFactory() for why this is explicit.
      *
      * @return Factory<self>

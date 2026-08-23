@@ -3,6 +3,7 @@
 namespace Modules\Clients\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class UpdateCompanyRequest extends FormRequest
 {
@@ -21,7 +22,24 @@ class UpdateCompanyRequest extends FormRequest
         return [
             'legal_name' => ['sometimes', 'string', 'max:255'],
             'trading_name' => ['sometimes', 'nullable', 'string', 'max:255'],
-            'registration_number' => ['sometimes', 'nullable', 'string', 'max:255'],
+            /*
+             * Unique, ignoring this client (ADR-0060 §1).
+             *
+             * The column has carried a unique index since it became the
+             * platform identity, and this rule did not — so editing a client's
+             * registration number onto one already taken produced a raw
+             * integrity-constraint 500 rather than a field error under the
+             * field. The database was right and the message was unusable.
+             *
+             * `withoutTrashed()` matches `OnboardClientRequest`: a soft-deleted
+             * client must not reserve a number for ever.
+             */
+            'registration_number' => [
+                'sometimes', 'nullable', 'string', 'max:255',
+                Rule::unique('companies', 'registration_number')
+                    ->ignore($this->route('company'))
+                    ->withoutTrashed(),
+            ],
             'industry' => ['sometimes', 'nullable', 'string', 'max:255'],
             'billing_email' => ['sometimes', 'email'],
             'phone' => ['sometimes', 'nullable', 'string', 'max:50'],

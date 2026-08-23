@@ -11,6 +11,7 @@ import { Alert } from '../components/feedback/Alert'
 import { EmptyState } from '../components/feedback/EmptyState'
 import { Input } from '../components/forms/Input'
 import { PageFill } from '../components/layout/PageFill'
+import { EditClientDialog } from './clients/EditClientDialog'
 import { OnboardClientDialog } from './clients/OnboardClientDialog'
 
 /**
@@ -42,6 +43,7 @@ export function CorporateClientsPage() {
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [onboarding, setOnboarding] = useState(false)
+  const [editing, setEditing] = useState<Company | null>(null)
 
   const load = useCallback(
     () =>
@@ -79,6 +81,20 @@ export function CorporateClientsPage() {
         card: 'status',
         header: 'Status',
         render: (row) => <Badge tone={STATUS_TONE[row.status]}>{row.status}</Badge>,
+      },
+      {
+        key: 'id',
+        id: 'edit',
+        header: '',
+        // A directory somebody may correct. Every other column here is a fact
+        // a person typed, and until this there was no way to fix one - head
+        // office could onboard a client and then watch a wrong legal name sit
+        // in the register for ever.
+        render: (row) => (
+          <Button size="sm" variant="secondary" onClick={() => setEditing(row)}>
+            Edit
+          </Button>
+        ),
       },
     ],
     [],
@@ -149,6 +165,17 @@ export function CorporateClientsPage() {
           onClose={() => setOnboarding(false)}
           onDone={() => {
             setOnboarding(false)
+            void load()
+          }}
+        />
+      )}
+
+      {editing && (
+        <EditClientDialog
+          client={editing}
+          onClose={() => setEditing(null)}
+          onDone={() => {
+            setEditing(null)
             void load()
           }}
         />

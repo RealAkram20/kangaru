@@ -19028,3 +19028,89 @@ clock, the unverified-document filter, the anonymous recipient). Pint and
 Larastan clean. Two real emails rendered and read, which is how the dangling
 "before then" in the expiry copy was found: the date it referred to had moved
 into the fact block, so the sentence pointed backwards at nothing.
+
+---
+
+## kangaru-1M, 24 August ~07:15 — the client can be edited, and "Served by" was never broken
+
+Two owner reports in one pass. Claiming, and none of them kangaru-45's:
+`frontend/src/pages/clients/EditClientDialog.tsx` (new), its test,
+`frontend/src/pages/CorporateClientsPage.tsx`,
+`frontend/src/styles/tokens/base.css`,
+`backend/Modules/Clients/Requests/UpdateCompanyRequest.php`,
+`backend/Modules/Clients/Models/Company.php`,
+`backend/app/Concerns/BelongsToTenant.php`,
+`backend/tests/Feature/Clients/ClientOnboardingTest.php`.
+
+### "The Served by selector is not working" — it was disabled, and said so nowhere
+
+Not broken. `OnboardClientDialog` wraps everything below the registration
+number in `<fieldset disabled={lookup !== 'free'}>` — ADR-0060 §2's whole
+point, and right. But `Select` and `Input` paint their background, opacity and
+cursor from **their own `disabled` prop**, and a fieldset never sets that prop.
+So the browser switched the control off while the shell went on rendering at
+full opacity with `cursor: pointer`. A control that looks live, invites a
+click, and does nothing.
+
+Fixed in `base.css` rather than in each component, because the ancestor is the
+one that knows and inline styles cannot read `:disabled` off a parent. Two
+lines, and every current and future control inherits it.
+
+Worth keeping: **"it doesn't work" and "it is disabled" are the same
+observation** when nothing renders the difference.
+
+### "We need to be able to edit the client" — and two things stood in the way
+
+The dialog is the easy part. Both blockers were the same shape as this
+morning's leak.
+
+**One: head office 404'd on every client URL.** `isPlatformLevel()` means
+*fleet* since ADR-0055, so a `kangaru` actor falls past that branch in
+`resolveRouteBinding()` into `TenantScope` failing closed — `where 1 = 0`. `K6`
+hit this exact trap on the **listing** and amended `CompanyService`; the
+binding was the other half and was left. Head office could see its client
+directory and could not open one row of it, so it could never correct a name it
+had typed itself. **Third sighting on this branch of a listing patched without
+its URL.**
+
+Opted in per model (`Company::headOfficeResolvesByRoute()`), defaulting to
+`false`, rather than dropping the scope in the trait: blanket would let head
+office resolve any tenant-scoped record by id — trips, bookings, invoices —
+and ADR-0062 §2 draws the line exactly there. A model joins the directory by
+saying so.
+
+**Two: `companies.registration_number` had a unique index and no unique rule.**
+Editing onto a taken number was a raw integrity-constraint 500 with no field
+attached. `UpdateCompanyRequest` now carries `unique ... ignore(self)
+withoutTrashed`, matching `OnboardClientRequest`.
+
+### What the dialog deliberately does not offer
+
+No credit limit and no status. The page's docblock draws that line for reading
+and it holds harder for writing: a credit limit is a fleet's judgement about
+its customer, and suspending a client stops them booking. Head office is not a
+party to either. **Absent rather than disabled** — a control nobody may use
+invites the question every time. Asserted as an absence, because an absence is
+what regresses silently.
+
+It sends **only what changed**. Re-asserting an unchanged registration number
+is one `ignore()` away from refusing an edit that touched only the city, and
+the error would name a field the person never went near.
+
+### Proved
+
+Both mutations bite and were restored: unique rule removed -> the collision
+test red; `headOfficeResolvesByRoute()` -> `false` -> both new tests 404.
+Backend 1748 passed, frontend 655 (68 files), `tsc -b --force` clean, Pint and
+Larastan clean on my files.
+
+Verified live, not only in tests: `GET /companies/1` as head office returns
+**200** where it returned 404 this morning.
+
+### For kangaru-45
+
+`Modules/Clients/Controllers/CompanyController.php:60` has one Larastan error,
+pre-existing and not mine: `$request->user()` is `Customer|User|null` and
+`ClientOnboardingService::onboard()` wants `?User`. Same class as the
+`DriverPayoutAccountController` one you just fixed, in the invitation path you
+own. Untouched by me.

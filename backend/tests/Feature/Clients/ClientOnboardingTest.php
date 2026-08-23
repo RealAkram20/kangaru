@@ -481,3 +481,89 @@ it('shows head office every client, whichever fleet serves them', function () {
     expect($names)->toContain($mine->registration_number)
         ->and($names)->toContain($theirs['registration_number']);
 });
+
+/* ------------------------------------------- correcting one, afterwards --- */
+
+/*
+ * `K6` could onboard a client and never fix it. There was no edit path in the
+ * console at all, so a legal name typed wrong at onboarding stayed wrong in
+ * the directory for ever — which is the same shape as the gap `ADR-0062`
+ * closed on the reading side, where head office could create a client and then
+ * not see it.
+ *
+ * The endpoint existed; nothing called it, and it was missing the one rule
+ * that decides whether an edit is safe.
+ */
+it('lets head office correct a client, and refuses a registration number that is taken', function () {
+    $hq = onboarder('kangaru');
+
+    $mine = Company::withoutGlobalScopes()->create([
+        'tenant_id' => Tenant::factory()->create()->id,
+        'legal_name' => 'Centenary Rural Devlopment Bank',
+        'registration_number' => 'UG-REG-88214',
+        'billing_email' => 'accounts@centenary.test',
+        'city' => 'Kampala',
+        'country' => 'UG',
+        'status' => 'active',
+    ]);
+
+    $theirs = Company::withoutGlobalScopes()->create([
+        'tenant_id' => Tenant::factory()->create()->id,
+        'legal_name' => 'Stanbic Bank Uganda',
+        'registration_number' => 'UG-REG-11002',
+        'billing_email' => 'accounts@stanbic.test',
+        'city' => 'Kampala',
+        'country' => 'UG',
+        'status' => 'active',
+    ]);
+
+    // The typo, corrected.
+    $this->actingAs($hq, 'sanctum')
+        ->patchJson("/api/v1/companies/{$mine->id}", ['legal_name' => 'Centenary Rural Development Bank'])
+        ->assertOk();
+
+    expect($mine->fresh()->legal_name)->toBe('Centenary Rural Development Bank');
+
+    /*
+     * The collision. **422 and not 500** is the whole of this assertion:
+     * `companies.registration_number` has carried a unique index since it
+     * became the platform identity (ADR-0060 §1), and `UpdateCompanyRequest`
+     * did not carry the matching rule — so this arrived as a raw
+     * integrity-constraint error with no field attached to it, and the console
+     * had nothing to put under the input.
+     */
+    $this->actingAs($hq, 'sanctum')
+        ->patchJson("/api/v1/companies/{$mine->id}", ['registration_number' => $theirs->registration_number])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors('registration_number');
+
+    expect($mine->fresh()->registration_number)->toBe('UG-REG-88214');
+});
+
+it('still lets a client keep its own registration number while editing something else', function () {
+    // The half a bare `unique` rule breaks, and the reason `ignore()` is on
+    // it: re-sending an unchanged number must not read as a collision with
+    // oneself. The console sends only what changed, which makes this
+    // unreachable from the UI — and that is exactly why it is asserted here,
+    // where the next caller of the endpoint has no such habit.
+    $hq = onboarder('kangaru');
+
+    $client = Company::withoutGlobalScopes()->create([
+        'tenant_id' => Tenant::factory()->create()->id,
+        'legal_name' => 'Centenary Bank',
+        'registration_number' => 'UG-REG-88214',
+        'billing_email' => 'accounts@centenary.test',
+        'city' => 'Kampala',
+        'country' => 'UG',
+        'status' => 'active',
+    ]);
+
+    $this->actingAs($hq, 'sanctum')
+        ->patchJson("/api/v1/companies/{$client->id}", [
+            'registration_number' => 'UG-REG-88214',
+            'city' => 'Entebbe',
+        ])
+        ->assertOk();
+
+    expect($client->fresh()->city)->toBe('Entebbe');
+});

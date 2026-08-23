@@ -13,3 +13,25 @@ code,kbd,samp{font-family:var(--font-mono);font-size:.9em}
 table{border-collapse:collapse}
 .kr-tabular{font-variant-numeric:tabular-nums}
 .kr-identifier{font:var(--type-identifier);letter-spacing:.01em}
+
+/*
+ * A disabled fieldset has to LOOK disabled.
+ *
+ * `<fieldset disabled>` makes every control inside it inert natively, which is
+ * why forms use it to gate a section on an earlier answer. But our controls
+ * are a styled shell wrapping a native element — `Select` and `Input` paint
+ * their own background, opacity and cursor from their **own** `disabled` prop,
+ * and a fieldset never sets that prop. So the shell went on rendering at full
+ * opacity with `cursor: pointer` around an element the browser had switched
+ * off: a control that looks live, invites a click, and does nothing.
+ *
+ * The owner found it on "Served by" in the onboarding dialog and reported the
+ * picker as broken. It was not broken; it was waiting on the registration
+ * number, and saying so nowhere a person could see.
+ *
+ * Here rather than in each component because it is the ancestor that knows.
+ * A component cannot read `:disabled` off a parent from inline styles, and CSS
+ * can — one rule, and every current and future control inherits it.
+ */
+fieldset:disabled{opacity:.55}
+fieldset:disabled,fieldset:disabled *{cursor:not-allowed}
