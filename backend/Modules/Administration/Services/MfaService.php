@@ -4,13 +4,15 @@ namespace Modules\Administration\Services;
 
 use App\Models\AuditLog;
 use App\Models\User;
-use BaconQrCode\Renderer\Image\SvgImageBackEnd;
 use BaconQrCode\Renderer\ImageRenderer;
+use BaconQrCode\Renderer\Image\SvgImageBackEnd;
 use BaconQrCode\Renderer\RendererStyle\RendererStyle;
 use BaconQrCode\Writer;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Modules\Administration\Models\MfaChallenge;
+use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Notifications\SecurityEventNotification;
 use OTPHP\TOTP;
 
 /**
@@ -135,6 +137,18 @@ class MfaService
         // factor and when is exactly what a bank's vendor questionnaire
         // asks, and `$hidden` keeps the secret itself out of the diff.
         AuditLog::record($user, 'updated');
+
+        /*
+         * The audit row is for a reviewer months later. This is for the
+         * account holder today, and the two are not substitutes: an attacker
+         * who has taken a session and armed their own authenticator has just
+         * locked the real owner out of their own account permanently, because
+         * ADR-0008 deliberately builds no administrator reset.
+         */
+        $user->notify(new SecurityEventNotification(
+            NotificationType::ACCOUNT_MFA_ENABLED,
+            [__('mail.security.fact_when') => now()->isoFormat('D MMMM YYYY, HH:mm')],
+        ));
 
         return $plaintext;
     }
@@ -294,6 +308,15 @@ class MfaService
         // security review as turning it on, and `confirmEnrolment` already
         // audits the other direction.
         AuditLog::record($user, 'updated');
+
+        // And the same asymmetry holds for the email: removing a factor is
+        // the step that makes a stolen password sufficient again, so if this
+        // was not the account holder they need to know within minutes rather
+        // than whenever somebody next reads an audit log.
+        $user->notify(new SecurityEventNotification(
+            NotificationType::ACCOUNT_MFA_DISABLED,
+            [__('mail.security.fact_when') => now()->isoFormat('D MMMM YYYY, HH:mm')],
+        ));
     }
 
     /**
@@ -321,6 +344,28 @@ class MfaService
             // without their authenticator is the event a security review
             // asks about, and it is invisible in an access log.
             AuditLog::record($user, 'updated');
+
+            /*
+             * And the count is finally said out loud (mail plan A8).
+             *
+             * `recoveryCodesAreLow()` has existed since ADR-0010 with a
+             * docblock saying the water mark was defined and **nothing
+             * consulted it**, so a user spent codes one at a time and learned
+             * the count by running out: lost phone, no code left, and no
+             * administrator able to help, because ADR-0008 deliberately builds
+             * no reset. This is the line that consults it.
+             *
+             * Sent as the code is spent rather than on a schedule, so it
+             * arrives attached to the act that caused it. It repeats on each
+             * subsequent use, which is intended: the number is going down and
+             * each step is more urgent than the last.
+             */
+            if ($this->recoveryCodesAreLow($user)) {
+                $user->notify(new SecurityEventNotification(
+                    NotificationType::ACCOUNT_RECOVERY_CODES_LOW,
+                    [__('mail.security.fact_remaining') => (string) $this->remainingRecoveryCodes($user)],
+                ));
+            }
 
             return true;
         }

@@ -108,6 +108,100 @@ return [
     ],
 
     /*
+     | M3, the security family. One class, `SecurityEventNotification`, and a
+     | key per event.
+     |
+     | Every one of these is written for a reader who did NOT do the thing.
+     | The person who clicked already knows; this email is the tripwire for the
+     | person who did not, so each one ends with `not_you` and none of them
+     | carries a link. A button offering to undo a change would be the single
+     | most valuable thing on this platform to forge, because it is a link in a
+     | security email that people are primed to click.
+     |
+     | None of them quotes the credential that changed. Not the password, not
+     | the code, not the account number, not even masked. An email that repeats
+     | the detail it is warning about hands that detail to whoever is reading
+     | the mailbox, which in the case this exists for is the attacker.
+     */
+    'security' => [
+
+        'not_you' => 'If this was not you, call your office now.',
+
+        'fact_when' => 'When',
+        'fact_ip' => 'From',
+        'fact_remaining' => 'Codes left',
+
+        'account_password_changed' => [
+            'subject' => 'Your password was changed',
+            'heading' => 'Your password was changed',
+            'body' => 'Every device signed in to your account was signed out.',
+        ],
+
+        /*
+         | Keyed on the browser, not the location, so this does not fire every
+         | time a driver's mobile address changes. See the known_devices
+         | migration.
+         */
+        'account_signed_in_new_device' => [
+            'subject' => 'New sign in on a new device',
+            'heading' => 'Somebody signed in on a new device',
+            'body' => 'Your account was used from a browser it has not been used from before.',
+        ],
+
+        'account_mfa_enabled' => [
+            'subject' => 'Two factor is on',
+            'heading' => 'Two factor is on',
+            'body' => 'Signing in now needs a code from your authenticator app. Keep your recovery codes somewhere safe.',
+        ],
+
+        'account_mfa_disabled' => [
+            'subject' => 'Two factor is off',
+            'heading' => 'Two factor is off',
+            'body' => 'Signing in now needs only your password.',
+        ],
+
+        /*
+         | ADR-0008 builds no administrator reset on purpose, so running out is
+         | not an inconvenience. It is the end of the account.
+         */
+        'account_recovery_codes_low' => [
+            'subject' => 'You are running out of recovery codes',
+            'heading' => 'You are running out of recovery codes',
+            'body' => 'You just used one to sign in. Generate a new set before the last one is gone, because nobody can reset two factor for you.',
+        ],
+
+        'account_suspended' => [
+            'subject' => 'Your account is suspended',
+            'heading' => 'Your account is suspended',
+            'body' => 'You cannot sign in until somebody at your office turns it back on.',
+        ],
+
+        'account_reactivated' => [
+            'subject' => 'Your account is active again',
+            'heading' => 'Your account is active again',
+            'body' => 'Sign in with the password you already had.',
+        ],
+
+        /*
+         | Sent to the old address as well as the new one. The copy addressed
+         | to the old mailbox is the last message the real owner will ever get
+         | about this account if somebody else made the change.
+         */
+        'account_email_changed' => [
+            'subject' => 'Your sign in email changed',
+            'heading' => 'Your sign in email changed',
+            'body' => 'This account now signs in with a different email address. This warning went to both the old address and the new one.',
+        ],
+
+        'driver_payout_account_changed' => [
+            'subject' => 'Your payout account changed',
+            'heading' => 'Your payout account changed',
+            'body' => 'The office now pays your earnings into a different account.',
+        ],
+
+    ],
+
+    /*
      | The settings screen test send. Not a notification, so it has no type
      | and nobody can switch it off.
      */

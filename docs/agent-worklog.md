@@ -18762,3 +18762,100 @@ kangaru-45 is mid-flight on the mail work, with Pint and census both moving.
 My own files pass Pint, and `Billing`, `Trips` and `Drivers` pass in isolation;
 the cross-file failures come and go with their edits. I committed by explicit
 path, not by directory.
+
+---
+
+## kangaru-1M claiming, 24 August ~06:00 — a cross-fleet leak on two listings
+
+Owner drove a brand-new fleet in the browser and saw **Shanitah's 20 vehicles
+and 19 drivers**. Not the assignment bug I was about to fix — the row is
+correct (`operator_id = 2`, and every vehicle is operator 1). The listings are
+unscoped.
+
+Claiming, none of them yours:
+
+- `backend/Modules/Vehicles/Services/VehicleService.php`
+- `backend/Modules/Drivers/Services/DriverService.php`
+- `backend/tests/Feature/Tenancy/CrossFleetIsolationTest.php`
+- `frontend/src/lib/navigation.ts`
+- `frontend/src/components/core/iconRegistry.ts`
+
+Full account below once it is proved by mutation.
+
+### 2026-08-24 — M3 done: the security family, and the email menu the owner asked for
+
+**Nine warnings that did not exist**, one class (`SecurityEventNotification`)
+and a `NotificationType` case each. Password changed, new device, MFA on, MFA
+off, recovery codes low, suspended, reactivated, address changed, payout
+account changed.
+
+Every one is wired into the service that performs the act, and the tests go
+through those services rather than through the notification. That is the whole
+point: **`MfaService::recoveryCodesAreLow()` has existed since ADR-0010 with a
+docblock saying the water mark was defined and nothing consulted it.** A test
+against the notification would have passed the entire time.
+
+**`known_devices` is keyed on the user agent and never on the IP.** An
+IP-keyed device would email a driver on a Ugandan mobile network every
+morning, and a warning that arrives daily is one nobody reads on the day it
+matters. The first device is recorded silently, because every account's first
+sign-in is from an unseen browser.
+
+**`ACCOUNT_EMAIL_CHANGED` is sent twice**, and the copy to the old address is
+the one that matters: somebody who has taken an account and changed its address
+has redirected every future warning to themselves.
+
+## The email menu, and the gate that was nearly wrong
+
+Settings → Which emails. `mail_toggles`, one row per type switched off, plus
+`MailPreference` which is the same shape for one person. Two switches on
+purpose: a platform toggle stored per user would be written across every
+account; a per-user preference read as a platform default would let one
+dispatcher decide what a colleague receives.
+
+**`settings.manage` was the obvious gate and it was wrong.** Every Super Admin
+holds it, **a fleet's own included**, exactly as `OperatorPolicy` documents for
+`fleets.manage`. It matters more here than for the settings beside it: a fleet
+editing SMTP writes its own override beside Kangaru's default (ADR-0055 §5), but
+`mail_toggles` has **no `operator_id`** — one row per type for the whole
+platform. A fleet Super Admin flipping a switch would have silenced that email
+for every other fleet and every client on it. Now both are required, permission
+and `access_level === kangaru`, with a test that asserts the fleet Super Admin
+holds the permission and is still refused.
+
+## Three bugs only running it found
+
+1. **`MailToggle::disabledTypes()` compared strings to enum instances.**
+   `pluck('type')` runs through the model cast, so `in_array($type->value, …, true)`
+   was a string against a list of objects: never equal, so `allows()` answered
+   true for everything. The endpoint answered 200, the row was written, the
+   screen drew the switch as off, and the emails kept going out.
+2. **`abort(403)` bypassed the error envelope.** The OpenAPI gate caught it.
+   `AuthorizationException` is what the handler formats.
+3. **The section crashed the whole settings page** when its endpoint returned
+   an unexpected shape, because every section is mounted at once and one
+   throwing render unmounts all of them. Found by the *existing*
+   `SystemSettingsPage` test, not mine. It reports rather than throws now, and
+   that shared test file is byte-for-byte untouched.
+
+## Deleted, at kangaru-c0's request and with their agreement
+
+`resources/views/vendor/mail/` and `resources/views/vendor/notifications/`.
+Both were published Laravel overrides styling a markdown renderer that **no
+code reaches any more** — there is not one `MailMessage` or `Mailable` left in
+the repo. `config/mail.php` carried a comment saying "booking decisions, export
+notices, closure answers and document reviews all render through
+`mail::message`", which was true when written and false since M0. A stylesheet
+that appears to control every email and controls none is worse than none: the
+next person to change a colour would have changed it there and seen nothing.
+
+## Verified
+
+1728 backend, 649 frontend. Ten guards proved by mutation and restored across
+M2 and M3. The menu driven in Chrome as a head-office Super Admin: rail entry,
+switchable list, locked list, and the throwaway account removed afterwards.
+
+**Test database:** I ran on `kangaruride_testing_mail` rather than
+`kangaruride_testing`, because we collided mid-run and my suite met a dropped
+`migrations` table. `.env.testing` is untouched; it is a `DB_DATABASE=` prefix
+on my own command only. Worth doing whenever two of us are running at once.

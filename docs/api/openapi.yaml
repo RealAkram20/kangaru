@@ -274,6 +274,76 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/settings/email:
+    get:
+      summary: >
+        Which emails this deployment sends at all (mail plan M3). Gated by
+        SettingPolicy, which ADR-0014 §4 holds at `settings.manage` for both
+        directions, so this is Super Admin and nobody else.
+      description: >
+        The list is the `NotificationType` enum filtered to the types that
+        actually carry mail, so a type added tomorrow appears here tomorrow
+        with no migration. `required` marks the emails that cannot be switched
+        off, and those are listed rather than hidden: an administrator looking
+        for "why did nobody get the password reset email" needs to find it and
+        see that it is locked. Reading this list tells you which warnings the
+        platform does not send, which is why the read is held as tightly as the
+        write.
+      responses:
+        '200':
+          description: Every mailable notification type and its state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string, nullable: true }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [type, label, required, enabled]
+                      additionalProperties: false
+                      properties:
+                        type: { type: string }
+                        label: { type: string }
+                        required:
+                          type: boolean
+                          description: True when the email cannot be switched off.
+                        enabled: { type: boolean }
+        default:
+          $ref: '#/components/responses/Error'
+
+    put:
+      summary: >
+        Switches one email on or off for the whole platform (mail plan M3).
+      description: >
+        One switch per call rather than a whole list, so a screen that fails
+        halfway leaves a state somebody can read. Idempotent: sending `false`
+        twice leaves it off rather than toggling it back on. A `required` type
+        answers 422 rather than being accepted and ignored, because a switch
+        the platform stores and then overrides reads back to the administrator
+        as an answer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, enabled]
+              additionalProperties: false
+              properties:
+                type: { type: string }
+                enabled: { type: boolean }
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOnly'
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/invitations/{token}:
     get:
       summary: >

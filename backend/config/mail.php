@@ -139,27 +139,31 @@ return [
     | Markdown Mail
     |--------------------------------------------------------------------------
     |
-    | The KangaruRide theme (ADR-0052 §4): DESIGN.md's palette and type,
-    | applied to every message this platform sends rather than to one of them.
-    | Booking decisions, export notices, closure answers and document reviews
-    | all render through `mail::message`, so a theme is the only edit that
-    | reaches all of them at once.
+    | Framework defaults, and nothing in this application uses them.
     |
-    | `resources/views/vendor/mail` is Laravel's published location and is
-    | searched *before* the framework's own views. Only the theme stylesheet
-    | is published there — every blade component still resolves to the
-    | framework's, so an upgrade that changes their markup keeps working and
-    | the styling follows it.
+    | This block used to carry a custom `kangaru` theme and a published view
+    | path, and a comment saying "booking decisions, export notices, closure
+    | answers and document reviews all render through `mail::message`, so a
+    | theme is the only edit that reaches all of them at once". That was true
+    | when it was written and is not true now: no `MailMessage` and no
+    | `Mailable` remains in the codebase, so the markdown renderer was
+    | unreachable and the published theme was styling nothing.
     |
-    | The trimmed notification template lives at
-    | `resources/views/vendor/notifications/email.blade.php` and is a separate
-    | override, because it belongs to the Notifications component rather than
-    | to Mail.
+    | Both overrides were deleted with mail plan M3 rather than left in place.
+    | A stylesheet that appears to control every email and controls none of
+    | them is worse than no stylesheet: the next person to change a colour
+    | would have changed it there and seen no effect.
+    |
+    | **Emails are built as `MailContent` and rendered by `MailRenderer`**
+    | through `resources/views/mail/layout.blade.php` and its plain text
+    | partner. See `Modules/Notifications/README.md` and `docs/mail-plan.md`
+    | §4. If you find yourself writing a Mailable, that is the thing to reach
+    | for instead.
     |
     */
 
     'markdown' => [
-        'theme' => env('MAIL_THEME', 'kangaru'),
+        'theme' => env('MAIL_THEME', 'default'),
 
         'paths' => [
             resource_path('views/vendor/mail'),

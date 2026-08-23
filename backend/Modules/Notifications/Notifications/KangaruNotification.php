@@ -2,6 +2,7 @@
 
 namespace Modules\Notifications\Notifications;
 
+use App\Models\User;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Notification as LaravelNotification;
@@ -241,6 +242,21 @@ abstract class KangaruNotification extends LaravelNotification implements Should
             actionUrl: $url === null ? null : rtrim((string) config('app.frontend_url'), '/').$url,
         );
     }
+    /**
+     * The address this notification goes to.
+     *
+     * The recipient's own, for everything except the one type that must reach
+     * an address the account no longer has. Overridden by
+     * `SecurityEventNotification` for `ACCOUNT_EMAIL_CHANGED`, which is sent
+     * twice: once to the new address and once to the old one, so an attacker
+     * who changed the address cannot have silenced the warning by pointing it
+     * at themselves.
+     */
+    public function mailTo(User $user): string
+    {
+        return (string) $user->email;
+    }
+
     /**
      * The platform's name, from settings rather than from a constant.
      *

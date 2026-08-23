@@ -147,6 +147,56 @@ enum NotificationType: string
      * notice about somebody else using your account has to reach you
      * **without** you signing in to the thing they were using.
      */
+    /*
+     | The security family (mail plan M3). One notification class,
+     | `SecurityEventNotification`, and a case each.
+     |
+     | Every one exists for the same reason: **the person who did it is not
+     | always the person who owns the account.** A password change, an MFA
+     | removal, a payout account edit and an address change are each a
+     | legitimate action a user takes, and each the first move of somebody who
+     | has taken an account. The email is a tripwire for the owner, not a
+     | receipt for whoever clicked.
+     |
+     | Cases rather than one `account.security` value because this string is
+     | also AGENTS.md's business-event name and the `notifications.type`
+     | column: collapsing them would leave the audit log unable to say which
+     | of nine things happened.
+     */
+    case ACCOUNT_PASSWORD_CHANGED = 'account.password_changed';
+
+    /**
+     * A sign-in from a browser this account has not used before (ADR-0028's
+     * neighbourhood, mail plan A5).
+     *
+     * Keyed on the user agent alone and never on the IP. A Ugandan mobile
+     * address changes several times a day, so an IP-keyed device would email
+     * a driver every morning, and a warning that arrives daily is a warning
+     * nobody reads on the day it matters.
+     */
+    case ACCOUNT_SIGNED_IN_NEW_DEVICE = 'account.signed_in_new_device';
+
+    case ACCOUNT_MFA_ENABLED = 'account.mfa_enabled';
+    case ACCOUNT_MFA_DISABLED = 'account.mfa_disabled';
+
+    /** ADR-0010: the count nobody consulted, now said out loud before it runs out. */
+    case ACCOUNT_RECOVERY_CODES_LOW = 'account.recovery_codes_low';
+
+    case ACCOUNT_SUSPENDED = 'account.suspended';
+    case ACCOUNT_REACTIVATED = 'account.reactivated';
+
+    /**
+     * Sent to the old address as well as the new one.
+     *
+     * Somebody who has taken an account and changed its address would
+     * otherwise have silenced the one warning that reaches the real owner, by
+     * redirecting it to themselves.
+     */
+    case ACCOUNT_EMAIL_CHANGED = 'account.email_changed';
+
+    /** Where a driver's money goes. Same reasoning, higher stakes. */
+    case DRIVER_PAYOUT_ACCOUNT_CHANGED = 'driver.payout_account.changed';
+
     /**
      * Somebody has an account and no way into it yet (mail plan M2).
      *
@@ -183,6 +233,15 @@ enum NotificationType: string
             self::DRIVER_SUPPORT_ANSWERED => 'Report answered',
             self::DRIVER_DOCUMENT_REVIEWED => 'Document checked',
             self::DRIVER_APPLICATION_DOCUMENT_REJECTED => 'Document needs resending',
+            self::ACCOUNT_PASSWORD_CHANGED => 'Password changed',
+            self::ACCOUNT_SIGNED_IN_NEW_DEVICE => 'New sign in',
+            self::ACCOUNT_MFA_ENABLED => 'Two factor on',
+            self::ACCOUNT_MFA_DISABLED => 'Two factor off',
+            self::ACCOUNT_RECOVERY_CODES_LOW => 'Recovery codes low',
+            self::ACCOUNT_SUSPENDED => 'Account suspended',
+            self::ACCOUNT_REACTIVATED => 'Account active again',
+            self::ACCOUNT_EMAIL_CHANGED => 'Sign-in email changed',
+            self::DRIVER_PAYOUT_ACCOUNT_CHANGED => 'Payout account changed',
             self::ACCOUNT_INVITED => 'Invitation to sign in',
             self::ACCOUNT_INVITATION_EXPIRING => 'Invitation expiring',
             self::ACCOUNT_ACCESSED_BY_SUPPORT => 'Support opened your account',
@@ -296,6 +355,34 @@ enum NotificationType: string
             // to notify and no device to push to.
             self::DRIVER_APPLICATION_DOCUMENT_REJECTED => [NotificationChannel::MAIL],
             /*
+             * Mail and the in-app row, for the whole security family except
+             * the two below.
+             *
+             * No push. These are not urgent in the interrupting sense: the
+             * thing has already happened and the reader's response is to make
+             * a phone call, not to tap. A lock-screen alert saying somebody
+             * changed your payout account is also a lock-screen alert
+             * announcing to whoever is holding the phone that this account is
+             * worth taking.
+             */
+            self::ACCOUNT_PASSWORD_CHANGED,
+            self::ACCOUNT_SIGNED_IN_NEW_DEVICE,
+            self::ACCOUNT_MFA_ENABLED,
+            self::ACCOUNT_MFA_DISABLED,
+            self::ACCOUNT_RECOVERY_CODES_LOW,
+            self::ACCOUNT_REACTIVATED,
+            self::ACCOUNT_EMAIL_CHANGED,
+            self::DRIVER_PAYOUT_ACCOUNT_CHANGED => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::MAIL,
+            ],
+            /*
+             * **Mail alone.** A suspended account cannot be signed into, so an
+             * in-app row would be filed in an inbox nobody can open. Same
+             * shape as `DRIVER_CLOSURE_ANSWERED`, and the same argument.
+             */
+            self::ACCOUNT_SUSPENDED => [NotificationChannel::MAIL],
+            /*
              * **Mail alone**, and for the plainest reason on this list: the
              * recipient cannot sign in. That is the entire subject of the
              * message. An in-app row would be filed in an inbox they have no
@@ -372,6 +459,23 @@ enum NotificationType: string
              * invisible, which is the thing the notification exists to
              * prevent.
              */
+            /*
+             * The whole security family, and this is the clearest case on the
+             * list. A person who has silenced these has silenced the only
+             * warning they will ever get that somebody else is holding their
+             * account, and the preference itself could only have been set by
+             * somebody signed in as them.
+             */
+            self::ACCOUNT_PASSWORD_CHANGED,
+            self::ACCOUNT_SIGNED_IN_NEW_DEVICE,
+            self::ACCOUNT_MFA_ENABLED,
+            self::ACCOUNT_MFA_DISABLED,
+            self::ACCOUNT_RECOVERY_CODES_LOW,
+            self::ACCOUNT_SUSPENDED,
+            self::ACCOUNT_REACTIVATED,
+            self::ACCOUNT_EMAIL_CHANGED,
+            self::DRIVER_PAYOUT_ACCOUNT_CHANGED => true,
+
             /*
              * There is no other way in. A preference that switched this off
              * would leave somebody holding an account they can never open,

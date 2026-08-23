@@ -97,6 +97,13 @@ function routeCensus(): array
         // there is no outbound-mail cost to defend the way the forgot leg has.
         'GET api/v1/invitations/{token}' => 'D',
         'POST api/v1/invitations/{token}/accept' => 'D',
+        // The email menu (mail plan M3). Authenticated, and gated twice: the
+        // `SettingPolicy` permission AND `access_level === kangaru`, because
+        // every Super Admin holds `settings.manage` including a fleet's own,
+        // and `mail_toggles` has no operator_id. A fleet flipping a switch
+        // would silence that email for every other fleet.
+        'GET api/v1/settings/email' => 'A',
+        'PUT api/v1/settings/email' => 'A',
         'POST api/v1/auth/social' => 'D',
         'GET api/v1/public/legal' => 'D',
         'GET api/v1/public/settings' => 'D',
@@ -471,7 +478,9 @@ it('has a census row for every API route and a route for every census row', func
     // reason they are worth the tripwire firing: until they existed, a fleet
     // owner and a corporate client admin were active accounts nobody could
     // sign into, because onboarding minted a random password and discarded it.
-    expect(count($router))->toBe(230);
+    // 232: the email menu's read and write, 2026-08-24. Authenticated,
+    // so the public count below is unchanged.
+    expect(count($router))->toBe(232);
 });
 
 it('uses only the four idioms, and files sixteen routes as public', function () {
@@ -530,7 +539,8 @@ it('authenticates every route that is not filed as public, and throttles every o
     // register search beside it.
     // 195: the four fleet-company routes, all authenticated. Head office's
     // register is the least public surface on the platform.
-    expect($guarded)->toBe(212);
+    // 214: the email menu's two routes, both authenticated.
+    expect($guarded)->toBe(214);
 });
 
 it('binds the actor\'s tenant on every staff route, so TenantScope has something to scope by', function () {
@@ -576,5 +586,7 @@ it('binds the actor\'s tenant on every staff route, so TenantScope has something
     // they bind the actor's tenant like the rest even though a Kangaru
     // account has none - IdentifyTenant binding a null is the fail-closed
     // state, and exempting them would be a second way to be unscoped.
-    expect($staff)->toBe(198);
+    // 200: the email menu's two routes. Head office only, and they bind
+    // the actor's tenant like the fleet register does.
+    expect($staff)->toBe(200);
 });

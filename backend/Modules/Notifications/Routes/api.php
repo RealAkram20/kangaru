@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use Modules\Notifications\Controllers\DeviceTokenController;
+use Modules\Notifications\Controllers\MailToggleController;
 use Modules\Notifications\Controllers\NotificationController;
 
 // Always the authenticated user's own inbox — there is no
@@ -38,3 +39,20 @@ Route::post('me/devices', [DeviceTokenController::class, 'store'])
 // arrives (see StoreDeviceTokenRequest).
 Route::delete('me/devices/{token}', [DeviceTokenController::class, 'destroy'])
     ->name('me.devices.destroy');
+
+// Which emails this deployment sends at all (mail plan M3, the owner's ask).
+//
+// `settings/email` rather than `notifications/toggles`: it is a platform
+// setting and it sits with the others in the settings screen. Gated by
+// `SettingPolicy`, which ADR-0014 §4 already holds at `settings.manage` for
+// both directions, so this is Super Admin and nobody else. Reading the list
+// tells you which warnings this platform does not send, which is why the read
+// is held as tightly as the write.
+Route::get('settings/email', [MailToggleController::class, 'index'])
+    ->name('settings.email.index');
+
+// PUT rather than PATCH, and one switch per call. The body names the type and
+// the state it should be in, which is idempotent: sending "off" twice leaves
+// it off rather than toggling it back on.
+Route::put('settings/email', [MailToggleController::class, 'update'])
+    ->name('settings.email.update');

@@ -10,6 +10,7 @@ use Modules\Notifications\Mail\MailAudience;
 use Modules\Notifications\Mail\MailRenderer;
 use Modules\Notifications\Models\MailDelivery;
 use Modules\Notifications\Models\MailPreference;
+use Modules\Notifications\Models\MailToggle;
 use Modules\Notifications\Notifications\KangaruNotification;
 use Throwable;
 
@@ -30,7 +31,7 @@ use Throwable;
  * successful test send now vouches for the path that matters, because it is
  * the same path.
  *
- * ## Three gates, and each one is silence rather than an error
+ * ## Four gates, and each one is silence rather than an error
  *
  * A notification is raised by something else finishing — approving a booking,
  * verifying a licence. None of those may fail because email is switched off,
@@ -41,8 +42,18 @@ use Throwable;
  * 2. **Mail not configured.** `mailConfigured()` is the single switch, the
  *    same one `PasswordResetService::enabled()` reads before offering the
  *    reset flow at all.
- * 3. **The recipient asked us to stop.** Required types ignore this, and
- *    `MailPreference` decides which those are at send time.
+ * 3. **The platform switched this type off.** `MailToggle`, set by a system
+ *    administrator in the settings screen, for everyone at once.
+ * 4. **This recipient asked us to stop.** `MailPreference`, set by the person
+ *    themselves, for themselves only.
+ *
+ * Three and four are deliberately two different switches rather than one with
+ * a scope column. A platform toggle stored per user would have to be written
+ * across every account and rewritten for every new one; a per-user preference
+ * read as a platform default would let one dispatcher's choice decide what a
+ * colleague receives. Required types ignore both, decided by
+ * `NotificationType::mailIsRequired()` at send time so neither a stale row nor
+ * an administrator can silence a password reset.
  *
  * ## The delivery row is written before the transport is touched
  *
@@ -64,13 +75,22 @@ class SettingsMailChannel
             return;
         }
 
-        $address = trim((string) $notifiable->email);
+        // Asked of the notification rather than read off the user, because
+        // one type deliberately does not go to the account's current address:
+        // `ACCOUNT_EMAIL_CHANGED` is sent a second time to the address the
+        // account used to have, so somebody who has taken an account cannot
+        // silence the warning by redirecting it to themselves.
+        $address = trim($notification->mailTo($notifiable));
 
         if ($address === '') {
             return;
         }
 
         if (! $this->settings->mailConfigured()) {
+            return;
+        }
+
+        if (! MailToggle::allows($notification->type())) {
             return;
         }
 
