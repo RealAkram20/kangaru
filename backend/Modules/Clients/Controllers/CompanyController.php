@@ -8,14 +8,18 @@ use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Modules\Clients\Models\Company;
-use Modules\Clients\Requests\StoreCompanyRequest;
+use Modules\Clients\Requests\OnboardClientRequest;
 use Modules\Clients\Requests\UpdateCompanyRequest;
 use Modules\Clients\Resources\CompanyResource;
+use Modules\Clients\Services\ClientOnboardingService;
 use Modules\Clients\Services\CompanyService;
 
 class CompanyController extends Controller
 {
-    public function __construct(private readonly CompanyService $companies) {}
+    public function __construct(
+        private readonly CompanyService $companies,
+        private readonly ClientOnboardingService $onboarding,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -34,13 +38,25 @@ class CompanyController extends Controller
         return ApiResponse::success(new CompanyResource($company));
     }
 
-    public function store(StoreCompanyRequest $request): JsonResponse
+    /**
+     * Onboarding a corporate client (ADR-0060, ADR-0062 §3).
+     *
+     * This used to attach a company profile to a `tenant_id` the caller
+     * already had, writing no contract and creating no login — a client served
+     * by nobody that nobody could sign into. It now creates the tenant, the
+     * company, the contract and the client's first administrator in one
+     * transaction, or none of them.
+     */
+    public function store(OnboardClientRequest $request): JsonResponse
     {
         $this->authorize('create', Company::class);
 
-        $company = $this->companies->create($request);
+        $company = $this->onboarding->onboard(
+            $request->safe()->except('operator_id'),
+            $request->contractingOperator(),
+        );
 
-        return ApiResponse::success(new CompanyResource($company), 'Company created.', 201);
+        return ApiResponse::success(new CompanyResource($company), 'Client onboarded.', 201);
     }
 
     public function update(UpdateCompanyRequest $request, Company $company): JsonResponse

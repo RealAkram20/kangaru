@@ -47,6 +47,33 @@ class OperatorClient extends Model
     public const ACTIVE = 'active';
 
     /**
+     * A fleet has asked to serve a client that is already on Kangaru, and
+     * nobody has answered yet (ADR-0060 §4).
+     *
+     * **A `requested` contract grants no read whatsoever.** Not the client's
+     * name, not their trips, not their staff, not their existence beyond the
+     * boolean `/clients/lookup` already gave. It is a request in a queue and
+     * it confers nothing until the client answers.
+     *
+     * That sentence is the whole isolation story of this feature: if
+     * `requested` grants any read at all, then any fleet holding any
+     * registration number can read any client, and the model is defeated by a
+     * form. `serving()` below is the scope that enforces it, and it exists so
+     * no caller has to remember which statuses count.
+     */
+    public const REQUESTED = 'requested';
+
+    /**
+     * The fleet has left, and the row stays (ADR-0060 §7).
+     *
+     * Not deleted, because the history is the client's: their trips and
+     * invoices with that fleet remain theirs to read, and the contract is what
+     * explains where they came from. The departing fleet keeps its completed
+     * work — it needs it for its own books — and loses every live read.
+     */
+    public const ENDED = 'ended';
+
+    /**
      * Set here as well as on the column, for the reason `UserFactory` records
      * about `status`: a database default applies **on insert**, so the
      * in-memory model a caller has just created carries null for it, and every
@@ -108,5 +135,27 @@ class OperatorClient extends Model
     public function scopeServing(Builder $query, int $tenantId): Builder
     {
         return $query->where('tenant_id', $tenantId)->where('status', self::ACTIVE);
+    }
+
+    /**
+     * The clients a fleet may serve **now** — the same question as `serving`,
+     * asked from the fleet's side rather than the client's.
+     *
+     * Both exist because both are asked, and neither is a filter a caller
+     * should write by hand. `where('status', 'active')` inline is one careless
+     * refactor away from `whereIn(['active', 'requested'])`, which would hand
+     * a fleet the client it has merely *asked* about — the single failure
+     * ADR-0060 §4 exists to prevent.
+     *
+     * `requested` and `ended` are both excluded, for different reasons: a
+     * request confers nothing until the client answers, and a fleet that has
+     * left keeps its finished work and loses every live read.
+     *
+     * @param  Builder<static>  $query
+     * @return Builder<static>
+     */
+    public function scopeServedBy(Builder $query, int $operatorId): Builder
+    {
+        return $query->where('operator_id', $operatorId)->where('status', self::ACTIVE);
     }
 }

@@ -6,6 +6,7 @@ use Modules\Clients\Controllers\ClientPlaceController;
 use Modules\Clients\Controllers\ClientRouteController;
 use Modules\Clients\Controllers\ClientRoutePreviewController;
 use Modules\Clients\Controllers\CompanyController;
+use Modules\Clients\Controllers\ContractController;
 
 // `except` + an explicit PATCH: `apiResource` registers update as
 // PUT|PATCH, but AGENTS.md's RESTful naming commits to PATCH alone, and
@@ -19,6 +20,13 @@ use Modules\Clients\Controllers\CompanyController;
 Route::get('clients/lookup', [ClientLookupController::class, 'show'])
     ->middleware('throttle:30,1')
     ->name('clients.lookup');
+
+// The contracts between a fleet and a client (ADR-0060). Three verbs, three
+// different parties: a fleet asks, the client answers, either side ends it.
+Route::get('contracts', [ContractController::class, 'index'])->name('contracts.index');
+Route::post('contracts', [ContractController::class, 'store'])->name('contracts.store');
+Route::post('contracts/{contract}/approval', [ContractController::class, 'approve'])->name('contracts.approve');
+Route::delete('contracts/{contract}', [ContractController::class, 'destroy'])->name('contracts.destroy');
 
 Route::apiResource('companies', CompanyController::class)->except(['update']);
 Route::patch('companies/{company}', [CompanyController::class, 'update'])->name('companies.update');

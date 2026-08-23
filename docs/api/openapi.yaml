@@ -5262,6 +5262,105 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/contracts:
+    get:
+      summary: The fleets serving this client, and the ones that have asked to.
+      description: >
+        ADR-0060. The client's own view, under "Our fleets" — and **the only
+        surface anywhere on which a `requested` contract is visible**. It is
+        visible to the party being asked and to nobody else: a fleet reading
+        this would learn which of its competitors had asked to serve the same
+        client. Client-level accounts only; a fleet and head office are both
+        refused.
+      responses:
+        '200':
+          description: Every contract naming this client, requests first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Contract' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: A fleet asks to serve a client already on Kangaru.
+      description: >
+        ADR-0060 §4, path B. **Grants no read.** The response carries the
+        request's own status and nothing whatever about the client — not their
+        name, not their city, not whether anybody else serves them. A fleet
+        that asks learns exactly what it knew before: that the number is taken.
+        Idempotent, so clicking twice does not queue two requests for the
+        client to answer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [registration_number]
+              additionalProperties: false
+              properties:
+                registration_number: { type: string, maxLength: 100 }
+      responses:
+        '201':
+          description: The request's own status, and nothing about the client.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [status]
+                    additionalProperties: false
+                    properties:
+                      status: { enum: [requested, active, ended] }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/contracts/{contract}/approval:
+    parameters:
+      - { name: contract, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: The client accepts a fleet that asked.
+      description: >
+        ADR-0060 §5. **The client alone** — not Kangaru, and not the incumbent
+        fleet. If any other party could reach this, a fleet could approve its
+        own request and ask-and-wait would collapse into a self-service read of
+        somebody else's client.
+      responses:
+        '200':
+          $ref: '#/components/responses/ContractResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/contracts/{contract}:
+    parameters:
+      - { name: contract, in: path, required: true, schema: { type: integer } }
+    delete:
+      summary: End a contract, from either side.
+      description: >
+        ADR-0060 §7. The row survives: the trips and invoices it explains are
+        still the client's history, and a year of work attributed to nobody is
+        worse than a row that says this ended. Head office is not a party and
+        is refused.
+      responses:
+        '200':
+          $ref: '#/components/responses/ContractResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/clients/lookup:
     get:
       summary: Is this company already on Kangaru?
@@ -7029,6 +7128,18 @@ components:
               reason: { type: string, maxLength: 1000 }
 
   responses:
+    ContractResponse:
+      description: One contract between a fleet and a client.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/Contract' }
     SupportRequestResponse:
       description: One driver report, with the office's answer if it has one.
       content:
@@ -7914,6 +8025,31 @@ components:
       type: string
       description: A named bundle of permissions a corporate client's administrator may switch on for one of their own people (App\Enums\ClientCapability).
       enum: [approves_bookings, sees_finance, manages_staff, manages_routes]
+
+    Contract:
+      type: object
+      required: [id, status, started_on, ended_on]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        status: { enum: [requested, active, ended] }
+        started_on: { type: ['string', 'null'], format: date }
+        ended_on: { type: ['string', 'null'], format: date }
+        fleet:
+          description: >
+            The fleet asking, or serving. Named because a client cannot answer
+            a request from somebody anonymous — that disclosure is
+            one-directional and is the point. Nothing else about the fleet is
+            served, and the contract's own credit limit and billing email are
+            withheld: they are the fleet's commercial terms, and a client
+            seeing one fleet's beside another's would be reading a number
+            neither offered to share.
+          type: object
+          required: [id, name]
+          additionalProperties: false
+          properties:
+            id: { type: integer }
+            name: { type: string }
 
     Role:
       type: object

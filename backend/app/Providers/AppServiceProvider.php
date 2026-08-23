@@ -8,6 +8,7 @@ use App\Models\AuditLog;
 use App\Models\Customer;
 use App\Models\ImpersonationSession;
 use App\Models\Operator;
+use App\Models\OperatorClient;
 use App\Models\User;
 use App\Support\Access\AccessContext;
 use App\Support\Access\ImpersonationContext;
@@ -50,6 +51,7 @@ use Modules\Clients\Models\Company;
 use Modules\Clients\Policies\ClientPlacePolicy;
 use Modules\Clients\Policies\ClientRoutePolicy;
 use Modules\Clients\Policies\CompanyPolicy;
+use Modules\Clients\Policies\OperatorClientPolicy;
 use Modules\Customers\Policies\CustomerPolicy;
 use Modules\Dispatch\Models\DispatchOffer;
 use Modules\Drivers\Listeners\CreditDriverForCompletedTrip;
@@ -269,6 +271,9 @@ class AppServiceProvider extends ServiceProvider
         // Explicit registration rather than relying on Laravel's naming-
         // convention policy guesser across the Modules\ namespace.
         Gate::policy(Company::class, CompanyPolicy::class);
+        // ADR-0060. Three parties, three answers — a fleet asks, the client
+        // approves, either ends. No permission can express that.
+        Gate::policy(OperatorClient::class, OperatorClientPolicy::class);
         // ADR-0045. Two policies rather than one: reading the register and
         // building a circuit are different acts, and only the second is
         // gated on `routes.manage`.
