@@ -25,20 +25,35 @@ function lookup(exists: boolean) {
 beforeEach(() => vi.clearAllMocks())
 
 /**
- * ADR-0060 §2. The number is asked first and everything waits on it, because a
- * form that asks last is one where somebody types the whole profile, hits save,
- * is told the company exists — and the easiest workaround at that moment is a
- * slightly different spelling of the name.
+ * ADR-0060 §2 asks for the number **first**, because a form that asks last is
+ * one where somebody types the whole profile, hits save, is told the company
+ * exists — and the easiest workaround at that moment is a slightly different
+ * spelling of the name.
+ *
+ * This used to assert that every other field was **disabled** until the lookup
+ * answered, and that is what shipped. In a browser it read as a broken form:
+ * the owner clicked "Served by", nothing happened, and reported the picker as
+ * faulty twice. `Select` cannot show a fieldset's disabled state — its shell
+ * paints from its own prop — but even fixed, a form whose fields go dead in a
+ * particular order is a form people fight.
+ *
+ * So the ordering is kept and the disabling is gone. What the ADR was actually
+ * protecting is asserted in the two tests below: the number is looked up live,
+ * the answer is shown before anybody types a profile, and onboarding is
+ * refused while it is taken.
  */
-it('keeps every other field disabled until the number has been answered for', async () => {
+it('asks for the number first and leaves the rest of the form usable', async () => {
   lookup(false)
   renderAs(<OnboardClientDialog onClose={vi.fn()} onDone={vi.fn()} />, FLEET)
 
-  expect(screen.getByLabelText(/legal name/i)).toBeDisabled()
+  // The first field, and reachable straight away — as is everything else.
+  const inputs = Array.from(document.querySelectorAll('input'))
+  expect(inputs[0]).toBe(screen.getByLabelText(/registration number/i))
+  expect(screen.getByLabelText(/legal name/i)).toBeEnabled()
 
   await userEvent.type(screen.getByLabelText(/registration number/i), 'UG-REG-88214')
 
-  await waitFor(() => expect(screen.getByLabelText(/legal name/i)).toBeEnabled())
+  await waitFor(() => expect(screen.getByText(/not on kangaru yet/i)).toBeInTheDocument())
 })
 
 /**
@@ -55,8 +70,6 @@ it('tells a fleet the number is taken, and nothing whatever about them', async (
   // Onboarding is off the table; asking is what is left.
   expect(screen.getByRole('button', { name: /request to serve them/i })).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: /^onboard client$/i })).not.toBeInTheDocument()
-  // The fields stay shut: there is nothing to fill in for a client that exists.
-  expect(screen.getByLabelText(/legal name/i)).toBeDisabled()
 })
 
 it('sends the request rather than creating anything', async () => {

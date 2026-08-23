@@ -4,12 +4,14 @@ namespace Modules\Clients\Models;
 
 use App\Concerns\Auditable;
 use App\Concerns\BelongsToTenant;
+use App\Models\OperatorClient;
 use App\Models\Tenant;
 use Database\Factories\CompanyFactory;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Vehicles\Models\Vehicle;
 
@@ -77,6 +79,25 @@ class Company extends Model
         return [
             'credit_limit_minor' => 'integer',
         ];
+    }
+
+    /**
+     * The fleets serving this client, past and present (ADR-0060).
+     *
+     * Keyed on `tenant_id` because a contract is between a fleet and the
+     * **tenant**, not the company profile — the same axis `Tenant::contracts()`
+     * uses, reached from the side head office actually holds. `CompanyService`
+     * lists companies; nothing there has a tenant to hang the relation off.
+     *
+     * Every status, including `ended`: the trips and invoices an ended
+     * contract explains are still the client's history (ADR-0060 §7). Callers
+     * wanting only the current ones filter on `OperatorClient::ACTIVE`.
+     *
+     * @return HasMany<OperatorClient, $this>
+     */
+    public function contracts(): HasMany
+    {
+        return $this->hasMany(OperatorClient::class, 'tenant_id', 'tenant_id');
     }
 
     /** @return BelongsTo<Tenant, $this> */

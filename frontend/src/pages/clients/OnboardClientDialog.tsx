@@ -162,7 +162,14 @@ export function OnboardClientDialog({ onClose, onDone }: Props) {
             <Button variant="secondary" onClick={onClose} disabled={saving}>
               Cancel
             </Button>
-            <Button type="submit" form="onboard-client" disabled={saving || lookup !== 'free'}>
+            {/*
+              * Refused while the number is TAKEN, rather than until it is
+              * known free. An empty or half-typed number leaves the button
+              * live so the browser's own `required` validation fires and puts
+              * the cursor in the field that is missing - a disabled button
+              * fires nothing and explains nothing.
+              */}
+            <Button type="submit" form="onboard-client" disabled={saving || lookup === 'taken'}>
               {saving ? 'Onboarding…' : 'Onboard client'}
             </Button>
           </>
@@ -209,10 +216,29 @@ export function OnboardClientDialog({ onClose, onDone }: Props) {
           <Alert tone="warning">This registration number already belongs to a client.</Alert>
         )}
 
-        <fieldset
-          disabled={lookup !== 'free'}
-          style={{ display: 'grid', gap: 'var(--space-4)', border: 0, padding: 0, margin: 0 }}
-        >
+        {/*
+          * Not a disabled fieldset any more, and the reason is worth keeping.
+          *
+          * ADR-0060 section 2 asked for the registration number to be answered
+          * first, and this form implemented that by switching everything else
+          * off until the lookup replied. In a browser that reads as broken:
+          * the owner clicked "Served by", nothing happened, and reported the
+          * picker as faulty - twice. A styled control cannot show a fieldset's
+          * disabled state (its shell paints from its own prop), but even with
+          * that fixed, a form whose fields go dead in a particular order is a
+          * form people fight.
+          *
+          * The ADR's actual protection is kept and moved to where it bites:
+          * the number is still asked first, still looked up live, and still
+          * says "taken" before anybody types a profile - and onboarding is
+          * refused while it is taken. What is gone is the pre-emptive
+          * disabling of six fields that were never the risk.
+          *
+          * The server is the real gate regardless: `OnboardClientRequest`
+          * carries `Rule::unique`, so a duplicate is a 422 on the field even
+          * if the lookup never ran.
+          */}
+        <fieldset style={{ display: 'grid', gap: 'var(--space-4)', border: 0, padding: 0, margin: 0 }}>
           {isHeadOffice && (
             <FormField
               label="Served by"

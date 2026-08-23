@@ -19274,3 +19274,115 @@ is green: Clients, Billing, Notifications, Drivers, Administration — 854 tests
 Three guards proved by mutation and restored (the billing address, the
 administrators-only recipient list, the double-click). Pint and Larastan clean
 on `Modules/Notifications`, `Modules/Billing` and my files in `Modules/Clients`.
+
+---
+
+## kangaru-1M, 24 August ~08:30 — the form was never broken, and a client can have many fleets
+
+Two owner reports, one of which reversed a decision in three files.
+
+### "Let the form work" — it worked; it was switched off
+
+Driven in a real browser first, because I had already guessed wrong once. The
+onboarding form completes end to end: the lookup fires, the fleet list fills
+with three options, the POST succeeds, the client lands in the directory, zero
+API errors. Nothing was broken.
+
+What the owner was hitting is `<fieldset disabled={lookup !== 'free'}>`. ADR-0060
+§2 asked for the number to be answered first and this form implemented it by
+switching six fields off until it was. Two reports of *"the Served by selector
+is not working"* later: the ADR's ordering is kept, the disabling is gone.
+
+The protection it was actually there for is still in place and is now where it
+bites — the number is looked up live, says **taken** before anybody types a
+profile, and onboarding is refused while it is. `OnboardClientRequest` carries
+`Rule::unique` regardless, so the server is the real gate.
+
+**The submit button is refused while the number is taken, not until it is known
+free.** An empty or half-typed number leaves it live so the browser's own
+`required` validation fires and puts the cursor in the missing field. A
+disabled button fires nothing and explains nothing — which is the same mistake
+one layer up.
+
+Keep: **"it doesn't work" and "it is disabled" are the same observation** when
+nothing renders the difference.
+
+### "We can assign multiple fleet companies" — which overturned ADR-0060 §5, on the owner's word
+
+I had built Served-by on the edit form as a **read-only fact** and flagged the
+question, because ADR-0060 §5 says the contract is *"theirs to grant, and
+nobody else's — not Kangaru's"* and `OperatorClientPolicy::end()` says head
+office *"is not a party to a contract between two other organisations."* Three
+places, all deliberate. Not mine to overturn quietly.
+
+The owner answered: head office sets the set, and can select and unselect.
+
+**What that changes and what it does not.** The ADR governed a *fleet asking*
+to serve somebody else's client, where consent must come from the client or the
+ask is not an ask. `ContractController` is untouched: a fleet still asks and
+the client still answers, and `CompanyPolicy::assignFleets` gates on the
+**level**, not a permission, so a custom role cannot be granted it. What the
+ADR did not cover is that head office already names the first fleet when it
+onboards — so it was already choosing a supplier, with no way to correct the
+choice. A client onboarded onto the wrong fleet stayed there for ever.
+
+**A set, not a diff.** `PUT /companies/{company}/fleets` takes the whole list
+and reconciles. `[1, 3]` is a statement anybody can check against the form;
+"add 3, remove 2" is a statement about history somebody has to replay.
+
+**Removing a fleet ends the contract and never deletes the row** (ADR-0060 §7).
+Deleting would strand every invoice raised under it against a relationship the
+database says never existed — quietly, because nothing joins back the other
+way. Which makes re-adding a **revival**: the pair is unique on the table, so a
+blind insert is a duplicate-key 500 the first time somebody changes their mind
+and changes it back. Both are tested.
+
+**Tick boxes, not a multi-select**, because unselecting has to be as visible as
+selecting: removing an entry from a `<select multiple>` is a ctrl-click on a
+highlighted row, the least discoverable interaction on the platform and here
+the one with the largest consequence.
+
+### The disclosure that came with it
+
+`served_by` on `CompanyResource` is **head office only**. Unconditional, it
+would tell a fleet which of its competitors also serves its client — ADR-0060
+§4's one named refusal — on the register it reads every day, with no endpoint
+added and nothing looking like a change of scope. The key is **absent, not
+empty**: `[]` reads as "nobody serves them", which is a different wrong answer.
+
+### An hour lost to a census message that named the wrong route
+
+`CrossTenantAnswers404Test` failed on `companies.fleets.update` with *"the
+owning client's Super Admin got 404"*. The route was fine — 422 in isolation.
+The loop runs the whole table against **one fixture in list order**, and
+`companies.destroy` had already soft-deleted the company. Anything listed after
+it 404s for a reason that has nothing to do with tenancy.
+
+The file already warned about this for `companies.update` and I read the
+warning after paying for it. Mine now sits beside it, with the same note.
+
+### Proved
+
+Three mutations, all restored: removal deletes instead of ends -> the row-
+survives test red; the level check dropped from `assignFleets` -> both refusals
+red; `served_by` disclosed to everybody -> the fleet-blindness test red.
+
+Backend 1767 passed. Frontend 681 across 69 files, `tsc -b --force` clean, Pint
+and Larastan clean on my files.
+
+Driven in Chrome, not only asserted: onboard is fully usable with nothing
+typed; the edit dialog's field order matches onboarding exactly; both fleets
+tick; `PUT /companies/1/fleets {"operator_ids":[1,2]}`; reopening shows both
+still ticked. No console errors and no failed requests.
+
+### Not mine, and left alone
+
+The two red password-floor tests (`PasswordResetTest`, `DriverApplicationTest`)
+are kangaru-aa's in-flight `PasswordPolicy::MINIMUM_LENGTH = 6`. kangaru-45
+attributed the `InvitationController` change to me; it is not mine either.
+
+`docs/api/openapi.yaml` holds three agents' edits at once. I staged **only my
+own hunks**, through the index rather than `git add`, so kangaru-aa's five
+`minLength: 6` entries stay uncommitted and theirs. Same discipline as staging
+by explicit path, one level down — and worth writing down, because `git add` on
+that file would have swept them silently.

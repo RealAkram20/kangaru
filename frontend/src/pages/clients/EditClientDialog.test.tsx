@@ -6,11 +6,18 @@ import { apiFailure, apiOk, makeUser, renderAs } from '../../test/harness'
 import { EditClientDialog } from './EditClientDialog'
 
 vi.mock('../../lib/apiClient', () => ({
-  apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn() },
+  apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn() },
 }))
 
 const { apiClient } = await import('../../lib/apiClient')
+const get = vi.mocked(apiClient.get)
 const patch = vi.mocked(apiClient.patch)
+const put = vi.mocked(apiClient.put)
+
+const FLEETS = [
+  { id: 1, name: 'Shanitah General Enterprises Ltd', slug: 'shanitah', status: 'active', is_active: true, created_at: null },
+  { id: 2, name: 'Najjemba Transporters', slug: 'najjemba', status: 'active', is_active: true, created_at: null },
+]
 
 const HEAD_OFFICE = makeUser({ role: 'super_admin', access_level: 'kangaru', tenant_id: null })
 
@@ -29,11 +36,15 @@ const CLIENT: Company = {
   country: 'UG',
   credit_limit_minor: 0,
   status: 'active',
+  served_by: [{ id: 1, name: 'Shanitah General Enterprises Ltd' }],
   created_at: '2026-08-01T00:00:00.000000Z',
   updated_at: '2026-08-01T00:00:00.000000Z',
 }
 
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  get.mockResolvedValue(apiOk(FLEETS))
+})
 
 function open() {
   const onDone = vi.fn()
@@ -143,4 +154,89 @@ it('offers head office no control over the credit limit or the status', async ()
   expect(screen.queryByLabelText(/credit limit/i)).toBeNull()
   expect(screen.queryByLabelText(/status/i)).toBeNull()
   expect(screen.queryByRole('button', { name: /suspend/i })).toBeNull()
+})
+
+/**
+ * The owner's request, as a test: the two dialogs are one form about one
+ * thing, so they present it in one order. A person fixing a typo should not
+ * have to re-learn the layout they used to create the record.
+ */
+it('lays the fields out in the same order the onboarding form uses', async () => {
+  open()
+  await screen.findByLabelText(/legal name/i)
+
+  // The field labels, not the tick boxes inside "Served by" - those are
+  // labels too, and they are content rather than structure.
+  const order = Array.from(document.querySelectorAll('label'))
+    .filter((label) => label.closest('[role="group"]') === null)
+    .map((label) => label.textContent?.replace(/\*|\(required\)/gi, '').trim())
+    .filter(Boolean)
+
+  expect(order).toEqual([
+    'Registration number',
+    'Served by',
+    'Legal name',
+    'Trading name',
+    'City',
+    'Country',
+    'Billing email',
+  ])
+})
+
+/**
+ * The owner's decision of 24 August: *"we can asign multer fleetcompanies, so
+ * we need the ability to select and unselect multiple providers"*.
+ *
+ * Tick boxes rather than a multi-select, because **unselecting has to be as
+ * visible as selecting** - removing an entry from a `<select multiple>` is a
+ * ctrl-click on a highlighted row, which is the least discoverable interaction
+ * on the platform and here the one with the largest consequence.
+ */
+it('opens with the fleets that serve the client already ticked', async () => {
+  open()
+
+  expect(await screen.findByRole('checkbox', { name: /Shanitah/ })).toBeChecked()
+  expect(screen.getByRole('checkbox', { name: /Najjemba/ })).not.toBeChecked()
+})
+
+it('sends the whole set when a fleet is added and another removed', async () => {
+  put.mockResolvedValue(apiOk(CLIENT))
+  open()
+
+  await userEvent.click(await screen.findByRole('checkbox', { name: /Najjemba/ }))
+  await userEvent.click(screen.getByRole('checkbox', { name: /Shanitah/ }))
+  await userEvent.click(screen.getByRole('button', { name: /save changes/i }))
+
+  // The set, not a diff. "Add 2, remove 1" is a statement about history that a
+  // reader has to replay; [2] is one anybody can check against the form.
+  await waitFor(() => expect(put).toHaveBeenCalledWith('/companies/7/fleets', { operator_ids: [2] }))
+  // The profile did not change, so nothing was PATCHed.
+  expect(patch).not.toHaveBeenCalled()
+})
+
+/**
+ * ADR-0062 section 3. A client with no fleet books and is never dispatched,
+ * and nothing anywhere errors - the failure mode `docs/master-plan.md` names
+ * as the one it most fears. The request refuses it too; this stops it before
+ * the round trip.
+ */
+it('refuses to save a client with nobody serving it', async () => {
+  open()
+
+  await userEvent.click(await screen.findByRole('checkbox', { name: /Shanitah/ }))
+
+  expect(screen.getByRole('button', { name: /save changes/i })).toBeDisabled()
+  expect(put).not.toHaveBeenCalled()
+})
+
+it('treats unticking a fleet and re-ticking it as no change at all', async () => {
+  open()
+
+  const shanitah = await screen.findByRole('checkbox', { name: /Shanitah/ })
+  await userEvent.click(shanitah)
+  await userEvent.click(shanitah)
+
+  // Compared as sets. An order-sensitive comparison would call this a change
+  // and send a request that alters nothing.
+  expect(screen.getByRole('button', { name: /save changes/i })).toBeDisabled()
 })

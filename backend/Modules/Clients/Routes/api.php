@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Clients\Controllers\ClientFleetController;
 use Modules\Clients\Controllers\ClientLookupController;
 use Modules\Clients\Controllers\ClientPlaceController;
 use Modules\Clients\Controllers\ClientRouteController;
@@ -30,6 +31,12 @@ Route::delete('contracts/{contract}', [ContractController::class, 'destroy'])->n
 
 Route::apiResource('companies', CompanyController::class)->except(['update']);
 Route::patch('companies/{company}', [CompanyController::class, 'update'])->name('companies.update');
+
+// Which fleets serve a client (owner's decision, 24 August). Its own route
+// rather than a field on the PATCH above: editing a client's city and ending
+// a commercial relationship are different acts, and only one of them can
+// leave a client with nobody to dispatch its trips.
+Route::put('companies/{company}/fleets', [ClientFleetController::class, 'update'])->name('companies.fleets.update');
 
 // ADR-0045: the client's own places and the circuits built from them.
 // Same `except(['update'])` + explicit PATCH shape as companies above, and

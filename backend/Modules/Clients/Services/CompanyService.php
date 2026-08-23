@@ -61,7 +61,13 @@ class CompanyService
         // allow-listed (§2), so what a wider query returns is still a
         // directory and not a client's operations.
         if ($user->access_level === AccessLevel::KANGARU) {
-            return Company::withoutGlobalScope(TenantScope::class)->get();
+            // `contracts.operator` eager-loaded because `CompanyResource`
+            // reports who serves each client to this level and no other, and
+            // the directory is one row per client on the platform — without
+            // this it is two queries per row (AGENTS.md — prevent N+1).
+            return Company::withoutGlobalScope(TenantScope::class)
+                ->with('contracts.operator')
+                ->get();
         }
 
         $query = Company::forActor($user);

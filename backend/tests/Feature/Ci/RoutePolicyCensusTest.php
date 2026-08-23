@@ -132,6 +132,10 @@ function routeCensus(): array
         'GET api/v1/companies/{company}' => 'A',
         'DELETE api/v1/companies/{company}' => 'A',
         'PATCH api/v1/companies/{company}' => 'A',
+        // Which fleets serve a client (owner's decision, 24 Aug). Head office
+        // alone - `CompanyPolicy::assignFleets` gates on the level, not on a
+        // permission, so a custom role cannot be granted it.
+        'PUT api/v1/companies/{company}/fleets' => 'A',
         // ADR-0045. All A: both policies are consulted by
         // `$this->authorize()` on every action, and reads are additionally
         // narrowed by `forActor()` for platform staff (A/C in effect, filed
@@ -480,7 +484,7 @@ it('has a census row for every API route and a route for every census row', func
     // sign into, because onboarding minted a random password and discarded it.
     // 232: the email menu's read and write, 2026-08-24. Authenticated,
     // so the public count below is unchanged.
-    expect(count($router))->toBe(232);
+    expect(count($router))->toBe(233);
 });
 
 it('uses only the four idioms, and files sixteen routes as public', function () {
@@ -540,7 +544,7 @@ it('authenticates every route that is not filed as public, and throttles every o
     // 195: the four fleet-company routes, all authenticated. Head office's
     // register is the least public surface on the platform.
     // 214: the email menu's two routes, both authenticated.
-    expect($guarded)->toBe(214);
+    expect($guarded)->toBe(215);
 });
 
 it('binds the actor\'s tenant on every staff route, so TenantScope has something to scope by', function () {
@@ -588,5 +592,5 @@ it('binds the actor\'s tenant on every staff route, so TenantScope has something
     // state, and exempting them would be a second way to be unscoped.
     // 200: the email menu's two routes. Head office only, and they bind
     // the actor's tenant like the fleet register does.
-    expect($staff)->toBe(200);
+    expect($staff)->toBe(201);
 });
