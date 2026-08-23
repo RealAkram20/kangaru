@@ -71,6 +71,45 @@ export const OUTBOX_TICK_INTERVAL_MS = 15_000;
 export const OFFER_POLL_INTERVAL_MS = 5_000;
 
 /**
+ * How often the same list refreshes while the app is **not** on screen.
+ *
+ * ## Why this is not simply zero, which is what it used to be
+ *
+ * `useOffers` set `refetchIntervalInBackground: false`, and `App.tsx` wires
+ * React Query's `focusManager` to `AppState` — so the offer poll stopped the
+ * instant the app left the screen. Combined with a push that never arrived,
+ * that made the order request page the only surface a job ever reached, and
+ * only while the driver was staring at the phone. It is the reported symptom
+ * exactly: *"the popup order notification is only showing in the app"*.
+ *
+ * Push is what should carry an offer to a backgrounded app, and after ADR-0046
+ * it does. But ADR-0025 §3 makes push best-effort and means it: a dead zone
+ * across the moment it was sent, a token that went stale, an OEM that dropped
+ * it. This is the path that survives all three, and it is worth having for the
+ * same reason the foreground poll was worth having before push existed.
+ *
+ * ## Why it is slower than the foreground one, and by this much
+ *
+ * Five seconds in the foreground is chosen against the driver's *attention* —
+ * a job seen five seconds late is five seconds of their window gone. In the
+ * background the constraint is different and it is battery: the app is only
+ * alive at all because the location foreground service is holding it, and that
+ * service wakes the radio once a minute. A five-second poll would wake it
+ * twelve times as often for a whole shift, and **a driver whose battery died
+ * is off duty for the rest of the shift whatever the database thinks** —
+ * `OnlineService` makes that argument about GPS accuracy and it applies here
+ * unchanged.
+ *
+ * Fifteen seconds against a forty-five-second window (`offer_ttl_seconds`)
+ * leaves two thirds of the clock in the worst case, which is enough to answer.
+ * It is a backstop for a lost push, not the mechanism — if it ever becomes the
+ * mechanism, the thing to fix is the push.
+ *
+ * Bounded by duty either way: this only runs while a shift is on.
+ */
+export const OFFER_POLL_BACKGROUND_INTERVAL_MS = 15_000;
+
+/**
  * How long to wait for a duty or presence write before giving up.
  *
  * Shorter than the app's default, because these are statements about *now*.

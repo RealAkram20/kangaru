@@ -284,3 +284,51 @@ it('shows an empty field rather than a placeholder that reads as a reading', asy
   // The guidance survives, on the field rather than floating under the header.
   expect(getByText('From the dashboard, in whole kilometres.')).toBeTruthy();
 });
+
+/**
+ * The driver's own words about the run (owner decision, 2026-08-22). Optional,
+ * closing-side only, riding the completion transition into `trip_events.notes`
+ * — the column a cancellation's reason already uses.
+ */
+it('sends what the driver wrote with the completion, trimmed', async () => {
+  const { getByLabelText, getByText } = await renderOdometer('trip_completed', 'trip_started');
+
+  await fireEvent.changeText(getByLabelText('Kilometres'), '104332');
+  await fireEvent.changeText(
+    getByLabelText('Anything to report?'),
+    '  Ntinda ATM held us 40 minutes — site had no power.  ',
+  );
+  void fireEvent.press(getByText('Complete trip'));
+
+  await waitFor(() => expect(replace).toHaveBeenCalled());
+
+  expect(mockQueueTransition).toHaveBeenCalledWith(
+    expect.objectContaining({
+      to: 'trip_completed',
+      notes: 'Ntinda ATM held us 40 minutes — site had no power.',
+    }),
+  );
+});
+
+it('sends no notes key at all when nothing was written', async () => {
+  const { getByLabelText, getByText } = await renderOdometer('trip_completed', 'trip_started');
+
+  await fireEvent.changeText(getByLabelText('Kilometres'), '104332');
+  void fireEvent.press(getByText('Complete trip'));
+
+  await waitFor(() => expect(replace).toHaveBeenCalled());
+
+  const payload = (mockQueueTransition.mock.calls[0] as unknown[])[0] as Record<string, unknown>;
+
+  // Absent, not empty: `notes: ''` would put a blank line in the trip's own
+  // event record.
+  expect('notes' in payload).toBe(false);
+});
+
+it('does not ask for narration at the kerb', async () => {
+  // The opening moment is a passenger boarding; the end of the run is when
+  // there is something to say.
+  const { queryByLabelText } = await renderOdometer('trip_started', 'driver_arrived');
+
+  expect(queryByLabelText('Anything to report?')).toBeNull();
+});

@@ -1,6 +1,8 @@
 import * as IntentLauncher from 'expo-intent-launcher';
 import { Platform } from 'react-native';
 
+import { runsInExpoGo } from './expoNotifications';
+
 /**
  * The permission that decides whether a job takes over a locked phone
  * (ADR-0049 §2).
@@ -74,9 +76,20 @@ export function fullScreenIntentIsGrantable(): boolean {
  * settings page: the driver has lost the takeover and kept the notification,
  * which is a working app.
  */
-export async function openFullScreenIntentSettings(): Promise<void> {
+export async function openFullScreenIntentSettings(): Promise<boolean> {
   if (!fullScreenIntentIsGrantable()) {
-    return;
+    return false;
+  }
+
+  /*
+   * **Impossible in Expo Go, and the caller must be able to say so.** The
+   * intent names `package:ug.co.kangaruride.driver`, which is not installed
+   * when the runtime is Expo Go — that package is `host.exp.exponent`. Android
+   * finds nothing to open and the screen never appears, which was reported as
+   * a row that "did nothing" when tapped.
+   */
+  if (runsInExpoGo()) {
+    return false;
   }
 
   try {
@@ -89,9 +102,13 @@ export async function openFullScreenIntentSettings(): Promise<void> {
       // not installed.
       { data: `package:${applicationId()}` },
     );
+
+    return true;
   } catch {
-    // Covered above: an OEM without the screen, or an intent this Android
-    // build does not know. Nothing to tell the driver that they could act on.
+    // An OEM without the screen, or an intent this Android build does not
+    // know. Reported rather than swallowed, so the row that was tapped can
+    // explain itself.
+    return false;
   }
 }
 

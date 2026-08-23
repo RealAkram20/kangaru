@@ -17,7 +17,23 @@ import { colors, spacing, typography } from './theme';
  * red.
  */
 export function SyncBanner() {
-  const { online, pending, parked, bufferedPings, stalled } = useSync();
+  const { online, pending, parked, bufferedPings, stalled, storageFailed } = useSync();
+
+  // The one failure that outranks everything else on this strip: the phone's
+  // own storage would not open, so nothing a driver does can be saved for
+  // later. Every trip button on the app is about to refuse — this sentence is
+  // the difference between that reading as "broken app" and being an
+  // instruction.
+  if (storageFailed) {
+    return (
+      <View accessibilityRole="alert" style={[styles.banner, { backgroundColor: colors.danger }]}>
+        <Text style={[styles.text, { color: colors.onPrimary }]}>
+          This phone&apos;s offline storage could not be opened. Trip updates cannot be saved —
+          restart the app, and report it if this keeps happening.
+        </Text>
+      </View>
+    );
+  }
 
   if (online && pending === 0 && parked.length === 0 && bufferedPings === 0) {
     return null;

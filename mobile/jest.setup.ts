@@ -50,6 +50,10 @@ jest.mock('expo-location', () => ({
   // branch that renders an em dash, which is the one a handset in a basement
   // takes.
   getForegroundPermissionsAsync: jest.fn(async () => ({ status: 'denied', granted: false })),
+  // Read by the Permissions screen. Denied by default, matching the
+  // foreground reader above, so a suite that does not care about permissions
+  // gets the same shape from both.
+  getBackgroundPermissionsAsync: jest.fn(async () => ({ status: 'denied', granted: false })),
   getCurrentPositionAsync: jest.fn(async () => ({
     coords: { latitude: 0.3476, longitude: 32.5825, accuracy: 12 },
     timestamp: 0,
@@ -60,6 +64,18 @@ jest.mock('expo-location', () => ({
   hasStartedLocationUpdatesAsync: jest.fn(async () => false),
   Accuracy: { High: 4, Balanced: 3 },
   ActivityType: { AutomotiveNavigation: 3 },
+}));
+
+/*
+ * Battery Saver, read by the Permissions screen.
+ *
+ * **Off by default, and that is the honest default rather than the convenient
+ * one**: a mock reporting saver-on would put a warning on every suite that
+ * happens to render the screen, and the state that needs proving is the
+ * warning appearing — not it being there already.
+ */
+jest.mock('expo-battery', () => ({
+  isLowPowerModeEnabledAsync: jest.fn(async () => false),
 }));
 
 jest.mock('expo-task-manager', () => ({
@@ -106,6 +122,7 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 
 jest.mock('expo-image-picker', () => ({
   requestCameraPermissionsAsync: jest.fn(async () => ({ granted: true })),
+  getCameraPermissionsAsync: jest.fn(async () => ({ granted: true })),
   launchCameraAsync: jest.fn(async () => ({ canceled: true })),
   MediaTypeOptions: { Images: 'Images' },
 }));
@@ -290,7 +307,31 @@ jest.mock('react-native-reanimated', () => {
 // change every time `app.json` does.
 jest.mock('expo-constants', () => ({
   __esModule: true,
-  default: { expoConfig: { version: '1.0.0' } },
+  default: {
+    expoConfig: { version: '1.0.0' },
+    /*
+     * **`bare`, meaning a development build, and it was missing entirely.**
+     *
+     * `expoNotifications.ts` reads this and compares it against the
+     * `ExecutionEnvironment` enum below — which the mock did not export, so
+     * `ExecutionEnvironment.StoreClient` was a property read on `undefined`
+     * and would throw in any suite that reached it. Nothing did, only because
+     * `canShowCallScreen()` short-circuits on `Platform.OS !== 'android'`
+     * first. That is a guard held up by an unrelated one.
+     *
+     * `bare` rather than `storeClient` so the default path here is a real
+     * build: `expo-device`'s `isDevice: false` is then what makes
+     * `pushUnavailableReason()` answer `simulator`, which is both true of this
+     * runner and the same answer `canReceivePush()` gave before.
+     */
+    executionEnvironment: 'bare',
+  },
+  // The real enum, transcribed — same rule the notify-kit mock below follows.
+  ExecutionEnvironment: {
+    Bare: 'bare',
+    Standalone: 'standalone',
+    StoreClient: 'storeClient',
+  },
 }));
 
 /*

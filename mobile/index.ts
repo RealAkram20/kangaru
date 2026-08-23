@@ -29,7 +29,9 @@ import './src/duty/PresenceTask';
  */
 import { registerOfferBackgroundHandler } from './src/push/offerBackgroundHandler';
 import { enableFreeze } from 'react-native-screens';
+import * as Sentry from '@sentry/react-native';
 import { startObservability } from './src/observability';
+import { startTracing } from './src/tracing';
 
 import App from './App';
 
@@ -51,9 +53,35 @@ enableFreeze(true);
  */
 startObservability();
 
+/*
+ * ADR-0054 §4, and it has to be this line rather than an `integrations:` entry
+ * in `Sentry.init` — see `src/tracing.ts`. Immediately after the init above,
+ * because an integration added after the first screen change has missed it.
+ * A no-op without a DSN, like everything else on this path.
+ */
+startTracing();
+
 registerOfferBackgroundHandler();
 
-// registerRootComponent calls AppRegistry.registerComponent('main', () => App);
-// It also ensures that whether you load the app in Expo Go or in a native build,
-// the environment is set up appropriately
-registerRootComponent(App);
+/*
+ * **`Sentry.wrap`, and it is not decoration.**
+ *
+ * Without it the app-start measurement stops when the JavaScript bundle
+ * finishes evaluating; with it, it stops when the first component mounts —
+ * which on this app is the difference between timing the bundle and timing
+ * the four things `App.tsx` starts in parallel on mount (the persisted query
+ * cache, the keystore session read, the outbox's SQLite open, the fonts).
+ * Cold start is a driver's first impression of the app and those four are
+ * what it is made of.
+ *
+ * It also mounts the SDK's touch boundary, which leaves a breadcrumb naming
+ * the *component* a driver last tapped. Component names only — no text, no
+ * accessibility label, no passenger detail. That matters here because
+ * ADR-0054 §2 already sends the request body, and this deliberately adds
+ * nothing to what a report can see.
+ *
+ * registerRootComponent calls AppRegistry.registerComponent('main', () => App);
+ * It also ensures that whether you load the app in Expo Go or in a native build,
+ * the environment is set up appropriately
+ */
+registerRootComponent(Sentry.wrap(App));

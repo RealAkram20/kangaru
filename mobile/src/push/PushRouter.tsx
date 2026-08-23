@@ -137,6 +137,28 @@ export function PushRouter() {
 
         if (match !== undefined && !cancelled) {
           await showCallNotification(match);
+
+          /*
+           * **One job, one notification.**
+           *
+           * Two arrive for every offer: the push Android posted from
+           * `offers.v2`, and the call notification just raised above. Since
+           * the ring moved onto the call channel they would now *both* ring,
+           * and a driver would be looking at two rows for one job — one that
+           * can be answered and one that cannot.
+           *
+           * So the plain push is withdrawn the moment the answerable one is
+           * up. Cancelling stops its sound with it, and the overlap is the
+           * few milliseconds between Android posting it and this listener
+           * running — the same event, so there is no waiting in between.
+           *
+           * **The push is still the floor and is still worth sending.** This
+           * only runs when the app is alive to hear the notification. On a
+           * handset whose foreground service an OEM battery manager has
+           * killed, nothing here executes, nothing is dismissed, and the push
+           * rings on its own exactly as it did before (ADR-0046 §6).
+           */
+          void dismissOffer(offerId);
         }
       } catch {
         // A dead zone between the push arriving and this request. The driver
@@ -204,10 +226,21 @@ export function PushRouter() {
 
       // (3) Launched by a tap on a notification, from a killed process. Asked
       // once, at start-up, because no listener can have been present for it.
-      const launch = await Notifications.getLastNotificationResponseAsync();
+      //
+      // Guarded on its own, because of what stands *after* it: a rejection
+      // here — a native module mid-initialisation, an OEM quirk — used to
+      // escape `subscribe()` before the two listeners below were registered,
+      // and push was then dead for the whole session with nothing logged and
+      // nothing on screen. A missed launch tap costs one navigation; a
+      // rejection must not also cost every offer that follows.
+      try {
+        const launch = await Notifications.getLastNotificationResponseAsync();
 
-      if (launch !== null) {
-        act(intentFrom(launch.notification.request.content.data));
+        if (launch !== null) {
+          act(intentFrom(launch.notification.request.content.data));
+        }
+      } catch {
+        // The launch intent is gone; the listeners below still matter more.
       }
 
       // (2) Tapped while the app was alive.
@@ -250,7 +283,10 @@ export function PushRouter() {
       };
     };
 
-    const pending = subscribe();
+    // The `catch` is the backstop for anything the guard above did not cover:
+    // an unhandled rejection out of an effect is invisible in a release build,
+    // and this particular one would take the session's push with it.
+    const pending = subscribe().catch(() => undefined);
 
     return () => {
       cancelled = true;

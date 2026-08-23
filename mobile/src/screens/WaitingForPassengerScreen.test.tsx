@@ -120,6 +120,7 @@ function trip(overrides: Partial<Trip> = {}): Trip {
     distance_km: null,
     gps_distance_km: null,
     distance_variance_flagged: null,
+    unplanned_stop_count: 0,
     started_at: null,
     completed_at: null,
     duration_minutes: null,

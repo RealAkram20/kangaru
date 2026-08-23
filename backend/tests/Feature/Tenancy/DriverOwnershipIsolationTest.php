@@ -388,5 +388,7 @@ it('names no route in the driver allow-list that the router does not have', func
     expect($phantom)->toBe([]);
     // 54: ADR-0045 added `trips.stops.store` and `trips.stop-candidates.index`.
     // 56: ADR-0057 §5 added the applicant's own two.
-    expect(count(ClientScope::routesFor(ClientScope::DRIVER)))->toBe(56);
+    // 57: the §10 geocoder follow-up, `trips.place-suggestions.index`
+    // (owner decision, 2026-08-22).
+    expect(count(ClientScope::routesFor(ClientScope::DRIVER)))->toBe(57);
 });

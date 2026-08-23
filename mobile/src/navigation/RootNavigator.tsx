@@ -11,6 +11,7 @@ import { OfferPresenter } from '../duty/OfferPresenter';
 import { navigationRef } from './navigationRef';
 import { registerNavigationForTracing } from '../tracing';
 import { PresenceController } from '../duty/PresenceController';
+import { FirstRunPermissions } from '../permissions/FirstRunPermissions';
 import { PushRegistrar } from '../push/PushRegistrar';
 import { PushRouter } from '../push/PushRouter';
 import { GpsController } from '../location/GpsController';
@@ -36,6 +37,7 @@ import { KycVerificationScreen } from '../screens/KycVerificationScreen';
 import { SignUpScreen } from '../screens/SignUpScreen';
 import { BankDetailsScreen } from '../screens/BankDetailsScreen';
 import { CloseAccountScreen } from '../screens/CloseAccountScreen';
+import { PermissionsScreen } from '../screens/PermissionsScreen';
 import { SyncQueueScreen } from '../screens/SyncQueueScreen';
 import { TimeOffScreen } from '../screens/TimeOffScreen';
 import { WelcomeScreen } from '../screens/WelcomeScreen';
@@ -389,6 +391,15 @@ function ProfileNavigator() {
         component={SyncQueueScreen}
         options={{ headerShown: false }}
       />
+      {/*
+        ADR-0046 / ADR-0049. Draws its own `ScreenHeader`, like every screen on
+        this stack.
+      */}
+      <ProfileStack.Screen
+        name="Permissions"
+        component={PermissionsScreen}
+        options={{ headerShown: false }}
+      />
       {/* ADR-0042. Draws its own `ScreenHeader`, like every screen on this stack. */}
       <ProfileStack.Screen
         name="BankDetails"
@@ -503,6 +514,13 @@ export function RootNavigator() {
           <GpsController />
           <PresenceController />
           <PushRegistrar />
+          {/*
+            ADR-0046. Asks for notifications, both location permissions and the
+            camera in one sequence, once. Renders nothing, and sits beside
+            `PushRegistrar` because both need a signed-in driver and neither
+            belongs to a screen.
+          */}
+          <FirstRunPermissions />
           <PushRouter />
           <MainNavigator />
 

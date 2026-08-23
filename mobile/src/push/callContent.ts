@@ -169,14 +169,28 @@ export function buildCallContent(offer: DispatchOffer): CallContent | null {
  * see `estimatedFareLabel`). A template would render "Pickup: null · null km
  * away", and a driver who reads that once stops believing the rest.
  *
+ * ## The numbers come first, and the owner asked for that by name
+ *
+ * Android truncates this line from the end. The old order put the fare last,
+ * so exactly the fact a driver decides on was the one a long pickup label
+ * pushed off the screen. The owner's reference design (worklog, 2026-08-22)
+ * leads with the fare and the run length; the prose — where it starts — is
+ * what can afford to lose its tail to the ellipsis.
+ *
  * Falls back to a sentence that is true when nothing is known, because the
  * job is still real and still worth waking a phone for.
  */
 function bodyFor(offer: DispatchOffer): string {
   const parts: string[] = [];
 
-  if (offer.pickup.label !== null && offer.pickup.label.trim() !== '') {
-    parts.push(`Pickup: ${offer.pickup.label.trim()}`);
+  if (offer.estimated_fare !== null) {
+    parts.push(formatMoney(offer.estimated_fare.total_minor, offer.estimated_fare.currency));
+  }
+
+  const trip = formatKilometres(offer.trip_distance_km);
+
+  if (trip !== null) {
+    parts.push(`${trip} trip`);
   }
 
   const away = formatKilometres(offer.pickup_distance_km);
@@ -187,8 +201,8 @@ function bodyFor(offer: DispatchOffer): string {
     parts.push(`${away} away`);
   }
 
-  if (offer.estimated_fare !== null) {
-    parts.push(formatMoney(offer.estimated_fare.total_minor, offer.estimated_fare.currency));
+  if (offer.pickup.label !== null && offer.pickup.label.trim() !== '') {
+    parts.push(`Pickup: ${offer.pickup.label.trim()}`);
   }
 
   return parts.length === 0 ? 'A passenger is waiting.' : parts.join(' · ');

@@ -60,12 +60,17 @@ describe('callNotificationId', () => {
 });
 
 describe('buildCallContent', () => {
-  it('leads with the service, then the pickup, the distance and the fare', () => {
+  /**
+   * The numbers first, the prose last — the owner's reference design
+   * (worklog, 2026-08-22). Android truncates the line from the end, so this
+   * order is what keeps the fare on screen when the pickup label is long.
+   */
+  it('leads with the fare and the run, then where it starts', () => {
     const content = buildCallContent(offer());
 
     expect(content).not.toBeNull();
     expect(content?.title).toBe('New ride request');
-    expect(content?.body).toBe('Pickup: Kampala Road · 2.4 km away · UGX 12,500');
+    expect(content?.body).toBe('UGX 12,500 · 6.0 km trip · 2.4 km away · Pickup: Kampala Road');
     expect(content?.id).toBe('offer-call-41');
     expect(content?.offerId).toBe(41);
   });
@@ -108,7 +113,7 @@ describe('buildCallContent', () => {
    */
   it('drops the facts it does not have rather than rendering them empty', () => {
     const content = buildCallContent(
-      offer({ pickup_distance_km: null, estimated_fare: null }),
+      offer({ pickup_distance_km: null, estimated_fare: null, trip_distance_km: null }),
     );
 
     expect(content?.body).toBe('Pickup: Kampala Road');
@@ -119,7 +124,7 @@ describe('buildCallContent', () => {
       offer({ pickup: { label: '   ', latitude: null, longitude: null } }),
     );
 
-    expect(content?.body).toBe('2.4 km away · UGX 12,500');
+    expect(content?.body).toBe('UGX 12,500 · 6.0 km trip · 2.4 km away');
   });
 
   it('still says something when nothing is known', () => {
@@ -127,6 +132,7 @@ describe('buildCallContent', () => {
       offer({
         pickup: { label: null, latitude: null, longitude: null },
         pickup_distance_km: null,
+        trip_distance_km: null,
         estimated_fare: null,
       }),
     );

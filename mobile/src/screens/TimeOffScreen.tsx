@@ -64,14 +64,24 @@ export function TimeOffScreen() {
 
     setBusy(true);
 
-    await queueAvailabilityRequest({
-      kind,
-      starts_at: new Date(startsAt).toISOString(),
-      ends_at: endsAt === '' ? null : new Date(endsAt).toISOString(),
-      reason: reason.trim(),
-    });
+    // `finally` for the busy flag, because the caller discards the promise: a
+    // `queueAvailabilityRequest` that throws (the outbox refusing to open)
+    // used to leave the submit button spinning for good. The form is cleared
+    // only on success — a driver whose request did not queue keeps what they
+    // typed instead of retyping the dates and the reason.
+    try {
+      await queueAvailabilityRequest({
+        kind,
+        starts_at: new Date(startsAt).toISOString(),
+        ends_at: endsAt === '' ? null : new Date(endsAt).toISOString(),
+        reason: reason.trim(),
+      });
+    } catch {
+      return;
+    } finally {
+      setBusy(false);
+    }
 
-    setBusy(false);
     setSubmitted(true);
     setStartsAt('');
     setEndsAt('');

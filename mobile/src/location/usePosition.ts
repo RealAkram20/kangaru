@@ -4,6 +4,47 @@ import * as Location from 'expo-location';
 import type { Coordinates } from '../api/types';
 
 /**
+ * A fix: where the driver is, and — when the handset said so — which way they
+ * are pointing.
+ *
+ * A superset of `Coordinates`, deliberately, so that every caller that only
+ * ever wanted two numbers keeps compiling and keeps behaving. The heading is
+ * read by exactly one of them today: the map, which draws the driver as their
+ * own vehicle and has to point it somewhere.
+ */
+export type Fix = Coordinates & {
+  /**
+   * Degrees clockwise from true north, or **null when the handset did not
+   * report one** — which is the ordinary answer at a standstill, indoors, and
+   * on a device with no compass.
+   *
+   * Null rather than a plausible number, and `FleetMap` records the reason
+   * from the console side: *"a rotated vehicle reads as a direction of
+   * travel, and inventing one would be a claim"*. An un-rotated sprite points
+   * north, which reads as an icon rather than as a course.
+   */
+  heading: number | null;
+};
+
+/**
+ * Expo's bearing, or null.
+ *
+ * The platforms disagree about how to say "I do not know". iOS sends a
+ * negative number, Android's `Location.getBearing()` answers `0.0` when
+ * `hasBearing()` is false, and either can arrive undefined. Only the negative
+ * case needs filtering: a genuine due-north course and a zero meaning nothing
+ * both render as `rotate(0deg)`, so they are the same picture and there is
+ * nothing to tell apart.
+ */
+function headingOf(reading: Location.LocationObject): number | null {
+  const heading = reading.coords.heading;
+
+  return heading === null || heading === undefined || Number.isNaN(heading) || heading < 0
+    ? null
+    : heading;
+}
+
+/**
  * Where the driver is, for a screen that needs to draw a distance.
  *
  * Extracted from `PickupScreen`, which had it privately, when a second screen
@@ -57,8 +98,8 @@ export function usePosition({
    * metres.
    */
   distanceInterval = 100,
-}: { watch?: boolean; distanceInterval?: number } = {}): Coordinates | null {
-  const [position, setPosition] = useState<Coordinates | null>(null);
+}: { watch?: boolean; distanceInterval?: number } = {}): Fix | null {
+  const [position, setPosition] = useState<Fix | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,7 +107,11 @@ export function usePosition({
 
     const record = (reading: Location.LocationObject) => {
       if (!cancelled) {
-        setPosition({ lat: reading.coords.latitude, lng: reading.coords.longitude });
+        setPosition({
+          lat: reading.coords.latitude,
+          lng: reading.coords.longitude,
+          heading: headingOf(reading),
+        });
       }
     };
 

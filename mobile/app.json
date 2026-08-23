@@ -3,7 +3,7 @@
     "name": "KangaruRide Driver",
     "slug": "kangaru",
     "owner": "realakram20s-team",
-    "version": "1.0.0",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "kangaruride-driver",
@@ -40,6 +40,7 @@
         "FOREGROUND_SERVICE_LOCATION",
         "POST_NOTIFICATIONS",
         "WAKE_LOCK",
+        "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
         "VIBRATE",
         "CAMERA",
         "USE_FULL_SCREEN_INTENT"

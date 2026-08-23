@@ -99,6 +99,7 @@ final class ClientScope
                 // policy-bounded to the trip's own driver on a live trip.
                 'trips.stops.store',
                 'trips.stop-candidates.index',
+                'trips.place-suggestions.index',
 
                 // GPS, which is the whole point of the device being there.
                 'trips.locations.store',

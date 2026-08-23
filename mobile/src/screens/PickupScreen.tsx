@@ -120,6 +120,7 @@ export function PickupScreen({ route, navigation }: Props) {
   const { data: approach, isLoading: routing } = useTripRoute(tripId, here, 'pickup');
 
   const [busy, setBusy] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
 
   /*
     The moment between accepting and driving — the owner's *"connecting to the
@@ -220,11 +221,26 @@ export function PickupScreen({ route, navigation }: Props) {
     }
 
     setBusy(true);
-    // Queued, not posted. A pickup happens in a stairwell, a basement car
-    // park, a street with no signal — `SyncProvider` holds the transition and
-    // sends it when there is a network (ADR-0023), and `SyncBanner` says so.
-    await queueTransition({ tripId: trip.id, from: trip.status, to: action.to });
-    setBusy(false);
+    setSaveFailed(false);
+
+    // The `try/finally` is load-bearing, not defensive dressing. The caller
+    // is `void run(action)`, so a `queueTransition` that throws — the outbox's
+    // SQLite refused to open, the enqueue itself failed — used to escape
+    // between `setBusy(true)` and `setBusy(false)`: every button on this
+    // screen stayed spinning for the rest of the session and the error was
+    // swallowed whole. `WaitingForPassengerScreen` had this right first.
+    try {
+      // Queued, not posted. A pickup happens in a stairwell, a basement car
+      // park, a street with no signal — `SyncProvider` holds the transition and
+      // sends it when there is a network (ADR-0023), and `SyncBanner` says so.
+      await queueTransition({ tripId: trip.id, from: trip.status, to: action.to });
+    } catch {
+      setSaveFailed(true);
+
+      return;
+    } finally {
+      setBusy(false);
+    }
 
     // "I've arrived" is the seam between the drive and the wait —
     // `isPickupPhase` says so in as many words — so the press that ends the
@@ -305,6 +321,10 @@ export function PickupScreen({ route, navigation }: Props) {
           so this cannot show a move the driver did not make, and a refused item
           drops out of it — returning the buttons rather than stranding them.
         */}
+        {saveFailed && (
+          <Notice tone="danger" message="Could not save that. Try again in a moment." />
+        )}
+
         {asked !== null ? (
           <Notice
             tone="info"

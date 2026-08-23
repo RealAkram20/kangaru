@@ -134,7 +134,6 @@ export function WaitingForPassengerScreen({ route, navigation }: Props) {
   const { data: fareRoute, isLoading: routing } = useTripRoute(tripId, null);
 
   const arrivedAt = arrivedAtFrom(events);
-  const now = useTicker();
 
   const odometerEnabled = useOdometerEnabled();
   const [reading, setReading] = useState('');
@@ -234,10 +233,6 @@ export function WaitingForPassengerScreen({ route, navigation }: Props) {
   // — TypeScript cannot prove a property is unchanged by the time a callback
   // runs, and it is right not to.
   const pickupPoint = located(trip.pickup) ? toCoordinates(trip.pickup) : null;
-
-  const waited = arrivedAt === null ? null : elapsedSeconds(arrivedAt, now);
-  const figure = waited === null ? NO_VALUE : formatElapsed(waited);
-  const fraction = waited === null ? 0 : fillFraction(waited, trip.pickup_wait_target_seconds);
 
   /**
    * The one move the driver has from here: the passenger gets in, the trip
@@ -339,24 +334,10 @@ export function WaitingForPassengerScreen({ route, navigation }: Props) {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/*
-          One announcement for the whole waiting state, composed rather than
-          left to linearise. The ring hides its own subtree from the screen
-          reader so this is not interrupted by a bare number every second.
-        */}
-          <View style={styles.clock} accessible accessibilityLabel={waitingAnnouncement(waited)}>
-            <WaitingRing seconds={waited} fraction={fraction} label={figure} />
-
-            <Text style={styles.blurb}>
-              {waited === null
-                ? 'Waiting time shows once your arrival reaches the office.'
-                : // **The "if" is not padding.** Nothing notifies the passenger
-                  // (see the module docblock); their ride screen shows this only
-                  // while it is open. Dropping the qualifier turns the one honest
-                  // line on this screen into a promise the platform cannot keep.
-                  "Shown on the passenger's screen, if it is open."}
-            </Text>
-          </View>
+          <WaitingClock
+            arrivedAt={arrivedAt}
+            targetSeconds={trip.pickup_wait_target_seconds}
+          />
 
           <MapPanel trip={trip} routePolyline={fareRoute?.polyline ?? null} />
 
@@ -500,7 +481,57 @@ function MapPanel({ trip, routePolyline }: { trip: Trip; routePolyline: string |
 }
 
 /**
- * A clock that ticks once a second for as long as the screen is mounted.
+ * The waiting clock, ring and caption — and the only part of this screen that
+ * ticks.
+ *
+ * A leaf on purpose. The ticker used to live in the screen component, which
+ * re-rendered the *entire* tree once a second for as long as a driver sat at
+ * the kerb: the map WebView with its 13 KB document prop, both detail rows,
+ * the odometer form, every button. Sixty full-screen renders a minute on the
+ * JS thread is where "the app is frozen" comes from — the thread a tap has to
+ * be answered on was busy re-describing a screen that had not changed. Held
+ * in here, the tick re-renders one ring and one line of caption.
+ */
+function WaitingClock({
+  arrivedAt,
+  targetSeconds,
+}: {
+  arrivedAt: number | null;
+  targetSeconds: number;
+}) {
+  const now = useTicker();
+
+  const waited = arrivedAt === null ? null : elapsedSeconds(arrivedAt, now);
+  const figure = waited === null ? NO_VALUE : formatElapsed(waited);
+  const fraction = waited === null ? 0 : fillFraction(waited, targetSeconds);
+
+  return (
+    <View style={styles.clock} accessible accessibilityLabel={waitingAnnouncement(waited)}>
+      {/*
+        One announcement for the whole waiting state, composed rather than
+        left to linearise. The ring hides its own subtree from the screen
+        reader so this is not interrupted by a bare number every second.
+      */}
+      <WaitingRing seconds={waited} fraction={fraction} label={figure} />
+
+      <Text style={styles.blurb}>
+        {waited === null
+          ? 'Waiting time shows once your arrival reaches the office.'
+          : // **The "if" is not padding.** Nothing notifies the passenger
+            // (see the module docblock); their ride screen shows this only
+            // while it is open. Dropping the qualifier turns the one honest
+            // line on this screen into a promise the platform cannot keep.
+            "Shown on the passenger's screen, if it is open."}
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * A clock that ticks once a second for as long as its component is mounted.
+ *
+ * **Lives in `WaitingClock`, never in the screen** — see that component for
+ * what hoisting it cost.
  *
  * `setInterval` rather than an animation frame loop: the figure changes once
  * per second and the ring steps with it, so sixty callbacks a second would

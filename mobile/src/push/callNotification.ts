@@ -143,6 +143,23 @@ export async function showCallNotification(offer: DispatchOffer): Promise<void> 
         // on a cradle actually needs.
         lightUpScreen: true,
 
+        // **Rings for the whole window, not once.** A notification tone plays
+        // for a second and stops; a call rings until it is answered or gives
+        // up, and that difference is most of why a driver notices one and not
+        // the other. The loop is bounded by `timeoutAfter` below — it cannot
+        // outlive the offer — and by every path that cancels this
+        // notification, since cancelling stops the sound with it.
+        //
+        // This is why the channel had to move to `offers.call.v2`: the sound
+        // is the channel's, and `v1` was created without one.
+        loopSound: true,
+
+        // The kangaroo, in the slot a calling app puts the caller's face. It
+        // is what makes this read as *KangaruRide is calling you* at a glance
+        // rather than as one more row in the shade. The same asset the
+        // launcher uses, so nothing extra is bundled for it.
+        largeIcon: require('../../assets/icon.png'),
+
         // Not swipeable and not dismissed by a tap. An offer is answered or it
         // expires; a driver who brushed it off the lock screen and then wanted
         // it back would have no way to get it, and `timeoutAfter` below is

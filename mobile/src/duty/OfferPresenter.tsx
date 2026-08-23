@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BackHandler, StyleSheet, View } from 'react-native';
+import { AppState, BackHandler, StyleSheet, View } from 'react-native';
+import type { AppStateStatus } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import type { DispatchOffer } from '../api/types';
 import { isApiError } from '../api/errors';
 import { openPickup } from '../navigation/navigationRef';
-import { hideCallNotification } from '../push/callNotification';
+import { hideCallNotification, showCallNotification } from '../push/callNotification';
 import { openedFromCallScreen } from '../push/callLaunch';
 import { OfferScreen } from '../screens/OfferScreen';
 import { OfferBanner } from './OfferBanner';
 import { offerRingtone } from './offerRingtone';
+import { presentOffer } from './offerSurface';
 import { useAcceptOffer, useDeclineOffer, useDuty, useOffers } from './queries';
 
 /**
@@ -140,66 +143,146 @@ export function OfferPresenter() {
   }, [offer]);
 
   /**
-   * Takes the call notification down once the driver is looking at the job.
+   * **Hands the offer between the two surfaces as the app comes and goes.**
    *
-   * A notification for a screen somebody is standing on is clutter, and worse
-   * than clutter: its Accept button is a second, slower way to answer a job
-   * they are already answering, and pressing both is the double-answer
-   * `claimAnswer` exists to catch. Removing it leaves exactly one way in.
+   * The rule is `offerSurface()`'s: whichever surface the driver can see is the
+   * one carrying the job, and the other is taken down. A notification for a
+   * screen somebody is standing on is clutter, and worse than clutter — its
+   * Accept button is a second, slower way to answer a job they are already
+   * answering, and pressing both is the double answer `claimAnswer` exists to
+   * catch.
+   *
+   * ## What this used to be, and the bug it had
+   *
+   * One unconditional `hideCallNotification(showingOfferId)`, guarded on
+   * nothing but the component being mounted. **`OfferPresenter` stays mounted
+   * while the app is backgrounded**, so the guard was answering "is there an
+   * offer" when it meant "is the driver looking at it".
+   *
+   * The consequence sat on the exact path this feature exists for.
+   * `PushRouter.act()` fires `invalidateQueries(['offers'])` and `raiseCall()`
+   * together; the refetch re-renders this component, the effect ran, and the
+   * call notification `raiseCall` had just put on a locked phone was cancelled
+   * by a page nobody could see. Racy, so it would have worked on some handsets
+   * and not others, and it produces no error either way.
+   *
+   * ## And the half that was missing entirely
+   *
+   * Nothing ever raised the notification *from here*. The offer poll is the
+   * only path that survives a lost or late push — but an offer it discovered
+   * while the app was in a pocket was painted onto an overlay behind a dark
+   * screen and shown to nobody. So the transition out of `active` now raises
+   * the call, which is what makes the poll a genuine second path rather than a
+   * foreground-only one.
+   *
+   * `showCallNotification` is idempotent on the offer and carries
+   * `onlyAlertOnce`, so re-raising one that is already up replaces it in place
+   * and does not buzz the handset again.
    *
    * Keyed on the id alone — `expires_in_seconds` changes on every poll, and
    * listing it would re-run this every five seconds (the same trap
-   * `useCountdown` and the ring effect below both document).
+   * `useCountdown` and the ring effect below both document). `offerRef` is what
+   * lets the effect reach the current offer object without taking that
+   * dependency.
    */
+  const offerRef = useRef<DispatchOffer | null>(null);
+
   useEffect(() => {
-    if (showingOfferId === null) {
-      return;
-    }
+    offerRef.current = offer;
+  }, [offer]);
 
-    void hideCallNotification(showingOfferId);
-  }, [showingOfferId]);
-
-  // **The ring, tied to the offer on screen and to nothing else.**
-  //
-  // Started here rather than inside `OfferScreen` because this component is
-  // what knows an offer has arrived and what knows it has gone — the screen is
-  // remounted on `key={offer.id}` and would restart the sound on every second
-  // job while never being told about the first one ending.
-  //
-  // The cleanup uses `stopFor`, not `stop`: React runs the teardown for the
-  // old offer *after* the new one has mounted, so an unconditional stop here
-  // would silence the job now on screen. `ringtone.ts` documents that at
-  // length, and it is covered there.
-  // **Keyed on the id alone, and the window is read through a ref.**
-  //
-  // `expires_in_seconds` is a *different number on every poll* — it counts
-  // down. Listing it as a dependency re-runs this effect every five seconds,
-  // and because the cleanup and the restart both name the same offer, the
-  // ring is stopped and started from the top over and over: audible as a
-  // sound that never gets past its first chime. Exactly the failure
-  // `useCountdown` documents for the countdown itself, one layer along.
-  // Written in an effect rather than during render, for the reason
-  // `PresenceController` gives: a ref assigned in the render body is invisible
-  // to the React Compiler, which then cannot memoise this component at all.
-  // Declared *before* the ring effect so it has the current window on the
-  // mount that starts a sound — effects run in declaration order.
+  /**
+   * The offer's remaining window, read through a ref.
+   *
+   * `expires_in_seconds` is a **different number on every five-second poll** —
+   * it counts down. Taking it as a dependency of the effect below would tear
+   * the effect down and rebuild it every five seconds, and because the
+   * teardown and the restart name the same offer the ring would be stopped and
+   * started from the top over and over: audible as a sound that never gets
+   * past its first chime. `useCountdown` documents exactly this trap for the
+   * countdown itself.
+   *
+   * **Declared before the effect that reads it, and that ordering is
+   * load-bearing.** Effects run in declaration order, so an update written
+   * below would not have run yet on the mount that starts the first ring — and
+   * `offerRingtone.start` would arm a zero-second deadline and fall silent
+   * immediately.
+   *
+   * Written in an effect rather than in the render body for the reason
+   * `PresenceController` gives: a ref assigned during render is invisible to
+   * the React Compiler, which then cannot memoise this component at all.
+   */
   const windowRef = useRef(0);
 
   useEffect(() => {
     windowRef.current = offer?.expires_in_seconds ?? 0;
   }, [offer?.expires_in_seconds]);
 
-  const offerId = offer?.id ?? null;
-
   useEffect(() => {
-    if (offerId === null) {
+    if (showingOfferId === null) {
       return;
     }
 
-    offerRingtone.start(offerId, windowRef.current);
+    // The judgement lives in `presentOffer`, where it can be read and tested
+    // without a query client, an auth provider and a duty poll standing behind
+    // it. What is left here is the subscription, which is plumbing.
+    //
+    // `offerRef` rather than `offer` so the current object is re-read at the
+    // moment the app state changes — a poll may have replaced it since this
+    // effect was set up, and `presentOffer` documents why raising a stale one
+    // onto a lock screen is the failure worth guarding.
+    const present = (state: AppStateStatus) =>
+      presentOffer(state, showingOfferId, offerRef.current, {
+        show: (job) => void showCallNotification(job),
+        hide: (id) => void hideCallNotification(id),
+        // The window comes from the ref for the reason the ring effect below
+        // documents at length: `expires_in_seconds` is a different number on
+        // every five-second poll, so reading it as a dependency would restart
+        // the sound from its first chime over and over.
+        ring: (id) => offerRingtone.start(id, windowRef.current),
+        silence: (id) => offerRingtone.stopFor(id),
+      });
 
-    return () => offerRingtone.stopFor(offerId);
-  }, [offerId]);
+    present(AppState.currentState);
+
+    const subscription = AppState.addEventListener('change', present);
+
+    return () => {
+      subscription.remove();
+
+      // Both surfaces go quiet together. `stopFor`, not `stop`, because React
+      // runs this teardown *after* the next offer's effect has already
+      // started its ring — an unconditional stop here would silence the job
+      // now on screen. `offerRingtone` documents that ordering trap in full.
+      offerRingtone.stopFor(showingOfferId);
+
+      // The job this effect was raised for is answered, expired or replaced,
+      // so its notification goes with it. **Keyed by the captured id**, which
+      // is what makes this safe against React running the old teardown after
+      // the new effect has already raised the next offer — the same ordering
+      // trap `offerRingtone.stopFor` exists for, one surface along.
+      //
+      // `timeoutAfter` on the notification is still the guarantee; this is the
+      // courtesy that makes a dead job leave the lock screen at the moment it
+      // dies rather than at the end of its window.
+      void hideCallNotification(showingOfferId);
+    };
+  }, [showingOfferId]);
+
+  /*
+   * **The ring used to live here, in an effect keyed on the offer alone.**
+   *
+   * That was right when the app's own player was the only thing that could
+   * make a noise. It is wrong now: `offers.call.v2` carries `offer_ring.wav`
+   * and the call notification loops it, so a backgrounded app running this
+   * effect as well would play two copies of the same ringtone —
+   * unsynchronised, and neither stopping when the other did.
+   *
+   * The ring is now one of `presentOffer`'s four ports, decided by the same
+   * rule as the rest: **in the app, the app's player; outside it, the
+   * channel's.** Whichever surface the driver can see is the one making the
+   * sound, and there is exactly one.
+   */
 
   // Android's back gesture dismisses rather than leaving the app. Registered
   // only while an offer is up, so it does not shadow the navigator's own
@@ -287,6 +370,19 @@ export function OfferPresenter() {
 
   const declineThis = () => void answer(decline.mutateAsync({ offerId: offer.id }));
 
+  // **Pending is scoped to *this* offer, not to the mutation.** The mutation
+  // objects outlive the `key={offer.id}` remount below, so an answer still in
+  // flight for the previous job — a slow round trip, a tap made as the signal
+  // dropped — would otherwise arrive at the next offer as `isPending`,
+  // rendering it with a spinning Accept and a disabled Decline the driver
+  // never pressed. `variables` says which offer an answer was actually for.
+  const pending =
+    accept.isPending && accept.variables === offer.id
+      ? 'accept'
+      : decline.isPending && decline.variables?.offerId === offer.id
+        ? 'decline'
+        : null;
+
   if (!expanded) {
     return (
       <View style={[styles.bannerSlot, { top: insets.top + 8 }]} pointerEvents="box-none">
@@ -295,7 +391,7 @@ export function OfferPresenter() {
           // it — the same reason `OfferScreen` is keyed below.
           key={offer.id}
           offer={offer}
-          pending={accept.isPending ? 'accept' : decline.isPending ? 'decline' : null}
+          pending={pending}
           onAccept={acceptThis}
           onDecline={declineThis}
           onOpen={() => setExpanded(true)}
@@ -315,7 +411,7 @@ export function OfferPresenter() {
       key={offer.id}
       offer={offer}
       // Which answer, not merely that one is in flight — see `OfferScreen`.
-      pending={accept.isPending ? 'accept' : decline.isPending ? 'decline' : null}
+      pending={pending}
       error={error}
       // Straight to the pickup once the office says yes. The server has
       // already put the trip on the road (`DispatchOfferService::accept`

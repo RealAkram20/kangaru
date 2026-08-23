@@ -127,6 +127,7 @@ reading the request that makes the transfer.
 | **Google** (Identity Services) | Email and profile name | Only if the customer chooses Google sign-in | `OrderPage.tsx:1454` loads `accounts.google.com/gsi/client` |
 | **Mapbox** | The **address text typed into the search box** | Only when `VITE_MAPBOX_TOKEN` is configured | `places.ts` → `api.mapbox.com/geocoding/v5` |
 | **komoot (Photon)** | The address text typed into the search box | The keyless fallback when Mapbox is not configured — **so this is the live path unless a token is set** | `places.ts` → `photon.komoot.io/api` |
+| **komoot (Photon)**, via this platform's own server | The drop-off text a **driver** types into the add-a-drop-off search — the query alone; no driver identity, trip id or position accompanies it | Owner decision of 2026-08-22 (ADR-0045 §10 follow-up). Server-side: the handset never contacts komoot and no key ships in the app | `PlaceSuggestionService` → `photon.komoot.io/api`, cached 60 s |
 | **CARTO** | Basemap tile requests | Map fallback path | `MapPanel.tsx:44` → `basemaps.cartocdn.com` |
 | **Sentry** (Functional Software, Inc.) | **Whatever was in the failing request** — passenger name and phone, pickup and drop-off, the signed-in user's id and email, the URL, and the stack trace | Only when an error or a sampled transaction occurs, from the API, the web app and the driver app | ADR-0054; `SENTRY_SEND_DEFAULT_PII=true` in `backend/.env.production.example`; `config/sentry.php` |
 

@@ -13,9 +13,9 @@ import { useSync } from '../offline/SyncProvider';
 import { validateOdometerReading } from '../trips/odometer';
 import { OdometerCapture } from '../trips/OdometerCapture';
 import { useTrip } from '../trips/queries';
-import { Button, Notice, Screen, ScreenHeader } from '../ui/components';
+import { Button, Field, Notice, Screen, ScreenHeader } from '../ui/components';
 import { SyncBanner } from '../ui/SyncBanner';
-import { colors, spacing, typography } from '../ui/theme';
+import { colors, FIELD_HEIGHT, spacing, typography } from '../ui/theme';
 import type { TripsStackParams } from '../navigation/types';
 
 type Props = NativeStackScreenProps<TripsStackParams, 'Odometer'>;
@@ -88,6 +88,7 @@ export function OdometerScreen({ route, navigation }: Props) {
 
   const [reading, setReading] = useState('');
   const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
 
@@ -118,6 +119,13 @@ export function OdometerScreen({ route, navigation }: Props) {
         await queueTransition({ tripId, from, to: 'passenger_onboard' });
       }
 
+      // The driver's own words about the run (owner decision, 2026-08-22).
+      // Rides the completion transition into `trip_events.notes` — the same
+      // column a cancellation's reason already uses — so the office reads it
+      // on the trip record with no new plumbing. Empty means absent: the
+      // request layer treats notes as optional prose, not a required excuse.
+      const narration = notes.trim();
+
       await queueTransition({
         tripId,
         // The opening reading always departs from `passenger_onboard` — either
@@ -129,6 +137,7 @@ export function OdometerScreen({ route, navigation }: Props) {
         ...(isOpening
           ? { odometerStart: Number.parseInt(reading, 10) }
           : { odometerEnd: Number.parseInt(reading, 10) }),
+        ...(!isOpening && narration !== '' ? { notes: narration } : {}),
       });
     } catch {
       // The queue could not accept it — the database is not open yet, or the
@@ -213,6 +222,25 @@ export function OdometerScreen({ route, navigation }: Props) {
             inputRef={inputRef}
           />
 
+          {/*
+            Closing only. The opening moment is a passenger at the kerb; the
+            end of the run is when there is something to say — which stop
+            overran, what the site asked for, why the route changed. Optional
+            by design: most runs have nothing to report and the button must
+            not wait on prose.
+          */}
+          {!isOpening && (
+            <Field
+              label="Anything to report?"
+              value={notes}
+              onChangeText={setNotes}
+              multiline
+              maxLength={1000}
+              textAlignVertical="top"
+              style={styles.notes}
+            />
+          )}
+
           <Button
             // **Not "Start trip", which is the button that opened this screen.**
             // Two buttons a press apart carrying the same three words read as
@@ -258,5 +286,11 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textMuted,
     lineHeight: 20,
+  },
+  // Two field-heights: room for a sentence or three without the field
+  // pretending to be a document. `Field` merges caller styles, so only the
+  // height changes; the border, padding and type are the shared ones.
+  notes: {
+    minHeight: FIELD_HEIGHT * 2,
   },
 });

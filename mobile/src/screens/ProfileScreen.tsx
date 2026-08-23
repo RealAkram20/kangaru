@@ -43,10 +43,6 @@ import {
   useUpdateDriverProfile,
   useUploadDriverPhoto,
 } from '../profile/queries';
-import {
-  fullScreenIntentIsGrantable,
-  openFullScreenIntentSettings,
-} from '../push/fullScreenIntent';
 import { useDriverStats } from '../trips/queries';
 import { usePayoutAccount } from '../wallet/payoutQueries';
 import { ratingNote, ratingValue } from '../trips/statsPresentation';
@@ -160,6 +156,7 @@ export function ProfileScreen({ navigation }: Props) {
   const [editing, setEditing] = useState<EditableField | null>(null);
   const [draft, setDraft] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
 
   // Seeded from the in-memory value rather than read from storage here.
   // `App.tsx` loads it once at start-up, precisely so the ring path can be
@@ -309,7 +306,20 @@ export function ProfileScreen({ navigation }: Props) {
   const confirmSignOut = () => {
     Alert.alert('Log out?', 'Your queued work stays on this phone until you sign back in.', [
       { text: 'Stay signed in', style: 'cancel' },
-      { text: 'Log out', style: 'destructive', onPress: () => void signOut() },
+      {
+        text: 'Log out',
+        style: 'destructive',
+        // The pill goes busy the moment the dialog closes. Signing out is
+        // two bounded server calls plus native teardown — seconds against
+        // the production API — and a tap that visibly did nothing for that
+        // long reads as ignored, which is how it gets tapped twice. The
+        // `finally` is for the day `signOut` returns without unmounting
+        // this screen; today the auth switch does the unmounting.
+        onPress: () => {
+          setSigningOut(true);
+          void signOut().finally(() => setSigningOut(false));
+        },
+      },
     ]);
   };
 
@@ -572,18 +582,29 @@ export function ProfileScreen({ navigation }: Props) {
             the sound off is exactly the one who should see that the screen can
             still light up.
           */}
-          {fullScreenIntentIsGrantable() ? (
-            <>
-              <View style={styles.separator} />
-              <MenuRow
-                icon={<SmartphoneIcon color={colors.primary} size={22} strokeWidth={2} />}
-                label="Show jobs over the lock screen"
-                subtitle="Android needs your permission for a job to open like an incoming call. Opens Android settings."
-                announcement="Show jobs over the lock screen. Opens Android settings, where you can allow a job offer to open like an incoming call."
-                onPress={() => void openFullScreenIntentSettings()}
-              />
-            </>
-          ) : null}
+          {/*
+            **One row for all six, replacing the single lock-screen row that
+            used to sit here.**
+
+            That row was one of six permissions the offer path depends on, and
+            being the only one with a door made it look like the only one that
+            could be wrong — a driver getting no work had no way to discover
+            that notifications, "all the time" location or an OEM battery
+            manager were the actual cause. `PermissionsScreen` names all six,
+            says which are stopping jobs, and opens the right page for each.
+
+            Shown on every platform, unlike its predecessor: the screen itself
+            hides the two Android-only rows, and notifications, location and
+            camera matter everywhere.
+          */}
+          <View style={styles.separator} />
+          <MenuRow
+            icon={<SmartphoneIcon color={colors.primary} size={22} strokeWidth={2} />}
+            label="Permissions"
+            subtitle="What this phone must allow so jobs can reach you."
+            announcement="Permissions. What this phone must allow so jobs can reach you."
+            onPress={() => navigation.navigate('Permissions')}
+          />
           <View style={styles.separator} />
           <MenuRow
             icon={<LockIcon color={colors.primary} size={22} strokeWidth={2} />}
@@ -651,7 +672,7 @@ export function ProfileScreen({ navigation }: Props) {
           />
         </Card>
 
-        <LogOutButton onPress={confirmSignOut} />
+        <LogOutButton onPress={confirmSignOut} busy={signingOut} />
 
         <Text style={styles.version}>KangaruRide {appVersion()}</Text>
       </ScrollView>
@@ -668,7 +689,7 @@ export function ProfileScreen({ navigation }: Props) {
  * The dialog stays: a one-tap log out at the foot of a scroll is exactly where
  * a flicked thumb lands.
  */
-function LogOutButton({ onPress }: { onPress: () => void }) {
+function LogOutButton({ onPress, busy = false }: { onPress: () => void; busy?: boolean }) {
   const press = usePressScale();
 
   return (
@@ -676,13 +697,19 @@ function LogOutButton({ onPress }: { onPress: () => void }) {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Log out"
+        accessibilityState={{ busy, disabled: busy }}
+        disabled={busy}
         onPress={onPress}
         onPressIn={press.onPressIn}
         onPressOut={press.onPressOut}
         style={styles.logout}
       >
-        <LogOutIcon size={20} color={colors.danger} strokeWidth={2.2} />
-        <Text style={styles.logoutLabel}>Log out</Text>
+        {busy ? (
+          <ActivityIndicator size="small" color={colors.danger} />
+        ) : (
+          <LogOutIcon size={20} color={colors.danger} strokeWidth={2.2} />
+        )}
+        <Text style={styles.logoutLabel}>{busy ? 'Logging out…' : 'Log out'}</Text>
       </Pressable>
     </Animated.View>
   );

@@ -29,6 +29,22 @@ export type Vehicle = {
   registration_number: string;
   make: string | null;
   model: string | null;
+  /**
+   * The fleet's own category vocabulary (ADR-0050) — `sedan`, `boda`,
+   * `tricycle`, and whatever else the office has added since this build.
+   *
+   * A raw string rather than an enum, and deliberately: the rows are data in
+   * a table an operator edits, so a value this bundle has never heard of is
+   * the expected case rather than a fault. `spriteFor` in
+   * `trips/vehicleSprites.ts` is where an unrecognised one lands, and it
+   * lands on a generic car.
+   *
+   * **Already on the wire since before this field existed here.**
+   * `VehicleResource` emits it, `TripController` eager-loads `vehicle`, and
+   * `openapi.yaml` requires it — the driver app simply never declared it, so
+   * it was arriving and being thrown away.
+   */
+  category: string | null;
 };
 
 export type Driver = {
@@ -70,6 +86,62 @@ export type TripPlace = {
   label: string;
   latitude: number | null;
   longitude: number | null;
+};
+
+/**
+ * One stop on a run — evidence, never a plan (ADR-0045 §1).
+ *
+ * The label is frozen at creation: renaming the client's saved place later
+ * does not rewrite what this journey visited. Coordinates follow
+ * `TripPlace`'s both-or-neither rule, and a label-only stop (typed free
+ * text) renders as prose, never as a pin at 0°,0°.
+ */
+export type TripStop = {
+  id: number;
+  /** 1-based position on the run. Appended, never reordered (§7). */
+  sequence: number;
+  label: string;
+  latitude: number | null;
+  longitude: number | null;
+  /** Who put it on the run. Only `added_by_driver` counts as unplanned. */
+  source: 'planned' | 'added_by_driver' | 'added_by_dispatch' | 'added_by_client';
+  /**
+   * Moved only by the transitions §2 reuses: the pause that carries a
+   * `stop_id` marks `arrived`, the resume marks `done`. `skipped` is §6's
+   * case and no surface writes it yet.
+   */
+  status: 'pending' | 'arrived' | 'done' | 'skipped';
+  arrived_at: string | null;
+  departed_at: string | null;
+  skip_reason: string | null;
+  client_place_id: number | null;
+};
+
+/**
+ * A saved place offered by the add-a-drop-off search (ADR-0045 §10) — a row
+ * of the client's own register, released to the trip's driver while the run
+ * is live and to nobody else.
+ */
+export type TripStopCandidate = {
+  id: number;
+  name: string;
+  address: string | null;
+  latitude: number;
+  longitude: number;
+};
+
+/**
+ * A public-geocoder answer for a stop the register does not know (the §10
+ * follow-up the owner decided 2026-08-22). Server-proxied — the handset never
+ * talks to the geocoder — and always located: the server drops any feature
+ * without a usable pair, because the pin is the whole value of a suggestion
+ * over the free-text row.
+ */
+export type PlaceSuggestion = {
+  name: string;
+  detail: string | null;
+  latitude: number;
+  longitude: number;
 };
 
 /**
@@ -257,6 +329,19 @@ export type Trip = {
   /** The same two places, with coordinates where there are any. */
   pickup: TripPlace;
   dropoff: TripPlace;
+  /**
+   * The run's itinerary in order (ADR-0045) — an empty array on every
+   * point-to-point trip. **Optional because it rides only on `GET
+   * /trips/{id}`**, the same bound `payment` and `earnings` carry: list
+   * endpoints do not load it, and `undefined` means "not asked", not "no
+   * stops".
+   */
+  stops?: TripStop[];
+  /**
+   * How many stops were added mid-run rather than planned (§4). A note,
+   * never a charge — the client sees the run deviated; nobody bills for it.
+   */
+  unplanned_stop_count: number;
   /**
    * `ride`, `delivery` or `self_drive` — what kind of job this was.
    *

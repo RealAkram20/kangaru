@@ -129,6 +129,10 @@ function tenantBoundRoutes(): array
         // add answers 409 TRIP_NOT_ACTIVE and the candidates search answers
         // 403 (driver-only, §10) — both of which prove the row resolved.
         'trips.stop-candidates.index' => ['GET', '/api/v1/trips/{trip}/stop-candidates'],
+        // The §10 geocoder follow-up (2026-08-22): the same driver-only
+        // policy, so the owning pass answers 403/409 like the two rows
+        // around it — which is what proves the row resolved.
+        'trips.place-suggestions.index' => ['GET', '/api/v1/trips/{trip}/place-suggestions'],
         'trips.stops.store' => ['POST', '/api/v1/trips/{trip}/stops'],
         'trips.transitions.store' => ['POST', '/api/v1/trips/{trip}/transitions'],
     ];
@@ -285,7 +289,9 @@ it('binds a tenant-owned model on exactly the routes this file lists', function 
     $visibleToReflection = array_values(array_diff($expected, ['notifications.read']));
 
     expect(tenantBoundRoutesByReflection())->toBe($visibleToReflection);
-    expect(count($expected))->toBe(40);
+    // 41: `trips.place-suggestions.index`, the §10 geocoder follow-up
+    // (2026-08-22).
+    expect(count($expected))->toBe(41);
 });
 
 it('answers 404, never 403, when another client names a tenant-owned record', function () {
@@ -319,7 +325,8 @@ it('answers 404, never 403, when another client names a tenant-owned record', fu
         $checked++;
     }
 
-    expect($checked)->toBe(40);
+    // 41: place-suggestions (2026-08-22).
+    expect($checked)->toBe(41);
 });
 
 it('answers something other than 404 to the owning client on every one of those routes, so the 404s above are not vacuous', function () {
@@ -356,5 +363,6 @@ it('answers something other than 404 to the owning client on every one of those 
         $checked++;
     }
 
-    expect($checked)->toBe(40);
+    // 41: place-suggestions (2026-08-22).
+    expect($checked)->toBe(41);
 });

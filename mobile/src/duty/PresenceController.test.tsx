@@ -18,9 +18,13 @@ import { PresenceController } from './PresenceController';
 
 const mockSendPresence = jest.fn();
 const mockFetchDuty = jest.fn();
+const mockSetDuty = jest.fn();
 jest.mock('../api/endpoints', () => ({
   sendPresence: (...args: unknown[]) => mockSendPresence(...args),
   fetchDuty: (...args: unknown[]) => mockFetchDuty(...args),
+  // Reached only by the launch reconciler below — a shift the app is not
+  // actually running is ended through this.
+  setDuty: (...args: unknown[]) => mockSetDuty(...args),
 }));
 // One client object for the whole file. `api` is a dependency of the
 // heartbeat effect, and a fresh `{}` per render would restart the timer on
@@ -28,6 +32,23 @@ jest.mock('../api/endpoints', () => ({
 // would never send.
 const API = {};
 jest.mock('../auth/AuthProvider', () => ({ useAuth: () => ({ api: API }) }));
+
+/*
+ * **The foreground service is running for every test in this file**, and
+ * saying so is load-bearing.
+ *
+ * `PresenceController` now ends a shift on launch when the server says on duty
+ * and `hasStartedLocationUpdatesAsync` says the service is not running — the
+ * cold-start state that used to leave a driver reading "You are online" with no
+ * heartbeat behind it (`launchState.ts`). The shared mock in `jest.setup.ts`
+ * answers **false**, which is that exact state, so without this every heartbeat
+ * test here would be reconciled off duty before it could send anything.
+ *
+ * A heartbeat test is by definition a driver whose service *is* running, so
+ * true is the honest fixture rather than a convenience. `launchState.test.ts`
+ * covers the reconciling itself.
+ */
+(Location.hasStartedLocationUpdatesAsync as jest.Mock).mockResolvedValue(true);
 
 const STALE: DriverPresence = {
   driver_id: 15,

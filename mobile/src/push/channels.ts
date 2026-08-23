@@ -23,34 +23,58 @@ import { loadNotifications } from './expoNotifications';
 export const OFFER_CHANNEL_ID = 'offers.v2';
 
 /**
- * The channel that carries the full-screen call UI, and nothing else
- * (ADR-0049 §4).
+ * The incoming-call channel: the one the driver actually hears and answers.
  *
- * ## Why the popup is on its own channel rather than on `offers.v2`
+ * ## What changed, and why `v1` had to be abandoned rather than edited
  *
- * Because the two want opposite settings, and one channel cannot hold both.
+ * `offers.call.v1` was **silent by construction**. The design split the job in
+ * two — `offers.v2` carried the noise, this carried the picture — so the two
+ * could not ring over each other. That split is what the owner reported as
+ * *"it won't ring when I am not in the app"*: the notification with the Accept
+ * and Decline buttons on it was, by design, incapable of making a sound, and
+ * the one that was supposed to ring is named by the **server**, which had not
+ * shipped the half that names it. One notification could be heard and not
+ * answered; the other could be answered and not heard.
  *
- * `offers.v2` is the **noise**: it is what a driver hears, and the owner's
- * rule is that it must fall silent under silent mode and Do Not Disturb.
- * This one is the **picture**: the notification whose only job is to hold a
- * `fullScreenAction` so Android launches the app over the lock screen. It
- * carries no sound and no vibration at all, which is what makes the next
- * paragraph defensible.
+ * So the ring moves here, onto the notification a driver actually interacts
+ * with. **A channel is immutable once created** — see `ensureNotificationChannels`
+ * — so this could not be edited into `v1`. The id moves, `v1` is deleted below,
+ * and every handset that has already run the app gets the new one.
  *
- * ## Why this one *does* bypass Do Not Disturb, when the ring does not
+ * ## What a driver gets now, in each of the two states that matter
  *
- * A channel that cannot make a sound cannot wake a sleeping household, so the
- * usual argument against bypassing DND does not apply to it. What it can do
- * is show a driver the job they turned their phone to Do Not Disturb *while
- * on duty* to receive — and if this respected DND, the whole feature would
- * silently not exist for every driver who drives with DND on, which is a good
- * share of them. That is the failure this codebase keeps finding and keeps
- * writing down: not a crash, but a capability that quietly is not there.
+ * - **Phone in use** — unlocked, on the home screen, in another app. Android
+ *   posts a **heads-up**: a banner over whatever they are doing, ringing, with
+ *   Decline and Accept on it. That is `AndroidImportance.HIGH` plus a sound,
+ *   and it is the whole of what an incoming WhatsApp call looks like on an
+ *   unlocked phone. It needs no special permission.
+ * - **Screen locked or dark** — the `fullScreenAction` on the notification
+ *   asks Android to start the activity instead, and `withLockScreenCallUi`'s
+ *   `showWhenLocked` and `turnScreenOn` draw it in front of the keyguard.
+ *   That half *does* need `USE_FULL_SCREEN_INTENT` on Android 14 and up, and
+ *   degrades silently to the heads-up above without it (`fullScreenIntent.ts`).
  *
- * The interruption is bounded by the duty toggle. Go offline and the matcher
- * does not offer, so nothing is sent on this channel at all.
+ * The important consequence of that pairing: **the heads-up is not a
+ * consolation prize.** A driver whose handset refuses the full-screen intent
+ * still gets a ringing, answerable notification over whatever they are doing.
+ *
+ * ## Silent mode and Do Not Disturb are honoured, and that is unchanged
+ *
+ * `bypassDnd` is false here, exactly as it is on `offers.v2`, and for the
+ * owner's own reason: a driver silences a phone on purpose and for reasons the
+ * app does not know — a funeral, a clinic, a passenger asleep in the back —
+ * and an app that rings through it is one they silence permanently in
+ * Android's own settings, where the office cannot see it.
+ *
+ * `v1` bypassed DND, and it could afford to because it made no sound. This one
+ * makes a sound, so it cannot. What is lost is a ring for a driver who is on
+ * duty with DND on; what is kept is a driver who does not uninstall the app.
+ * The screen still lights (`lightUpScreen`) and the offer still appears.
+ *
+ * The interruption is bounded by the duty toggle either way. Go offline and
+ * the matcher does not offer, so nothing is sent on this channel at all.
  */
-export const OFFER_CALL_CHANNEL_ID = 'offers.call.v1';
+export const OFFER_CALL_CHANNEL_ID = 'offers.call.v2';
 
 /**
  * The file name, without its path, exactly as the `expo-notifications` config
@@ -68,7 +92,7 @@ const OFFER_SOUND = 'offer_ring.wav';
  * way to tell which is live — and a driver who switches the wrong one off has
  * silenced nothing, then reports that the app ignores their setting.
  */
-const RETIRED_CHANNEL_IDS = ['offers.v1'];
+const RETIRED_CHANNEL_IDS = ['offers.v1', 'offers.call.v1'];
 
 /**
  * Creates the channels this app rings on and shows call screens from.
@@ -156,34 +180,49 @@ export async function ensureNotificationChannels(): Promise<void> {
     });
 
     await Notifications.setNotificationChannelAsync(OFFER_CALL_CHANNEL_ID, {
-      name: 'Job offer screen',
+      // Named for what a driver experiences, not for the mechanism. This is
+      // the row they will look for in Android's settings when they want to
+      // change the sound or stop being interrupted, so it has to read as the
+      // thing itself.
+      name: 'Incoming jobs',
       description:
-        'Opens the job over your lock screen, the way an incoming call does. It never makes a sound — "Job offers" is what you hear.',
+        'Rings and shows the job over whatever you are doing, the way an incoming call does. Turning this off means jobs arrive in silence.',
 
-      // HIGH rather than MAX, and it costs nothing. A full-screen intent is
-      // what puts this on screen; the heads-up banner MAX would additionally
-      // buy is redundant next to the app itself opening, and would show a
-      // second offer row behind the one the driver is already answering.
-      importance: Notifications.AndroidImportance.HIGH,
+      // **MAX, not HIGH, and the difference is the whole feature on an
+      // unlocked phone.** HIGH earns a heads-up in most states; MAX is what
+      // reliably earns one over a full-screen app — a driver watching a video
+      // or using maps is exactly who must not miss a job. On a locked screen
+      // the `fullScreenAction` takes over instead, so this costs nothing
+      // there.
+      importance: Notifications.AndroidImportance.MAX,
 
-      // **Both deliberately off.** See the docblock on the id: the ring lives
-      // on `offers.v2` so a driver's silent switch reaches it, and this
-      // channel making its own noise would put the sound somewhere that switch
-      // cannot reach — the precise thing the owner asked us to stop doing.
-      //
-      // `null`, not `undefined`: the two are different instructions to
-      // Android. Null means *this channel has no sound*; an absent key means
-      // *no preference*, and the OS fills that with the default notification
-      // tone — a second, wrong ring layered under `offers.v2`'s. There is no
-      // `vibrationPattern` for the same reason, with `enableVibrate` false
-      // carrying the intent.
-      sound: null,
-      enableVibrate: false,
+      // **The ring, moved here from `offers.v2`.** It belongs on the
+      // notification the driver can actually answer — see the docblock on the
+      // id for why the old split left one notification audible and the other
+      // answerable.
+      sound: OFFER_SOUND,
 
-      // Silent, therefore allowed through. Argued at the id.
-      bypassDnd: true,
+      // A ring-like cadence rather than a single buzz, so it is recognisable
+      // through a jacket. Milliseconds, alternating wait and vibrate. The same
+      // pattern `offers.v2` uses, because they are the same event.
+      vibrationPattern: [0, 500, 250, 500, 250, 500],
+      enableVibrate: true,
 
+      // **False now, where `v1` was true, and the reason is that this channel
+      // can make a noise.** `v1` bypassed Do Not Disturb on the argument that
+      // a silent channel cannot wake a household. That argument does not
+      // survive the sound moving here, and the owner's rule — silent means
+      // silent — is the one that governs. `lightUpScreen` on the notification
+      // still lights a dark screen, so a driver on duty with DND on sees the
+      // job even though they do not hear it.
+      bypassDnd: false,
+
+      // The pickup shows on a locked screen, which is the trade ADR-0025 §5
+      // records making: a driver cannot judge a job without knowing where it
+      // starts. The payload carries no passenger identity to expose.
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+
+      lightColor: '#01903D',
       showBadge: false,
     });
 

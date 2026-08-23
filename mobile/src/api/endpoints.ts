@@ -9,10 +9,13 @@ import type {
   DispatchOffer,
   DriverLedgerEntry,
   DriverPresence,
+  PlaceSuggestion,
   Trip,
   TripEvent,
   TripRoute,
   TripStatus,
+  TripStop,
+  TripStopCandidate,
   User,
 } from './types';
 
@@ -147,6 +150,82 @@ export async function fetchTripRoute(
 
 export async function fetchTripEvents(api: ApiClient, tripId: number): Promise<TripEvent[]> {
   const response = await api.request<TripEvent[], CursorMeta>(`/trips/${tripId}/events`);
+
+  return response.data;
+}
+
+/**
+ * Extends a live run with the next drop-off (ADR-0045 §4).
+ *
+ * Two shapes, matching the server's: a saved-place pick sends the id alone —
+ * the label and pin are copied from the client's register server-side, so
+ * this handset cannot mislabel an ATM — or free text sends a label, with
+ * coordinates only if something trustworthy produced them.
+ *
+ * **A direct POST, not an outbox item, deliberately.** The search that feeds
+ * it needs connectivity anyway, so a dead zone closes the whole flow rather
+ * than half of it: nothing typed is lost because nothing gets typed. The
+ * arrive/continue taps — the billable, evidence-bearing acts — stay queued
+ * (ADR-0023); this is the one stop action that is not one.
+ */
+export async function addTripStop(
+  api: ApiClient,
+  tripId: number,
+  input:
+    | { clientPlaceId: number }
+    | { label: string; latitude?: number; longitude?: number },
+): Promise<TripStop> {
+  const response = await api.request<TripStop>(`/trips/${tripId}/stops`, {
+    method: 'POST',
+    body:
+      'clientPlaceId' in input
+        ? { client_place_id: input.clientPlaceId }
+        : {
+            label: input.label,
+            // Both or neither — `StoreTripStopRequest` refuses half a
+            // position, and a geocoder suggestion always carries both.
+            ...(input.latitude !== undefined && input.longitude !== undefined
+              ? { latitude: input.latitude, longitude: input.longitude }
+              : {}),
+          },
+  });
+
+  return response.data;
+}
+
+/**
+ * The add-a-drop-off search over the client's own place register (ADR-0045
+ * §10) — the ATM estate, served to this trip's driver while the run is live
+ * and to nobody else. A walk-in trip answers an empty list, which the screen
+ * covers with its free-text row.
+ */
+export async function fetchTripStopCandidates(
+  api: ApiClient,
+  tripId: number,
+  query: string,
+): Promise<TripStopCandidate[]> {
+  const response = await api.request<TripStopCandidate[]>(`/trips/${tripId}/stop-candidates`, {
+    query: { q: query === '' ? undefined : query },
+  });
+
+  return response.data;
+}
+
+/**
+ * Geocoder suggestions for a stop the register does not know (§10 follow-up,
+ * owner decision 2026-08-22). The server proxies a public geocoder and fails
+ * soft to an empty list; the free-text row is the floor either way. `q` is
+ * required at three characters — the server 422s below that, so callers gate
+ * before asking.
+ */
+export async function fetchPlaceSuggestions(
+  api: ApiClient,
+  tripId: number,
+  query: string,
+): Promise<PlaceSuggestion[]> {
+  const response = await api.request<PlaceSuggestion[]>(`/trips/${tripId}/place-suggestions`, {
+    query: { q: query },
+  });
 
   return response.data;
 }

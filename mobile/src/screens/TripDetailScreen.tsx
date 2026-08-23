@@ -185,8 +185,15 @@ export function TripDetailScreen({ route, navigation }: Props) {
     }
 
     setBusy(true);
-    await queueTransition({ tripId: trip.id, from: trip.status, to: action.to });
-    setBusy(false);
+    // `finally`, because the caller discards the promise: a `queueTransition`
+    // that throws (the outbox refusing to open is the live case) used to skip
+    // `setBusy(false)` and leave every action on this record spinning, with
+    // the error swallowed. Same fix as `PickupScreen.run`.
+    try {
+      await queueTransition({ tripId: trip.id, from: trip.status, to: action.to });
+    } finally {
+      setBusy(false);
+    }
   };
 
   const confirmDecline = async () => {
@@ -201,14 +208,22 @@ export function TripDetailScreen({ route, navigation }: Props) {
         style: 'destructive',
         onPress: () => {
           void (async () => {
-            await queueTransition({
-              tripId: trip.id,
-              from: trip.status,
-              to: 'rejected',
-              notes: notes.trim(),
-            });
-            setDeclining(false);
-            setNotes('');
+            // The sheet closes in `finally`: a throw between here and
+            // `setDeclining(false)` used to strand the notes sheet open with
+            // no way to tell why nothing happened. Closing on failure is
+            // right — the queued decline either exists or it does not, and
+            // the sync banner is the surface that reports which.
+            try {
+              await queueTransition({
+                tripId: trip.id,
+                from: trip.status,
+                to: 'rejected',
+                notes: notes.trim(),
+              });
+            } finally {
+              setDeclining(false);
+              setNotes('');
+            }
           })();
         },
       },

@@ -4,6 +4,7 @@ import { WebView } from 'react-native-webview';
 
 import type { Coordinates } from '../api/types';
 import { boundsFor } from './places';
+import { VEHICLE_SPRITES, type VehicleSprite } from './vehicleSprites';
 import { colors, radius, typography } from '../ui/theme';
 
 /**
@@ -65,6 +66,9 @@ export function PickupMap({
   leg = 'fare',
   overlay = null,
   routePolyline = null,
+  legPolyline = null,
+  heading = null,
+  vehicle = 'sedan',
 }: {
   pickup: Coordinates | null;
   dropoff: Coordinates | null;
@@ -128,6 +132,46 @@ export function PickupMap({
    * routing existed.
    */
   routePolyline?: string | null;
+  /**
+   * The **whole** leg's road, from the fixed end it started at — as against
+   * `routePolyline`, which starts wherever the driver happens to be.
+   *
+   * This is the fix for a complaint that took a while to name. The map only
+   * ever drew the road *ahead*, and then framed the camera on it, so the
+   * remaining road filled the screen at every stage: the picture at ten per
+   * cent through a job and at ninety looked the same. The owner, from a
+   * handset: *"the driver can not see where he is from the entire route so
+   * they find it hard to tell the progress visually"*.
+   *
+   * With this present the map draws the whole leg muted underneath, the road
+   * still to drive in brand green on top, and the vehicle at the seam — and
+   * **the camera holds still**, refitting only when this geometry changes
+   * rather than on every position tick. A frame that holds still is what makes
+   * a moving vehicle read as progress; that is the entire mechanism.
+   *
+   * Null is the ordinary case and it restores exactly the previous picture:
+   * the approach leg has no such road (its origin is wherever the driver was
+   * when they accepted, which this platform does not record), and neither has
+   * a trip whose route the provider could not draw.
+   */
+  legPolyline?: string | null;
+  /**
+   * Which way the driver is pointing, in degrees clockwise from true north,
+   * or null when the handset did not say.
+   *
+   * Null leaves the vehicle pointing north, and `FleetMap` records the reason
+   * from the console side: *"a rotated vehicle reads as a direction of travel,
+   * and inventing one would be a claim"*.
+   */
+  heading?: number | null;
+  /**
+   * Which silhouette the driver is drawn as — from `vehicle.category` on the
+   * trip, through `spriteFor`.
+   *
+   * The default is the same generic car `spriteFor` falls back to, so a caller
+   * that does not know the vehicle draws a car rather than nothing.
+   */
+  vehicle?: VehicleSprite;
 }) {
   const webRef = useRef<WebView>(null);
 
@@ -135,7 +179,7 @@ export function PickupMap({
   // being in the document's dependency list. Written in an effect rather than
   // during render — a ref assigned in the render body is invisible to the
   // React Compiler, which then cannot memoise this component at all.
-  const stateRef = useRef(statePayload(here, leg, routePolyline));
+  const stateRef = useRef(statePayload(here, leg, routePolyline, legPolyline, heading));
 
   const hereLat = here?.lat ?? null;
   const hereLng = here?.lng ?? null;
@@ -145,6 +189,8 @@ export function PickupMap({
       here: hereLat === null || hereLng === null ? null : [hereLng, hereLat],
       leg,
       route: routePolyline,
+      legRoute: legPolyline,
+      heading,
     };
     // `true;` because injectJavaScript evaluates the string and Android
     // rejects a non-serialisable completion value. Both optional calls are
@@ -154,7 +200,7 @@ export function PickupMap({
     webRef.current?.injectJavaScript?.(
       `window.__applyState && window.__applyState(${JSON.stringify(stateRef.current)}); true;`,
     );
-  }, [hereLat, hereLng, leg, routePolyline]);
+  }, [hereLat, hereLng, leg, routePolyline, legPolyline, heading]);
 
   // Keyed on the trip's fixed geography only. `pickup` and `dropoff` are new
   // *objects* every render (`toCoordinates` builds them in the render body),
@@ -164,9 +210,20 @@ export function PickupMap({
     () =>
       pickup === null
         ? null
-        : mapDocument(pickup, dropoff, fill, overlay, statePayload(here, leg, routePolyline)),
+        : mapDocument(
+            pickup,
+            dropoff,
+            fill,
+            overlay,
+            vehicle,
+            statePayload(here, leg, routePolyline, legPolyline, heading),
+          ),
+    // `vehicle` belongs in this list rather than in the injected state: the
+    // sprite is inlined into the document's markup, and a driver does not swap
+    // vehicles mid-trip, so it is fixed geography's kind of constant.
+    //
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on primitives of the fixed geography only; the dynamic props seed the document when it happens to build and travel via injection ever after
-    [pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, fill, overlay],
+    [pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, fill, overlay, vehicle],
   );
 
   if (html === null) {
@@ -222,11 +279,21 @@ function statePayload(
   here: Coordinates | null,
   leg: 'approach' | 'fare',
   routePolyline: string | null,
-): { here: [number, number] | null; leg: 'approach' | 'fare'; route: string | null } {
+  legPolyline: string | null,
+  heading: number | null,
+): {
+  here: [number, number] | null;
+  leg: 'approach' | 'fare';
+  route: string | null;
+  legRoute: string | null;
+  heading: number | null;
+} {
   return {
     here: here === null ? null : [here.lng, here.lat],
     leg,
     route: routePolyline,
+    legRoute: legPolyline,
+    heading,
   };
 }
 
@@ -245,6 +312,7 @@ function mapDocument(
   dropoff: Coordinates | null,
   interactive: boolean,
   overlay: 'bottom-left' | 'bottom-right' | null,
+  vehicle: VehicleSprite,
   initial: ReturnType<typeof statePayload>,
 ): string {
   const points = [
@@ -263,7 +331,30 @@ function mapDocument(
 <style>
   html, body, #map { margin: 0; padding: 0; height: 100%; width: 100%; background: ${colors.surfaceSunken}; }
   .maplibregl-ctrl-attrib, .maplibregl-ctrl-bottom-left { display: none; }
-  .marker { display: flex; align-items: center; gap: 4px; }
+  /*
+    The pin sits *on* the coordinate it marks, and its name hangs beside it.
+
+    This was a flex row — pin, gap, tag — centred on the point by MapLibre,
+    which put the pin about 28 px to the *left* of the place it marked, at
+    every zoom, on both ends of every job. On a 393 px handset that is seven
+    per cent of the screen between a pickup marker and the pickup. Found by
+    rendering this document in a browser and measuring the elements, not by a
+    test; taking the label out of the flow is the same fix the vehicle marker
+    below needed for the same reason.
+
+    **absolute here rather than relative, and it is load-bearing.**
+    MapLibre's own stylesheet sets position:absolute on every marker root
+    and positions it with a transform. This inline block is parsed after that
+    link, so declaring relative at the same specificity *wins* and drops the
+    marker back into normal flow — the vehicle rendered 52 px below the road
+    it was driving on. Mirroring MapLibre's declaration keeps the root a
+    containing block for the label without fighting the SDK for the property
+    it positions with. (Measured in a browser; the map is unchanged and the
+    marker is simply somewhere else, which is the kind of wrong no assertion
+    over an HTML string can see.)
+  */
+  .marker { position: absolute; top: 0; left: 0; width: 26px; height: 26px; }
+  .marker .tag { position: absolute; left: 32px; top: 50%; transform: translateY(-50%); }
   /* Named, not just coloured. docs/screen-rules.md §6: never carry meaning
      by colour alone — and on a full-screen map there is no rail underneath to
      name the two ends, so the map has to name them itself. */
@@ -282,8 +373,44 @@ function mapDocument(
   .pickup i { background: ${colors.surface}; border-color: ${colors.primary}; }
   .dropoff { background: ${colors.dangerTint}; }
   .dropoff i { background: ${colors.danger}; border-color: ${colors.onPrimary}; }
-  .here { background: ${colors.infoTint}; }
-  .here i { background: ${colors.info}; }
+  /*
+    The driver, drawn as the vehicle they are driving rather than as a dot.
+    The console made this decision first — see vehicleSprites.ts — and the
+    size lives here because how big a marker is belongs to the map, not to
+    the vehicle.
+  */
+  .unit { position: absolute; top: 0; left: 0; width: 46px; height: 46px; }
+  /*
+    A white disc under the vehicle.
+
+    The sedan is a pale silhouette and read perfectly well on its own. The
+    boda does not: its rider is drawn in the brand green, and this marker sits
+    *on* the brand-green route by design — so a rider, on the one screen a
+    rider looks at, merged into the road. Seen by rendering the boda document
+    in a browser, not by reasoning about it.
+
+    A disc is also what the reference the owner sent does (a marker inside a
+    white circle), and it fixes the general case rather than that one sprite:
+    any silhouette, over any line colour, stays a separate object. It does not
+    rotate — only the vehicle inside it turns.
+  */
+  .unit .puck {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    border-radius: 50%; background: ${colors.surface};
+    box-shadow: 0 1px 4px ${colors.scrim};
+  }
+  /* The rotating wrapper. MapLibre owns the marker root's transform for
+     positioning, so anything that turns goes on an inner element; the same
+     rule fleetMap.css states on the console side, and writing to the root
+     fights the SDK. */
+  .unit .turn { position: absolute; top: 6px; left: 6px; right: 6px; bottom: 6px; transform-origin: 50% 50%; }
+  .unit svg { display: block; width: 100%; height: 100%; }
+  /* Hung underneath rather than laid beside. The pins above are flex rows, so
+     MapLibre centres the *row* on the coordinate and the dot sits to the left
+     of it — harmless for a dot, wrong for a vehicle, which has to sit on the
+     road it is driving. Taking the label out of the flow leaves the sprite
+     centred on the fix. */
+  .unit .tag { position: absolute; top: 52px; left: 50%; transform: translateX(-50%); }
 </style>
 </head>
 <body>
@@ -292,6 +419,12 @@ function mapDocument(
 <script>
   var PICKUP = ${JSON.stringify([pickup.lng, pickup.lat])};
   var DROPOFF = ${dropoff === null ? 'null' : JSON.stringify([dropoff.lng, dropoff.lat])};
+
+  // The driver's own silhouette, inlined rather than fetched: this document
+  // has no asset pipeline in front of it, which is exactly what keeps it
+  // drawing where there is no signal. Exactly one sprite is ever inlined, so
+  // the shared gradient ids inside them cannot collide.
+  var VEHICLE = ${JSON.stringify(VEHICLE_SPRITES[vehicle])};
 
   // Which corner the screen has floated a stat badge over, if any.
   var OVERLAY = ${JSON.stringify(overlay)};
@@ -305,15 +438,26 @@ function mapDocument(
    * bottom too would eat half of a 220pt map to solve the same problem twice.
    */
   function pad(base) {
-    if (OVERLAY === null) { return base; }
+    /*
+      Every pin carries its name to its *right* — the .marker flex row is the
+      pin then the tag — and fitBounds only knows about the point. So a
+      destination framed to the pixel puts its own label off the edge of the
+      screen, which is what "Drop-off" did: rendered at 393 CSS px wide, the
+      pill ended at 393.7.
 
+      It was survivable while the camera re-fitted every hundred metres and
+      the clipping moved around. Framing the whole leg makes the drop-off's
+      place on screen fixed for the length of the trip, so it would have been
+      clipped from the kerb to the door.
+    */
+    var label = 84;
     var room = base + 110;
 
     return {
       top: base,
       bottom: base,
       left: OVERLAY === 'bottom-left' ? room : base,
-      right: OVERLAY === 'bottom-right' ? room : base
+      right: OVERLAY === 'bottom-right' ? room : base + label
     };
   }
 
@@ -371,31 +515,70 @@ ${interactive ? "  map.addControl(new maplibregl.NavigationControl({ showCompass
     return points;
   }
 
-  // The route the camera last framed, so a re-send of the same geometry —
+  // The geometries the camera last framed, so a re-send of the same one —
   // every position tick re-injects the whole state — never moves the camera.
   var framedRoute = null;
+  var framedLeg = null;
   var hereMarker = null;
+  var hereTurn = null;
 
-  function addRoute(encoded) {
-    var coordinates = encoded === null ? [] : decodePolyline(encoded);
-
-    map.getSource('route').setData({
+  function setLine(source, coordinates) {
+    map.getSource(source).setData({
       type: 'Feature',
       properties: {},
       geometry: { type: 'LineString', coordinates: coordinates }
     });
+  }
 
-    if (encoded !== null && coordinates.length > 1 && encoded !== framedRoute) {
-      // Framed on the route rather than on the pins: a road that loops around
-      // a lake leaves the box the two endpoints would have drawn. Animated on
-      // an update — a camera that teleports under a driver's eyes reads as
-      // the map breaking; the first frame, before the page is visible, snaps.
-      var box = coordinates.reduce(function (b, point) {
-        return b.extend(point);
-      }, new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
+  function frameOn(coordinates, animate) {
+    // Framed on the line rather than on the pins: a road that loops around a
+    // lake leaves the box the two endpoints would have drawn. Animated on an
+    // update — a camera that teleports under a driver's eyes reads as the map
+    // breaking; the first frame, before the page is visible, snaps.
+    var box = coordinates.reduce(function (b, point) {
+      return b.extend(point);
+    }, new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
 
-      map.fitBounds(box, { padding: pad(44), animate: framedRoute !== null, duration: 600 });
-      framedRoute = encoded;
+    map.fitBounds(box, { padding: pad(44), animate: animate, duration: 600 });
+  }
+
+  /**
+   * Both roads, and which of them the camera belongs to.
+   *
+   * **The whole leg wins the camera, and wins it once.** This is the fix the
+   * legPolyline prop exists for: framing the *remaining* road re-fitted the
+   * view every hundred metres, so the road still to drive always filled the
+   * screen and a driver could not tell a job nearly finished from one just
+   * begun. Pinned to the whole journey instead, the frame holds still and the
+   * vehicle visibly crosses it — which is what reads as progress. Nothing
+   * else here had to change for that; it was the fitting that was wrong.
+   *
+   * The leg is refit only when its own geometry changes, which happens when a
+   * stop is added and not otherwise.
+   */
+  function applyRoutes(state) {
+    var road = state.route === null ? [] : decodePolyline(state.route);
+    var whole = state.legRoute === null ? [] : decodePolyline(state.legRoute);
+
+    setLine('route', road);
+    setLine('leg-route', whole);
+
+    if (whole.length > 1) {
+      if (state.legRoute !== framedLeg) {
+        frameOn(whole, framedLeg !== null);
+        framedLeg = state.legRoute;
+      }
+
+      // Claimed rather than left null, so the branch below can never re-frame
+      // on the shrinking road drawn on top of this one.
+      framedRoute = state.route;
+
+      return;
+    }
+
+    if (road.length > 1 && state.route !== framedRoute) {
+      frameOn(road, framedRoute !== null);
+      framedRoute = state.route;
     }
   }
 
@@ -420,7 +603,7 @@ ${interactive ? "  map.addControl(new maplibregl.NavigationControl({ showCompass
    * one of them ends the document mid-sentence.)
    */
   function legFeatures(state) {
-    if (state.route !== null) { return []; }
+    if (state.route !== null || state.legRoute !== null) { return []; }
 
     var legs = [];
 
@@ -463,20 +646,47 @@ ${interactive ? "  map.addControl(new maplibregl.NavigationControl({ showCompass
     return new maplibregl.Marker({ element: el }).setLngLat(lngLat).addTo(map);
   }
 
-  function setHere(lngLat, hasRoute) {
+  /**
+   * Which way the vehicle points.
+   *
+   * On the inner element, never on the marker root — MapLibre owns that one.
+   * **No rotation at all when the handset reported no bearing**, which is the
+   * ordinary answer at a standstill: an unrotated sprite points north, which
+   * reads as an icon, where a guessed angle would read as a course.
+   */
+  function pointVehicle(heading) {
+    hereTurn.style.transform = heading === null ? '' : 'rotate(' + heading + 'deg)';
+  }
+
+  function setHere(state) {
+    var lngLat = state.here;
+    var hasRoute = state.route !== null || state.legRoute !== null;
+
     if (lngLat === null) {
-      if (hereMarker !== null) { hereMarker.remove(); hereMarker = null; }
+      if (hereMarker !== null) { hereMarker.remove(); hereMarker = null; hereTurn = null; }
       return;
     }
 
     if (hereMarker !== null) {
       // The whole point of injecting instead of reloading: a position tick is
-      // one marker gliding, not a page rebuilding.
+      // one vehicle gliding, not a page rebuilding.
       hereMarker.setLngLat(lngLat);
+      pointVehicle(state.heading);
       return;
     }
 
-    hereMarker = addMarker(lngLat, 'here', 'You');
+    var el = document.createElement('div');
+    el.className = 'unit';
+    el.innerHTML =
+      '<span class="puck"></span><span class="turn">' + VEHICLE + '</span><span class="tag"></span>';
+    // Drawn *and* named. A silhouette says "a vehicle"; the word is what says
+    // it is this driver, beside a pickup and a drop-off that are both labelled
+    // too. docs/screen-rules.md 6: meaning never rests on the picture alone.
+    el.querySelector('.tag').textContent = 'You';
+    hereTurn = el.querySelector('.turn');
+    pointVehicle(state.heading);
+
+    hereMarker = new maplibregl.Marker({ element: el }).setLngLat(lngLat).addTo(map);
 
     if (!hasRoute) {
       // The first fix after load, on a map framed without it: widen to take
@@ -498,9 +708,9 @@ ${interactive ? "  map.addControl(new maplibregl.NavigationControl({ showCompass
   function applyState(state) {
     if (!mapLoaded) { pendingState = state; return; }
 
-    addRoute(state.route);
+    applyRoutes(state);
     addLegs(legFeatures(state));
-    setHere(state.here, state.route !== null);
+    setHere(state);
   }
 
   // The one entry point React Native injects into. Updates that arrive before
@@ -531,6 +741,42 @@ ${interactive ? "  map.addControl(new maplibregl.NavigationControl({ showCompass
         // direct line, and it has to keep saying so at every zoom.
         'line-dasharray': [1.4, 1.4],
         'line-opacity': 0.9
+      }
+    });
+
+    /*
+      The whole leg, under everything. What stays visible of it is the part
+      the live road no longer covers — which is the road already driven, and
+      which is the only thing on this map that answers "how far through am
+      I". It is deliberately quiet: this is where the driver has *been*, and
+      it must not compete with where they are going.
+
+      Solid, not dashed, and that distinction is the document's own rule
+      (see legFeatures): this followed a road. A dash here would claim it was
+      a straight-line guess.
+    */
+    map.addSource('leg-route', {
+      type: 'geojson',
+      data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } }
+    });
+
+    map.addLayer({
+      id: 'leg-route',
+      type: 'line',
+      source: 'leg-route',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        // The same width as the live road's core, so the green covers this
+        // exactly where the two coincide and leaves it showing where they do
+        // not. DESIGN.md's neutral — the palette's own "closed" tone, which
+        // is what a stretch of road behind you is.
+        'line-width': 5,
+        'line-color': '${colors.textMuted}',
+        // Muted, but not so muted it disappears in Kampala sun — which is
+        // the condition this app is designed for, and which is why the whole
+        // palette runs high-contrast. At 0.55 this was a suggestion of a
+        // road; 0.7 is a road somebody has driven.
+        'line-opacity': 0.7
       }
     });
 
@@ -567,7 +813,7 @@ ${interactive ? "  map.addControl(new maplibregl.NavigationControl({ showCompass
     ${
       bounds === null
         ? ''
-        : `if (${JSON.stringify(initial.route)} === null) { map.fitBounds(${JSON.stringify(bounds)}, { padding: pad(28), animate: false }); }`
+        : `if (${JSON.stringify(initial.route)} === null && ${JSON.stringify(initial.legRoute)} === null) { map.fitBounds(${JSON.stringify(bounds)}, { padding: pad(28), animate: false }); }`
     }
 
     mapLoaded = true;

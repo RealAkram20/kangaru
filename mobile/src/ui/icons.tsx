@@ -840,6 +840,36 @@ export function SmartphoneIcon(props: IconProps) {
   );
 }
 
+/**
+ * Lucide `battery-charging`. The battery-optimisation exemption.
+ *
+ * Transcribed verbatim from `lucide-react` v1.27.0, as DESIGN.md §7 requires —
+ * the four paths below are that file's `__iconNode`, in its order, unaltered.
+ * Drawn by eye it would sit a pixel out from every other glyph on the screen.
+ *
+ * `battery-charging` rather than a plain `battery`, because the row it marks is
+ * not about charge level: it is about the phone being allowed to keep working
+ * while the screen is off.
+ */
+export function BatteryChargingIcon(props: IconProps) {
+  const { size, color, strokeWidth } = base(props);
+
+  return (
+    <Outline size={size}>
+      <Path d="m11 7-3 5h4l-3 5" {...strokeProps(color, strokeWidth)} />
+      <Path
+        d="M14.856 6H16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.935"
+        {...strokeProps(color, strokeWidth)}
+      />
+      <Path d="M22 14v-4" {...strokeProps(color, strokeWidth)} />
+      <Path
+        d="M5.14 18H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2.936"
+        {...strokeProps(color, strokeWidth)}
+      />
+    </Outline>
+  );
+}
+
 /** Lucide `credit-card`. Settlement by card. */
 export function CreditCardIcon(props: IconProps) {
   const { size, color, strokeWidth } = base(props);

@@ -1,6 +1,6 @@
 import * as Sentry from '@sentry/react-native';
 
-import { startObservability } from './observability';
+import { resetObservabilityForTest, startObservability } from './observability';
 
 /**
  * The switch, and only the switch.
@@ -109,18 +109,42 @@ describe('startObservability', () => {
      * appear in a development build or in release. A neighbouring warning is
      * asserted through as well, so a future widening of this rule fails here
      * rather than silently swallowing real logs.
+     *
+     * ## Why it keeps the first one, when it used to drop all of them
+     *
+     * **This rule was right about the noise and wrong about the value.** The
+     * string is the runtime saying, in its own words, that the location
+     * foreground service which keeps the app alive in a driver's pocket does
+     * not exist here — the precondition the entire outside-the-app offer path
+     * rests on. Dropping every copy deleted that on its way out of the
+     * building, for the whole period the app was being tested in Expo Go and
+     * the offer push was silently reaching no handset for the same underlying
+     * reason.
+     *
+     * One is enough to say it. The rest are the duty-toggle repetition the
+     * original rule was correctly aimed at.
      */
-    it('drops the Expo Go background-location warning, and only that', () => {
+    it('keeps the first Expo Go background-location warning and drops the rest', () => {
+      resetObservabilityForTest();
+
       const beforeSendLog = optionsFromLastInit().beforeSendLog;
 
-      expect(
-        beforeSendLog?.({
-          level: 'warn',
-          message:
-            'Background location is limited in Expo Go:\nOn Android, it is not available at all.',
-        }),
-      ).toBeNull();
+      const warning = {
+        level: 'warn' as const,
+        message:
+          'Background location is limited in Expo Go:\nOn Android, it is not available at all.',
+      };
 
+      // The one that says the runtime cannot do background work.
+      expect(beforeSendLog?.(warning)).not.toBeNull();
+
+      // Every one after it, which says the same thing again.
+      expect(beforeSendLog?.(warning)).toBeNull();
+      expect(beforeSendLog?.(warning)).toBeNull();
+
+      // And nothing else is touched by the rule, before or after it has bitten
+      // — the assertion that keeps a future widening of the match from
+      // swallowing real logs.
       expect(
         beforeSendLog?.({ level: 'warn', message: 'Outbox stalled: nothing is going out' }),
       ).not.toBeNull();

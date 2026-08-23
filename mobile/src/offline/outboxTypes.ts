@@ -15,6 +15,12 @@ export type TransitionPayload = {
   notes?: string;
   odometer_start?: number;
   odometer_end?: number;
+  /**
+   * Which stop a pause is an arrival at (ADR-0045 §2). Only ever set with
+   * `to: 'waiting'`; the resume pairs itself server-side with whichever stop
+   * is open, so it never carries one.
+   */
+  stop_id?: number;
 };
 
 export type AvailabilityRequestPayload = {

@@ -2,9 +2,9 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import type { Coordinates, Trip, TripRoute } from '../api/types';
+import type { Trip, TripEvent, TripRoute } from '../api/types';
 import { estimatedFareLabel, formatKilometres, formatMoney } from '../duty/offerPresentation';
-import { usePosition } from '../location/usePosition';
+import { usePosition, type Fix } from '../location/usePosition';
 import type { TripsStackParams } from '../navigation/types';
 import { useSync } from '../offline/SyncProvider';
 import { dialPassenger } from '../trips/contact';
@@ -19,6 +19,9 @@ import {
 } from '../trips/progress';
 import { useOdometerEnabled } from '../trips/odometerSetting';
 import { useTrip, useTripEvents, useTripRoute } from '../trips/queries';
+import { StopList } from '../trips/StopList';
+import { nextPendingStop, pickupIsLegOrigin } from '../trips/stops';
+import { spriteFor } from '../trips/vehicleSprites';
 import { statusLabel } from '../trips/transitions';
 import { elapsedSeconds, NO_VALUE } from '../trips/waiting';
 import { Button, Notice, Screen, ScreenHeader } from '../ui/components';
@@ -26,6 +29,7 @@ import { SkeletonCards } from '../ui/Skeleton';
 import { DetailRow, GLYPH, Stat, StatRow } from '../ui/facts';
 import {
   BanknoteIcon,
+  CirclePlusIcon,
   NavigationIcon,
   PauseIcon,
   PhoneIcon,
@@ -115,8 +119,26 @@ export function TripInProgressScreen({ route, navigation }: Props) {
   const here = usePosition({ watch: true });
   const { data: roadRoute } = useTripRoute(tripId, here);
 
+  /*
+    And the whole leg, which is the line the map frames on and draws the
+    driven part of. Same request `WaitingForPassengerScreen` makes — no
+    origin, so a constant key — which is why this is usually a cache read
+    rather than a billed one; the reasoning in full is on `TripMapScreen`.
+
+    Withheld once any stop has been worked: the leg then runs stop to stop
+    and no longer starts at the pickup, so the road this returns is not the
+    one the driver is on.
+  */
+  const wholeLegKnown = trip !== undefined && pickupIsLegOrigin(trip.stops ?? []);
+  const { data: cachedLeg } = useTripRoute(tripId, null, 'dropoff', wholeLegKnown);
+
+  // Gated where it is *used*, not only where it is asked for — a disabled
+  // query still serves whatever its key already holds, and the waiting screen
+  // warms this exact key on every job. `TripMapScreen` carries the full story
+  // and the figures it produced on a real trip.
+  const legRoute = wholeLegKnown ? cachedLeg : undefined;
+
   const startedAt = startedAtFrom(events, trip?.started_at ?? null);
-  const now = useTicker();
 
   if (isLoading && trip === undefined) {
     return (
@@ -153,7 +175,17 @@ export function TripInProgressScreen({ route, navigation }: Props) {
   const passenger = trip.passenger_contact;
   const dropoff = located(trip.dropoff) ? toCoordinates(trip.dropoff) : null;
 
-  const driving = startedAt === null ? null : elapsedSeconds(startedAt, now);
+  /*
+   * The itinerary, and the stop the run is heading for (ADR-0045).
+   *
+   * `stops` is undefined on a list payload and empty on every point-to-point
+   * trip; both render exactly the screen this always was. `nextStop` is what
+   * "the drop-off" *means* mid-circuit — the map, the Navigate button and
+   * the drop-off row all read it, so they cannot disagree about where the
+   * vehicle is going.
+   */
+  const stops = trip.stops ?? [];
+  const nextStop = nextPendingStop(stops);
 
   /**
    * The status this trip is heading for, which is not always the one the
@@ -186,8 +218,9 @@ export function TripInProgressScreen({ route, navigation }: Props) {
    * Null rather than zero when the timeline has not arrived — the same rule
    * every other figure on this screen follows. A `00:00` on a trip that has
    * been held twice would understate a charge the passenger will see.
+   *
+   * Computed inside `HoldNotice`, which owns the tick — see that component.
    */
-  const waited = events === undefined ? null : waitingSecondsFrom(events, now);
 
   /**
    * Holding the trip, and picking it up again.
@@ -210,16 +243,33 @@ export function TripInProgressScreen({ route, navigation }: Props) {
    * write a second `trip_events` row and bill the pause twice. ADR-0023's
    * reconciliation is what prevents that, and nothing here re-implements it.
    */
-  const hold = async (to: 'waiting' | 'trip_resumed') => {
+  const hold = async (to: 'waiting' | 'trip_resumed', stopId?: number) => {
     setBusy(true);
-    // `from` is the status this transition will actually depart from, which on
-    // a pause-then-resume in one dead zone is the one still sitting in the
-    // outbox rather than the one the office last confirmed. It is only read
-    // when an item fails, to tell "my write is missing" from "the trip moved on
-    // without me" — so a stale value here would misreport the one case the
-    // reconciliation exists to distinguish.
-    await queueTransition({ tripId: trip.id, from: effective, to });
-    setBusy(false);
+    // The `finally` is what `end` below already has, and skipping it here was
+    // a dead screen: `queueTransition` throws when the outbox is not open,
+    // the caller is `void hold(...)`, and a rejection between these two lines
+    // left both buttons spinning for the rest of the session with the error
+    // swallowed whole.
+    try {
+      // `from` is the status this transition will actually depart from, which
+      // on a pause-then-resume in one dead zone is the one still sitting in
+      // the outbox rather than the one the office last confirmed. It is only
+      // read when an item fails, to tell "my write is missing" from "the trip
+      // moved on without me" — so a stale value here would misreport the one
+      // case the reconciliation exists to distinguish.
+      //
+      // `stopId` is ADR-0045 §2: a pause that carries one is an arrival at
+      // that stop, and the plain Pause button carries none — same transition,
+      // two meanings, distinguished by the payload exactly as the server does.
+      await queueTransition({
+        tripId: trip.id,
+        from: effective,
+        to,
+        ...(stopId === undefined ? {} : { stopId }),
+      });
+    } finally {
+      setBusy(false);
+    }
   };
 
   /**
@@ -297,7 +347,13 @@ export function TripInProgressScreen({ route, navigation }: Props) {
       <SyncBanner />
 
       <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
-        <MapPanel trip={trip} here={here} driving={driving} route={roadRoute ?? null} />
+        <MapPanel
+          trip={trip}
+          here={here}
+          startedAt={startedAt}
+          route={roadRoute ?? null}
+          leg={legRoute ?? null}
+        />
 
         {passenger !== null && (
           <DetailRow
@@ -323,14 +379,21 @@ export function TripInProgressScreen({ route, navigation }: Props) {
 
         <DetailRow
           icon={<NavigationIcon {...GLYPH} />}
-          label="Drop-off"
-          value={trip.dropoff.label}
-          caption={null}
+          // Mid-circuit, "the drop-off" is the next stop still to be visited
+          // (ADR-0045); the label changes with it so the row cannot read as
+          // the journey's end while the run has three sites left.
+          label={nextStop === null ? 'Drop-off' : 'Next drop-off'}
+          value={nextStop === null ? trip.dropoff.label : nextStop.label}
+          caption={nextStop === null ? null : `Stop ${nextStop.sequence} of ${stops.length}`}
           trailing={
-            dropoff !== null ? (
+            // Navigate needs somewhere to point: the next stop's pin, or the
+            // trip's own. A label-only next stop falls back to the trip pin
+            // rather than hiding the button — the map screen says in words
+            // which target it is drawing.
+            (nextStop !== null && located(nextStop)) || dropoff !== null ? (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`Navigate to ${trip.dropoff.label}`}
+                accessibilityLabel={`Navigate to ${nextStop === null ? trip.dropoff.label : nextStop.label}`}
                 onPress={() => navigation.navigate('TripMap', { tripId: trip.id })}
                 style={styles.navigate}
               >
@@ -341,27 +404,22 @@ export function TripInProgressScreen({ route, navigation }: Props) {
           }
         />
 
-        <Facts trip={trip} />
-
-        {paused && (
-          <Notice
-            tone="info"
-            message={
-              // "Recorded and priced" stays: it is money, and it is the reason
-              // a driver leaves the trip on hold rather than ending it.
-              //
-              // **The duration needs the office, not just the intent.** It is
-              // summed from `trip_events`, and a pause still sitting in the
-              // outbox has no row there — so on an unconfirmed hold the events
-              // describe *previous* pauses, and printing that total would date
-              // this one from the last time the driver stopped. The
-              // durationless sentence is the true one until the row exists.
-              !pauseConfirmed || waited === null
-                ? 'On hold. Waiting time is recorded and priced.'
-                : `On hold for ${formatTripDuration(waited)}. Waiting time is recorded and priced.`
-            }
+        {stops.length > 0 && (
+          <StopList
+            stops={stops}
+            destination={trip.dropoff.label}
+            // Arriving is the pause (§2): a paused trip has nowhere to
+            // arrive from, and the button follows the same `effective`
+            // status the Pause/Resume pair reads.
+            canArrive={!paused}
+            busy={busy}
+            onArrive={(stop) => void hold('waiting', stop.id)}
           />
         )}
+
+        <Facts trip={trip} />
+
+        {paused && <HoldNotice events={events} confirmed={pauseConfirmed} />}
 
         <View style={styles.actions}>
           {/*
@@ -398,6 +456,20 @@ export function TripInProgressScreen({ route, navigation }: Props) {
               />
             </>
           )}
+          {/*
+            In both modes, deliberately — the bank flow adds the next site
+            *while paused at this one* (ADR-0045 §4), and hiding the button
+            behind a resume would make the driver lie about where they are
+            to extend their own run. Below End trip: extending the run is
+            the occasional act, ending it is the daily one.
+          */}
+          <Button
+            label="Add a drop-off"
+            tone="neutral"
+            busy={busy}
+            onPress={() => navigation.navigate('AddDropoff', { tripId: trip.id })}
+            icon={<CirclePlusIcon size={16} />}
+          />
         </View>
       </ScrollView>
     </Screen>
@@ -415,25 +487,49 @@ export function TripInProgressScreen({ route, navigation }: Props) {
 function MapPanel({
   trip,
   here,
-  driving,
+  startedAt,
   route,
+  leg,
 }: {
   trip: Trip;
-  here: Coordinates | null;
-  driving: number | null;
+  here: Fix | null;
+  startedAt: number | null;
   route: TripRoute | null;
+  /**
+   * The whole leg's road, or null.
+   *
+   * What the map frames on, so the camera stops re-fitting itself to the
+   * shrinking road ahead — the reason a driver could not see their own
+   * progress. What is left of it showing behind the vehicle is the road
+   * already driven.
+   */
+  leg: TripRoute | null;
 }) {
   const pickup = located(trip.pickup) ? toCoordinates(trip.pickup) : null;
-  const dropoff = located(trip.dropoff) ? toCoordinates(trip.dropoff) : null;
+
+  /*
+   * Mid-circuit the map's target is the next pending stop (ADR-0045) — the
+   * same answer the drop-off row gives and the same one the route endpoint
+   * draws toward, so the pin, the row and the line cannot point three ways.
+   * A label-only stop keeps the trip's own pin: prose is not a place, and
+   * the badge must measure to somewhere real or to nothing.
+   */
+  const nextStop = nextPendingStop(trip.stops ?? []);
+  const target =
+    nextStop !== null && located(nextStop)
+      ? toCoordinates(nextStop)
+      : located(trip.dropoff)
+        ? toCoordinates(trip.dropoff)
+        : null;
 
   // The road when there is one, the crow's flight when there is not — and the
   // caption below changes with it, because the two are different claims.
   const remaining =
     route !== null
       ? formatKilometres(route.distance_km)
-      : here === null || dropoff === null
+      : here === null || target === null
         ? null
-        : formatKilometres(greatCircleKm(here, dropoff));
+        : formatKilometres(greatCircleKm(here, target));
 
   // `PickupMap` draws a map only when there is a pickup pin, and renders a
   // short explanatory panel otherwise. The badge floats *over* a map and must
@@ -445,7 +541,7 @@ function MapPanel({
     <View>
       <PickupMap
         pickup={pickup}
-        dropoff={dropoff}
+        dropoff={target}
         here={here}
         leg="fare"
         // The stat badge below floats over the map's bottom-right. Without
@@ -453,35 +549,114 @@ function MapPanel({
         // describing it — the owner's handset, mid-trip.
         overlay="bottom-right"
         routePolyline={route?.polyline ?? null}
+        legPolyline={leg?.polyline ?? null}
+        // The driver as the vehicle they are driving, pointed the way they
+        // are going — the same silhouette the office's live map draws.
+        heading={here?.heading ?? null}
+        vehicle={spriteFor(trip.vehicle?.category)}
       />
 
-      <View
-        style={mapped ? styles.badge : styles.badgeInline}
-        accessible
-        accessibilityLabel={
-          `${remaining === null ? 'Distance to the drop-off is not available.' : `${remaining} to the drop-off, straight line.`} ` +
-          durationAnnouncement(driving)
-        }
-      >
-        <Text style={styles.badgeValue}>{remaining ?? NO_VALUE}</Text>
-        {/*
-          Said on the badge, not only in a docblock. A bare "4.6 km" beside a
-          map reads as road distance, and a driver who plans on it arrives
-          late — the crow's flight under-reads every time.
-        */}
-        <Text style={styles.badgeCaption}>{route === null ? 'straight line' : 'by road'}</Text>
-
-        <View style={styles.badgeRule} />
-
-        <Text style={styles.badgeValue}>
-          {driving === null ? NO_VALUE : formatTripDuration(driving)}
-        </Text>
-        {/* "elapsed", not "driving": this is wall-clock from `trip_started`
-            and includes every pause, so on a held trip the two differ by
-            exactly the time the passenger is being charged for. */}
-        <Text style={styles.badgeCaption}>elapsed</Text>
-      </View>
+      <StatBadge
+        startedAt={startedAt}
+        remaining={remaining}
+        byRoad={route !== null}
+        mapped={mapped}
+      />
     </View>
+  );
+}
+
+/**
+ * The floating stats — distance to go and elapsed time — and the only part
+ * of the map panel that ticks.
+ *
+ * A leaf for the same reason `HoldNotice` is one: the elapsed figure changes
+ * once a second, and when it was computed in the screen component that second
+ * re-rendered everything, `PickupMap`'s WebView and its 13 KB `source` prop
+ * included. Sixty re-marshallings of an unchanged map document per minute,
+ * for the whole length of a trip, on the JS thread a tap is answered on — the
+ * literal mechanics of "the app is frozen". In here, the tick repaints two
+ * lines of text.
+ */
+function StatBadge({
+  startedAt,
+  remaining,
+  byRoad,
+  mapped,
+}: {
+  startedAt: number | null;
+  remaining: string | null;
+  byRoad: boolean;
+  mapped: boolean;
+}) {
+  const now = useTicker();
+  const driving = startedAt === null ? null : elapsedSeconds(startedAt, now);
+
+  return (
+    <View
+      style={mapped ? styles.badge : styles.badgeInline}
+      accessible
+      accessibilityLabel={
+        `${remaining === null ? 'Distance to the drop-off is not available.' : `${remaining} to the drop-off, straight line.`} ` +
+        durationAnnouncement(driving)
+      }
+    >
+      <Text style={styles.badgeValue}>{remaining ?? NO_VALUE}</Text>
+      {/*
+        Said on the badge, not only in a docblock. A bare "4.6 km" beside a
+        map reads as road distance, and a driver who plans on it arrives
+        late — the crow's flight under-reads every time.
+      */}
+      <Text style={styles.badgeCaption}>{byRoad ? 'by road' : 'straight line'}</Text>
+
+      <View style={styles.badgeRule} />
+
+      <Text style={styles.badgeValue}>
+        {driving === null ? NO_VALUE : formatTripDuration(driving)}
+      </Text>
+      {/* "elapsed", not "driving": this is wall-clock from `trip_started`
+          and includes every pause, so on a held trip the two differ by
+          exactly the time the passenger is being charged for. */}
+      <Text style={styles.badgeCaption}>elapsed</Text>
+    </View>
+  );
+}
+
+/**
+ * The on-hold notice, with the running duration — and it owns its own tick.
+ *
+ * See `StatBadge` for why the ticker must live in a leaf. This one renders
+ * only while the trip is paused, so the timer costs nothing the rest of the
+ * ride.
+ */
+function HoldNotice({
+  events,
+  confirmed,
+}: {
+  events: TripEvent[] | undefined;
+  confirmed: boolean;
+}) {
+  const now = useTicker();
+  const waited = events === undefined ? null : waitingSecondsFrom(events, now);
+
+  return (
+    <Notice
+      tone="info"
+      message={
+        // "Recorded and priced" stays: it is money, and it is the reason
+        // a driver leaves the trip on hold rather than ending it.
+        //
+        // **The duration needs the office, not just the intent.** It is
+        // summed from `trip_events`, and a pause still sitting in the
+        // outbox has no row there — so on an unconfirmed hold the events
+        // describe *previous* pauses, and printing that total would date
+        // this one from the last time the driver stopped. The
+        // durationless sentence is the true one until the row exists.
+        !confirmed || waited === null
+          ? 'On hold. Waiting time is recorded and priced.'
+          : `On hold for ${formatTripDuration(waited)}. Waiting time is recorded and priced.`
+      }
+    />
   );
 }
 
@@ -527,11 +702,28 @@ function Facts({ trip }: { trip: Trip }) {
           icon={<RouteIcon {...GLYPH} />}
           label="Journey"
           value={
-            located(trip.pickup) && located(trip.dropoff)
-              ? formatKilometres(
-                  greatCircleKm(toCoordinates(trip.pickup), toCoordinates(trip.dropoff)),
-                )
-              : null
+            /*
+             * **Withheld on a circuit, and that is the honest answer**
+             * (ADR-0045). This is the straight line from pickup to drop-off,
+             * which describes a point-to-point job. A bank's ATM run starts
+             * and ends at head office, so on the trip that matters most here
+             * the two ends are the same place and this read **"Under 100 m"**
+             * for a morning's driving — found by rendering the screen with a
+             * three-stop circuit, not by any test.
+             *
+             * There is no honest substitute mid-run: summing the legs would
+             * be a straight-line total for a road journey, and `distance_km`
+             * and `gps_distance_km` are both written at Trip Completed. So
+             * the row renders an em dash, exactly as this screen's docblock
+             * says distance *travelled* does, and for the same reason.
+             */
+            (trip.stops ?? []).length > 0
+              ? null
+              : located(trip.pickup) && located(trip.dropoff)
+                ? formatKilometres(
+                    greatCircleKm(toCoordinates(trip.pickup), toCoordinates(trip.dropoff)),
+                  )
+                : null
           }
         />,
       ]}
@@ -540,13 +732,15 @@ function Facts({ trip }: { trip: Trip }) {
 }
 
 /**
- * A clock that ticks once a second for as long as the screen is mounted.
+ * A clock that ticks once a second for as long as its component is mounted.
  *
- * The same shape as `WaitingForPassengerScreen`'s, including the decision not
- * to gate it on the timeline having arrived: gating froze `now` at mount, so
- * the first render after the events request landed computed elapsed time
- * against a stale clock and read low. One 1 Hz timer on a mounted screen costs
- * nothing measurable; a wrong reading costs the figure its point.
+ * **Lives in `StatBadge` and `HoldNotice`, never in the screen** — see
+ * `StatBadge` for what hoisting it cost. The same shape as
+ * `WaitingForPassengerScreen`'s, including the decision not to gate it on the
+ * timeline having arrived: gating froze `now` at mount, so the first render
+ * after the events request landed computed elapsed time against a stale clock
+ * and read low. One 1 Hz timer on a mounted leaf costs nothing measurable; a
+ * wrong reading costs the figure its point.
  */
 function useTicker(): number {
   const [now, setNow] = useState(() => Date.now());

@@ -2,6 +2,8 @@ import * as Location from 'expo-location';
 
 import { rememberShift, forgetShift, type Shift } from './dutyStore';
 import { PRESENCE_TASK, stopPresenceUpdates } from './PresenceTask';
+import { annotate, traced } from '../tracing';
+import { runsInExpoGo } from '../push/expoNotifications';
 
 /**
  * Keeps the app alive for as long as the driver is online (ADR-0024 §2).
@@ -60,6 +62,34 @@ function intervalMs(shift: Shift): number {
  * fatal would be the app inventing a rule the platform does not have.
  */
 export async function goOnline(shift: Shift): Promise<boolean> {
+  /*
+   * Traced (ADR-0054 §4). Not the HTTP call that starts the shift — the SDK
+   * already times that — but the **native** half, which nothing has ever
+   * timed and which is where the Go Online button actually stalls: a
+   * keystore-backed write, a permission check, and
+   * `startLocationUpdatesAsync`, which on some Android OEMs takes seconds to
+   * bring up a foreground service and on others quietly refuses.
+   *
+   * `refused` is the attribute that makes it worth reading. This function
+   * swallows the failure by design — ADR-0024 §2 keeps a driver dispatchable
+   * without coordinates, so a refusal must not block the shift — which means
+   * a driver can be online, invisible to the matcher, and nothing anywhere
+   * says so. On the span it is one boolean.
+   */
+  return traced('duty.go_online', 'start reporting position', async () => {
+    const started = await startPresence(shift);
+
+    // The cadence rides along because it is what the OS was asked for:
+    // `intervalMs(shift)` is derived from it, and a slow start on a
+    // five-second heartbeat is a different finding from a slow start on
+    // thirty.
+    annotate({ refused: !started, heartbeat_seconds: shift.heartbeatSeconds });
+
+    return started;
+  });
+}
+
+async function startPresence(shift: Shift): Promise<boolean> {
   await rememberShift(shift);
 
   try {
@@ -108,6 +138,32 @@ export async function goOnline(shift: Shift): Promise<boolean> {
     // no. None of these is worth an exception here: the caller has a driver
     // waiting on a toggle, and the shift is the server's to start.
     return false;
+  }
+}
+
+/**
+ * Whether the foreground service is running right now, where that can be known.
+ *
+ * **Null is "we could not find out", and it is not the same as false.** In Expo
+ * Go `hasStartedLocationUpdatesAsync` does not throw — it writes *"Background
+ * location is limited in Expo Go"* to the console and answers false, which
+ * would have every launch there look like a shift that had died. A read that
+ * throws is treated the same way, because the one thing a caller must never do
+ * is end a real shift because a task registry would not answer.
+ *
+ * This is the ground truth behind the duty toggle: every permission on the
+ * Permissions screen exists only to keep this running, so a single boolean here
+ * says more about whether a job can arrive than any of them.
+ */
+export async function serviceIsRunning(): Promise<boolean | null> {
+  if (runsInExpoGo()) {
+    return null;
+  }
+
+  try {
+    return await Location.hasStartedLocationUpdatesAsync(PRESENCE_TASK);
+  } catch {
+    return null;
   }
 }
 

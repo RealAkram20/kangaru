@@ -104,6 +104,7 @@ function trip(overrides: Partial<Trip> = {}): Trip {
     distance_km: null,
     gps_distance_km: null,
     distance_variance_flagged: null,
+    unplanned_stop_count: 0,
     started_at: null,
     completed_at: null,
     duration_minutes: null,
@@ -235,6 +236,29 @@ it('shows no pickup distance when the handset has no fix to measure from', async
 
   expect(getByText('To pickup')).toBeTruthy();
   expect(queryByText('straight line')).toBeNull();
+});
+
+it('releases the button and says so when the queue refuses the transition', async () => {
+  // The outbox can refuse — its SQLite failed to open, the enqueue itself
+  // threw. The caller is `void run(action)`, so before `run` grew its
+  // `try/catch/finally` the rejection escaped between `setBusy(true)` and
+  // `setBusy(false)`: every button on this screen spun for the rest of the
+  // session and the error was swallowed whole. This test is the mutation
+  // proof — remove the `finally` and the second press below never fires.
+  mockQueueTransition.mockRejectedValueOnce(new Error('The offline queue is not ready yet.'));
+
+  const { getByText, findByText } = await renderPickup();
+
+  void fireEvent.press(getByText("I've arrived"));
+
+  // The refusal is a sentence, not a spinner that never ends.
+  expect(await findByText('Could not save that. Try again in a moment.')).toBeTruthy();
+
+  // And the button came back: the next press queues again.
+  mockQueueTransition.mockClear();
+  mockQueueTransition.mockResolvedValueOnce(undefined);
+  void fireEvent.press(getByText("I've arrived"));
+  await waitFor(() => expect(mockQueueTransition).toHaveBeenCalledTimes(1));
 });
 
 it('calls an unsettled figure an estimate, and a settled one a fare', async () => {
@@ -432,10 +456,14 @@ it('asks for the road to the passenger, never the passenger journey', async () =
   // Both halves matter. `'pickup'` is the leg; the driver's own position is
   // the origin, and the approach has no other honest one — routing from the
   // pickup to the pickup is a zero-length line.
+  //
+  // `objectContaining` rather than the whole shape: a fix now carries the
+  // handset's heading as well as its coordinates, and this test is about
+  // *which leg is asked for from where*, not about the fields of a fix.
   await waitFor(() =>
     expect(mockUseTripRoute).toHaveBeenCalledWith(
       42,
-      { lat: expect.any(Number), lng: expect.any(Number) },
+      expect.objectContaining({ lat: expect.any(Number), lng: expect.any(Number) }),
       'pickup',
     ),
   );

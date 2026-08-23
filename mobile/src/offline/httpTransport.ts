@@ -97,6 +97,13 @@ export function buildTransitionForm(payload: TransitionPayload, photoUri: string
     form.append('odometer_end', String(payload.odometer_end));
   }
 
+  // Dead today — a pause never carries a photo, so a stop_id never rides the
+  // multipart path — but a payload field the builder silently drops is the
+  // kind of gap that outlives the assumption. Guarded like its siblings.
+  if (payload.stop_id !== undefined) {
+    form.append('stop_id', String(payload.stop_id));
+  }
+
   // `formFile`, not a `{ uri, name, type }` descriptor — Expo's fetch throws on
   // that shape, and this is the path where the throw costs most: it happens
   // inside the outbox, long after the driver has left the vehicle. The whole

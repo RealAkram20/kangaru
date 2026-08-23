@@ -54,6 +54,25 @@ import { Platform } from 'react-native';
  * this useful at all here — the crashes worth seeing are the ones that happen
  * where there is no signal to report them from.
  */
+/**
+ * Whether Expo Go's background-location limitation has been reported once.
+ *
+ * Module-scoped rather than per-init: it is a fact about the runtime, not
+ * about a session, and `startObservability` is called once per process anyway.
+ */
+let expoGoLocationWarningReported = false;
+
+/**
+ * Test seam. Nothing in the app calls this.
+ *
+ * Same shape and same reason as `resetCallLaunchForTest`: a module-scoped
+ * "already said this" flag survives between tests in one file, so a second
+ * assertion would read the first one's state rather than its own.
+ */
+export function resetObservabilityForTest(): void {
+  expoGoLocationWarningReported = false;
+}
+
 export function startObservability(): void {
   const dsn = process.env.EXPO_PUBLIC_SENTRY_DSN;
 
@@ -127,8 +146,27 @@ export function startObservability(): void {
       // two runtimes that matter. This rule is inert everywhere it could do
       // harm and only bites where the noise is, which is the opposite of the
       // usual objection to filtering on text.
+      //
+      // **Downgraded from a drop to a rate limit, and the reason is what this
+      // rule cost.** The argument above is sound about noise and wrong about
+      // value: this string is the runtime stating, in its own words, that the
+      // foreground service which keeps the app alive in a driver's pocket does
+      // not exist. That is the precondition the entire outside-the-app path
+      // rests on, and it was being deleted on its way out of the building for
+      // the whole period the app was being tested that way — while the offer
+      // push silently reached no handset for exactly the same underlying
+      // reason.
+      //
+      // So the first one per process is kept and the rest are dropped. One is
+      // all it takes to say "this build cannot do background work"; the
+      // hundred that follow are the duty-toggle noise the original rule was
+      // right about.
       if (log.message?.includes('Background location is limited in Expo Go')) {
-        return null;
+        if (expoGoLocationWarningReported) {
+          return null;
+        }
+
+        expoGoLocationWarningReported = true;
       }
 
       return log;

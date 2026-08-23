@@ -157,6 +157,7 @@ function trip(partial: Partial<Trip> = {}): Trip {
     distance_km: '12.60',
     gps_distance_km: '12.40',
     distance_variance_flagged: false,
+    unplanned_stop_count: 0,
     started_at: '2026-08-15T05:35:00Z',
     completed_at: '2026-08-15T06:22:00Z',
     duration_minutes: 32,

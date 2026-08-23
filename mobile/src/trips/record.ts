@@ -12,13 +12,16 @@ import { statusLabel } from './transitions';
  *
  * ## What this module refuses to invent
  *
- * **Stops.** The mockup for this screen drew *Stop 1*, *Waiting at Stop 1* and
- * *Stop 2* on a route rail. This platform has no intermediate stops anywhere:
- * `trips` carries `origin` and `destination`, the public order form asks for two
- * places, and `TripPricingEngine` prices one journey. So the rail is built from
- * `trip_events` — the append-only timeline billing itself derives waiting from —
- * and every row on it is a transition that actually happened, at the time it
- * happened. Same shape as the mockup; nothing on it is imagined.
+ * **Stops — which now exist, and are still not drawn from here.** This
+ * comment used to say the platform had no intermediate stops anywhere; since
+ * ADR-0045 it does (`trip_stops`, served as `Trip.stops`, written by the
+ * driver's add-a-drop-off and the §2 arrive/continue stamps). The rail below
+ * is *still* built from `trip_events` — the append-only timeline billing
+ * derives waiting from — because every row on it is a transition that
+ * actually happened, at the time it happened, and the §2 stamps are those
+ * same transitions wearing a stop id. A per-stop rail (label, dwell, skip
+ * reason) is a real improvement this record screen has not learned yet; the
+ * worklog records it as deliberately not built in the ADR-0045 driver slice.
  *
  * **A fare breakdown.** No base-fare, distance or waiting *amount* survives a
  * walk-in: the pricing engine is pure and writes nothing, and only the total

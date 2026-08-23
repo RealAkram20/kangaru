@@ -6,6 +6,7 @@ use Modules\Trips\Controllers\OdometerPhotoController;
 use Modules\Trips\Controllers\TripController;
 use Modules\Trips\Controllers\TripEventController;
 use Modules\Trips\Controllers\TripLocationController;
+use Modules\Trips\Controllers\TripPlaceSuggestionController;
 use Modules\Trips\Controllers\TripRouteController;
 use Modules\Trips\Controllers\TripStopCandidateController;
 use Modules\Trips\Controllers\TripStopController;
@@ -20,6 +21,9 @@ Route::get('trips/{trip}/route', [TripRouteController::class, 'show'])->name('tr
 // on the trip payload itself, so there is no index route to leak one.
 Route::post('trips/{trip}/stops', [TripStopController::class, 'store'])->name('trips.stops.store');
 Route::get('trips/{trip}/stop-candidates', [TripStopCandidateController::class, 'index'])->name('trips.stop-candidates.index');
+// The §10 follow-up the owner decided on 2026-08-22: when the register has
+// no answer, the server (never the handset) asks a public geocoder.
+Route::get('trips/{trip}/place-suggestions', [TripPlaceSuggestionController::class, 'index'])->name('trips.place-suggestions.index');
 
 // The dashboard photo captured with each odometer reading (PROJECT.md's
 // anchor-client requirement). Streamed behind auth rather than served from

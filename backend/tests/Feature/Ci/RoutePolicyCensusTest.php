@@ -313,6 +313,10 @@ function routeCensus(): array
         // register). Both additionally 409 outside the journey statuses.
         'POST api/v1/trips/{trip}/stops' => 'A',
         'GET api/v1/trips/{trip}/stop-candidates' => 'A',
+        // The §10 follow-up (owner decision, 2026-08-22): the same
+        // `viewStopCandidates` policy and 409 gate, answering from a
+        // server-side geocoder proxy instead of the register.
+        'GET api/v1/trips/{trip}/place-suggestions' => 'A',
 
         // ── Billing ─────────────────────────────────────────────────────
         'GET api/v1/invoices' => 'A',
@@ -423,10 +427,12 @@ it('has a census row for every API route and a route for every census row', func
     // 199: the office's read-only view of an applicant's documents, 2026-08-22.
     // 201: ADR-0057 added accept and refuse for one applicant document.
     // 203: ADR-0057 §5's two applicant self-service routes.
-    // 210: the fleet-company register (K2, ADR-0059) - index, store, show,
+    // 207: the §10 geocoder follow-up, `trips.place-suggestions.index`,
+    // 2026-08-22.
+    // 211: the fleet-company register (K2, ADR-0059) — index, store, show,
     // update. No destroy: a fleet that leaves is suspended, because six
     // operational tables carry `operator_id`.
-    expect(count($router))->toBe(211);
+    expect(count($router))->toBe(212);
 });
 
 it('uses only the four idioms, and files sixteen routes as public', function () {
@@ -479,9 +485,11 @@ it('authenticates every route that is not filed as public, and throttles every o
     // somebody's identity document, so being counted here is the point.
     // 185: the same two, both authenticated.
     // 187: the same two, both authenticated.
-    // 194: the four fleet-company routes, all authenticated. Head office's
+    // 191: the geocoder place-suggestions route, authenticated like the
+    // register search beside it.
+    // 195: the four fleet-company routes, all authenticated. Head office's
     // register is the least public surface on the platform.
-    expect($guarded)->toBe(195);
+    expect($guarded)->toBe(196);
 });
 
 it('binds the actor\'s tenant on every staff route, so TenantScope has something to scope by', function () {
@@ -522,9 +530,10 @@ it('binds the actor\'s tenant on every staff route, so TenantScope has something
     // hand and only with a reason - that is the whole point of counting.
     // 171: and both are staff routes (ADR-0057).
     // 173: and both bind the actor's tenant like every other `me/` route.
-    // 180: the fleet-company register. Staff routes, and they bind the
-    // actor's tenant like the rest even though a Kangaru account has none -
-    // IdentifyTenant binding a null is the fail-closed state, and exempting
-    // them would be a second way to be unscoped.
-    expect($staff)->toBe(181);
+    // 177: place-suggestions, same middleware stack as stop-candidates.
+    // 181: the fleet-company register (K2, ADR-0059). Four staff routes, and
+    // they bind the actor's tenant like the rest even though a Kangaru
+    // account has none - IdentifyTenant binding a null is the fail-closed
+    // state, and exempting them would be a second way to be unscoped.
+    expect($staff)->toBe(182);
 });

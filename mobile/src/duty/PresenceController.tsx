@@ -1,11 +1,14 @@
+import * as Sentry from '@sentry/react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import * as Location from 'expo-location';
 import { useEffect, useRef } from 'react';
 
-import { sendPresence } from '../api/endpoints';
+import { sendPresence, setDuty } from '../api/endpoints';
 import { useAuth } from '../auth/AuthProvider';
 import { isApiError } from '../api/errors';
 import { forgetShift, rememberShift } from './dutyStore';
+import { shouldEndShiftOnLaunch } from './launchState';
+import { goOffline, serviceIsRunning } from './OnlineService';
 import { reportPresence } from './presence';
 import { useDuty } from './queries';
 
@@ -79,6 +82,60 @@ export function PresenceController() {
   useEffect(() => {
     vehicleRef.current = vehicleId;
   }, [vehicleId]);
+
+  /**
+   * **Ends a shift this handset is not actually doing** (ADR-0024 §2).
+   *
+   * Duty lives on the server, so it survives a reboot, a force-stop and every
+   * ordinary process death — but `Location.startLocationUpdatesAsync` does not.
+   * It runs when a driver *taps* Go Online and at no other time. So after a
+   * cold start the server said "on duty", the bar read **"You are online"**,
+   * and there was no foreground service, no heartbeat, and no driver in the
+   * dispatch pool `presence_ttl_seconds` later.
+   *
+   * Observed, not theorised: the demo driver sat at `on_duty = 1` with a
+   * position four and a half hours old while the app showed them working.
+   *
+   * The rule is `launchState.ts`'s, and it is deliberately "go offline" rather
+   * than "restart the service" — starting a wake lock and position reporting on
+   * the app's own initiative, after a reboot the driver did not ask for, is how
+   * an app earns a force-stop. **Asked once per process**, because the duty
+   * query polls and this must not fight a driver who taps Go Online a second
+   * later.
+   */
+  const reconciled = useRef(false);
+
+  useEffect(() => {
+    if (duty === undefined || reconciled.current) {
+      return;
+    }
+
+    reconciled.current = true;
+
+    void (async () => {
+      if (!shouldEndShiftOnLaunch({ serverSaysOnDuty: duty.on_duty, serviceRunning: await serviceIsRunning() })) {
+        return;
+      }
+
+      Sentry.logger.warn('Ended a shift no service was running for', {
+        vehicleId: duty.vehicle_id ?? 0,
+      });
+
+      // Both halves, and in this order. The server is the authority on duty, so
+      // it is told first; `goOffline` then clears the local record the
+      // background task reads. A failure to reach the office leaves the shift
+      // open server-side, which the platform's own stale sweep closes.
+      try {
+        await setDuty(api, { onDuty: false, vehicleId: duty.vehicle_id });
+      } catch {
+        // A dead zone at launch. The local half still runs below, so nothing
+        // here starts pinging for a shift the app is not doing.
+      }
+
+      await goOffline();
+      await queryClient.invalidateQueries({ queryKey: ['duty'] });
+    })();
+  }, [duty, api, queryClient]);
 
   // **Mirrors the server's duty record to storage for the background task.**
   //

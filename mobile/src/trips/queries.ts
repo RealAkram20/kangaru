@@ -1,12 +1,15 @@
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import {
   fetchAvailabilityRequests,
   fetchDriverStats,
+  fetchPlaceSuggestions,
   fetchTrip,
   fetchTripEvents,
   fetchTripRoute,
   fetchTrips,
+  fetchTripStopCandidates,
 } from '../api/endpoints';
 import type { Coordinates, Trip } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
@@ -45,7 +48,12 @@ export function useTrips() {
     gcTime: 24 * 60 * 60 * 1000,
   });
 
-  const trips: Trip[] = orderTripsForToday(query.data?.trips ?? []);
+  // Memoized on the query's own data, which React Query keeps referentially
+  // stable between fetches. Unmemoized, this sorted on every render *and*
+  // handed every caller a fresh array identity — so `HomeScreen`'s
+  // `useMemo([trips])` over the completed list could never hit its cache,
+  // and each render re-ran two sorts with `Date.parse` in the comparator.
+  const trips: Trip[] = useMemo(() => orderTripsForToday(query.data?.trips ?? []), [query.data]);
 
   return { ...query, trips };
 }
@@ -162,6 +170,85 @@ export function useTripRoute(
     // Only while the last attempt failed — see the docblock. A succeeded route
     // returns `false` here and is never polled.
     refetchInterval: (query) => (query.state.status === 'error' ? ROUTE_RETRY_MS : false),
+  });
+}
+
+/**
+ * The add-a-drop-off search (ADR-0045 §10) — the client's own place register,
+ * filtered as the driver types.
+ *
+ * **`networkMode` is the default here, not `offlineFirst`.** Every other
+ * query in this file serves a cached answer in a dead zone because a stale
+ * trip is better than a spinner; a stale *search result* is a destination
+ * the driver did not search for. Offline, the screen's free-text row is the
+ * honest path, and this query simply pauses.
+ *
+ * **The empty query is asked, not withheld, and that is the primary flow.**
+ * The bank case is five ATMs served one at a time by one driver: opening the
+ * screen and seeing that estate is one tap, where making them type first is a
+ * keyboard in a cradle for a list of twelve rows the server was going to send
+ * whole anyway. The endpoint caps at twelve with or without `q`, so this is
+ * one request on open rather than a page — and §10's bound is unchanged,
+ * because it is the same register the same driver may already read.
+ *
+ * `enabled` is the caller's to withhold: `AddDropoffScreen` passes an empty
+ * string for a walk-in trip, which has no register and would be a guaranteed
+ * empty answer.
+ */
+export function useTripStopCandidates(tripId: number, query: string, enabled = true) {
+  const { api } = useAuth();
+  const trimmed = query.trim();
+
+  return useQuery({
+    queryKey: ['trips', tripId, 'stop-candidates', trimmed],
+    queryFn: () => fetchTripStopCandidates(api, tripId, trimmed),
+    enabled,
+    // A register edited at a desk, read at a kerb: a minute of staleness is
+    // fine, refetching per keystroke against one URL is not.
+    staleTime: 60_000,
+    retry: 1,
+  });
+}
+
+/**
+ * Geocoder suggestions under the same search box (the §10 follow-up, owner
+ * decision 2026-08-22) — for the site nobody has pinned, typed by a
+ * technician mid-circuit.
+ *
+ * ## The debounce lives here, because the web already decided its shape
+ *
+ * `usePlaceSearch` on the console settled the behaviour of place search
+ * against a public geocoder: 300ms after the last keystroke, three characters
+ * minimum, and only what the user actually typed. The keystroke-keyed query
+ * below would otherwise fire per character — fine against the register's one
+ * URL, rude against a free public service — so the key is the *settled* text,
+ * not the live one.
+ *
+ * `retry: false` where the register above retries once: a suggestion that
+ * needs a second attempt has already lost to the free-text row sitting under
+ * it, and the server is itself a fail-soft proxy that answers `[]` on a
+ * geocoder outage.
+ */
+export function usePlaceSuggestions(tripId: number, query: string) {
+  const { api } = useAuth();
+  const trimmed = query.trim();
+  const [settled, setSettled] = useState(trimmed);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(trimmed), 300);
+
+    return () => clearTimeout(timer);
+  }, [trimmed]);
+
+  return useQuery({
+    queryKey: ['trips', tripId, 'place-suggestions', settled],
+    queryFn: () => fetchPlaceSuggestions(api, tripId, settled),
+    // The server 422s under three characters; two matches most of Kampala
+    // and costs a geocoder call to say so (the console's own floor).
+    enabled: settled.length >= 3,
+    // Mirrors the server's own cache window on the same query.
+    staleTime: 60_000,
+    retry: false,
   });
 }
 
