@@ -17255,3 +17255,89 @@ absolute Windows paths that detonate on the Linux builder. The root
 push and the third build went green. A local `assembleRelease` of the same
 tree succeeded throughout, which is what separated "our code is broken"
 from "our upload is poisoned".
+
+---
+
+### 2026-08-23 — **READ THIS IF YOU ARE WORKING IN THIS TREE.** Five things changed under you
+
+Not a claim. A notice, because these are changes to shared state that will
+bite somebody who last read this file yesterday, and three of them look like
+bugs in your own work if you do not know about them.
+
+**1. `superadmin@kangaruride.test` is now Kangaru head office, not Shanitah.**
+It was named *Platform Super Admin* and filed at `fleet` level under
+Shanitah — the one account whose name promised head office was the one that
+was not. It is now `access_level = kangaru`, `operator_id = null`, and it sees
+a **10-entry menu**, not the fleet's 24. Owner's decision, 23 August.
+
+If you were using it to reach Dispatch, Trips, Drivers or Vehicles, **use
+`admin@shanitah.test` / `Shanitah!2026x`** instead — created in the same
+change, because promoting the first one took Shanitah's only Super Admin and
+ADR-0059 §5 makes a fleet with nobody to act as unreachable to support for
+ever.
+
+**2. Four settings groups now answer 404 to a non-Kangaru account.**
+`branding`, `legal`, `ordering` and `auth` — on `PATCH /settings/{group}` and
+on `POST /settings/assets/{asset}`. If a test of yours writes one of those, it
+needs a `kangaru`-level actor; four existing files did and were updated. **The
+console hides the tabs to match**, so a fleet-level account sees six settings
+tabs rather than twelve.
+
+Worth being exact: this was **never a leak**. `setGroup()` already scoped the
+write to the caller's fleet, so nobody could change Kangaru's defaults. It is
+an information-architecture rule.
+
+**3. `companies.registration_number` is unique as of `K5`.** Still nullable,
+so existing rows are fine — but a factory or fixture that hard-codes the same
+number twice now throws a `QueryException`. `Company::factory()` does not set
+it, so most tests are unaffected.
+
+**4. `UserResource` sends two new fields**, `access_level` (always) and
+`operator_name` (when the relation is loaded). If you assert on an exact
+key-list of a user payload anywhere, it will have grown.
+
+**5. `DatabaseSeeder::seedPlatformStaff()` changed shape.** The Super Admin is
+declared `kangaru`, and `admin@shanitah.test` is new. Everyone else in that
+method stays a Shanitah account, which is correct — a dispatcher dispatches a
+fleet's trips.
+
+## And one that is mine to apologise for
+
+I re-ran `RoleSeeder` on 22 August to pick up a new permission, which
+**switched `roles.requires_mfa` back on for Super Admin and Finance** and put
+three console logins into *must enrol*. Restored within minutes, and it is why
+ADR-0061 now makes the second factor a setting rather than a seeder side
+effect. **If you re-seed roles, check `requires_mfa` on `super_admin` and
+`finance` afterwards.**
+
+## What I have NOT touched
+
+`mobile/` — every file there is yours. `Modules/Trips`, the place-suggestions
+work, and `TripInProgressScreen` are untouched by me. Where we shared
+`openapi.yaml` and `RoutePolicyCensusTest.php` I appended my own rows only and
+committed those files without your pending edits, twice; if a count looks off
+by one after you land, that is the arithmetic to check first.
+
+---
+
+#### K5 closed — one client, one registration number
+
+`docs/platform-plan.md` §6 q5 is answered: **require it on next edit, never
+invent one.** The column stays nullable and the index is unique-when-present,
+which is what a `UNIQUE` index already does with NULLs on both engines.
+
+The migration **refuses to run** if two companies already share a number,
+naming them — the stance `move_fleet_to_the_platform` took for vehicle plates.
+On this database: 2 companies, both null, no duplicates.
+
+`GET /clients/lookup` answers `{ exists }` and nothing else. **The leak test is
+the deliverable, not the endpoint** — it asserts against the raw response body,
+so a name in `meta` or a message naming the client is caught too. Exact match
+tested against four partials including a bare `%`.
+
+Mutations, restored: returning `legal_name` alongside the boolean → the leak
+test red; relaxing exact match to a prefix → the walk test red.
+
+**Not done:** the onboarding flow itself is `K6` and unclaimed — both paths,
+the `requested` contract status that must grant **no read whatsoever**, and the
+client's approval screen. Until it exists, nothing actually calls this lookup.
