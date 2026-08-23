@@ -18307,3 +18307,90 @@ column. All of those are the blocked half, and each is named in
 screen and is **deliberately not in this package**; the console half is what
 lets the office see and answer, and the driver app can follow once the loop
 above it exists.
+
+---
+
+#### K8 closed — the contract half. Green on
+[32662793322](https://github.com/RealAkram20/kangaru/actions/runs/32662793322)
+
+`37eb586`. A driver asks, their fleet consents, Kangaru approves. Four states
+rather than a boolean, because a single flag loses the one the queue is built
+on — *consented, waiting on head office* — and with it the ability to say who
+a request is blocked on.
+
+**Two gates on one door, answering different questions.** The policy asks *are
+you the right party*; the service asks *is it your turn*. An out-of-order call
+by the **correct** party is still wrong, and a silent overwrite is how a
+fleet's refusal becomes an approval.
+
+`approve` is keyed on the **level**, not a permission — a permission can be
+granted to a custom role, and the chain rests on this not being grantable to
+the parties it sits above.
+
+**`operator_id` lives on the contract, never read through the driver.** A
+driver can move fleets; which fleet agreed is a fact about the contract at the
+moment consent was given. There is a test that moves the driver and asserts
+their new employer is still refused.
+
+## Mutations, restored
+
+`approve`'s state check removed → the skip-the-fleet test red. The policy's
+`operator_id` comparison removed → the moved-driver test red.
+
+## One flaky result, named rather than reported as clean
+
+The frontend suite failed once on a run I could not reproduce — 640/641, then
+641/641 with no change. Not diagnosed, and not merge damage; the third such
+sighting in this branch (two document-encryption cases and an export-pruning
+one on 23 August). **Worth somebody's attention as a pattern rather than as
+three separate flakes.**
+
+---
+
+## Where the K packages stand
+
+| | State |
+|---|---|
+| `K0` the record and the rail | done, green |
+| `K1` the level reaches the console | done, green |
+| `K2` a fleet company exists | done, green |
+| `K3` the fleet console | done, green |
+| `K4` head office's dashboard, the cut to ten | done, green |
+| `K5` one client, one registration number | done, green |
+| `K6` onboarding a client, and the client's consent | done, green |
+| `K7` what a fleet pays | done, green |
+| `K8` a driver's contract with Kangaru | **contract half done; commission blocked** |
+| `K9` inventory | **not started — writes its own plan first** |
+
+## What is deliberately not built, so nobody rebuilds it badly
+
+**The commission half of `K8`.** Blocked on `docs/platform-plan.md` §6 q2 and
+q3, both the owner's. With them: the commission ledger against the driver's
+wallet, the walk-in dispatch pool across fleets, the depth control on what a
+fleet reads of a walk-in customer, and the **explicit channel column** on
+bookings and trips that ADR-0055 §2 requires so Kangaru's own reads never
+infer "walk-in" from `tenant_id IS NULL`.
+
+**Any billing run, payment or invoice from Kangaru to a fleet** (`K7`). Free is
+the only plan that has to work today.
+
+**Staff-limit enforcement.** `PlanAllowance::STAFF` counts correctly and
+`blockers()` uses it, but no create path calls `require()` for it.
+
+**The driver's own surface for asking.** `K8` built the office's half; the
+driver app screen that raises the request is not written, so today a contract
+can only be created through the service. **The loop is open at the actor end**
+— master plan §2's gate 1 — and that is the first thing `K8`'s remainder needs.
+
+**A fleet switcher for a client on two contracts.** Deferred on purpose: a
+control with one option.
+
+**Inventory** (`K9`) — fuel, tyres, parts. No module, no table, no mention
+anywhere in the backend. The largest single item left, and it writes
+`docs/inventory-plan.md` before any code.
+
+**An audit row when the MFA switch moves** (ADR-0061 §5 asks for one;
+`SettingsService` has no audit hook).
+
+**`fleets_without_an_account` is a number on a dashboard, not an alert.** If
+ADR-0059 §5's invariant breaks, somebody has to be looking.
