@@ -18176,3 +18176,77 @@ against a plan that charges nothing is the safest possible first customer
 the money moves.
 
 **Not touched:** `mobile/`, `Modules/Trips`, `Modules/Billing`.
+
+---
+
+#### K7 closed — green on
+[32660401297](https://github.com/RealAkram20/kangaru/actions/runs/32660401297)
+
+`78f5ca2`. A plan carries its price, its period and three ceilings, and
+`PlanAllowance` is the only thing that reads them.
+
+## Null is unlimited, and the case that proves it matters
+
+`$count >= null` is **true for every count in PHP**, so a caller comparing
+directly would refuse the **first** driver a grandfathered fleet ever hired.
+Handled in one place, and there is a test for exactly that shape rather than a
+comment hoping.
+
+The alternative encoding — a magic large number — is a ceiling somebody
+eventually hits at the scale where hitting it costs most, and Shanitah's
+*Founding fleet* plan is genuinely uncapped.
+
+## The three prohibitions, each with its own test
+
+| ADR-0058 §4 | Test |
+|---|---|
+| No retroactive deactivation | eleven drivers and their statuses untouched after the question is asked |
+| No silent enforcement deep in the stack | 422 in the create path naming the plan and the number |
+| A downgrade is refused, naming the figures | neither the plan nor a single driver moved |
+
+## One test rewritten because it was unreachable
+
+*"fails closed for a fleet with no plan"* was quietly testing a fleet on Free —
+`Operator::creating` fills `plan_id` from `is_default` before the row exists,
+so the state it described cannot occur. It now asserts the **invariant**, and
+the fail-closed branch stays as cheap defence with a note that it is
+deliberately not what the test pins. Same shape as the `mfaEnforced()`
+null-coalesce found in `K0`; that is twice now, and the pattern is worth
+naming: **a guard written for a state the schema already prevents will pass its
+test for the wrong reason.**
+
+## Two things only running found
+
+- An **unquoted YAML description** containing a comma and a colon broke the
+  whole contract validator — eighteen Fleet tests red, none of them about
+  plans, and the message pointed at an allocation test.
+- My driver payload used the **British spelling** (`licence_number`), so the
+  form refused it before the plan check was reached and the test read as
+  though the limit had fired.
+
+## Mutations, restored
+
+`null`-is-unlimited removed → the grandfathered test red. The downgrade
+refusal removed → the figures test red.
+
+## Verified
+
+Browser as head office: the Plans entry, both rows, the **Default** badge on
+Free, and *Unlimited* rendered as a word rather than a dash or a number. No
+console errors, no 4xx.
+
+## Not built, deliberately
+
+**No billing run, no payment, no invoice from Kangaru to a fleet.** Free is the
+only plan that has to work today, and a billing run proved against a plan that
+charges nothing is the safest possible first customer (ADR-0058 Consequences).
+The columns exist so the argument is settled before the money moves.
+
+**Commission stays out of this table.** Per-trip against the driver's wallet,
+not per-period against the fleet — merging them makes both unauditable
+(ADR-0058 §5). That is `K8`.
+
+**No staff-limit enforcement.** `PlanAllowance::STAFF` counts correctly and
+`blockers()` uses it, but no create path calls `require()` for it yet — the
+staff controller is a shared file and the driver and vehicle paths were enough
+to prove the rule. Named so it is not assumed.
