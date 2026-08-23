@@ -66,7 +66,12 @@ return new class extends Migration
     {
         foreach (['bookings', 'trips'] as $table) {
             Schema::table($table, function (Blueprint $blueprint) {
-                $blueprint->dropIndex([$table === 'trips' ? 'trips_channel_created_at_index' : 'bookings_channel_created_at_index']);
+                // The **columns**, not a name. `dropIndex(['a_name'])` treats
+                // the array as columns to derive a name from, so passing the
+                // finished name yields `trips_trips_channel_..._index_index`
+                // and the drop misses. Giving it the columns lets Laravel
+                // derive exactly what `up()` created.
+                $blueprint->dropIndex(['channel', 'created_at']);
                 $blueprint->dropColumn('channel');
             });
         }
