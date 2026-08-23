@@ -51,10 +51,17 @@ class DriverWalkInContract extends Model
     /** Somebody said no. `refused_reason` says who and why, if they said. */
     public const REFUSED = 'refused';
 
+    /** 15% to Kangaru, 10% to the fleet — the platform's opening position. */
+    public const DEFAULT_COMMISSION_BP = 1500;
+
+    public const DEFAULT_FLEET_SHARE_BP = 1000;
+
     protected $fillable = [
         'driver_id',
         'operator_id',
         'status',
+        'kangaru_commission_bp',
+        'fleet_share_bp',
         'fleet_answered_at',
         'kangaru_answered_at',
         'refused_reason',
@@ -65,6 +72,8 @@ class DriverWalkInContract extends Model
         return [
             'fleet_answered_at' => 'datetime',
             'kangaru_answered_at' => 'datetime',
+            'kangaru_commission_bp' => 'integer',
+            'fleet_share_bp' => 'integer',
         ];
     }
 
