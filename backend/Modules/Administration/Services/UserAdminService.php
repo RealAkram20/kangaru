@@ -5,6 +5,8 @@ namespace Modules\Administration\Services;
 use App\Enums\UserStatus;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+use Modules\Clients\Models\ClientRoute;
 
 /**
  * Creating and editing accounts.
@@ -26,11 +28,34 @@ class UserAdminService
      */
     public function create(array $attributes, User $actor): User
     {
+        return DB::transaction(function () use ($attributes, $actor) {
+            $user = $this->insert($attributes, $actor);
+
+            if (array_key_exists('route_ids', $attributes)) {
+                $this->replaceRoutes($user, $attributes['route_ids'], $actor);
+            }
+
+            return $user;
+        });
+    }
+
+    /**
+     * @param  array<string, mixed>  $attributes  already validated
+     */
+    private function insert(array $attributes, User $actor): User
+    {
+        $tenantId = $actor->isPlatformLevel()
+            ? ($attributes['tenant_id'] ?? null)
+            : $actor->tenant_id;
+
         return User::create([
             'name' => $attributes['name'],
             'email' => $attributes['email'],
+            'phone' => $attributes['phone'] ?? null,
             'password' => $attributes['password'],
             'role' => $attributes['role'],
+            'capabilities' => $attributes['capabilities'] ?? null,
+            'books_without_approval' => (bool) ($attributes['books_without_approval'] ?? false),
             'status' => UserStatus::ACTIVE,
             // A tenant administrator's new colleagues are always their own
             // tenant's, whatever the request said — the field is not even
@@ -41,19 +66,44 @@ class UserAdminService
             // it is Super Admin's to do — `staff.manage` is the gate, and
             // the escalation rule (ADR-0004) is what keeps a Corporate
             // Admin from reaching it.
-            'tenant_id' => $actor->isPlatformLevel()
-                ? ($attributes['tenant_id'] ?? null)
-                : $actor->tenant_id,
+            'tenant_id' => $tenantId,
+            // The mirror of the line above, and it has to be said rather than
+            // left out (ADR-0055 §4). A new colleague with neither a client nor
+            // a fleet is **Kangaru** — head office — and `User::saving` refuses
+            // to infer that. The suite found this the moment the guard landed:
+            // 36 failures, every one of them this line missing.
+            //
+            // A colleague pinned to a client is that client's and has no fleet.
+            // Everyone else joins whichever fleet the administrator making the
+            // appointment belongs to.
+            //
+            // **A Kangaru actor throws here, deliberately.** They have no fleet
+            // to pass on, so this produces two nulls and the guard refuses
+            // them. Creating head office staff is the "serious act" ADR-0006
+            // describes, made more so by ADR-0056 — it wants its own path, with
+            // `access_level` named out loud by somebody who meant it, and that
+            // path arrives with S1. Until then a loud 500 beats a quiet
+            // promotion, and the exception says exactly that.
+            'operator_id' => $tenantId === null ? $actor->operator_id : null,
         ]);
     }
 
     /**
      * @param  array<string, mixed>  $attributes  already validated
+     * @param  User  $actor  the administrator making the change — the routes
+     *                       they may pin are scoped to them (ADR-0006)
      */
-    public function update(User $subject, array $attributes): User
+    public function update(User $subject, array $attributes, User $actor): User
     {
-        return DB::transaction(function () use ($subject, $attributes) {
-            $subject->fill(array_intersect_key($attributes, array_flip(['name', 'email', 'role'])));
+        return DB::transaction(function () use ($subject, $attributes, $actor) {
+            $subject->fill(array_intersect_key(
+                $attributes,
+                array_flip(['name', 'email', 'phone', 'role', 'capabilities', 'books_without_approval']),
+            ));
+
+            if (array_key_exists('route_ids', $attributes)) {
+                $this->replaceRoutes($subject, $attributes['route_ids'], $actor);
+            }
 
             if (array_key_exists('status', $attributes)) {
                 $status = $attributes['status'] instanceof UserStatus
@@ -88,5 +138,70 @@ class UserAdminService
     public function revokeTokens(User $subject): void
     {
         $subject->tokens()->delete();
+    }
+
+    /**
+     * Sets which of the client's routes this person rides (ADR-0045 §8).
+     *
+     * A roster, not a permission — nothing authorises off `client_route_members`
+     * — so there is no escalation rule to apply here. What there *is* is an
+     * isolation rule, and it is the whole of this method: a route may only
+     * be pinned to somebody in the tenant that owns it. `User` carries no
+     * global tenant scope (see the model), and `ClientRoute`'s scope follows
+     * the *actor's* tenant rather than the subject's, so the `where` is
+     * written out by hand here and asserted directly.
+     *
+     * Refused rather than filtered, like `ClientRouteService::replaceMembers`:
+     * a roster that saves as two routes when three were named is a lie
+     * noticed a month later by a driver waiting at an ATM.
+     *
+     * @param  array<int, int>  $routeIds
+     *
+     * @throws ValidationException
+     */
+    private function replaceRoutes(User $subject, array $routeIds, User $actor): void
+    {
+        $wanted = array_values(array_unique(array_map('intval', $routeIds)));
+
+        if ($wanted === []) {
+            $subject->clientRoutes()->sync([]);
+
+            return;
+        }
+
+        // A platform account has no tenant and therefore no routes to ride.
+        // Refused by name, because the alternative is a `where(..., null)`
+        // that matches nothing and reports it as "not yours".
+        if ($subject->tenant_id === null) {
+            throw ValidationException::withMessages([
+                'route_ids' => "Routes belong to a client's own staff, not to platform accounts.",
+            ]);
+        }
+
+        // Both halves, and they answer different questions. `forActor` is
+        // ADR-0006's named way past the tenant scope, and it is what lets a
+        // Super Admin — who has no tenant of their own — administer a
+        // client's staff at all. The explicit `where` is what stops that
+        // same dropped scope from pinning one client's route to another
+        // client's employee.
+        $owned = ClientRoute::query()
+            ->forActor($actor)
+            ->whereIn('id', $wanted)
+            ->where('tenant_id', $subject->tenant_id)
+            ->pluck('id')
+            ->all();
+
+        if (count($owned) !== count($wanted)) {
+            throw ValidationException::withMessages([
+                'route_ids' => 'One of those routes is not yours.',
+            ]);
+        }
+
+        // The pivot carries `tenant_id` (ADR-0001 covers join tables too)
+        // and `sync()` will not invent it — a bare sync fails on the NOT
+        // NULL column.
+        $subject->clientRoutes()->sync(
+            array_fill_keys($owned, ['tenant_id' => $subject->tenant_id]),
+        );
     }
 }

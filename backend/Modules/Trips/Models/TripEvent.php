@@ -24,6 +24,8 @@ use Modules\Trips\Enums\TripStatus;
  * @property TripStatus|null $from_status
  * @property TripStatus $to_status
  * @property int|null $user_id
+ * @property int|null $stop_id Which stop an arrival/departure was about
+ *                             (ADR-0045 §2). Null on every other row.
  * @property string|null $notes
  * @property CarbonInterface $created_at
  */
@@ -42,6 +44,7 @@ class TripEvent extends Model
         'from_status',
         'to_status',
         'user_id',
+        'stop_id',
         'notes',
     ];
 
@@ -124,7 +127,7 @@ class TripEvent extends Model
         return $this->belongsTo(User::class);
     }
 
-    public static function record(Trip $trip, ?TripStatus $from, TripStatus $to, ?User $actor, ?string $notes): self
+    public static function record(Trip $trip, ?TripStatus $from, TripStatus $to, ?User $actor, ?string $notes, ?int $stopId = null): self
     {
         return static::create([
             'tenant_id' => $trip->tenant_id,
@@ -132,6 +135,7 @@ class TripEvent extends Model
             'from_status' => $from,
             'to_status' => $to,
             'user_id' => $actor?->id,
+            'stop_id' => $stopId,
             'notes' => $notes,
         ]);
     }

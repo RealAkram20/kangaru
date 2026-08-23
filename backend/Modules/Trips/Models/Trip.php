@@ -4,6 +4,7 @@ namespace Modules\Trips\Models;
 
 use App\Concerns\Auditable;
 use App\Concerns\BelongsToTenant;
+use App\Concerns\RecordsActingFleet;
 use App\Models\Customer;
 use App\Models\Tenant;
 use App\Support\Tenancy\TenantScope;
@@ -50,6 +51,8 @@ use Modules\Vehicles\Models\Vehicle;
  * @property string|null $distance_km
  * @property string|null $gps_distance_km
  * @property bool $distance_variance_flagged
+ * @property int $unplanned_stop_count How many stops were added mid-run rather
+ *                                     than planned (ADR-0045 §4) — surfaced, never billed.
  * @property string|null $billed_distance_km The resolver's figure (ADR-0045). Nothing
  *                                           prices from it yet — Phase 1 of `docs/measured-distance-plan.md` runs in shadow.
  * @property DistanceGrade|null $distance_grade
@@ -77,7 +80,7 @@ use Modules\Vehicles\Models\Vehicle;
 class Trip extends Model
 {
     /** @use HasFactory<TripFactory> */
-    use Auditable, BelongsToTenant, HasFactory, SoftDeletes;
+    use Auditable, BelongsToTenant, HasFactory, RecordsActingFleet, SoftDeletes;
 
     /**
      * @see Vehicle::newFactory() for why this is explicit.
@@ -119,6 +122,12 @@ class Trip extends Model
 
     protected $fillable = [
         'tenant_id',
+        // The fleet whose driver ran this (ADR-0055). Set by `TripService`
+        // from the assigned driver rather than from whoever is acting: the
+        // fleet that did the work is a fact about the work, and a dispatcher
+        // — or, after ADR-0056, a support agent acting as one — is not
+        // necessarily in it. Null only on a walk-in nobody has accepted.
+        'operator_id',
         // ADR-0024 §1. The other owner: set on a walk-in trip, where
         // tenant_id is null. TripService is the only writer and asserts
         // that exactly one of the pair is present.
@@ -168,6 +177,7 @@ class Trip extends Model
             'distance_km' => 'decimal:2',
             'gps_distance_km' => 'decimal:2',
             'distance_variance_flagged' => 'boolean',
+            'unplanned_stop_count' => 'integer',
             'billed_distance_km' => 'decimal:2',
             'distance_grade' => DistanceGrade::class,
             'distance_resolved_at' => 'datetime',
@@ -337,6 +347,26 @@ class Trip extends Model
     public function events(): HasMany
     {
         return $this->hasMany(TripEvent::class)->orderBy('created_at');
+    }
+
+    /**
+     * The stops this journey carried, in run order (ADR-0045 §1).
+     *
+     * **The tenant scope is dropped on the relation itself**, and that is
+     * load-bearing rather than tidy: `TenantScope` fails closed, a driver's
+     * request binds no tenant, and a walk-in trip's stops have none — so a
+     * plain `hasMany` here would serve an empty itinerary on exactly the
+     * requests that need it. `TripEvent::scopeForTrip` records this same trap
+     * shipping silently once; the narrowing to one already-authorised trip is
+     * the authorization, as it argues there.
+     *
+     * @return HasMany<TripStop, $this>
+     */
+    public function stops(): HasMany
+    {
+        return $this->hasMany(TripStop::class)
+            ->withoutGlobalScope(TenantScope::class)
+            ->orderBy('sequence');
     }
 
     /**

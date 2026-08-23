@@ -27,6 +27,7 @@ import {
   isCancellable,
   type Captain,
   type Fare,
+  type RatingOutcome,
   type RidePhase,
   type RideState,
 } from './ride'
@@ -218,7 +219,17 @@ export function RideScreen({
 
   useEffect(() => source.subscribe(setState), [source])
 
-  const { phase, captain, progress, etaSeconds, estimate, fare, cancelledReason, cancellable } =
+  const {
+    phase,
+    captain,
+    progress,
+    etaSeconds,
+    estimate,
+    fare,
+    cancelledReason,
+    cancellable,
+    notice = null,
+  } =
     state
   const copy = PRE_ASSIGNMENT_COPY[phase]
 
@@ -312,6 +323,18 @@ export function RideScreen({
               {phase === 'cancelled' && cancelledReason !== null && (
                 <p className="mt-2 text-sm text-text-secondary">Reason: {cancelledReason}</p>
               )}
+              {/* The office's answer to something the passenger just did —
+                  today, a cancellation that arrived after the journey had
+                  started. Its own words, so the screen and the server never
+                  disagree about what to do next. */}
+              {notice !== null && (
+                <p
+                  role="alert"
+                  className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+                >
+                  {notice}
+                </p>
+              )}
             </section>
           )}
 
@@ -353,6 +376,7 @@ export function RideScreen({
               paid={paid}
               rated={rated}
               onPaid={() => setPaid(true)}
+              onRate={(stars) => source.rate(stars)}
               onRated={() => setRated(true)}
             />
           )}
@@ -478,6 +502,21 @@ function TripCaptainBanner({ captain }: { captain: Captain }) {
  * The plate gets its own pill because it is the thing you actually match
  * against the car pulling up.
  */
+/**
+ * "Toyota Hiace, white" — or just "Toyota Hiace" when nobody recorded a colour.
+ *
+ * The colour is genuinely optional on a vehicle, and `liveRideSource` maps a
+ * null to an empty string, so both places that named the car were
+ * interpolating it unconditionally: the card rendered **"Toyota Hiace, "** with
+ * a dangling comma on a real walk-in ride, and the share text put a double
+ * space where the colour should have been. Seen on the live tracking screen
+ * rather than reasoned about, which is why it survived the tests around it —
+ * the seeded demo vehicles all have a colour.
+ */
+function vehicleDescription(captain: Captain): string {
+  return [captain.vehicle, captain.vehicleColour].filter((part) => part.trim() !== '').join(', ')
+}
+
 function CaptainCard({
   captain,
   phase,
@@ -490,7 +529,7 @@ function CaptainCard({
   const [shareNote, setShareNote] = useState<string | null>(null)
 
   const share = () => {
-    const text = `I'm on a KangaruRide with ${captain.name}, ${captain.vehicleColour} ${captain.vehicle}, plate ${captain.plate}.`
+    const text = `I'm on a KangaruRide with ${captain.name}, ${vehicleDescription(captain)}, plate ${captain.plate}.`
     // The Web Share API where it exists, the clipboard where it does not.
     // Both are real; neither pretends to be live trip tracking, which does
     // not exist yet.
@@ -529,7 +568,7 @@ function CaptainCard({
 
       <div className="mt-4 flex items-center justify-between gap-3">
         <p className="min-w-0 truncate text-sm text-text-secondary">
-          {captain.vehicle}, {captain.vehicleColour}
+          {vehicleDescription(captain)}
         </p>
         <span className="shrink-0 rounded-lg bg-surface-sunken px-3 py-1.5 font-display text-base font-bold tracking-wide text-text-heading">
           {captain.plate}
@@ -742,6 +781,7 @@ function TripCompleted({
   paid,
   rated,
   onPaid,
+  onRate,
   onRated,
 }: {
   fare: Fare
@@ -749,10 +789,36 @@ function TripCompleted({
   paid: boolean
   rated: boolean
   onPaid: () => void
+  /** Sends the stars to the platform; resolves with what became of them. */
+  onRate: (stars: number) => Promise<RatingOutcome>
+  /** Flips the screen to the confirmation — only after `onRate` recorded. */
   onRated: () => void
 }) {
   const [method, setMethod] = useState('cash')
   const [stars, setStars] = useState(0)
+  const [sending, setSending] = useState(false)
+  /** The server's own sentence when the rating was refused, shown verbatim. */
+  const [ratingError, setRatingError] = useState<string | null>(null)
+
+  /*
+   * Submit means submitted. This button used to flip a local flag and the
+   * card thanked the passenger for a rating that had gone nowhere — the
+   * owner rated a real ride and the driver never received it. Now the
+   * confirmation renders only after the platform said "recorded", and a
+   * refusal keeps the stars on screen with the reason above them.
+   */
+  const submit = () => {
+    setSending(true)
+    setRatingError(null)
+    void onRate(stars).then((outcome) => {
+      if (outcome.recorded) {
+        onRated()
+        return
+      }
+      setSending(false)
+      setRatingError(outcome.message)
+    })
+  }
 
   if (rated) {
     return (
@@ -795,13 +861,18 @@ function TripCompleted({
             </button>
           ))}
         </div>
+        {ratingError !== null && (
+          <p role="status" className="mt-4 text-center text-sm font-medium text-red-600 dark:text-red-400">
+            {ratingError}
+          </p>
+        )}
         <button
           type="button"
-          disabled={stars === 0}
-          onClick={onRated}
+          disabled={stars === 0 || sending}
+          onClick={submit}
           className="mt-5 w-full rounded-full bg-brand-green px-6 py-4 font-semibold text-text-on-brand transition-[background-color,transform,opacity] duration-150 ease-[var(--kr-ease-out)] hover:bg-brand-green-hover active:scale-[0.98] disabled:opacity-50"
         >
-          Submit rating
+          {sending ? 'Sending…' : 'Submit rating'}
         </button>
       </section>
     )
@@ -812,11 +883,28 @@ function TripCompleted({
       <p className="text-center font-display text-4xl font-bold text-text-heading">
         {formatUgx(fare.total)}
       </p>
-      <dl className="mt-4 space-y-2 border-t border-border pt-4 text-sm">
-        <FareRow label="Base fare" value={formatUgx(fare.base)} />
-        <FareRow label={`Distance · ${fare.distanceKm} km`} value={formatUgx(fare.distance)} />
-        <FareRow label={`Time · ${fare.minutes} mins`} value={formatUgx(fare.time)} />
-      </dl>
+      {/* The lines only when the source has them (see `Fare.breakdown`); the
+          platform serves a total and a distance, and three invented numbers
+          adding up to it would be a bill nobody issued. */}
+      {fare.breakdown !== undefined ? (
+        <dl className="mt-4 space-y-2 border-t border-border pt-4 text-sm">
+          <FareRow label="Base fare" value={formatUgx(fare.breakdown.base)} />
+          <FareRow
+            label={`Distance · ${fare.distanceKm ?? '—'} km`}
+            value={formatUgx(fare.breakdown.distance)}
+          />
+          <FareRow
+            label={`Time · ${fare.breakdown.minutes} mins`}
+            value={formatUgx(fare.breakdown.time)}
+          />
+        </dl>
+      ) : (
+        fare.distanceKm !== null && (
+          <p className="mt-3 border-t border-border pt-3 text-center text-sm text-text-secondary">
+            {fare.distanceKm} km travelled
+          </p>
+        )
+      )}
 
       <p className="mt-5 font-semibold text-text-heading">Pay with</p>
       <div className="mt-2 grid grid-cols-3 gap-2">

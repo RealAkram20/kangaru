@@ -4,13 +4,13 @@ import { Image } from 'expo-image';
 import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useDutyToggle } from '../duty/useDutyToggle';
-import { appVersion } from '../ui/version';
+import { authorizedImageSource } from '../api/imageSource';
+import { useDuty } from '../duty/queries';
 import { initials, tripsTotal } from '../profile/presentation';
 import { useDriverProfile } from '../profile/queries';
 import { useNotifications } from '../notifications/queries';
-import { useDriverStats, useTrips } from '../trips/queries';
-import { ratingValue } from '../trips/statsPresentation';
+import { useDriverStats } from '../trips/queries';
+import { ratingNote, ratingValue } from '../trips/statsPresentation';
 import { usePressScale } from '../ui/components';
 import {
   BellIcon,
@@ -20,9 +20,7 @@ import {
   GiftIcon,
   HeadsetIcon,
   HouseIcon,
-  PowerIcon,
   ReceiptIcon,
-  RouteIcon,
   SettingsIcon,
   ShieldIcon,
   StarIcon,
@@ -31,7 +29,7 @@ import {
   XIcon,
 } from '../ui/icons';
 import { colors, radius, spacing, typography } from '../ui/theme';
-import { drawerSections, liveTripRow, selectedRowKey, type DrawerRow } from './drawer';
+import { drawerSections, selectedRowKey, type DrawerRow } from './drawer';
 
 /**
  * The drawer — the whole map of the app, and the one menu in it.
@@ -72,18 +70,27 @@ export function DrawerContent(props: DrawerContentComponentProps) {
   const insets = useSafeAreaInsets();
   const { data: profile } = useDriverProfile();
   const { data: stats } = useDriverStats();
-  const { data: trips } = useTrips();
   const { data: inbox } = useNotifications();
 
-  // The shared hook, not a second copy of the toggle. `DutyBar` on the home
-  // screen posts through the same one, so the two controls cannot disagree
-  // about whether this driver is working — and the location permission prompt
-  // is asked in one place rather than in whichever control they happened to
-  // press first.
-  const { onDuty, busy: dutyBusy, refusal, toggle } = useDutyToggle();
+  /**
+   * Duty is **read here, never driven here.**
+   *
+   * This was `useDutyToggle`, because the panel carried a Go Offline button.
+   * The owner removed it — *"it sounds like we are forcing people to go
+   * offline"* — and the button was a duplicate of `HomeScreen`'s in any case;
+   * `DutyBar`'s own docblock records the duplication.
+   *
+   * The **state** stays, and deliberately: `docs/screen-rules.md` §6 makes it
+   * the most consequential fact on this panel — a driver who believes they are
+   * online and is not is being offered no work and does not know it. So the
+   * dot and the pill remain, and the action lives on the one screen that owns
+   * it. Reporting a fact and offering an action are different jobs, and a menu
+   * does the first.
+   */
+  const { data: duty } = useDuty();
+  const onDuty = duty?.on_duty ?? false;
 
-  // Read once per render so every row agrees about which trip is live.
-  const sections = drawerSections(liveTripRow(trips?.trips), inbox?.unread ?? null);
+  const sections = drawerSections(inbox?.unread ?? null);
 
   const [tab, screen] = currentRoute(props);
   const selected = selectedRowKey(sections, tab, screen);
@@ -104,9 +111,42 @@ export function DrawerContent(props: DrawerContentComponentProps) {
       return;
     }
 
+    /**
+     * **`initial: false` is what puts the tab's own root screen underneath
+     * this one, and without it the tab stops working.**
+     *
+     * The owner found it: *"if I open Promotions and then I try to click the
+     * Profile it does not work — this is application wide."*
+     *
+     * Navigating into a nested navigator that has **not been rendered yet**
+     * does not push onto its stack — there is no stack. React Navigation
+     * builds the child's *initial state* from what it was handed, so the
+     * Profile stack came into existence as `["Promotions"]`, index 0, with
+     * `ProfileHome` never in it at all. Measured, not guessed:
+     *
+     *     without initial:false   index=0  routes=["Promotions"]
+     *     with    initial:false   index=1  routes=["ProfileHome","Promotions"]
+     *
+     * From `index: 0` there is nothing to pop, so pressing the Profile tab
+     * had nothing to do and did nothing — while the other three tabs, sitting
+     * at their own roots, kept switching normally. That asymmetry is exactly
+     * what the owner described.
+     *
+     * **The back gesture was the other half of it.** A stack of one has
+     * nothing behind it, so Android's back from Promotions left the app
+     * instead of returning to Profile.
+     *
+     * It bites seven of this drawer's eleven rows — every one naming a screen
+     * that is not its tab's initial route: Trips History under Home, and
+     * Promotions, Performance, Notifications, Documents, Safety and Support
+     * under Profile. The four that name a root were always fine, which is why
+     * this survived so long.
+     *
+     * Guarded by `DrawerContent.test.tsx`, which fails without this flag.
+     */
     props.navigation.navigate('Main', {
       screen: target,
-      params: { screen: inner, params },
+      params: { screen: inner, params, initial: false },
     });
   };
 
@@ -147,7 +187,11 @@ export function DrawerContent(props: DrawerContentComponentProps) {
         style={styles.identity}
         accessible
         accessibilityRole="button"
-        accessibilityLabel={`${profile?.name ?? 'Driver'}. Rating ${ratingValue(stats)}. ${tripsTotal(profile)}. ${onDuty ? 'Online' : 'Offline'}. Opens your profile.`}
+        accessibilityLabel={`${profile?.name ?? 'Driver'}. ${
+          stats?.rating === null || stats?.rating === undefined
+            ? (ratingNote(stats) ?? 'No ratings yet')
+            : `Rating ${ratingValue(stats)}`
+        }. ${tripsTotal(profile)}. ${onDuty ? 'Online' : 'Offline'}. Opens your profile.`}
         onPress={() =>
           go({
             key: 'profile',
@@ -163,12 +207,40 @@ export function DrawerContent(props: DrawerContentComponentProps) {
             {profile?.name ?? '—'}
           </Text>
 
+          {/*
+            **A withheld score says why, rather than drawing a bare dash.**
+
+            The owner read this row as a defect — *"the client left us the
+            review, it counts, but the rating is showing —"* — and they were
+            right to. The figure is correct: ADR-0030 §3 publishes nothing
+            below five ratings, because one three-star rating is not a 3.0.
+            What was wrong is that this row alone never said so.
+
+            `HomeScreen` and `ProfileScreen` both draw `ratingValue` beside
+            `ratingNote` and always have. This drew the dash on its own, next
+            to a star, which reads as a score of nothing — and
+            `ratingNote`'s own docblock is explicit about the cost: *"a bare
+            dash says nothing and invites a driver to assume the worst about a
+            score that can end their income."*
+
+            The trip count stays either way; it is the one number here that is
+            never withheld, and dropping it to make room would trade one
+            silence for another.
+          */}
           <View style={styles.ratingRow}>
             <StarIcon size={16} />
-            <Text style={styles.rating}>{ratingValue(stats)}</Text>
-            <Text style={styles.tripCount} numberOfLines={1}>
-              ({tripsTotal(profile)})
-            </Text>
+            {stats?.rating === null || stats?.rating === undefined ? (
+              <Text style={styles.tripCount} numberOfLines={1}>
+                {ratingNote(stats) ?? 'No ratings yet'} · {tripsTotal(profile)}
+              </Text>
+            ) : (
+              <>
+                <Text style={styles.rating}>{ratingValue(stats)}</Text>
+                <Text style={styles.tripCount} numberOfLines={1}>
+                  ({tripsTotal(profile)})
+                </Text>
+              </>
+            )}
           </View>
 
           {/*
@@ -186,8 +258,14 @@ export function DrawerContent(props: DrawerContentComponentProps) {
         </View>
       </Pressable>
 
+      {/*
+        The rows are the whole panel now. The foot below them held a red
+        full-width **Go Offline**, the refusal line that answered it, and a
+        version string; all three are gone, so the bottom inset moves onto the
+        list rather than onto a container kept alive to hold padding.
+      */}
       <ScrollView
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + spacing.md }]}
         showsVerticalScrollIndicator={false}
       >
         {sections.map((section, index) => (
@@ -205,22 +283,6 @@ export function DrawerContent(props: DrawerContentComponentProps) {
           </View>
         ))}
       </ScrollView>
-
-      <View style={[styles.foot, { paddingBottom: insets.bottom + spacing.md }]}>
-        <DutyButton online={onDuty} busy={dutyBusy} onPress={() => void toggle()} />
-
-        {/* The server's own sentence — approved leave, a roster, a suspension.
-            ADR-0017 put that wording in one place so a driver is not told two
-            different things by two different screens, and this is the second
-            screen. */}
-        {refusal !== null && (
-          <Text accessibilityRole="alert" style={styles.refusal}>
-            {refusal}
-          </Text>
-        )}
-
-        <Text style={styles.version}>{appVersion()}</Text>
-      </View>
     </View>
   );
 }
@@ -250,7 +312,7 @@ function Avatar({
         </View>
       ) : (
         <Image
-          source={{ uri: photo }}
+          source={authorizedImageSource(photo)}
           style={styles.avatarPhoto}
           contentFit="cover"
           transition={120}
@@ -314,60 +376,28 @@ function DrawerItem({
   );
 }
 
-/**
- * Going on and off duty, from the menu.
+/*
+ * **There is no duty button here, and it is not an oversight.**
  *
- * The mockup's red **Go Offline**. Red is right for *going* offline — it is
- * the destructive direction, it stops work arriving — but the button has to
- * say both states, and going *on* duty is not destructive. So the tone follows
- * the action rather than the control.
+ * A red full-width *Go Offline* sat at the foot of this panel — the mockup's,
+ * and defensible on its own terms: red for the destructive direction, tone
+ * following the action rather than the control. The owner removed it on the
+ * reading that matters more than any of that: *"it sounds like we are forcing
+ * people to go offline."* A menu that ends every opening with one loud red
+ * action is suggesting it, and this menu is opened to get somewhere else.
  *
- * **This is the same mutation the home screen's toggle posts**, not a second
- * one: `useSetDuty` is shared, so the two controls cannot disagree about
- * whether a driver is working.
+ * It was also a duplicate. `HomeScreen` carries the same toggle through the
+ * same `useSetDuty`, and `DutyBar`'s docblock had already flagged the pair
+ * against AGENTS.md. The panel keeps the *state* — dot and pill — because
+ * `screen-rules.md` §6 makes it the most consequential fact here.
  */
-function DutyButton({
-  online,
-  busy,
-  onPress,
-}: {
-  online: boolean;
-  busy: boolean;
-  onPress: () => void;
-}) {
-  const press = usePressScale();
-  const label = online ? 'Go Offline' : 'Go Online';
-  const tone = online ? colors.danger : colors.primaryText;
-
-  return (
-    <Animated.View style={{ transform: [{ scale: press.scale }] }}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={label}
-        accessibilityState={{ disabled: busy, busy }}
-        disabled={busy}
-        onPress={onPress}
-        onPressIn={press.onPressIn}
-        onPressOut={press.onPressOut}
-        style={[
-          styles.duty,
-          { backgroundColor: online ? colors.dangerTint : colors.primaryTint, opacity: busy ? 0.5 : 1 },
-        ]}
-      >
-        <PowerIcon size={20} color={tone} strokeWidth={2.2} />
-        <Text style={[styles.dutyButtonLabel, { color: tone }]}>{label}</Text>
-      </Pressable>
-    </Animated.View>
-  );
-}
 
 /**
  * The glyph for a row, keyed on the row rather than passed with it.
  *
  * Icons are components and `drawer.ts` is a pure module a test can read
  * without a renderer — keeping JSX out of it is what lets the row list be
- * asserted as data. The live-trip row takes `RouteIcon`, which is the journey,
- * rather than a status glyph that would change under the driver.
+ * asserted as data.
  */
 function glyphFor(key: string, color: string): ReactNode {
   const props = { color, size: 22, strokeWidth: 1.9 };
@@ -375,8 +405,6 @@ function glyphFor(key: string, color: string): ReactNode {
   switch (key) {
     case 'home':
       return <HouseIcon {...props} />;
-    case 'live-trip':
-      return <RouteIcon {...props} />;
     case 'trips-history':
       return <ReceiptIcon {...props} />;
     case 'earnings':
@@ -593,33 +621,5 @@ const styles = StyleSheet.create({
     height: 9,
     borderRadius: radius.pill,
     backgroundColor: colors.primary,
-  },
-  foot: {
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    gap: spacing.sm,
-  },
-  duty: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm + 2,
-    minHeight: 52,
-    borderRadius: radius.md,
-  },
-  dutyButtonLabel: {
-    ...typography.button,
-  },
-  refusal: {
-    ...typography.caption,
-    color: colors.danger,
-    textAlign: 'center',
-  },
-  version: {
-    ...typography.caption,
-    color: colors.textMuted,
-    textAlign: 'center',
   },
 });

@@ -5,6 +5,8 @@ namespace App\Models;
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Casts\RoleSlug;
 use App\Concerns\Auditable;
+use App\Enums\AccessLevel;
+use App\Enums\ClientCapability;
 use App\Enums\Permission;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
@@ -13,10 +15,13 @@ use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Modules\Administration\Models\Role;
+use Modules\Administration\Services\SettingsService;
+use Modules\Clients\Models\ClientRoute;
 
 /**
  * Deliberately NOT scoped by BelongsToTenant: login must locate a user by
@@ -24,6 +29,14 @@ use Modules\Administration\Models\Role;
  * enforced downstream, once IdentifyTenant middleware sets TenantContext
  * from this (now-authenticated) user's tenant_id.
  *
+ * @property AccessLevel $access_level Which level this account belongs to
+ *                                     (ADR-0055 §4). Declared for the same reason `$mfa_secret`
+ *                                     is below: the column is a `string` and static analysis takes the raw
+ *                                     column type over the cast, which turns every `match` on this into
+ *                                     "always false" — seventeen of them, in four files.
+ * @property int|null $operator_id The fleet this person works for, null for a
+ *                                 client's own staff and for Kangaru's. Which of those two a null
+ *                                 means is `$access_level`'s question.
  * @property UserStatus $status Writable, unlike $role: UserAdminService
  *                              assigns it directly so the status change and its deactivated_at stamp
  *                              happen in one save and produce one audit entry.
@@ -63,9 +76,21 @@ class User extends Authenticatable
     protected $fillable = [
         'name',
         'email',
+        // The work number a driver is given when this person travels. See
+        // the `phone` migration for why it is nullable on the column and
+        // required by `StoreUserRequest` all the same.
+        'phone',
         'password',
         'tenant_id',
+        // Beside `tenant_id` because they are the two halves of one
+        // question (ADR-0055). `access_level` is deliberately **absent**:
+        // it is derived on save from these two, and the one value that
+        // cannot be derived — `kangaru` — must be assigned in code by
+        // somebody who meant it, never arrive in a request payload.
+        'operator_id',
         'role',
+        'capabilities',
+        'books_without_approval',
         'status',
         'deactivated_at',
     ];
@@ -105,7 +130,10 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'access_level' => AccessLevel::class,
             'role' => RoleSlug::class,
+            'capabilities' => 'array',
+            'books_without_approval' => 'boolean',
             'status' => UserStatus::class,
             'deactivated_at' => 'datetime',
             // App-level encryption, the treatment AGENTS.md requires for
@@ -123,6 +151,73 @@ class User extends Authenticatable
     }
 
     /**
+     * The ownership invariant, settled before every write (ADR-0055 §4).
+     *
+     * `access_level` is derived here rather than being another field every
+     * caller has to remember, and deriving it is not a softening of the ADR:
+     * the one value that would be dangerous to guess — `kangaru` — is the one
+     * value this cannot produce. Two nulls do not become head office; they
+     * throw.
+     *
+     * That is the difference the hazard turns on. Six accounts on the
+     * development database are null-client rows today, **three of them
+     * drivers**, and inference would have promoted every one of them with
+     * nothing failing anywhere.
+     *
+     * The database holds the same rule as a `CHECK` constraint, so a raw query
+     * or a seeder that never loads this class is caught too. This half exists
+     * to fail with a sentence rather than an SQLSTATE.
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (self $user): void {
+            $user->access_level = self::levelFor($user);
+        });
+    }
+
+    /**
+     * @throws \RuntimeException when the two ownership columns do not describe
+     *                           exactly one level
+     */
+    private static function levelFor(self $user): AccessLevel
+    {
+        $operatorId = $user->operator_id;
+        $tenantId = $user->tenant_id;
+
+        if ($operatorId !== null && $tenantId !== null) {
+            throw new \RuntimeException(
+                "User {$user->email} names both a fleet and a client. They are "
+                .'independent axes (ADR-0055) and an account belongs to exactly '
+                .'one of them: a fleet employs the person, a client employs the '
+                .'person, and nobody is employed by both.'
+            );
+        }
+
+        if ($tenantId !== null) {
+            return AccessLevel::CLIENT;
+        }
+
+        if ($operatorId !== null) {
+            return AccessLevel::FLEET;
+        }
+
+        // Two levels share this column shape, and both must be *declared*.
+        // Neither can be reached by omission, which is the whole of §4.
+        if (in_array($user->access_level, [AccessLevel::KANGARU, AccessLevel::APPLICANT], true)) {
+            return $user->access_level;
+        }
+
+        throw new \RuntimeException(
+            "User {$user->email} names neither a fleet nor a client. That shape "
+            .'is Kangaru — head office — and it is never inferred: assign '
+            .'access_level = AccessLevel::KANGARU explicitly if that is what '
+            .'was meant, or give the account an operator_id. A fleet driver '
+            .'silently becoming head office is the failure this guard exists '
+            .'for (ADR-0055 §4).'
+        );
+    }
+
+    /**
      * Whether this user's role demands a second factor (ADR-0008).
      *
      * Read from the role **row**, not from a constant naming two enum
@@ -136,7 +231,21 @@ class User extends Authenticatable
      */
     public function requiresMfa(): bool
     {
-        return (bool) $this->roleRecord?->requires_mfa;
+        // ADR-0061: two switches, one resolved answer. The platform-wide
+        // `auth.mfa_enforced` and the per-role `requires_mfa` are combined
+        // **here and nowhere else** — two callers reading two columns and
+        // combining them themselves is how the gates drift apart, and the
+        // drift is invisible: somebody in the half-state signs in with a 200
+        // *and a token*, then gets refused every route but five.
+        //
+        // Order matters for cost, not correctness: the role read is already
+        // loaded, the setting is a cached lookup, and `&&` short-circuits on
+        // the common answer.
+        if (! (bool) $this->roleRecord?->requires_mfa) {
+            return false;
+        }
+
+        return app(SettingsService::class)->mfaEnforced();
     }
 
     /** Enrolment is only real once a code has been verified against it. */
@@ -154,9 +263,24 @@ class User extends Authenticatable
         return $this->requiresMfa() && ! $this->hasMfaEnabled();
     }
 
+    /** @return BelongsTo<Tenant, $this> */
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);
+    }
+
+    /**
+     * The fleet company this person works for, if any (ADR-0055).
+     *
+     * Null for a client's own staff and for Kangaru's. Which of those two a
+     * null means is `access_level`'s question, never this relation's — that
+     * distinction is the whole reason the column exists.
+     *
+     * @return BelongsTo<Operator, $this>
+     */
+    public function operator(): BelongsTo
+    {
+        return $this->belongsTo(Operator::class);
     }
 
     public function isActive(): bool
@@ -165,12 +289,27 @@ class User extends Authenticatable
     }
 
     /**
-     * Shanitah's own staff — dispatchers, Finance, Operations, HR, Super
-     * Admin — as opposed to a client's users (ADR-0005, ADR-0006).
+     * A fleet company's own staff — dispatchers, Finance, Operations, HR,
+     * Super Admin — as opposed to a client's users (ADR-0005, ADR-0006).
      *
-     * Keyed off having no tenant rather than a role name, so a custom
-     * platform-level role behaves the same way without anybody remembering
-     * to add it to a list (ADR-0004).
+     * Keyed off the declared level rather than a role name, so a custom
+     * fleet-level role behaves the same way without anybody remembering to
+     * add it to a list (ADR-0004).
+     *
+     * **This used to read `tenant_id === null`, and that is now one answer to
+     * two questions** (ADR-0055). A `kangaru` account has no client either, and
+     * it must *not* inherit what this grants: head office reads Kangaru's own
+     * rows and reaches a fleet's by acting as somebody in it (ADR-0056), never
+     * by being mistaken for fleet staff. Keying on `FLEET` specifically is what
+     * keeps the two apart, and it is behaviour-identical today because F0
+     * deliberately creates no Kangaru accounts.
+     *
+     * The name is kept, against ADR-0055 §1's own advice about the word
+     * "platform", for a reason worth stating: renaming it touches 35 call
+     * sites in 26 files in the same pass that changes what it *means*, and a
+     * reviewer cannot then tell the mechanical half from the load-bearing
+     * half. The meaning moves here, alone, where the diff is four words. The
+     * rename belongs to F2, which touches these call sites anyway.
      *
      * This answers *whose* records the user may reach, never *what* they may
      * do with them. Permission is `hasPermission()`, and the two compose:
@@ -179,7 +318,31 @@ class User extends Authenticatable
      */
     public function isPlatformLevel(): bool
     {
-        return $this->tenant_id === null;
+        return $this->access_level === AccessLevel::FLEET;
+    }
+
+    /**
+     * The client's routes this person rides (ADR-0045 §8).
+     *
+     * The other half of `ClientRoute::members()`, and the same warning
+     * applies: **this is a roster, not a permission.** Nothing authorises
+     * off it. It exists so a colleague's routes can be set where the
+     * colleague is created — the roster is a fact about a person, and
+     * making an administrator open four routes to add one new starter to
+     * each was the reason the relation went unused from the route's side.
+     *
+     * @return BelongsToMany<ClientRoute, $this>
+     */
+    public function clientRoutes(): BelongsToMany
+    {
+        // Ordered here rather than at each call site, for the reason
+        // `ClientRoute::stops()` gives: `route_ids` is compared and
+        // round-tripped by the staff screen, and a roster that comes back
+        // in pivot-insertion order looks like a different roster every
+        // time somebody is added.
+        return $this->belongsToMany(ClientRoute::class, 'client_route_members')
+            ->orderBy('client_routes.id')
+            ->withTimestamps();
     }
 
     /**
@@ -198,11 +361,37 @@ class User extends Authenticatable
      */
     public function scopeForActor(Builder $query, User $actor): Builder
     {
-        // Never `where tenant_id = null`: a tenant actor whose own tenant_id
-        // were somehow null must match nothing, not every platform account.
-        return $actor->isPlatformLevel()
-            ? $query
-            : $query->where('tenant_id', $actor->tenant_id);
+        // Was `isPlatformLevel() ? $query : where tenant_id = ...`, and the
+        // unbounded branch is the hole ADR-0055 closes: a *second* fleet's
+        // dispatcher would have read the first fleet's entire staff list.
+        // Nothing leaks today because there is one fleet, which is exactly the
+        // kind of gap that ships.
+        //
+        // The old comment warned never to write `where tenant_id = null`,
+        // because a client actor whose own `tenant_id` were somehow null would
+        // then match every platform account. That shape is now impossible
+        // rather than merely discouraged — `users_access_level_matches_columns`
+        // refuses to store a `client` row without a client.
+        return match ($actor->access_level) {
+            // Their own fleet's people, plus every client's — a fleet
+            // administrator manages the clients they serve. F2 narrows the
+            // second half to the clients this fleet actually contracts with;
+            // today one fleet serves all of them, so this is behaviour for
+            // behaviour what it replaced.
+            AccessLevel::FLEET => $query->where(function (Builder $scoped) use ($actor): void {
+                $scoped->where('users.operator_id', $actor->operator_id)
+                    ->orWhereNotNull('users.tenant_id');
+            }),
+            // Head office administers head office. Reaching into a fleet or a
+            // client is ADR-0056's act-as, which arrives as that person and is
+            // scoped as them.
+            AccessLevel::KANGARU => $query->where('users.access_level', AccessLevel::KANGARU),
+            AccessLevel::CLIENT => $query->where('users.tenant_id', $actor->tenant_id),
+            // An applicant reads their own application and nothing else.
+            // Not even themselves here: this scope answers "which staff
+            // list may they read", and the answer is none.
+            AccessLevel::APPLICANT => $query->whereRaw('1 = 0'),
+        };
     }
 
     /**
@@ -253,8 +442,54 @@ class User extends Authenticatable
         }
 
         $role = $this->roleRecord;
+        $fromRole = $role instanceof Role ? $role->permissions : [];
 
-        return $this->resolvedPermissions = $role instanceof Role ? $role->permissions : [];
+        // Plus what a client's administrator switched on for this person
+        // (App\Enums\ClientCapability). Only slugs the enum knows, and only
+        // the permissions those bundles name — an unknown slug or a stray
+        // permission in the column grants nothing. No role means no
+        // capabilities either: the union widens a role, it does not stand
+        // in for one.
+        $fromCapabilities = [];
+        if ($role instanceof Role) {
+            foreach ($this->capabilities() as $capability) {
+                foreach ($capability->permissions() as $permission) {
+                    $fromCapabilities[] = $permission->value;
+                }
+            }
+        }
+
+        return $this->resolvedPermissions = array_values(array_unique([...$fromRole, ...$fromCapabilities]));
+    }
+
+    /**
+     * The capabilities switched on for this user, as enum cases. Slugs the
+     * enum does not know are dropped silently — fail closed, never fatal.
+     *
+     * @return array<int, ClientCapability>
+     */
+    public function capabilities(): array
+    {
+        // `getAttribute`, not `$this->capabilities`: the column and this
+        // method share a name, and reading the property leaves it ambiguous
+        // to a reader (and to static analysis) which of the two is meant.
+        // This says plainly that the stored column is what is being read.
+        $slugs = $this->getAttribute('capabilities');
+        $cases = [];
+        foreach (is_array($slugs) ? $slugs : [] as $slug) {
+            $case = is_string($slug) ? ClientCapability::tryFrom($slug) : null;
+            if ($case !== null) {
+                $cases[$case->value] = $case;
+            }
+        }
+
+        return array_values($cases);
+    }
+
+    /** Whether a booking this user creates is approved on their behalf. */
+    public function booksWithoutApproval(): bool
+    {
+        return (bool) $this->books_without_approval;
     }
 
     /**

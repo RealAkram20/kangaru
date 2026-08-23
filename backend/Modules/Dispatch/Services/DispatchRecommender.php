@@ -39,6 +39,34 @@ use Modules\Vehicles\Models\Vehicle;
  */
 class DispatchRecommender
 {
+    /**
+     * What a category match is worth, and why it is this number (ADR-0051).
+     *
+     * The owner's rule is "a matching vehicle outranks everything except a
+     * contracted one", and the tiers have to hold arithmetically rather than
+     * by intention:
+     *
+     * - the contract bonus is **1000** (ADR-0009 §1: a commercial agreement
+     *   must not be overridden by a distance heuristic);
+     * - distance contributes at most **500**, as `500 / (1 + km)` at km = 0;
+     * - the spare-seat penalty subtracts at most **20**.
+     *
+     * So a contracted vehicle scores at least `1000 - 20 = 980`, and for it
+     * to beat every non-contracted one this bonus must satisfy
+     * `CATEGORY_MATCH + 500 < 980` — anything under 480. At 450 the tiers
+     * are strict: contract, then category, then distance.
+     *
+     * It is not a *total* order over distance, deliberately. A matching van
+     * 40 km away scores `450 + 12 = 462` and loses to a sedan at the kerb on
+     * `500`. That is the right answer and it is what "strong preference"
+     * means: at some distance the vehicle that can actually arrive wins, and
+     * the reason line says plainly that it is not what was asked for.
+     *
+     * Changing this number changes who gets sent. It belongs beside the
+     * arithmetic that constrains it, not in config.
+     */
+    private const CATEGORY_MATCH = 450.0;
+
     public function __construct(
         private readonly AvailabilityService $availability,
         private readonly AllocationLookup $allocations,
@@ -127,6 +155,30 @@ class DispatchRecommender
             $reasons[] = $booking->origin_latitude === null
                 ? 'Pickup has no coordinates, so distance was not used.'
                 : 'This vehicle has not reported a position, so distance was not used.';
+        }
+
+        // ADR-0051. The kind of vehicle the client asked for.
+        //
+        // **A preference, not a filter.** The owner was offered a hard
+        // filter and chose this: refusing every other category means a bank
+        // whose van is out gets no candidate at all, the booking sits, and
+        // nothing says why. Ranking says the same thing and still leaves a
+        // dispatcher something to send.
+        if ($booking->vehicle_category !== null) {
+            if ($vehicle->category === $booking->vehicle_category) {
+                $score += self::CATEGORY_MATCH;
+                $reasons[] = sprintf('%s, as the client requested.', ucfirst($vehicle->category));
+            } else {
+                // Said on every mismatch, not only the ones that rank badly.
+                // A dispatcher reading a list has to be able to see that the
+                // top candidate is not what was asked for — that is the
+                // whole difference between this and a silent substitution.
+                $reasons[] = sprintf(
+                    'Not the %s the client requested — this is a %s.',
+                    $booking->vehicle_category,
+                    $vehicle->category,
+                );
+            }
         }
 
         // A gentle nudge, not a rule: a fifty-seater sent to collect one

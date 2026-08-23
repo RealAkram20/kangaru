@@ -138,6 +138,29 @@ export function PrivacyNoticePage() {
             Then Google confirms your email and name to us. If you sign up with a password instead,
             Google is not involved in your account.
           </Row>
+          {/*
+            ADR-0054. Disclosed because it has to be, and because the sentence
+            above says we run no analytics trackers — which stays true only if
+            the one thing we *do* send is named plainly rather than defended as
+            "not really tracking".
+
+            The owner chose to send full request data over the scrubbed
+            alternative, so an error while somebody is ordering carries what
+            they had typed. A notice that said "technical error information"
+            would be the accurate-sounding phrasing that leaves a reader with
+            the wrong picture, which is the failure this whole page is written
+            against.
+          */}
+          <Row label="Our error reporting, when something breaks">
+            If the site fails while you are using it, a report goes to Sentry, a service that helps
+            us find the fault.{' '}
+            <span className="text-text-body">
+              It includes what you had entered on the form at that moment
+            </span>{' '}
+            — such as your name, number and the addresses — along with the technical detail of the
+            failure. It is sent only when something goes wrong, never as you browse, and it is
+            stored in Germany. Your password is never included.
+          </Row>
         </Section>
 
         <Section icon={<Smartphone aria-hidden />} title="What stays on your phone">

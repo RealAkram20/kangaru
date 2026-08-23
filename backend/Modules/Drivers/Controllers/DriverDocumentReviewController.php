@@ -8,11 +8,14 @@ use App\Models\User;
 use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Http\UploadedFile;
+use Modules\Drivers\Enums\DriverDocumentType;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverDocument;
 use Modules\Drivers\Requests\RejectDriverDocumentRequest;
+use Modules\Drivers\Requests\StoreDriverDocumentRequest;
 use Modules\Drivers\Resources\DriverDocumentResource;
+use Modules\Drivers\Resources\DriverDocumentSlots;
 use Modules\Drivers\Services\DriverDocumentService;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -46,17 +49,14 @@ class DriverDocumentReviewController extends Controller
 
         $timezone = $this->documents->timezone();
 
-        $rows = array_map(
-            fn (array $row): array => [
-                'type' => $row['type']->value,
-                'type_label' => $row['type']->label(),
-                'hint' => $row['type']->hint(),
-                'requires_expiry' => $row['type']->requiresExpiry(),
-                'document' => $row['document'] === null
-                    ? null
-                    : (new DriverDocumentResource($row['document'], $timezone))->toArray($request),
-            ],
+        // One presenter, three screens (`DriverDocumentSlots`). This shape was
+        // built by hand here and in the other controller, and ADR-0048 added a
+        // third caller — which is where a drifting `hint` stops being
+        // duplication and starts being a field asked for on one surface only.
+        $rows = DriverDocumentSlots::toArray(
             $this->documents->forDriver($driver),
+            $timezone,
+            $request,
         );
 
         return ApiResponse::success(
@@ -64,6 +64,55 @@ class DriverDocumentReviewController extends Controller
             'Driver documents retrieved.',
             200,
             ['compliance' => $this->documents->complianceFor($driver)],
+        );
+    }
+
+    /**
+     * The office files a document on a driver's behalf (ADR-0052 §5).
+     *
+     * A driver hands their licence across the counter, or emails a scan, or
+     * photographs it badly six times in a row and gives up. Until now the only
+     * way a document reached this platform was the handset in that driver's
+     * pocket, which is the same gap ADR-0048 found for driver *creation*: the
+     * API could do it and no human could.
+     *
+     * **`StoreDriverDocumentRequest`, unchanged and shared with the driver's
+     * own endpoint.** The size ceiling, the mime list, the expiry rule and the
+     * per-type "this one needs a date" check are identical because the
+     * *document* is identical — only the person holding the file differs. A
+     * second request class here would be the drift ADR-0048 §3 argues against,
+     * one layer up.
+     *
+     * **This does not verify anything.** `upload()` writes `pending` and
+     * clears every review field, so filing a document and accepting it stay
+     * two acts by two deliberate decisions — ADR-0033 §4's "nothing is
+     * auto-verified, ever" applies to the office as much as to a machine.
+     * The office member who uploads it may then verify it, and that is a
+     * second click that leaves a second audit entry.
+     */
+    public function store(StoreDriverDocumentRequest $request, Driver $driver): JsonResponse
+    {
+        $this->authorize('create', DriverDocument::class);
+
+        $type = DriverDocumentType::from((string) $request->validated('type'));
+
+        /** @var UploadedFile $file */
+        $file = $request->file('file');
+
+        $expiresAt = $request->validated('expires_at');
+
+        $document = $this->documents->upload(
+            $driver,
+            $type,
+            $file,
+            is_string($expiresAt) && $expiresAt !== '' ? $expiresAt : null,
+        );
+
+        return ApiResponse::success(
+            (new DriverDocumentResource($document->fresh() ?? $document, $this->documents->timezone()))
+                ->toArray($request),
+            'Document filed. It still needs to be checked.',
+            201,
         );
     }
 
@@ -81,7 +130,13 @@ class DriverDocumentReviewController extends Controller
             return $this->notThisDriver();
         }
 
-        if (! Storage::exists($document->file_path)) {
+        // Decrypted by the store, which is the only thing that knows the bytes
+        // on disk are ciphertext (ADR-0053). The driver's own controller reads
+        // the same rows through the same method, so the two cannot drift into
+        // serving different things.
+        $download = $this->documents->download($document);
+
+        if ($download === null) {
             return ApiResponse::error(
                 ErrorCode::NOT_FOUND,
                 'That document file is no longer on file.',
@@ -90,7 +145,7 @@ class DriverDocumentReviewController extends Controller
             );
         }
 
-        return Storage::response($document->file_path);
+        return $download;
     }
 
     public function verify(Request $request, Driver $driver, DriverDocument $document): JsonResponse

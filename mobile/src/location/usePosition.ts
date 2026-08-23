@@ -4,6 +4,47 @@ import * as Location from 'expo-location';
 import type { Coordinates } from '../api/types';
 
 /**
+ * A fix: where the driver is, and — when the handset said so — which way they
+ * are pointing.
+ *
+ * A superset of `Coordinates`, deliberately, so that every caller that only
+ * ever wanted two numbers keeps compiling and keeps behaving. The heading is
+ * read by exactly one of them today: the map, which draws the driver as their
+ * own vehicle and has to point it somewhere.
+ */
+export type Fix = Coordinates & {
+  /**
+   * Degrees clockwise from true north, or **null when the handset did not
+   * report one** — which is the ordinary answer at a standstill, indoors, and
+   * on a device with no compass.
+   *
+   * Null rather than a plausible number, and `FleetMap` records the reason
+   * from the console side: *"a rotated vehicle reads as a direction of
+   * travel, and inventing one would be a claim"*. An un-rotated sprite points
+   * north, which reads as an icon rather than as a course.
+   */
+  heading: number | null;
+};
+
+/**
+ * Expo's bearing, or null.
+ *
+ * The platforms disagree about how to say "I do not know". iOS sends a
+ * negative number, Android's `Location.getBearing()` answers `0.0` when
+ * `hasBearing()` is false, and either can arrive undefined. Only the negative
+ * case needs filtering: a genuine due-north course and a zero meaning nothing
+ * both render as `rotate(0deg)`, so they are the same picture and there is
+ * nothing to tell apart.
+ */
+function headingOf(reading: Location.LocationObject): number | null {
+  const heading = reading.coords.heading;
+
+  return heading === null || heading === undefined || Number.isNaN(heading) || heading < 0
+    ? null
+    : heading;
+}
+
+/**
  * Where the driver is, for a screen that needs to draw a distance.
  *
  * Extracted from `PickupScreen`, which had it privately, when a second screen
@@ -30,17 +71,21 @@ export function usePosition({
   /**
    * Whether to keep following the driver, or take a single fix.
    *
-   * **`false` is the right default and the interesting case.** `PickupScreen`
-   * takes one reading deliberately: its figure is "how far to the pickup",
-   * glanced at to judge *am I close*, and a number that ticks down while the
-   * driver is looking at the road is motion on a surface that has no business
-   * moving.
+   * **`false` is for a reading, `true` is for a drive**, and the question to
+   * ask is whether the screen is watched while the handset is moving.
    *
-   * `true` exists for the trip in progress, where the same argument inverts.
-   * The driver is definitionally moving for the whole life of that screen, so
-   * a single fix taken at the drop-off's start is wrong within a minute and
-   * stays wrong — and "how far still to go" is the one figure on it that is
-   * supposed to change.
+   * `true` is what every map screen wants. The driver is definitionally moving
+   * for the whole life of `TripInProgressScreen`, `TripMapScreen` and
+   * `PickupScreen` — a single fix taken when the screen opened is wrong within
+   * a minute and stays wrong, and since ADR-0031 the reading is also the
+   * *origin of the drawn route*, so a frozen fix freezes the road too.
+   *
+   * `PickupScreen` used to take a single reading, on the argument that a
+   * distance ticking down beside a driver's eyes is motion for its own sake.
+   * That argument lost when the same reading started feeding a route: the
+   * approach was drawn from the kerb the driver set off from and never
+   * redrawn. `distanceInterval` is what actually settles the original worry —
+   * the figure moves 0.1 km at a time, which is progress, not jitter.
    */
   watch = false,
   /**
@@ -53,8 +98,8 @@ export function usePosition({
    * metres.
    */
   distanceInterval = 100,
-}: { watch?: boolean; distanceInterval?: number } = {}): Coordinates | null {
-  const [position, setPosition] = useState<Coordinates | null>(null);
+}: { watch?: boolean; distanceInterval?: number } = {}): Fix | null {
+  const [position, setPosition] = useState<Fix | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,7 +107,11 @@ export function usePosition({
 
     const record = (reading: Location.LocationObject) => {
       if (!cancelled) {
-        setPosition({ lat: reading.coords.latitude, lng: reading.coords.longitude });
+        setPosition({
+          lat: reading.coords.latitude,
+          lng: reading.coords.longitude,
+          heading: headingOf(reading),
+        });
       }
     };
 

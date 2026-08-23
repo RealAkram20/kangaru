@@ -14,6 +14,13 @@ driver equivalent of `vehicle_allocations`.
 
 - `Driver` — name, phone, email, licence number, licence expiry, status.
   One record per driver.
+- `Driver.owns_vehicle` (ADR-0048 §7) — whether `vehicle_id` names the
+  driver's **own** machine or one the depot allocates. Deliberately stored
+  rather than derived from `vehicle_id`, which a depot driver also sets: the
+  two differ in who insures the vehicle, who repairs it, whether it leaves
+  when the driver does, and whether the vehicle papers on file are the
+  driver's or the platform's. **It gates nothing yet** — same
+  record-before-enforcement split as ADR-0033 §6.
 - `Driver.user_id` (nullable FK to `users`) links a driver profile to the
   account that signs in as them. `Modules/Trips` needs it so a driver can
   trigger their own transitions — the `trips.transition.own` permission is
@@ -39,11 +46,14 @@ Standard REST resource, all behind `auth:sanctum` + `tenant` middleware:
 |---|---|---|
 | GET | `/api/v1/drivers` | `viewAny` — `drivers.view`, seeded on every system role |
 | GET | `/api/v1/drivers/{id}` | `view` — same permission |
-| POST | `/api/v1/drivers` | `create` — `drivers.manage` |
-| PATCH | `/api/v1/drivers/{id}` | `update` — `drivers.manage` |
+| POST | `/api/v1/drivers` | `create` — `drivers.manage`. May carry `owns_vehicle` and a nested `vehicle` object; registering one also needs `vehicles.manage`, checked separately (ADR-0048 §9) |
+| PATCH | `/api/v1/drivers/{id}` | `update` — same, including the inline vehicle |
 | DELETE | `/api/v1/drivers/{id}` | `delete` — `drivers.manage` |
 | POST | `/api/v1/drivers/{id}/account` | `manageAccount` — `drivers.manage` **and** `staff.manage` (ADR-0016) |
 | DELETE | `/api/v1/drivers/{id}/account` | `manageAccount` — same pair |
+| POST | `/api/v1/driver-applications/documents` | **Public.** Authorised by the ADR-0048 §4 claim ticket, throttled 5/min/IP |
+| GET | `/api/v1/driver-applications/documents` | **Public.** Same ticket. Metadata only — `file_url` is null for an application-owned row |
+| DELETE | `/api/v1/driver-applications/documents/{type}` | **Public.** Same ticket. 204 whether or not anything was held |
 | GET | `/api/v1/me/stats` | None — the driver is the token. `403 NOT_A_DRIVER` for an account with no driver profile |
 | GET | `/api/v1/me/earnings?period=day\|week\|month` | Same — the driver is the token |
 | GET | `/api/v1/me/ledger-entries?cursor=&from=&to=` | Same — the driver is the token |
@@ -57,6 +67,7 @@ Standard REST resource, all behind `auth:sanctum` + `tenant` middleware:
 | GET/POST | `/api/v1/me/documents` | Same — the driver is the token |
 | GET | `/api/v1/me/documents/{id}/file` | `view` — the owner, or `drivers.manage` |
 | GET | `/api/v1/drivers/{id}/documents` | `viewAny` — `drivers.manage` |
+| POST | `/api/v1/drivers/{id}/documents` | `create` — `drivers.manage`. The office filing a paper handed over in person (ADR-0052 §5). **Filing is not verifying**: the row lands `pending`. |
 | GET | `/api/v1/drivers/{id}/documents/{doc}/file` | `view` — `drivers.manage` |
 | POST | `/api/v1/drivers/{id}/documents/{doc}/verify` | `review` — `drivers.manage` |
 | POST | `/api/v1/drivers/{id}/documents/{doc}/reject` | `review` — `drivers.manage` |
@@ -99,6 +110,23 @@ regulator.
 East African list (*PSV badge*, *logbook*) was deliberately not used: a type
 enum lands in a column, an OpenAPI enum and every shipped handset, and is then
 untouchable.
+
+**Encrypted at rest (ADR-0053).** The bytes on disk are ciphertext —
+`Crypt::encryptString`, keyed by `APP_KEY` — and `driver_documents.encrypted`
+records it per row so that files written before that change still stream. The
+flag *describes* the file; nothing consults it to decide whether to encrypt,
+because the store always does.
+
+`DriverDocumentStore::download()` is the single read path, and it is single on
+purpose: two controllers stream these rows, and a decryption branch present in
+one and absent from the other would serve a national ID as gibberish to exactly
+one audience. `Storage::response()` is gone from both — it infers the content
+type from bytes that are now ciphertext, so the response is built from the
+stored `mime_type` instead.
+
+**`APP_KEY` is now load-bearing for stored data.** Rotating it without
+re-encrypting makes every document unreadable, and a restore from backup needs
+the key that was current when the files were written.
 
 **One row per driver per type.** Re-uploading replaces the file and resets the
 status to `pending`, clearing the review — a document the office verified is
@@ -504,6 +532,48 @@ provides no self-service reset. See `mobile/README.md` for the first-test
 walkthrough.
 
 ## What's explicitly deferred
+
+- **~~The console cannot create a driver~~ — built, ADR-0048 (21 August
+  2026).** Worth recording because of how long it hid: `DriverController`
+  has had `store`, `update` and `destroy` since Phase 1, `StoreDriverRequest`
+  has accepted `vehicle_id` since ADR-0009, and **no screen ever called any
+  of them.** `DriversPage` was a read-only table, so every driver in every
+  environment arrived from a seeder — which is exactly why nobody noticed
+  that the API could onboard a driver and the platform could not.
+
+  What shipped: `DriverFormDialog` in the console, an `owns_vehicle` flag,
+  and inline vehicle registration in the same transaction as the driver
+  (ADR-0048 §8), so a clerk onboarding a boda rider does not have to abandon
+  a half-typed form to register the machine on another screen. Un-ticking
+  ownership clears the link and **keeps the vehicle** — a checkbox that
+  destroys a fleet record is the silent destruction ADR-0016 §5 refuses.
+
+  `vehicles.manage` is checked separately from `drivers.manage`, because
+  folding fleet creation into the driver permission is the side door
+  ADR-0016 §1 refuses at length. A clerk holding only `drivers.manage` gets
+  the fleet picker and is told why.
+
+- **~~Documents belong only to a driver, never to an application~~ —
+  amended, ADR-0048 §3.** ADR-0033 argued that an application "is a
+  stranger's row that is deleted or abandoned" and kept documents off it.
+  The owner asked for KYC at both moments, so `driver_documents` gained
+  `driver_application_id` and `driver_id` became nullable — **exactly one of
+  the two is ever set.** One table rather than two, because two tables
+  holding the same file with the same review states is where the second one
+  drifts.
+
+  The catalogue is six, not four: `identity_selfie` and `vehicle_photo`
+  join on the naming rule the original four were chosen under — nothing
+  named for one country.
+
+  ADR-0033 §4 is untouched. **Nothing is auto-verified, ever**, and a selfie
+  makes that easier to reach for, which is why ADR-0048 §2 restates it.
+  Approval carries documents onto the driver and deliberately leaves them
+  `pending`: approval is not review.
+
+  Three endings, all handled — approval carries, rejection destroys, and
+  `drivers:prune-abandoned-application-documents` sweeps the applications
+  nobody ever decided after 90 days (scheduled daily in `routes/console.php`).
 
 - **~~`user_id` cannot be set through the API~~ — built, ADR-0016
   (7 August 2026).** Kept in place rather than deleted because it was the

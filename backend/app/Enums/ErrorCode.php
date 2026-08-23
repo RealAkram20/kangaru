@@ -34,6 +34,15 @@ enum ErrorCode: string
     case EXPORT_EXPIRED = 'EXPORT_EXPIRED';
 
     /**
+     * The trip is not in a journey status, so its itinerary cannot grow and
+     * the place search is closed (ADR-0045 §4, §10 — a driver's reach is
+     * bounded to the run they are *currently driving*). A conflict rather
+     * than a validation failure: the request was well-formed, the trip has
+     * simply moved on — or not started.
+     */
+    case TRIP_NOT_ACTIVE = 'TRIP_NOT_ACTIVE';
+
+    /**
      * An exclusive allocation cannot share a vehicle with another contract
      * over the same days (ADR-0009). A conflict rather than a validation
      * failure: the request was well-formed, the world already holds
@@ -109,6 +118,43 @@ enum ErrorCode: string
     case MAIL_DELIVERY_FAILED = 'MAIL_DELIVERY_FAILED';
 
     /**
+     * ADR-0045: a route named a saved place that is not this client's, or a
+     * team member who is not in their organisation. 422 rather than 404 —
+     * the route being saved is the resource, and it is the *payload* that
+     * is wrong. A 404 here would also be a worse answer than it looks: the
+     * ids came from the client's own screen, so "not found" reads as "we
+     * lost your data" rather than "that one is not yours".
+     */
+    case UNKNOWN_CLIENT_PLACE = 'UNKNOWN_CLIENT_PLACE';
+    case UNKNOWN_ROUTE_MEMBER = 'UNKNOWN_ROUTE_MEMBER';
+
+    /**
+     * A saved place cannot be deleted while a route still visits it
+     * (ADR-0045 §1 — `client_route_stops.client_place_id` is
+     * restrictOnDelete). 409: the request is legal and the state refuses
+     * it, and the message names the routes so the officer can act.
+     */
+    case CLIENT_PLACE_IN_USE = 'CLIENT_PLACE_IN_USE';
+
+    /**
+     * A vehicle category cannot be deleted while a vehicle, a rate card
+     * price or an invoice line still names it (ADR-0050 §3).
+     *
+     * Unlike `CLIENT_PLACE_IN_USE` above, **no foreign key is enforcing
+     * this** — `rate_card_rates.vehicle_category` and
+     * `invoice_lines.vehicle_category` are deliberately plain strings, so
+     * that an issued invoice reproduces from stored data without joining a
+     * table somebody can rename. The database will not refuse this delete;
+     * the controller must, or an immutable rate card rate is left naming
+     * nothing on a version that can never be corrected.
+     *
+     * 409 for the shared reason: the request is well-formed and the world
+     * disagrees with it. The message names the counts and points at
+     * retirement, which is the action that actually resolves it.
+     */
+    case VEHICLE_CATEGORY_IN_USE = 'VEHICLE_CATEGORY_IN_USE';
+
+    /**
      * The sign-in account cannot be attached to this driver (ADR-0016):
      * the profile already has one, or the account being linked is already
      * some other driver's. 409 rather than 422 — the request is
@@ -128,6 +174,13 @@ enum ErrorCode: string
      * one person.
      */
     case DRIVER_APPLICATION_CLOSED = 'DRIVER_APPLICATION_CLOSED';
+
+    /**
+     * Approval was attempted while a document was still unaccepted
+     * (ADR-0057 §2). Distinct from CLOSED, which means somebody already
+     * decided: this application is open and there is one more step.
+     */
+    case DRIVER_APPLICATION_DOCUMENTS_PENDING = 'DRIVER_APPLICATION_DOCUMENTS_PENDING';
 
     /**
      * The sign-in method the caller asked for is switched off, or its

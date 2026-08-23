@@ -41,9 +41,12 @@ import {
 } from '../../auth/customerAuth'
 import {
   SERVICE_META,
+  fetchFareQuotes,
   submitPublicOrder,
+  type FareQuote,
   type PublicOrderPayload,
   type PublicService,
+  type RideClass,
 } from './publicOrder'
 import {
   currentLocationPlace,
@@ -59,10 +62,12 @@ import {
   dropoffCoordinates,
   pickupCoordinates,
   withCoordinateErrorsOnTheirFields,
+  withGeocodedEnds,
 } from './orderCoordinates'
 import { usePlaceSearch } from '../../lib/usePlaceSearch'
 import { DateRangePicker } from './DateRangePicker'
-import { DeliverySummary, type Payer, type PaymentMethod } from './DeliverySummary'
+import { DeliverySummary, type Payer } from './DeliverySummary'
+import { PaymentMethodField, type PaymentMethod } from './PaymentMethodField'
 import { DeliveryParties } from './DeliveryParties'
 import { EMPTY_PARTY, type Party } from './party'
 import { KycVerification } from './KycVerification'
@@ -70,9 +75,17 @@ import { RENTAL_KYC, type KycFiles } from './kycDocuments'
 import { PrivacyLine } from './PrivacyNoticePage'
 import { tripEstimate } from './tripEstimate'
 import { MapPanel } from './MapPanel'
+import { mergeFleet, NEARBY_POLL_MS, type FleetSprite } from './nearbyVehicles'
+import { apiClient } from '../../lib/apiClient'
+import type { ApiSuccess } from '../../types/api'
+import type { NearbyVehicle } from '../../types/livePosition'
+import { formatUgx } from './ride'
 import { RideScreen } from './RideScreen'
 import { OrderNav } from './OrderNav'
 import './landing.css'
+
+/** Kampala city centre, lng-first — the map's own opening point. */
+const KAMPALA_CENTRE: [number, number] = [32.5825, 0.3476]
 
 type Step = 'service' | 'details' | 'vehicle' | 'account' | 'review' | 'parties' | 'kyc'
 
@@ -346,8 +359,113 @@ export function OrderPage() {
   /** Both ends geocoded: the map is drawing the trip, so make room for it. */
   const tripFrom = pickupPlace?.lngLat ?? null
   const tripTo = dropoffPlace?.lngLat ?? null
+
+  /*
+   * The tariff's price per ride class, once both ends are placed.
+   *
+   * The card beside each class used to show a literal — "from UGX 12,500" —
+   * while the rate card sat unasked on the server until a vehicle had
+   * accepted; the passenger chose against numbers no tariff had produced and
+   * the driver was then quoted a different figure for the same ride. Now the
+   * form asks `GET /public/fare-quotes` the moment it knows both points, and
+   * shows the estimate; the literal survives only as the fallback for a class
+   * the tariff does not price, and is labelled "from" so the two never read as
+   * the same claim. Re-asked only when a point moves — not on every render.
+   */
+  const quoteKey =
+    tripFrom !== null && tripTo !== null ? `${tripFrom.join(',')}|${tripTo.join(',')}` : null
+  // Stored with the pair it answers, so a quote for the *previous* pair is
+  // never shown against a new one while the fetch is in flight — and so the
+  // effect never has to reset state synchronously to clear it.
+  const [fetchedQuotes, setFetchedQuotes] = useState<{
+    key: string
+    quotes: Record<RideClass, FareQuote | null>
+  } | null>(null)
+  const fareQuotes = fetchedQuotes !== null && fetchedQuotes.key === quoteKey ? fetchedQuotes.quotes : null
+  useEffect(() => {
+    if (quoteKey === null || tripFrom === null || tripTo === null) return
+    const controller = new AbortController()
+    fetchFareQuotes(tripFrom, tripTo, controller.signal)
+      .then((quotes) => setFetchedQuotes({ key: quoteKey, quotes }))
+      // A quote that could not be fetched is no quote: the "from" figure
+      // stands, honestly labelled. Never a spinner over a form.
+      .catch(() => undefined)
+    return () => controller.abort()
+    // `quoteKey` is the pair, stringified; the two arrays are new objects on
+    // every render and would refetch on each.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quoteKey])
   // Self drive has no trip to draw: it is a rental, not a journey.
   const tripVisualised = service !== 'self_drive' && tripFrom !== null && tripTo !== null
+
+  /*
+   * The real vehicles nearby (GET /public/nearby-vehicles) — the live data
+   * behind the map's ambient fleet, which used to be six sprites at
+   * hardcoded offsets. Polled every NEARBY_POLL_MS while the fleet is
+   * actually on screen: not once a route is drawn (the panel stands the
+   * fleet down then, and asking for what will not be shown is spend for
+   * nothing) and not while the tab is hidden.
+   *
+   * Centred on the pickup if one is placed, else the device fix, else the
+   * city — the map's own opening framing, in the same order.
+   */
+  const [fleet, setFleet] = useState<FleetSprite[]>([])
+  const fleetCentre = useRef<[number, number]>(KAMPALA_CENTRE)
+  // Written in an effect, not during render — a render-time ref write is
+  // exactly what the React Compiler rules exist to catch.
+  useEffect(() => {
+    fleetCentre.current = tripFrom ?? myPosition ?? KAMPALA_CENTRE
+  }, [tripFrom, myPosition])
+  useEffect(() => {
+    if (tripVisualised) return
+
+    let live = true
+    let timer: ReturnType<typeof setInterval> | undefined
+
+    const load = () => {
+      const [lng, lat] = fleetCentre.current
+      // `Promise.resolve` around the call and optional chaining on the
+      // envelope: this is an ambient layer on an unauthenticated endpoint,
+      // and anything unexpected — a proxy error page, a surprising mock, a
+      // client that returned nothing — must degrade to "no vehicles",
+      // never to a crash in a polling loop.
+      Promise.resolve(
+        apiClient.get<ApiSuccess<NearbyVehicle[]>>(
+          `/public/nearby-vehicles?latitude=${lat}&longitude=${lng}`,
+        ),
+      )
+        .then((response) => {
+          if (!live) return
+          const vehicles = response?.data?.data
+          if (!Array.isArray(vehicles)) return
+          setFleet((previous) => mergeFleet(previous, vehicles))
+        })
+        // An ambient layer never surfaces an error: a poll that failed
+        // simply leaves the last honest answer standing until the next.
+        .catch(() => undefined)
+    }
+
+    const start = () => {
+      load()
+      timer = setInterval(load, NEARBY_POLL_MS)
+    }
+    const stop = () => {
+      clearInterval(timer)
+      timer = undefined
+    }
+    const onVisibility = () => {
+      stop()
+      if (document.visibilityState === 'visible') start()
+    }
+
+    if (document.visibilityState === 'visible') start()
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      live = false
+      stop()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [tripVisualised])
   const [rideFor, setRideFor] = useState<'myself' | 'other'>('myself')
   const [riderName, setRiderName] = useState('')
   const [riderPhone, setRiderPhone] = useState('')
@@ -522,6 +640,10 @@ export function OrderPage() {
       // The dispatcher settles the headcount on the phone.
       details.passengers = 1
       details.vehicle_class = vehicleClass
+      // How the passenger will pay, so the driver knows before the kerb.
+      // Rides sent nothing here for as long as the form existed, and the
+      // driver app showed "Payment" over an empty cell on every one.
+      details.payment_method = paymentMethod
       // A ride for someone else: the rider is the recipient of the service,
       // so it rides on the same validated details keys delivery uses.
       if (rideFor === 'other') {
@@ -602,7 +724,12 @@ export function OrderPage() {
     setFailure(null)
     setServerErrors({})
     try {
-      setReference(await submitPublicOrder(buildPayload(account)))
+      // A typed address is placed here, before it goes: the driver's fare
+      // estimate, journey and route all hang off the drop-off point, and a
+      // string cannot be priced. See `withGeocodedEnds`.
+      setReference(
+        await submitPublicOrder(await withGeocodedEnds(buildPayload(account), searchPlaces)),
+      )
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 422) {
         const raw: Record<string, string[]> = error.response.data.errors ?? {}
@@ -1114,8 +1241,24 @@ export function OrderPage() {
                         </span>
                       </span>
                       <span className="shrink-0 text-right">
-                        <span className="block text-xs text-text-secondary">from</span>
-                        <span className="block font-semibold text-text-heading">{klass.fare}</span>
+                        {(() => {
+                          const quote = fareQuotes?.[klass.value as RideClass] ?? null
+                          return quote !== null ? (
+                            <>
+                              <span className="block text-xs text-text-secondary">est.</span>
+                              <span className="block font-semibold text-text-heading">
+                                {formatUgx(quote.total_minor)}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="block text-xs text-text-secondary">from</span>
+                              <span className="block font-semibold text-text-heading">
+                                {klass.fare}
+                              </span>
+                            </>
+                          )
+                        })()}
                       </span>
                       {selected ? (
                         <CheckCircle2 className="h-6 w-6 shrink-0 text-brand-green" aria-hidden />
@@ -1279,6 +1422,17 @@ export function OrderPage() {
                 <ReviewRow label="Name" value={customer?.name ?? ''} />
                 <ReviewRow label="Phone" value={customer?.phone ?? ''} />
               </dl>
+              {/* Asked here rather than assumed: the driver reads it off the
+                  trip before the kerb, and "cash" is a choice, not a default
+                  the passenger never saw. */}
+              {service === 'ride' && (
+                <PaymentMethodField
+                  className="mt-4"
+                  value={paymentMethod}
+                  onChange={setPaymentMethod}
+                  cashLabel="Cash"
+                />
+              )}
               <div className="mt-4">
                 <label className="mb-1 block text-sm font-medium text-text-heading">
                   Anything else? <span className="font-normal text-text-secondary">(optional)</span>
@@ -1312,6 +1466,7 @@ export function OrderPage() {
           center={myPosition}
           from={service === 'self_drive' ? null : tripFrom}
           to={service === 'self_drive' ? null : tripTo}
+          fleet={fleet}
         />
       </div>
     </div>

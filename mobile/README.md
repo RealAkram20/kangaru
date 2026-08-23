@@ -55,6 +55,7 @@ Home ─────── duty, the live trip, today's figures, the day's finis
         └── Pickup               ← accepted, driver_en_route
         └── Waiting for passenger ← driver_arrived
         └── Trip in progress     ← trip_started, waiting, trip_resumed
+        └── Add a drop-off       ← ADR-0045 §4; pushed from Trip in progress, no status
         └── Trip map             ← full-screen, from Navigate
         └── Trips history        ← finished work, by day; All/Rides/Deliveries
         └── Trip detail          ← the record: rail from trip_events, ledger rows,
@@ -68,13 +69,51 @@ Profile ──── who the driver is: rating, vehicle, member since, documents
         └── Notifications        ← ADR-0039; what the office said, and a dot
         └── Report an issue      ← ADR-0044; one of five topics, written to the office
         └── Your reports         ← ADR-0044; what you sent, and what they answered
-        └── Documents            ← ADR-0033; upload, and what the office said
+        └── Documents            ← ADR-0033/0048; the six slots, grouped, and
+                                    what the office said. Shares
+                                    `documents/DocumentSlotList` with KYC.
         └── Performance          ← ADR-0038; six dials, and the bonus week
         └── Promotions           ← ADR-0036/0037; weekly target, peak, referrals
         └── Time off
         └── Change password
         └── Updates & sync       ← the outbox, and the parked queue
 ```
+
+## Before there is an account at all
+
+```
+Welcome ──── hero carousel, social buttons, "Sign up with email"
+        └── Sign in
+        └── Sign up              ← ADR-0027; the application form
+              └── KYC Verification  ← ADR-0048 §4; **immediately after
+                                      submitting**, and the reason the
+                                      sign-up screen no longer ends in a
+                                      confirmation panel of its own
+```
+
+**The applicant has no account and holds a claim ticket instead.** Submitting
+the form returns `upload_token` — 64 opaque characters that resolve to one
+`driver_applications` row and authorise three verbs on their own documents,
+and nothing else on the platform. It lives 24 hours, dies when the office
+decides, and **is held in memory only**: it is a live credential for somebody's
+identity documents, and `RootNavigator` drops it on the way out.
+
+That is also why the KYC screen does not use `useQuery` like every other
+screen here. `App.tsx` persists the query cache to AsyncStorage with no
+`shouldDehydrateQuery` filter, so keying a query by the ticket would write it
+to disk for 24 hours.
+
+**Nothing on that screen is required.** ADR-0048 §6 keeps every document
+optional at application time — an applicant who uploads nothing is in the queue
+on the same terms as one who uploads six — and the footnote under *Submit for
+Review* says so. A disabled button there would assert a rule the platform does
+not have.
+
+**The picker is ours** (`documents/MediaPickerSheet`). Camera or photo library,
+over `expo-image-picker`, which was already a dependency. The cost is stated
+rather than hidden: the server accepts PDF and this app cannot send one,
+because picking a PDF needs `expo-document-picker` and the owner chose no new
+dependency.
 
 **The five Help Topics rows write to the office now (ADR-0044).** They used to
 open the same contact card five times, differing only by a subtitle — and the
@@ -155,11 +194,28 @@ While a trip is held, **End trip is withdrawn**: `TripStatus::WAITING` allows
 only `TRIP_RESUMED`, and offering completion there would 422 through the
 outbox minutes after the driver walked away.
 
-Two of those live screens draw a distance and neither draws a duration to go.
-There is no routing engine here, and ADR-0020 §3 declined to derive minutes
-from a straight line by name — so every distance says "straight line" on the
-screen in words, and the driver's own maps app answers the part this platform
-cannot (`src/trips/directions.ts`).
+Those live screens draw a distance, and **what kind of distance is always said
+on the screen in words.** Since ADR-0031 there is a routing engine behind the
+server, so the figure is usually a road; with no key, no signal or no pins it
+falls back to the straight line it always was, and the caption changes with it.
+Minutes appear only when the provider sent them — ADR-0020 §3's refusal to
+derive a duration locally still stands, and ADR-0031 §6 restates it. The
+driver's own maps app still answers the part this platform does not do at all,
+which is turn-by-turn guidance (`src/trips/directions.ts`).
+
+**The map draws the whole leg, not just the road ahead.** `PickupMap` takes two
+polylines: `routePolyline`, the road from where the driver is, and
+`legPolyline`, the same leg from the pickup. It frames the camera on the second
+and refits only when *that* changes — because framing the first re-fitted every
+hundred metres, so the road left always filled the screen and a driver could not
+tell a job nearly finished from one just begun. What stays visible of the muted
+whole leg is the road already driven; the driver sits at the seam, drawn as
+their own vehicle (`src/trips/vehicleSprites.ts`, the console's own top-down
+silhouettes) and turned to the handset's heading when it reported one.
+
+`TripMapScreen`'s footer states how far is left, how far the leg is, and a bar
+between them — `src/trips/journey.ts`, which is a ratio of two *measured* road
+distances and refuses to become anything else.
 
 `isPickupPhase`, `isWaitingForPassenger` and `isTripInProgress` in
 `src/trips/transitions.ts` implement the split and are defined next to each
@@ -452,13 +508,123 @@ the vehicle off the coast of Ghana.
 
 ### Polling, and what it costs
 
-There are no push notifications in Phase 1, so the trip list polls every **60
-seconds, foreground only**. Roughly 60 small requests an hour; the radio wake is
-the cost, not the bytes, and at that interval it coincides with traffic the
-handset is generating anyway. Ten seconds would roughly quadruple it for a
-signal that changes a few times a shift. Nothing polls in the background — an
-app that drains battery for an assignment nobody is looking at gets force-stopped,
-after which it receives nothing at all.
+Push carries a job offer now (ADR-0046), but polling stays: ADR-0025 §3 makes
+push best-effort, so this is the path that works for a driver who refused the
+permission or whose token went stale.
+
+The trip list polls every **60 seconds, foreground only**. Roughly 60 small
+requests an hour; the radio wake is the cost, not the bytes, and at that
+interval it coincides with traffic the handset is generating anyway. Ten
+seconds would roughly quadruple it for a signal that changes a few times a
+shift. It stays foreground-only even though the process now survives
+backgrounding — a trip assigned for later today does not earn a radio wake from
+a pocket.
+
+The **offer** poll is the one that does, at five seconds while on duty. It has
+a passenger standing at the end of it.
+
+### The Expo slug is `kangaru`, and the app is not
+
+`app.json` reads `"slug": "kangaru"` while everything else about this app says
+*kangaruride-driver* — the deep-link `scheme`, the Android package
+`ug.co.kangaruride.driver`, the display name. That looks like a mistake and is
+not.
+
+**An EAS project id is permanently bound to one slug** ("A project ID is
+associated with a single slug, which cannot be changed" —
+[expo.fyi/eas-project-id](https://expo.fyi/eas-project-id)). The project this
+app is linked to, `428e44a0-67ff-4336-a4eb-9cb5c0406258`, was created as
+`kangaru`, so the app's slug had to move to meet it. Renaming the project on
+the dashboard changes its display name, not the slug EAS validates against —
+that was tried.
+
+The slug is an Expo-side identifier only. It affects the project's name in the
+EAS dashboard and build URLs, and **nothing on a handset**: the bundle
+identifier, the package, the scheme and the name a driver sees are all
+unaffected.
+
+**Do not "fix" it back to `kangaruride-driver`.** Every EAS command will fail
+with a slug mismatch until it is changed again. The only way to have the
+descriptive name is a *new* project id, which means new credentials and losing
+this project's build history.
+
+### Staying alive while on duty
+
+Going online starts an Android **foreground service** — the ongoing "You are
+online" notification — through `expo-location`'s background updates. That
+service is what keeps the process alive, and the presence heartbeat, the push
+handler and the ringtone all depend on it.
+
+Before it existed, `PresenceController`'s `setInterval` was throttled within
+minutes of backgrounding, and `dispatch.presence_ttl_seconds` is 180 — so a
+driver whose phone went into their pocket left the dispatch pool three minutes
+later with their screen still reading "You are online".
+
+`goOnline` / `goOffline` in `src/duty/OnlineService.ts` own it, called from the
+duty toggle and from both sign-out paths.
+
+---
+
+## What the office can see when this goes wrong
+
+Sentry, EU region, set up in `src/observability.ts` and started from
+`index.ts` before React (ADR-0054). Three signals: **errors**, **tracing** at
+a tenth of transactions, and **logs**.
+
+**All of it is inert without `EXPO_PUBLIC_SENTRY_DSN`** — `startObservability()`
+returns before touching the native module, which is how development and the
+Jest environment run. It is also the one app where switching it on is a
+**rebuild and a fresh signed APK**, not a config change: `@sentry/react-native`
+is native and has a config plugin.
+
+### What tracing measures, and why it produced nothing until now
+
+`tracesSampleRate` decides how many transactions are sent, not whether any
+exist — and a React Native app creates none on its own. `src/tracing.ts` is
+what makes the handset produce them: `Sentry.wrap` in `index.ts` for app
+start, and a React Navigation integration registered from the navigator's
+`onReady` for screen changes, with **time to initial display** — the interval
+between tapping a job and the screen being drawn, which is what a driver means
+by "it hangs".
+
+Two things are traced by hand, and only because nothing else could see them:
+
+| Where | Span | Why not automatic |
+|---|---|---|
+| `offline/outbox.ts` | `outbox.drain` | Fires on a reconnect from no screen, so no navigation transaction brackets it. Becomes a transaction of its own. |
+| `duty/OnlineService.ts` | `duty.go_online` | The **native** half of going online — the foreground service, not the HTTP call the SDK already times. `refused` says the OS declined while the driver was told nothing. |
+
+Every API call is already traced by the SDK, so wrapping one by hand would
+only duplicate it.
+
+### Why logs, on top of errors
+
+Errors report what crashed and tracing reports what was slow. The commonest
+production failure on a handset upcountry is neither: nothing crashed, nothing
+was slow, and the job still did not happen. Four places swallow exactly that,
+each for a reason written beside it — and each now says so to the office while
+staying silent to the driver, who cannot act on any of it mid-shift.
+
+| Where | Level | What it means |
+|---|---|---|
+| `push/offerAnswer.ts` | `error` | A lock-screen Accept the network lost. The driver believes they have the job. |
+| `offline/SyncProvider.tsx` | `error` | An outbox item parked: a transition or leave request the server refused for good. Needs a person. |
+| `offline/SyncProvider.tsx` | `fatal` | The outbox database would not open. No queueing and no GPS for the rest of the session. |
+| `offline/SyncProvider.tsx` | `warn` | The queue is stalled — trying, getting nowhere, while NetInfo insists the phone is online. Once per stall, not per tick. |
+| `duty/useDutyToggle.ts` | `error` | On duty, but the phone refused the online service. The matcher is offering work to a handset that has gone deaf. |
+| `duty/useDutyToggle.ts` | `info` | The shift boundary, from the server's answer rather than the tap. |
+| `auth/AuthProvider.tsx` | `warn` | A sign-in refused, or a session that expired mid-shift and paused the queue. |
+
+`console.warn` and `console.error` are forwarded too, which is what picks up
+`GpsPingBuffer` and `HttpOutboxTransport` — both announce their one diagnostic
+through an injected `warn` port and nowhere else. The native log stream is
+**not** forwarded (`logsOrigin: 'js'`): a driver's data bundle should not carry
+every library's Logcat chatter.
+
+**Attributes are ids, never people.** Trip ids, offer ids, error codes, counts,
+durations. ADR-0054 §2 permits full request data on an *error*; that is not
+extended to log attributes. `Sentry.setUser` in `AuthProvider` attaches
+`user.id`, which is the one identifier a report is joined on.
 
 ---
 
@@ -697,8 +863,23 @@ hides it.
    all rather than shipping a screen that is always empty. **Ask:** a
    `trip.assigned` notification type.
 
-5. **No push notifications** (brief gap 2, PROJECT.md Phase 1). Polling is the
-   consequence; the interval and its battery cost are in `src/config.ts`.
+5. ~~**No push notifications**~~ **Built (ADR-0046)**, and worth recording how
+   long it was silently broken: the backend channel, the device-token table and
+   the routes had all shipped, but `app.json` carried no `extra.eas.projectId`,
+   so `getExpoPushTokenAsync` threw into `PushRegistrar`'s deliberately-quiet
+   catch and **no handset was ever registered**. Nothing failed; nothing
+   happened. The app also had no notification handler at all, so a push arriving
+   with the app open was suppressed by Android and a tap opened the app on
+   whatever screen it was showing.
+
+   **This is why the driver app can no longer be developed in Expo Go.** Push,
+   foreground services and notification channels all need a development build —
+   see `eas.json`. Polling stays regardless; the interval and its battery cost
+   are in `src/config.ts`.
+
+   Still to do: the true full-screen `CallStyle` notification, which is staged
+   behind Google Play's `USE_FULL_SCREEN_INTENT` declaration, and CallKit on
+   iOS. Both are set out in ADR-0046 §6.
 
 6. **No offline sync endpoint** (brief gap 3). Owned entirely by ADR-0023, as
    the brief says it must be.
@@ -723,6 +904,7 @@ than backing off on its own schedule.
 ## Related decisions
 
 - **ADR-0023** — this app's offline outbox
+- ADR-0054 — error, performance and log reporting, and what it is allowed to see
 - ADR-0022 — token scope per client app
 - ADR-0017 — resource availability, §6 for the driver's own requests
 - ADR-0016 — driver sign-in accounts

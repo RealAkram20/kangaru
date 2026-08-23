@@ -12,6 +12,17 @@ web-build/
 /ios
 /android
 
+# The Firebase *service account private key* — the credential EAS sends push
+# with. Never committed: it authorises sending notifications to every handset
+# in the fleet, and a lock screen carries a pickup address.
+#
+# `google-services.json` is deliberately NOT ignored. It is the client
+# configuration the app is built with, it contains no secret, Expo's own docs
+# say to commit it, and the build fails without it — an ignored copy is how a
+# CI build produces an app that cannot register for push at all.
+google-service-account*.json
+*-firebase-adminsdk-*.json
+
 # macOS / editor
 .DS_Store
 *.tsbuildinfo

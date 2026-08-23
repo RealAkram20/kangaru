@@ -4,6 +4,7 @@ namespace Modules\Bookings\Models;
 
 use App\Concerns\Auditable;
 use App\Concerns\BelongsToTenant;
+use App\Concerns\RecordsActingFleet;
 use App\Models\Tenant;
 use App\Models\User;
 use Database\Factories\BookingFactory;
@@ -41,7 +42,7 @@ use Modules\Vehicles\Models\Vehicle;
 class Booking extends Model
 {
     /** @use HasFactory<BookingFactory> */
-    use Auditable, BelongsToTenant, HasFactory, SoftDeletes;
+    use Auditable, BelongsToTenant, HasFactory, RecordsActingFleet, SoftDeletes;
 
     /**
      * @see Vehicle::newFactory() for why this is explicit.
@@ -56,9 +57,18 @@ class Booking extends Model
     protected $fillable = [
         'tenant_id',
         'requested_by_user_id',
+        // Which colleague is travelling, when a client raised it. The link,
+        // not the source — the snapshot below is what a driver is
+        // dispatched against. See the column's migration.
+        'passenger_user_id',
         'passenger_name',
         'passenger_phone',
         'passenger_count',
+        // ADR-0051: the kind of vehicle the client asked for, or null when
+        // they stated no preference. A preference, not a constraint — the
+        // recommender ranks a match far above everything else and still
+        // offers the alternatives, saying which is which.
+        'vehicle_category',
         'origin',
         // ADR-0020: where the pickup actually is, when the caller knew.
         // Nullable — every booking that predates this has none, and the
@@ -106,6 +116,17 @@ class Booking extends Model
     public function requestedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'requested_by_user_id');
+    }
+
+    /**
+     * The colleague travelling, when a client raised the booking. Null for
+     * the walk-ins and callers Shanitah's own desk books for.
+     *
+     * @return BelongsTo<User, $this>
+     */
+    public function passengerUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'passenger_user_id');
     }
 
     /** @return BelongsTo<User, $this> */

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiClient } from '../lib/apiClient'
 import { apiError, fieldErrors } from '../lib/apiError'
+import { formatDate } from '../lib/format'
 import type { ApiSuccess } from '../types/api'
 import type { Driver } from '../types/driver'
 import { Badge } from '../components/core/Badge'
@@ -11,7 +12,9 @@ import { Alert } from '../components/feedback/Alert'
 import { Dialog } from '../components/feedback/Dialog'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { PageFill } from '../components/layout/PageFill'
 import { DriverDocumentsDialog } from './drivers/DriverDocumentsDialog'
+import { DriverFormDialog } from './drivers/DriverFormDialog'
 import { DriverPayoutDialog } from './drivers/DriverPayoutDialog'
 
 const STATUS_TONE: Record<Driver['status'], 'success' | 'warning' | 'neutral'> = {
@@ -31,6 +34,15 @@ export function DriversPage() {
   const [reviewing, setReviewing] = useState<Driver | null>(null)
   /** ADR-0042. Whose payout destination the office is reading, if any. */
   const [payout, setPayout] = useState<Driver | null>(null)
+  /**
+   * ADR-0048 §8. The driver being created or edited.
+   *
+   * Three states in one value, and the third is why it is not a boolean: a
+   * `Driver` is an edit, `'new'` is a creation, and `null` is closed. A
+   * separate `creating` flag alongside an `editing` object is the pair that
+   * can hold both at once and render two dialogs on top of each other.
+   */
+  const [editing, setEditing] = useState<Driver | 'new' | null>(null)
 
   const load = useCallback(
     () =>
@@ -63,12 +75,63 @@ export function DriversPage() {
 
   const columns: DataColumn<Driver>[] = useMemo(
     () => [
-      { key: 'name', header: 'Name', sortable: true },
-      { key: 'phone', header: 'Phone' },
-      { key: 'license_number', header: 'License number' },
-      { key: 'license_expiry', header: 'License expiry', sortable: true },
+      { key: 'name', card: 'title', header: 'Name', sortable: true },
+      { key: 'phone', card: 'meta', header: 'Phone' },
+      { key: 'license_number', card: 'meta', header: 'License number' },
+      {
+        /**
+         * What they drive, and whose it is (ADR-0048 §7).
+         *
+         * The plate is the answer to "who is out in what", and the badge
+         * beside it carries the distinction `vehicle_id` alone cannot: a boda
+         * rider's own machine versus a depot car handed out this morning.
+         *
+         * **Never colour alone** (`docs/screen-rules.md` §6) — "Own" is a
+         * word, not a green dot.
+         */
+        key: 'vehicle_id',
+        card: 'meta',
+        header: 'Vehicle',
+        render: (row) =>
+          row.vehicle_id === null ? (
+            // An em dash, not "None" and not a zero: the depot allocates one
+            // per shift for these drivers, so there is nothing to name here
+            // rather than nothing at all.
+            <span style={{ color: 'var(--text-secondary)' }} title="Allocated per shift">
+              —
+            </span>
+          ) : (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>
+                {row.vehicle?.registration_number ?? `#${row.vehicle_id}`}
+              </span>
+              {row.owns_vehicle && (
+                <Badge tone="neutral" icon="car">
+                  Own
+                </Badge>
+              )}
+            </span>
+          ),
+      },
+      {
+        key: 'license_expiry',
+        card: 'meta',
+        header: 'License expiry',
+        sortable: true,
+        /*
+          `formatDate`, because this column was rendering the raw cast —
+          `2028-08-17T00:00:00.000000Z` — for what is a calendar date. It read
+          as machine output and cost roughly 150px of a table that already
+          scrolls sideways.
+
+          Sorting is unaffected: `DataTable` sorts on the row value, not on
+          what `render` returns, so the ISO string still orders correctly.
+        */
+        render: (row) => formatDate(row.license_expiry),
+      },
       {
         key: 'status',
+        card: 'status',
         header: 'Status',
         render: (row) => <Badge tone={STATUS_TONE[row.status]}>{row.status}</Badge>,
       },
@@ -77,6 +140,7 @@ export function DriversPage() {
         // gap survived so long: nothing on any screen said whether a driver
         // could sign in, so nobody noticed that none of them could.
         key: 'account',
+        card: 'meta',
         header: 'Sign-in',
         render: (row) =>
           row.account === null ? (
@@ -99,6 +163,7 @@ export function DriversPage() {
       },
       {
         key: 'id',
+        card: 'meta',
         header: '',
         render: (row) => (
           <span style={{ display: 'inline-flex', gap: 'var(--space-2)' }}>
@@ -122,6 +187,13 @@ export function DriversPage() {
             <Button size="sm" variant="secondary" onClick={() => setManaging(row)}>
               {row.account === null ? 'Give sign-in' : 'Manage sign-in'}
             </Button>
+            {/*
+              ADR-0048 §8. The action that has never existed: until now the
+              only way a driver reached this table was a seeder.
+            */}
+            <Button size="sm" variant="secondary" onClick={() => setEditing(row)}>
+              Edit
+            </Button>
           </span>
         ),
       },
@@ -130,18 +202,35 @@ export function DriversPage() {
   )
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+    <PageFill>
+      <PageFill.Flex>
       <Card
+        fill
         title="Drivers"
         subtitle={drivers ? `${drivers.length} total` : undefined}
         actions={
-          <Input
-            iconLeft="search"
-            placeholder="Filter by name or license number"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            style={{ width: 260 }}
-          />
+          <span
+            style={{
+              display: 'inline-flex',
+              gap: 'var(--space-2)',
+              alignItems: 'center',
+              // The filter shrinks before the action does: on a narrow screen
+              // "New driver" is the thing somebody came here to press.
+              flexWrap: 'wrap',
+              justifyContent: 'flex-end',
+            }}
+          >
+            <Input
+              iconLeft="search"
+              placeholder="Filter by name or license number"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              style={{ width: 'min(260px, 100%)' }}
+            />
+            <Button iconLeft="plus" onClick={() => setEditing('new')}>
+              New driver
+            </Button>
+          </span>
         }
         padding="none"
       >
@@ -151,22 +240,35 @@ export function DriversPage() {
           <DataTable<Driver>
             columns={columns}
             rows={filtered}
+            fill
             emptyMessage={
               drivers === null
                 ? 'Loading…'
                 : query
                   ? 'No drivers match your filter'
-                  : 'No drivers yet'
+                  : 'No drivers yet — use New driver to add the first one'
             }
           />
         )}
       </Card>
+      </PageFill.Flex>
 
       {reviewing && (
         <DriverDocumentsDialog driver={reviewing} onClose={() => setReviewing(null)} />
       )}
 
       {payout && <DriverPayoutDialog driver={payout} onClose={() => setPayout(null)} />}
+
+      {editing !== null && (
+        <DriverFormDialog
+          driver={editing === 'new' ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={async () => {
+            await load()
+            setEditing(null)
+          }}
+        />
+      )}
 
       {managing && (
         <DriverAccountDialog
@@ -178,7 +280,7 @@ export function DriversPage() {
           }}
         />
       )}
-    </div>
+    </PageFill>
   )
 }
 

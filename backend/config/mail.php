@@ -115,4 +115,36 @@ return [
         'name' => env('MAIL_FROM_NAME', env('APP_NAME', 'Laravel')),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Markdown Mail
+    |--------------------------------------------------------------------------
+    |
+    | The KangaruRide theme (ADR-0052 §4): DESIGN.md's palette and type,
+    | applied to every message this platform sends rather than to one of them.
+    | Booking decisions, export notices, closure answers and document reviews
+    | all render through `mail::message`, so a theme is the only edit that
+    | reaches all of them at once.
+    |
+    | `resources/views/vendor/mail` is Laravel's published location and is
+    | searched *before* the framework's own views. Only the theme stylesheet
+    | is published there — every blade component still resolves to the
+    | framework's, so an upgrade that changes their markup keeps working and
+    | the styling follows it.
+    |
+    | The trimmed notification template lives at
+    | `resources/views/vendor/notifications/email.blade.php` and is a separate
+    | override, because it belongs to the Notifications component rather than
+    | to Mail.
+    |
+    */
+
+    'markdown' => [
+        'theme' => env('MAIL_THEME', 'kangaru'),
+
+        'paths' => [
+            resource_path('views/vendor/mail'),
+        ],
+    ],
+
 ];

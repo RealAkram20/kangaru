@@ -65,7 +65,7 @@ class AuthController extends Controller
         }
 
         return ApiResponse::success([
-            'user' => new UserResource($result['user']),
+            'user' => new UserResource($result['user']->load(['tenant', 'operator'])),
             'token' => $result['token'],
             // The SPA needs this at the moment it stores the token: a user
             // in this state can reach nothing but enrolment, and a client
@@ -106,7 +106,7 @@ class AuthController extends Controller
         }
 
         return ApiResponse::success([
-            'user' => new UserResource($result['user']),
+            'user' => new UserResource($result['user']->load(['tenant', 'operator'])),
             'token' => $result['token'],
             'must_enrol_mfa' => false,
         ], 'Logged in successfully.');
@@ -216,7 +216,9 @@ class AuthController extends Controller
         }
 
         return ApiResponse::success(
-            new UserResource($user->fresh()),
+            // `refresh`, not `fresh`: same reload, but it returns this user
+            // rather than a nullable copy of a row that was read moments ago.
+            new UserResource($user->refresh()->load(['tenant', 'operator'])),
             'Two-factor authentication is off. You can turn it back on at any time.',
         );
     }
@@ -234,7 +236,11 @@ class AuthController extends Controller
 
     public function me(Request $request): JsonResponse
     {
-        return ApiResponse::success(new UserResource($request->user()));
+        // Guaranteed non-null: this route requires auth:sanctum.
+        /** @var User $user */
+        $user = $request->user();
+
+        return ApiResponse::success(new UserResource($user->load(['tenant', 'operator'])));
     }
 
     /**

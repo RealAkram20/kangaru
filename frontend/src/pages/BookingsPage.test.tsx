@@ -28,9 +28,13 @@ function booking(overrides: Partial<Booking> = {}): Booking {
     tenant_id: 1,
     requested_by_user_id: 9,
     requested_by: { id: 9, name: 'Moses Kato', email: 'moses@x.test', role: 'corporate_admin' },
+    passenger_user_id: null,
     passenger_name: 'Grace Amongin',
     passenger_phone: '+256700000000',
     passenger_count: 2,
+    // ADR-0051: required on the wire — `BookingResource` sends it
+    // unconditionally, and null is the "no preference" case.
+    vehicle_category: null,
     origin: 'Kampala',
     destination: 'Entebbe',
     scheduled_for: null,
@@ -60,6 +64,16 @@ beforeEach(() => {
  * A test that reached for internal state would keep passing through a
  * rewrite that broke the screen, which is the opposite of the point.
  */
+/**
+ * Shanitah's own desk: no tenant, so no colleagues to name.
+ *
+ * The dialog tests below type a passenger's name, which is what this
+ * account does — it books for walk-ins and callers who have no account
+ * anywhere (ADR-0012). A client's own staff get the colleague picker
+ * instead, and that has its own tests at the end of this file.
+ */
+const dispatcher = makeUser({ role: 'dispatcher', tenant_id: null, tenant_name: null })
+
 describe('BookingsPage', () => {
   it('lists the bookings it loaded', async () => {
     renderAs(<BookingsPage />)
@@ -86,7 +100,7 @@ describe('BookingsPage', () => {
    */
   it('sends the pick-up coordinates when the dispatcher takes a suggestion', async () => {
     const user = userEvent.setup()
-    renderAs(<BookingsPage />)
+    renderAs(<BookingsPage />, dispatcher)
 
     await user.click(await screen.findByRole('button', { name: /new booking/i }))
     await user.type(screen.getByLabelText(/^passenger\*/i), 'Peter Ochieng')
@@ -107,7 +121,7 @@ describe('BookingsPage', () => {
 
   it('sends no coordinates when the pick-up was only typed', async () => {
     const user = userEvent.setup()
-    renderAs(<BookingsPage />)
+    renderAs(<BookingsPage />, dispatcher)
 
     await user.click(await screen.findByRole('button', { name: /new booking/i }))
     await user.type(screen.getByLabelText(/^passenger\*/i), 'Peter Ochieng')
@@ -132,7 +146,7 @@ describe('BookingsPage', () => {
         origin_latitude: ['That pickup is outside the area we cover.'],
       }),
     )
-    renderAs(<BookingsPage />)
+    renderAs(<BookingsPage />, dispatcher)
 
     await user.click(await screen.findByRole('button', { name: /new booking/i }))
     await user.type(screen.getByLabelText(/^passenger\*/i), 'Peter Ochieng')
@@ -150,7 +164,7 @@ describe('BookingsPage', () => {
 
   it('sends a booking with no pickup time as an immediate request', async () => {
     const user = userEvent.setup()
-    renderAs(<BookingsPage />)
+    renderAs(<BookingsPage />, dispatcher)
 
     await user.click(await screen.findByRole('button', { name: /new booking/i }))
 
@@ -172,6 +186,9 @@ describe('BookingsPage', () => {
       origin: 'Nakawa',
       destination: 'Jinja',
       scheduled_for: null,
+      // ADR-0051: sent on every booking, and null is the "no preference"
+      // answer rather than an omission.
+      vehicle_category: null,
       notes: null,
     })
   })
@@ -184,7 +201,7 @@ describe('BookingsPage', () => {
       }),
     )
 
-    renderAs(<BookingsPage />)
+    renderAs(<BookingsPage />, dispatcher)
 
     await user.click(await screen.findByRole('button', { name: /new booking/i }))
     await user.type(screen.getByLabelText(/^passenger\*/i), 'Peter Ochieng')
@@ -210,7 +227,7 @@ describe('BookingsPage', () => {
       apiFailure(409, 'CREDIT_LIMIT_EXCEEDED', 'This company has reached its credit limit.'),
     )
 
-    renderAs(<BookingsPage />)
+    renderAs(<BookingsPage />, dispatcher)
 
     await user.click(await screen.findByRole('button', { name: /new booking/i }))
     await user.type(screen.getByLabelText(/^passenger\*/i), 'Peter Ochieng')
@@ -321,5 +338,100 @@ describe('BookingsPage', () => {
 
     expect(await screen.findByText('Gulu → Lira')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByText('Kampala → Entebbe')).not.toBeInTheDocument())
+  })
+
+  /*
+   |------------------------------------------------------------------
+   | The passenger, when a client raises the booking
+   |------------------------------------------------------------------
+   |
+   | A client's booking is for one of the client's own people. The server
+   | is what enforces that — it rejects `passenger_user_id` and takes the
+   | passenger's *name* off the account — and these assert the screen's half
+   | of it: search rather than a directory-sized dropdown, the id sent, and
+   | the number prefilled but still the caller's to correct.
+   */
+
+  /** Answers `/colleagues` with a directory, and everything else with the queue. */
+  function withColleagues(hits: { id: number; name: string; phone: string | null }[]) {
+    get.mockImplementation((url: string) =>
+      Promise.resolve(url.startsWith('/colleagues') ? apiOk(hits) : apiOk([booking()])),
+    )
+  }
+
+  it('names a colleague as the passenger, and sends the account, not the spelling', async () => {
+    const user = userEvent.setup()
+    withColleagues([{ id: 12, name: 'Joseph Mukasa', phone: '+256700111222' }])
+
+    renderAs(<BookingsPage />)
+
+    await user.click(await screen.findByRole('button', { name: /new booking/i }))
+    await user.type(screen.getByLabelText(/^passenger\*/i), 'Jose')
+
+    // Searched server-side and debounced: a bank's directory is thousands
+    // of accounts, so this is never a `<select>` holding all of them.
+    await waitFor(() =>
+      expect(get).toHaveBeenCalledWith('/colleagues', expect.objectContaining({ params: { q: 'Jose' } })),
+    )
+
+    await user.click(await screen.findByRole('button', { name: /Joseph Mukasa/ }))
+
+    // The account's number, prefilled from the record rather than retyped.
+    expect(screen.getByLabelText(/contact number/i)).toHaveValue('+256700111222')
+
+    await user.type(screen.getByLabelText(/pick-up/i), 'Nakawa')
+    await user.type(screen.getByLabelText(/destination/i), 'Jinja')
+    await user.click(screen.getByRole('button', { name: /create booking/i }))
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    expect(post.mock.calls[0][1]).toMatchObject({
+      passenger_user_id: 12,
+      passenger_name: 'Joseph Mukasa',
+      passenger_phone: '+256700111222',
+    })
+  })
+
+  it('drops the chosen colleague the moment the name is typed over', async () => {
+    const user = userEvent.setup()
+    withColleagues([{ id: 12, name: 'Joseph Mukasa', phone: '+256700111222' }])
+
+    renderAs(<BookingsPage />)
+
+    await user.click(await screen.findByRole('button', { name: /new booking/i }))
+    await user.type(screen.getByLabelText(/^passenger\*/i), 'Jose')
+    await user.click(await screen.findByRole('button', { name: /Joseph Mukasa/ }))
+
+    // The id and the name on screen must never be able to disagree: the
+    // whole point of naming an account is that one person is one passenger.
+    await user.type(screen.getByLabelText(/^passenger\*/i), ' someone else')
+    await user.type(screen.getByLabelText(/pick-up/i), 'Nakawa')
+    await user.type(screen.getByLabelText(/destination/i), 'Jinja')
+    await user.click(screen.getByRole('button', { name: /create booking/i }))
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    // Sent without one, and refused by the server — which is the right
+    // place for that refusal to come from.
+    expect(post.mock.calls[0][1]).not.toHaveProperty('passenger_user_id')
+  })
+
+  it('shows the server refusal to name nobody against the passenger field', async () => {
+    const user = userEvent.setup()
+    withColleagues([])
+    post.mockRejectedValue(
+      apiFailure(422, 'VALIDATION_FAILED', 'The given data was invalid.', {
+        passenger_user_id: ['Choose the colleague who is travelling.'],
+      }),
+    )
+
+    renderAs(<BookingsPage />)
+
+    await user.click(await screen.findByRole('button', { name: /new booking/i }))
+    await user.type(screen.getByLabelText(/^passenger\*/i), 'Nobody In Particular')
+    await user.click(screen.getByRole('button', { name: /create booking/i }))
+
+    // Against the field, not as a banner: the error names `passenger_user_id`
+    // and there is no input by that name, so untranslated it would render
+    // as nothing visibly wrong.
+    expect(await screen.findByText('Choose the colleague who is travelling.')).toBeInTheDocument()
   })
 })

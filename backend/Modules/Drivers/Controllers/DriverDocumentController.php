@@ -9,12 +9,12 @@ use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Storage;
 use Modules\Drivers\Enums\DriverDocumentType;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverDocument;
 use Modules\Drivers\Requests\StoreDriverDocumentRequest;
 use Modules\Drivers\Resources\DriverDocumentResource;
+use Modules\Drivers\Resources\DriverDocumentSlots;
 use Modules\Drivers\Services\DriverDocumentService;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -48,17 +48,14 @@ class DriverDocumentController extends Controller
 
         $timezone = $this->documents->timezone();
 
-        $rows = array_map(
-            fn (array $row): array => [
-                'type' => $row['type']->value,
-                'type_label' => $row['type']->label(),
-                'hint' => $row['type']->hint(),
-                'requires_expiry' => $row['type']->requiresExpiry(),
-                'document' => $row['document'] === null
-                    ? null
-                    : (new DriverDocumentResource($row['document'], $timezone))->toArray($request),
-            ],
+        // One presenter, three screens (`DriverDocumentSlots`). This shape was
+        // built by hand here and in the other controller, and ADR-0048 added a
+        // third caller — which is where a drifting `hint` stops being
+        // duplication and starts being a field asked for on one surface only.
+        $rows = DriverDocumentSlots::toArray(
             $this->documents->forDriver($driver),
+            $timezone,
+            $request,
         );
 
         return ApiResponse::success(
@@ -109,18 +106,24 @@ class DriverDocumentController extends Controller
     }
 
     /**
-     * The file itself, streamed.
+     * The file itself, decrypted on the way out (ADR-0053).
      *
      * Never a storage URL: a signed link to somebody's identity document is
      * addressable by anyone who ever saw it, for as long as it lives
      * (ADR-0033 §5). `OdometerPhotoController` makes the same argument about a
      * dashboard photograph, and it applies here more strongly.
+     *
+     * The decryption lives in `DriverDocumentStore` and not here, because the
+     * office's review controller streams the same rows and a branch present in
+     * one of the two would serve ciphertext to exactly one audience.
      */
     public function file(Request $request, DriverDocument $document): StreamedResponse|JsonResponse
     {
         $this->authorize('view', $document);
 
-        if (! Storage::exists($document->file_path)) {
+        $download = $this->documents->download($document);
+
+        if ($download === null) {
             return ApiResponse::error(
                 ErrorCode::NOT_FOUND,
                 'That document file is no longer on file. Upload it again.',
@@ -129,7 +132,7 @@ class DriverDocumentController extends Controller
             );
         }
 
-        return Storage::response($document->file_path);
+        return $download;
     }
 
     private function driverFor(Request $request): ?Driver

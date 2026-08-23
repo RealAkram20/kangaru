@@ -16,6 +16,7 @@ use Modules\Fleet\Support\DriverPresence;
 use Modules\Fleet\Support\DriverPresenceStore;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
+use Modules\Trips\Models\TripEvent;
 use Modules\Vehicles\Models\Vehicle;
 
 /**
@@ -134,15 +135,24 @@ it('turns an accept into a customer-owned trip', function () {
     expect($trip->tenant_id)->toBeNull();
     expect($trip->driver_id)->toBe($driver->id);
     expect($trip->vehicle_id)->toBe($vehicle->id);
-    // `accepted`, not `assigned`. The driver said yes when they took the
-    // offer; a trip that lands in `assigned` asks them to say it again, and
-    // ADR-0024 §7 withholds the passenger's number until `accepted` so the
-    // call button would never appear either.
+    // `driver_en_route`, not `assigned` and no longer merely `accepted`.
+    // The driver said yes when they took the offer — a trip that lands in
+    // `assigned` asks them to say it again — and saying yes from the seat is
+    // setting off, so the accept carries them straight onto the road (the
+    // owner's ruling: "on my way should be automatic the moment the driver
+    // accepts"). Both rows are on the timeline; the graph gained no edge.
     //
     // This assertion read ASSIGNED until the flow was run end to end against
-    // a live server — the test had been written to match the implementation
-    // rather than the ADR.
-    expect($trip->status)->toBe(TripStatus::ACCEPTED);
+    // a live server, and ACCEPTED until the second press was measured on a
+    // handset — each time the test had been written to match the
+    // implementation rather than the ride.
+    expect($trip->status)->toBe(TripStatus::DRIVER_EN_ROUTE);
+    // Past the tenant scope, like the trip itself: a walk-in's events have no
+    // tenant either.
+    $statuses = TripEvent::query()->withoutGlobalScopes()
+        ->where('trip_id', $trip->id)->orderBy('id')->pluck('to_status')
+        ->map(fn (TripStatus $s) => $s->value)->all();
+    expect($statuses)->toContain('accepted', 'driver_en_route');
 
     // The foreign key `OrderRequestStatus::CONVERTED` was promised in
     // ADR-0012 and given in ADR-0024 §4. The case keeps its meaning; it now
@@ -441,4 +451,77 @@ it('lets a driver-scoped token reach the offer routes', function () {
         ->toContain('me.offers.index')
         ->toContain('me.offers.acceptance.store')
         ->toContain('me.offers.decline.store');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Self-drive rentals (found in a live run, 18 August 2026)
+|--------------------------------------------------------------------------
+|
+| A five-day pickup rental placed from the web app — hire dates and KYC
+| documents in `details` — was offered to the nearest on-duty driver, who
+| accepted it in under a second. Nothing in the dispatch path had ever asked
+| what service the order was for, so `accept()` had no origin or destination
+| and fell back to writing a trip reading "Pickup → As directed".
+|
+| Three tests because there were three ways in, and a fix for one of them is
+| a fix a run can walk past: the intake, the retry sweep, and the customer's
+| own tracking screen, which was rendering a captain search over the rental.
+|
+*/
+
+it('never offers a self-drive rental to a driver', function () {
+    onDutyDriverAt(0.3486, 32.5825);
+
+    $this->postJson('/api/v1/public/order-requests', [
+        'service_type' => 'self_drive',
+        'contact_name' => 'Aki A',
+        'contact_phone' => '+256700000009',
+        'details' => [
+            'vehicle_category' => 'pickup',
+            'start_date' => now()->toDateString(),
+            'end_date' => now()->addDays(5)->toDateString(),
+        ],
+    ])->assertStatus(201);
+
+    // The rental is taken, and it stays in the desk's queue: somebody has to
+    // check the hire dates and the documents, and no driver is being sent to
+    // a car the customer is going to drive themselves.
+    expect(OrderRequest::query()->count())->toBe(1);
+    expect(DispatchOffer::query()->count())->toBe(0);
+    expect(Trip::query()->count())->toBe(0);
+});
+
+it('never offers a self-drive rental when the retry sweep runs either', function () {
+    // No driver on duty when it arrives, so the order goes unoffered and lands
+    // in exactly the set `retryUnoffered()` revisits. This is the path a guard
+    // placed only at intake would miss, and the sweep runs every ten seconds.
+    $order = walkInOrder(['service_type' => 'self_drive']);
+
+    onDutyDriverAt(0.3486, 32.5825);
+
+    $this->artisan('dispatch:advance-offers')->assertExitCode(0);
+
+    expect(DispatchOffer::query()->count())->toBe(0);
+    expect($order->refresh()->trip_id)->toBeNull();
+});
+
+it('does not show a captain search over a self-drive rental', function () {
+    $customer = Customer::factory()->create();
+
+    walkInOrder([
+        'service_type' => 'self_drive',
+        'customer_id' => $customer->id,
+        'pickup_location' => null,
+        'dropoff_location' => null,
+    ]);
+
+    // The screen behind this endpoint is a captain search and a live map. It
+    // was saying "Finding you a captain" over a five-day hire, and then — once
+    // the retry window closed — that no captain had been found for something
+    // no captain was ever going to drive.
+    $this->actingAs($customer, 'customer')
+        ->getJson('/api/v1/customer/rides/active')
+        ->assertOk()
+        ->assertJsonPath('data', null);
 });

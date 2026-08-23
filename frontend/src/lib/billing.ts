@@ -31,7 +31,10 @@ export function canViewInvoices(user: User | null): boolean {
     user?.role === 'super_admin' ||
     user?.role === 'finance' ||
     user?.role === 'operations_manager' ||
-    user?.role === 'corporate_admin'
+    user?.role === 'corporate_admin' ||
+    // A client's person switched on to see finance (App\Enums\ClientCapability
+    // — `invoices.view` + `reports.view` unioned onto their role).
+    (user?.role === 'corporate_employee' && (user.capabilities ?? []).includes('sees_finance'))
   )
 }
 
@@ -76,22 +79,18 @@ export const ROUNDING_OPTIONS: { value: RoundingMode; label: string }[] = [
   { value: 'down', label: 'Always round down' },
 ]
 
-/**
- * Vehicle categories, mirroring Vehicle::CATEGORIES. A category priced here
- * but absent there — or the reverse — is a vehicle nobody can invoice, so
- * the two lists exist to be compared.
+/*
+ * `VEHICLE_CATEGORIES` was here, mirroring `Vehicle::CATEGORIES` by hand.
+ * **Deleted by ADR-0050**, which made the categories a table the office
+ * edits without a deploy — so a literal here could only ever be a list that
+ * goes stale, and its own docblock already said what that costs: "a category
+ * priced here but absent there is a vehicle nobody can invoice".
+ *
+ * `useVehicleCategories()` in `lib/vehicleCategories.ts` replaces it. There
+ * is deliberately no fallback constant, and that file explains why: the
+ * office can *retire* a category, so a stale list offers choices the server
+ * answers 422 to.
  */
-export const VEHICLE_CATEGORIES = [
-  'boda',
-  'tricycle',
-  'sedan',
-  'suv',
-  'van',
-  'minibus',
-  'bus',
-  'pickup',
-  'truck',
-] as const
 
 /**
  * Adjustment lines are corrections to the running subtotal rather than

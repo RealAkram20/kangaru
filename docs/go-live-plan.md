@@ -1,5 +1,7 @@
 # Go-live plan
 
+> **See also `docs/platform-plan.md`** — the `K0`–`K9` packages run beside this plan and do **not** enter its sequence or reorder Track A or Track B.
+
 Decided with the owner on 2026-08-17.
 
 **Two tracks, different deadlines.**

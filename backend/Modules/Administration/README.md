@@ -19,6 +19,16 @@ permission catalogue, and the audit log.
   `invoices.issued_by_user_id` is `restrictOnDelete`, so the database
   refuses it anyway). Suspending revokes the account's Sanctum tokens, so
   it reaches sessions that are already signed in.
+- **The colleague lookup** (`/colleagues`) — the passenger picker behind the
+  booking dialog. A client's booking is for a client's own person, and a
+  bank branch network is thousands of accounts, so the passenger field is a
+  server-side search rather than a dropdown holding the directory. Three
+  fields come back — id, name, work number — and the number is the one
+  collected on the account (`users.phone`), so a driver is dispatched
+  against something checked once instead of retyped from memory. The
+  enforcement is `StoreBookingRequest`: a tenant actor who names nobody gets
+  a 422, and the passenger's *name* is then taken off the account rather
+  than out of the payload, so one employee cannot arrive spelled three ways.
 - **The role catalogue** (`/roles`) — ADR-0004. `App\Enums\Permission` is
   the catalogue of abilities and lives in code; roles are rows carrying a
   JSON permission set. The ten Phase 1 roles are seeded as **system
@@ -57,15 +67,19 @@ permission catalogue, and the audit log.
 | POST | `/api/v1/auth/mfa/recovery-codes` | Sanctum | Regenerates the set, invalidating the old one. Own account only |
 | DELETE | `/api/v1/auth/mfa` | Sanctum | Rate limited 10/min/IP. Removes your own factor against a current TOTP **or recovery** code (ADR-0010). `403` if your role requires one |
 | POST | `/api/v1/auth/logout` | Sanctum | Revokes the current access token |
-| GET | `/api/v1/auth/me` | Sanctum | Returns the authenticated user |
+| GET | `/api/v1/support/act-as` | Sanctum | Whether this request is being made by somebody acting as the account, and until when. **`null` for everybody who is simply themselves**, which is almost every request. A route of its own rather than a field on `UserResource`, because the session is a fact about the *request* — and a field there would append `acting_as: null` to every nested actor in the API |
+| POST | `/api/v1/support/act-as` | Sanctum | Begins a support session (ADR-0056). `support.act-as` **and** `access_level = kangaru`; a reason is required and recorded. Rate limited 10/min. Refuses chaining, a second open session, and acting as yourself |
+| DELETE | `/api/v1/support/act-as` | Sanctum | Ends it. **Idempotent, and deliberately unguarded** — stopping is the one act a support agent must always be able to perform, and a guard here would strand them inside somebody else's account until the thirty minutes ran out |
+| GET | `/api/v1/auth/me` | Sanctum | Returns the authenticated user. `UserResource` carries `tenant_name` (additive) — the client's own name for the console's chrome, null for platform staff |
 | PATCH | `/api/v1/auth/password` | Sanctum | Own password only. Rate limited 5/min. Revokes every token, including the caller's |
 | POST | `/api/v1/auth/password/forgot` | none | Rate limited 3/min/IP. ADR-0028 §2: emails a 6-digit code, hashed at rest, 15-min TTL. **Identical 202 whether or not the email exists.** 409 `AUTH_METHOD_DISABLED` until the owner enables it and SMTP is configured |
 | POST | `/api/v1/auth/password/reset` | none | Rate limited 5/min/IP. Exchanges the code for a new password; single-use, five wrong guesses burn it; success revokes every token |
 | POST | `/api/v1/auth/social` | none | Rate limited 5/min/IP. ADR-0028 §3: verifies a Google/Facebook proof server-side against admin-stored credentials. 200 signed_in (driver-scoped token) · 202 sign_up (verified name+email, **nothing created** — ADR-0027 holds) · 409 `MFA_REQUIRED` · 403 `NOT_A_DRIVER` · 401 `SOCIAL_TOKEN_INVALID` |
-| GET | `/api/v1/users` | Sanctum + tenant | `UserPolicy::viewAny`. Whitelisted filters `status`, `role`, `q`; unknown params → 422. `meta.assignable_roles` carries the roles this actor may hand out |
-| POST | `/api/v1/users` | Sanctum + tenant | `UserPolicy::create`. Administrator sets the initial password |
+| GET | `/api/v1/users` | Sanctum + tenant | `UserPolicy::viewAny`. Whitelisted filters `status`, `role`, `q`; unknown params → 422. `meta.assignable_roles` carries the roles this actor may hand out; `meta.capabilities` the client-capability catalogue (below); `meta.routes` the client's active routes a colleague may be put on (empty for platform staff, who have none) |
+| POST | `/api/v1/users` | Sanctum + tenant | `UserPolicy::create`. Administrator sets the initial password. Required `phone`. Optional `capabilities[]`, `books_without_approval`, `route_ids[]` |
 | GET | `/api/v1/users/{user}` | Sanctum + tenant | `UserPolicy::view` |
-| PATCH | `/api/v1/users/{user}` | Sanctum + tenant | `UserPolicy::update`. Name, email, role, status. Suspension revokes tokens |
+| PATCH | `/api/v1/users/{user}` | Sanctum + tenant | `UserPolicy::update`. Name, email, phone, role, status, `capabilities[]` and `route_ids[]` (each the whole list, replacing), `books_without_approval`. Suspension revokes tokens |
+| GET | `/api/v1/colleagues` | Sanctum + tenant | `BookingPolicy::create` — *you may look up a colleague if you may book a car for one.* Required `q` (min 2), at most 15 results, three fields each. Deliberately **not** a filter on `/users`, which is gated on `staff.view` and answers with roles and MFA state that the Corporate Employee naming a passenger does not hold. Empty for platform staff, who belong to no client |
 | GET | `/api/v1/roles` | Sanctum + tenant | `RolePolicy::viewAny` — `roles.manage` **or** `staff.view`, since whoever assigns a role must be able to read it. `meta.catalogue` (grouped permissions), `meta.grantable` (what this actor may put in a role), `meta.can_manage` |
 | POST | `/api/v1/roles` | Sanctum + tenant | `RolePolicy::create` — `roles.manage`. Slug derived from the name when omitted |
 | PATCH | `/api/v1/roles/{slug}` | Sanctum + tenant | `RolePolicy::update`. A system role's permissions may change; its name may not |
@@ -77,6 +91,38 @@ permission catalogue, and the audit log.
 | POST | `/api/v1/settings/assets/{asset}` | Sanctum | `settings.manage`. Multipart logo/favicon upload to the public disk |
 | POST | `/api/v1/settings/mail/test` | Sanctum | `settings.manage`. Sends a test message using the stored SMTP credentials; refuses until mail is configured |
 | GET | `/api/v1/audit-logs` | Sanctum + tenant | `AuditLogPolicy::viewAny` — `audit.view`. Whitelisted filters: `auditable_type` (any alias in the enforced morph map), `action`, `user_id`, `from`/`to` (`Y-m-d`; `to` includes its whole day). Unknown params → 422. Cursor-paginated. `meta.filters` carries the accepted values plus the actors present in this reader's slice; `meta.scope` is `platform` or `tenant` |
+
+## Client capabilities — a corporate client's own access control
+
+`App\Enums\ClientCapability` (2026-08-19). Roles are platform-wide
+(ADR-0004): one catalogue, seeded by Shanitah, read by every client, so a
+client cannot own a role. What a client's administrator *can* own is a
+person's switches. Each capability is a fixed bundle of existing
+permissions that `User::permissions()` unions onto the role's set:
+
+| Slug | Grants | For |
+|---|---|---|
+| `approves_bookings` | `bookings.approve`, `bookings.view.all`, `trips.view.all` | a branch officer who approves the branch's requests |
+| `sees_finance` | `invoices.view`, `reports.view` | a finance clerk who reconciles the month |
+| `manages_staff` | `staff.view`, `staff.manage` | a deputy who onboards colleagues |
+
+Stored as slugs on `users.capabilities` (JSON). Every policy keeps asking
+`hasPermission()`; nothing new is authorised. Fail-closed on every edge: a
+slug the enum does not know grants nothing, a permission outside a bundle
+cannot arrive, a user with no role gets no capabilities, and the requests
+apply the same escalation rule as roles — nobody grants what they do not
+hold (`holdsAll`). Refused on platform accounts (`tenant_id` null): a
+capability is a client's switch for a client's person. Changes are on the
+audit trail like any user update.
+
+**`users.books_without_approval`** is the one switch that is not a
+permission: `BookingService::create()` approves that person's own bookings
+on their behalf, the same transition and audit rows as a human approver,
+beside the owner's platform-wide `booking.approval_required` waiver.
+
+The console reads `capabilities` off `/auth/me` to widen the client's menu
+(`lib/navigation.ts`), and the Staff page offers the switches from
+`meta.capabilities` — the labels are served, not copied.
 
 ## Frontend
 
@@ -191,6 +237,55 @@ not themselves hold. Enforced twice — when a role is *defined*
 (`StoreRoleRequest`/`UpdateRoleRequest`) and when it is *assigned*
 (`UserPolicy::assignRole`) — because an administrator who sets the new
 account's password could otherwise sign in as it.
+
+## Acting as somebody else (ADR-0056)
+
+Reverses a position this module states twice — `AuthController::changePassword`
+calls an admin resetting somebody's password *"the one act an audit trail
+cannot tell apart from impersonation"*, and `Modules/Customers/Routes/staff.php`
+says *"no impersonation"* outright.
+
+**The objection was never to impersonation. It was to impersonation the trail
+cannot distinguish from the person's own hand.** So that is what was built:
+
+- `audit_logs.impersonator_id`. **`user_id` stays the subject**, so a client's
+  own trail reads chronologically as their account's activity; the new column
+  names who was holding it. Never one without the other when rendered.
+- `impersonation_sessions` — the evidence that a session *happened*. Start and
+  end are audited in their own right, because reading a bank's trip history is
+  the act whether or not anything was written.
+- Thirty minutes, enforced as a **predicate, not a cron**. Nothing sweeps the
+  table, so a scheduler that stops running cannot leave a session standing.
+- `ActAsSubject` middleware swaps the user **before `IdentifyTenant`**. That
+  ordering is the whole of its correctness: after it, a session would carry the
+  *actor's* fleet — a Kangaru account's, which is none — and every scoped read
+  would come back empty while looking like it had worked.
+- The deny-list (§3) is **attached to routes, never matched against route
+  names**. A name-matching deny-list is one rename away from silently
+  permitting what it was written to refuse. It guards the password, MFA, payout
+  destinations, account closure and settlement decisions — the acts whose whole
+  purpose is to prove it was the person.
+- It **never mints a client-app token**. A driver token handed to a support
+  agent would let them register a push device and take a real job off a driver
+  on the road.
+
+### What keeps the grant narrow
+
+Not the permission catalogue — the **level**. Only a `kangaru` account may act
+as anybody, and one can only be created with a shell on the server
+(`php artisan kangaru:create-staff`).
+
+Holding `support.act-as` out of the Super Admin catalogue was tried and
+reverted the same hour: `StoreRoleRequest` refuses to let anybody author a role
+carrying a permission they do not hold themselves, so the exclusion made the
+permission **ungrantable by any screen**. Ungrantable is not stricter; it is
+broken. A fleet Super Admin holds the permission and cannot use it.
+
+### Not built, and it matters
+
+The **notification to the person acted upon** (§5). Their own audit trail shows
+it, and the banner shows the agent — but nobody tells the driver or the client
+afterwards. Named here rather than left to be discovered.
 
 ## What's explicitly deferred
 

@@ -21,6 +21,7 @@ import {
   waitingMinutesFrom,
   type RecordRow,
 } from '../trips/record';
+import { useOdometerEnabled } from '../trips/odometerSetting';
 import { driverActions, statusLabel, type TripAction } from '../trips/transitions';
 import { Button, Card, Field, Notice, Screen, ScreenHeader, usePressScale } from '../ui/components';
 import { SkeletonCards } from '../ui/Skeleton';
@@ -95,6 +96,8 @@ export function TripDetailScreen({ route, navigation }: Props) {
   const { data: trip, isLoading } = useTrip(tripId);
   const { data: events } = useTripEvents(tripId);
   const { queueTransition } = useSync();
+  // ADR-0047, as on the pickup screen.
+  const odometerEnabled = useOdometerEnabled();
 
   const [declining, setDeclining] = useState(false);
   const [notes, setNotes] = useState('');
@@ -152,7 +155,7 @@ export function TripDetailScreen({ route, navigation }: Props) {
     );
   }
 
-  const actions = driverActions(trip);
+  const actions = driverActions(trip, { odometerEnabled });
   // Bound to a local so the null check narrows inside the press handler —
   // TypeScript cannot prove a property is still non-null by the time a callback
   // runs, and it is right not to.
@@ -182,8 +185,15 @@ export function TripDetailScreen({ route, navigation }: Props) {
     }
 
     setBusy(true);
-    await queueTransition({ tripId: trip.id, from: trip.status, to: action.to });
-    setBusy(false);
+    // `finally`, because the caller discards the promise: a `queueTransition`
+    // that throws (the outbox refusing to open is the live case) used to skip
+    // `setBusy(false)` and leave every action on this record spinning, with
+    // the error swallowed. Same fix as `PickupScreen.run`.
+    try {
+      await queueTransition({ tripId: trip.id, from: trip.status, to: action.to });
+    } finally {
+      setBusy(false);
+    }
   };
 
   const confirmDecline = async () => {
@@ -198,14 +208,22 @@ export function TripDetailScreen({ route, navigation }: Props) {
         style: 'destructive',
         onPress: () => {
           void (async () => {
-            await queueTransition({
-              tripId: trip.id,
-              from: trip.status,
-              to: 'rejected',
-              notes: notes.trim(),
-            });
-            setDeclining(false);
-            setNotes('');
+            // The sheet closes in `finally`: a throw between here and
+            // `setDeclining(false)` used to strand the notes sheet open with
+            // no way to tell why nothing happened. Closing on failure is
+            // right — the queued decline either exists or it does not, and
+            // the sync banner is the surface that reports which.
+            try {
+              await queueTransition({
+                tripId: trip.id,
+                from: trip.status,
+                to: 'rejected',
+                notes: notes.trim(),
+              });
+            } finally {
+              setDeclining(false);
+              setNotes('');
+            }
           })();
         },
       },

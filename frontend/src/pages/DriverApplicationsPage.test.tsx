@@ -33,6 +33,57 @@ function application(overrides: Partial<DriverApplication> = {}): DriverApplicat
 
 const listOf = (...rows: DriverApplication[]) => apiOk({ driver_applications: rows })
 
+/**
+ * Two endpoints answer through one mock now: the queue, and the documents the
+ * decision dialog loads for whichever application was opened.
+ *
+ * Routed by URL rather than by call order. `mockResolvedValueOnce` chains
+ * were the first attempt and they encode *how many times* each screen
+ * fetches, so adding a request anywhere silently hands the wrong body to the
+ * wrong caller — which is precisely how these tests broke when the documents
+ * section arrived.
+ */
+function answerWith(rows: DriverApplication[], slots: unknown[] = []) {
+  get.mockImplementation((url: string) => {
+    // The file route before the list route: `/documents/41/file` contains
+    // `/documents`, so ordering these the other way hands `MediaPreview` an
+    // array of slots where it asked for a blob, and the previewer renders its
+    // "could not be loaded" state instead of the document.
+    if (url.endsWith('/file')) {
+      return Promise.resolve({ data: new Blob(['x'], { type: 'image/jpeg' }) })
+    }
+
+    return Promise.resolve(url.includes('/documents') ? apiOk(slots) : listOf(...rows))
+  })
+}
+
+/** One slot with a file in it, in the shape `DriverDocumentSlot` promises. */
+function heldSlot(overrides: Record<string, unknown> = {}) {
+  return {
+    type: 'driving_licence',
+    type_label: 'Driving licence',
+    group: 'driver',
+    group_label: 'Driver',
+    hint: '',
+    requires_expiry: true,
+    document: {
+      id: 41,
+      driver_id: null,
+      driver_application_id: 7,
+      type: 'driving_licence',
+      type_label: 'Driving licence',
+      status: 'pending',
+      status_label: 'Awaiting review',
+      compliance_state: 'pending',
+      mime_type: 'image/jpeg',
+      original_name: 'licence.jpg',
+      size_bytes: 1024,
+      expires_at: '2029-06-30',
+    },
+    ...overrides,
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
 })
@@ -49,7 +100,7 @@ beforeEach(() => {
  */
 describe('DriverApplicationsPage', () => {
   it('opens on the people still waiting, not on everything ever submitted', async () => {
-    get.mockResolvedValue(listOf(application()))
+    answerWith([application()])
 
     renderAs(<DriverApplicationsPage />)
 
@@ -62,15 +113,167 @@ describe('DriverApplicationsPage', () => {
   it('shows the phone number, because it is the only way anyone hears back', async () => {
     // ADR-0027 §6 gives an applicant no way to check their own status, so
     // this column is the whole feedback channel.
-    get.mockResolvedValue(listOf(application()))
+    answerWith([application()])
 
     renderAs(<DriverApplicationsPage />)
 
     expect(await screen.findByText('0772 123 456')).toBeVisible()
   })
 
+  /*
+    ADR-0048 section 4's uploads, on the screen where they decide.
+
+    The licence-number field's own hint says "From the licence you checked,
+    not the applicant's form" — an instruction the console gave with no way to
+    follow it, because nothing here could show the licence. These three cover
+    the parts that would silently regress: that the documents are fetched for
+    the application actually opened, that an empty slot is named rather than
+    hidden, and that a broken documents response does not take Approve and
+    Reject down with it.
+  */
+  it('shows the applicant’s documents on the dialog where they are decided', async () => {
+    answerWith([application()], [heldSlot()])
+
+    renderAs(<DriverApplicationsPage />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Review' }))
+
+    expect(await screen.findByRole('button', { name: 'View Driving licence' })).toBeVisible()
+
+    // The application actually opened, not a hardcoded id.
+    expect(get).toHaveBeenCalledWith('/driver-applications/7/documents')
+  })
+
+  it('names a slot the applicant never sent, rather than hiding it', async () => {
+    // "What is missing" is the reviewer's question as much as "what is here".
+    // A slot dropped from the list reads as a document that does not exist.
+    answerWith([application()], [heldSlot({ document: null })])
+
+    renderAs(<DriverApplicationsPage />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Review' }))
+
+    expect(await screen.findByText('Not sent')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'View Driving licence' })).toBeNull()
+  })
+
+  it('keeps the decision possible when the documents cannot be read', async () => {
+    /*
+      The documents are the secondary content of a dialog whose primary job is
+      Approve and Reject. Before the boundary check this threw during render
+      and unmounted the whole dialog — so a reviewer who could not see the
+      papers also lost the ability to decide, which is worse than the fault
+      that caused it.
+    */
+    get.mockImplementation((url: string) =>
+      Promise.resolve(url.includes('/documents') ? apiOk({ not: 'a list' }) : listOf(application())),
+    )
+
+    renderAs(<DriverApplicationsPage />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Review' }))
+
+    expect(await screen.findByLabelText(/licence number/i)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Approve and create sign-in' })).toBeVisible()
+  })
+
+  /*
+    ADR-0057, on the screen. The point of the whole change is that refusing
+    one document does not refuse the person, so what these assert is that the
+    reviewer can act per-document at all, and that a refusal asks for the
+    reason the applicant is going to be emailed.
+  */
+  it('accepts a single document without leaving the dialog', async () => {
+    answerWith([application()], [heldSlot()])
+    post.mockResolvedValue(apiOk({}))
+
+    renderAs(<DriverApplicationsPage />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Review' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept Driving licence' }))
+
+    expect(post).toHaveBeenCalledWith(
+      '/driver-applications/7/documents/41/verify',
+      {},
+    )
+
+    // Still on the decision dialog. A verdict that closed it would make
+    // accepting six documents six round trips through the queue.
+    expect(screen.getByLabelText(/licence number/i)).toBeVisible()
+  })
+
+  it('asks for a reason before refusing, and sends it', async () => {
+    answerWith([application()], [heldSlot()])
+    post.mockResolvedValue(apiOk({}))
+
+    renderAs(<DriverApplicationsPage />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Review' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Refuse Driving licence' }))
+
+    // The reviewer is told where the words go, because they are going to a
+    // person who has to act on them rather than into a file.
+    expect(
+      await screen.findByText(/the applicant is emailed this reason/i),
+    ).toBeVisible()
+
+    await userEvent.type(screen.getByLabelText(/reason/i), 'The bottom is cut off.')
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }))
+
+    expect(post).toHaveBeenCalledWith('/driver-applications/7/documents/41/reject', {
+      reason: 'The bottom is cut off.',
+    })
+  })
+
+  it('offers no verdict on a document already accepted', async () => {
+    // Re-running a verdict rewrites the reviewer and timestamp on the row for
+    // a decision nobody made, and invites the reviewer to wonder whether the
+    // first one registered.
+    answerWith(
+      [application()],
+      [heldSlot({ document: { ...heldSlot().document, status: 'verified', compliance_state: 'verified' } })],
+    )
+
+    renderAs(<DriverApplicationsPage />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Review' }))
+
+    expect(await screen.findByRole('button', { name: 'View Driving licence' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Accept Driving licence' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Refuse Driving licence' })).toBeNull()
+  })
+
+  /*
+    The verdict where the document is.
+
+    Reported from the console: judging a document and acting on it are one
+    moment, and closing the previewer to reach a button put four steps
+    between them. The browse arrows are already in that footer, so a reviewer
+    can work through all six without it closing once.
+  */
+  it('accepts from inside the preview, without closing it', async () => {
+    answerWith([application()], [heldSlot()])
+    post.mockResolvedValue(apiOk({}))
+
+    renderAs(<DriverApplicationsPage />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Review' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'View Driving licence' }))
+
+    // The previewer is open — its file metadata is on screen, which the row
+    // behind it does not render.
+    expect(await screen.findByText('licence.jpg')).toBeVisible()
+
+    // Plain "Accept": inside a dialog titled with the document, the type is
+    // the heading. The row's button keeps its longer label, and this exact
+    // match would not find it.
+    await userEvent.click(screen.getByRole('button', { name: 'Accept' }))
+
+    expect(post).toHaveBeenCalledWith('/driver-applications/7/documents/41/verify', {})
+  })
+
   it('approves with the licence details the applicant could not be trusted for', async () => {
-    get.mockResolvedValue(listOf(application()))
+    answerWith([application()])
     post.mockResolvedValue(apiOk({}))
 
     renderAs(<DriverApplicationsPage />)
@@ -89,7 +292,7 @@ describe('DriverApplicationsPage', () => {
   })
 
   it('surfaces the 409 when somebody else already decided the row', async () => {
-    get.mockResolvedValue(listOf(application()))
+    answerWith([application()])
     post.mockRejectedValue(
       apiFailure(409, 'DRIVER_APPLICATION_CLOSED', "Musa Kiwanuka's application was already approved."),
     )
@@ -107,7 +310,7 @@ describe('DriverApplicationsPage', () => {
   })
 
   it('requires a reason to reject, and sends it', async () => {
-    get.mockResolvedValue(listOf(application()))
+    answerWith([application()])
     post.mockResolvedValue(apiOk({}))
 
     renderAs(<DriverApplicationsPage />)

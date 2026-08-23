@@ -38,6 +38,31 @@ if (typeof HTMLDialogElement !== 'undefined') {
   }
 }
 
+/**
+ * `matchMedia` is absent from jsdom, and the app now asks it at what is
+ * effectively every render: `Card`, `DataTable`, `Topbar`, `UserMenu` and
+ * `PageFill` all read `useIsCompact()` to decide between the desktop console
+ * and the phone layout.
+ *
+ * Reports **no match**, i.e. the desktop layout. That is the deliberate
+ * default: these suites assert against tables, column headers and the docked
+ * detail panel, and a stub that answered "compact" would render cards and
+ * fail several hundred assertions for the wrong reason. A test that wants the
+ * phone layout should stub this itself for that file.
+ */
+globalThis.matchMedia ??= ((query: string) =>
+  ({
+    media: query,
+    matches: false,
+    onchange: null,
+    addEventListener() {},
+    removeEventListener() {},
+    // Deprecated, but React and older libraries still feature-detect them.
+    addListener() {},
+    removeListener() {},
+    dispatchEvent: () => false,
+  }) as unknown as MediaQueryList) as typeof window.matchMedia
+
 /** Not implemented in jsdom; several components observe their own size. */
 globalThis.ResizeObserver ??= class {
   observe() {}

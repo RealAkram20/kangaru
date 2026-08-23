@@ -1,11 +1,11 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Animated,
-  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -14,7 +14,10 @@ import {
   View,
 } from 'react-native';
 
+import { refusalMessage } from '../api/errors';
+import { authorizedImageSource } from '../api/imageSource';
 import { useAuth } from '../auth/AuthProvider';
+import { ringtoneEnabled, setRingtoneEnabled } from '../duty/ringtonePreference';
 import type { ProfileStackParams } from '../navigation/types';
 import { useSync } from '../offline/SyncProvider';
 import {
@@ -43,16 +46,27 @@ import {
 import { useDriverStats } from '../trips/queries';
 import { usePayoutAccount } from '../wallet/payoutQueries';
 import { ratingNote, ratingValue } from '../trips/statsPresentation';
-import { Button, Card, MenuRow, Notice, Screen, ScreenHeader, usePressScale } from '../ui/components';
+import {
+  Button,
+  Card,
+  MenuRow,
+  Notice,
+  Screen,
+  ScreenHeader,
+  SwitchRow,
+  usePressScale,
+} from '../ui/components';
 import {
   AlertTriangleIcon,
   BanknoteIcon,
+  BellIcon,
   CalendarIcon,
   CameraIcon,
   FileTextIcon,
   LockIcon,
   LogOutIcon,
   PencilIcon,
+  SmartphoneIcon,
   StarIcon,
   Trash2Icon,
   WalletIcon,
@@ -142,6 +156,14 @@ export function ProfileScreen({ navigation }: Props) {
   const [editing, setEditing] = useState<EditableField | null>(null);
   const [draft, setDraft] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
+
+  // Seeded from the in-memory value rather than read from storage here.
+  // `App.tsx` loads it once at start-up, precisely so the ring path can be
+  // synchronous, and asking AsyncStorage again would render the row in the
+  // wrong position for a frame before correcting itself — on a switch, that
+  // reads as the app having changed the setting on its own.
+  const [ringtone, setRingtone] = useState(() => ringtoneEnabled());
 
   // A driver whose profile has not loaded still knows their own name — the
   // account carries one. Falling back to it beats an em dash where a person's
@@ -183,9 +205,15 @@ export function ProfileScreen({ navigation }: Props) {
     try {
       await updateProfile.mutateAsync({ [field]: draft.trim() });
       cancelEdit();
-    } catch {
+    } catch (error) {
+      // The office's own words where it answered — it is the thing that knows
+      // a phone number was already somebody else's. The connection sentence is
+      // kept for the case it describes and no other.
       setProblem(
-        'That did not reach the office. Your details need a connection — unlike your trip work, they are not queued.',
+        refusalMessage(
+          error,
+          'That did not reach the office. Your details need a connection — unlike your trip work, they are not queued.',
+        ),
       );
     }
   };
@@ -233,8 +261,13 @@ export function ProfileScreen({ navigation }: Props) {
 
     try {
       await uploadPhoto.mutateAsync(result.assets[0].uri);
-    } catch {
-      setProblem('That photo did not reach the office. It needs a connection — try again.');
+    } catch (error) {
+      setProblem(
+        refusalMessage(
+          error,
+          'That photo did not reach the office. It needs a connection — try again.',
+        ),
+      );
     }
   };
 
@@ -256,8 +289,13 @@ export function ProfileScreen({ navigation }: Props) {
           void (async () => {
             try {
               await deletePhoto.mutateAsync();
-            } catch {
-              setProblem('That did not reach the office. Try again when you have a connection.');
+            } catch (error) {
+              setProblem(
+                refusalMessage(
+                  error,
+                  'That did not reach the office. Try again when you have a connection.',
+                ),
+              );
             }
           })();
         },
@@ -268,7 +306,20 @@ export function ProfileScreen({ navigation }: Props) {
   const confirmSignOut = () => {
     Alert.alert('Log out?', 'Your queued work stays on this phone until you sign back in.', [
       { text: 'Stay signed in', style: 'cancel' },
-      { text: 'Log out', style: 'destructive', onPress: () => void signOut() },
+      {
+        text: 'Log out',
+        style: 'destructive',
+        // The pill goes busy the moment the dialog closes. Signing out is
+        // two bounded server calls plus native teardown — seconds against
+        // the production API — and a tap that visibly did nothing for that
+        // long reads as ignored, which is how it gets tapped twice. The
+        // `finally` is for the day `signOut` returns without unmounting
+        // this screen; today the auth switch does the unmounting.
+        onPress: () => {
+          setSigningOut(true);
+          void signOut().finally(() => setSigningOut(false));
+        },
+      },
     ]);
   };
 
@@ -305,9 +356,24 @@ export function ProfileScreen({ navigation }: Props) {
                   <Text style={styles.monogramText}>{initials(name)}</Text>
                 </View>
               ) : (
+                /*
+                  **`expo-image`, not React Native's `Image`, and the
+                  difference is load-bearing.** This portrait is fetched from
+                  an authenticated endpoint (ADR-0041 streams it rather than
+                  publishing a URL), so the source carries an Authorization
+                  header — and React Native's own `Image` silently drops it on
+                  Android, answering every request with a 401 and drawing an
+                  empty circle with nothing on screen to say why. The drawer
+                  has always used this component and its avatar always worked;
+                  that difference is how this was found. `contentFit` and the
+                  fade match `DrawerContent`'s, so one face does not appear
+                  two ways in two places.
+                */
                 <Image
-                  source={{ uri: photo }}
+                  source={authorizedImageSource(photo)}
                   style={styles.photo}
+                  contentFit="cover"
+                  transition={120}
                   accessibilityIgnoresInvertColors
                 />
               )}
@@ -473,6 +539,73 @@ export function ProfileScreen({ navigation }: Props) {
             onPress={() => navigation.navigate('BankDetails')}
           />
           <View style={styles.separator} />
+          {/*
+            **The smaller answer to a phone that rings at the wrong moment**
+            (ADR-0046 §3). Without this the only control a driver has is
+            Android's own, which switches the whole `offers.v1` channel off —
+            and with it the banner, the heads-up and any chance of noticing a
+            job. That choice is silent, permanent and invisible to the office;
+            a driver who makes it once appears to the fleet as somebody who
+            stopped accepting work.
+
+            So the row offers the part they actually want to change. The
+            notification, the countdown and the vibration all stay.
+          */}
+          <SwitchRow
+            icon={<BellIcon color={colors.primary} size={22} strokeWidth={2} />}
+            label="Job offer sound"
+            subtitle="Plays a ringtone when a job arrives. The alert still shows if you turn this off."
+            value={ringtone}
+            announcement={`Job offer sound. ${ringtone ? 'On' : 'Off'}. Plays a ringtone when a job arrives.`}
+            onToggle={(next) => {
+              setRingtone(next);
+              void setRingtoneEnabled(next);
+            }}
+          />
+          {/*
+            **Only on Android 14 and above** (ADR-0049 §2), where the
+            permission is genuinely missing. Below it, `USE_FULL_SCREEN_INTENT`
+            is granted at install, and a row asking a driver to go and enable
+            something they already have is an instruction that makes the app
+            look broken.
+
+            **Worded as an action, not as a state**, and that is a limitation
+            rather than a style choice: nothing in this stack can read whether
+            the permission was granted. `canUseFullScreenIntent()` is the
+            platform call and neither `expo-notifications` nor
+            `react-native-notify-kit` exposes it. A "Not allowed" label we
+            cannot verify would be wrong on every handset that had already
+            said yes, so the row says what tapping it does and stops there.
+
+            It sits under the ringtone switch on purpose: both are about how
+            loudly a job is allowed to arrive, and a driver who has just turned
+            the sound off is exactly the one who should see that the screen can
+            still light up.
+          */}
+          {/*
+            **One row for all six, replacing the single lock-screen row that
+            used to sit here.**
+
+            That row was one of six permissions the offer path depends on, and
+            being the only one with a door made it look like the only one that
+            could be wrong — a driver getting no work had no way to discover
+            that notifications, "all the time" location or an OEM battery
+            manager were the actual cause. `PermissionsScreen` names all six,
+            says which are stopping jobs, and opens the right page for each.
+
+            Shown on every platform, unlike its predecessor: the screen itself
+            hides the two Android-only rows, and notifications, location and
+            camera matter everywhere.
+          */}
+          <View style={styles.separator} />
+          <MenuRow
+            icon={<SmartphoneIcon color={colors.primary} size={22} strokeWidth={2} />}
+            label="Permissions"
+            subtitle="What this phone must allow so jobs can reach you."
+            announcement="Permissions. What this phone must allow so jobs can reach you."
+            onPress={() => navigation.navigate('Permissions')}
+          />
+          <View style={styles.separator} />
           <MenuRow
             icon={<LockIcon color={colors.primary} size={22} strokeWidth={2} />}
             label="Change password"
@@ -539,7 +672,7 @@ export function ProfileScreen({ navigation }: Props) {
           />
         </Card>
 
-        <LogOutButton onPress={confirmSignOut} />
+        <LogOutButton onPress={confirmSignOut} busy={signingOut} />
 
         <Text style={styles.version}>KangaruRide {appVersion()}</Text>
       </ScrollView>
@@ -556,7 +689,7 @@ export function ProfileScreen({ navigation }: Props) {
  * The dialog stays: a one-tap log out at the foot of a scroll is exactly where
  * a flicked thumb lands.
  */
-function LogOutButton({ onPress }: { onPress: () => void }) {
+function LogOutButton({ onPress, busy = false }: { onPress: () => void; busy?: boolean }) {
   const press = usePressScale();
 
   return (
@@ -564,13 +697,19 @@ function LogOutButton({ onPress }: { onPress: () => void }) {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Log out"
+        accessibilityState={{ busy, disabled: busy }}
+        disabled={busy}
         onPress={onPress}
         onPressIn={press.onPressIn}
         onPressOut={press.onPressOut}
         style={styles.logout}
       >
-        <LogOutIcon size={20} color={colors.danger} strokeWidth={2.2} />
-        <Text style={styles.logoutLabel}>Log out</Text>
+        {busy ? (
+          <ActivityIndicator size="small" color={colors.danger} />
+        ) : (
+          <LogOutIcon size={20} color={colors.danger} strokeWidth={2.2} />
+        )}
+        <Text style={styles.logoutLabel}>{busy ? 'Logging out…' : 'Log out'}</Text>
       </Pressable>
     </Animated.View>
   );

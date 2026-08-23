@@ -1,8 +1,8 @@
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render } from '@testing-library/react-native';
 import type { ReactElement } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import type { Trip, TripEvent } from '../api/types';
+import type { Trip, TripEvent, TripStatus } from '../api/types';
 import { WaitingForPassengerScreen } from './WaitingForPassengerScreen';
 
 /**
@@ -35,9 +35,29 @@ const ARRIVED_AT = '2026-08-14T09:15:00.000Z';
 
 // `mock` prefix required: Jest hoists the factory below above this declaration.
 const mockQueueTransition = jest.fn(async () => undefined);
+let mockQueued = new Map<number, TripStatus>();
+
+// `mock` prefix required: Jest hoists mock factories above this line.
+const mockOdometerEnabled = jest.fn(() => true);
+
+/*
+  ADR-0047's odometer switch. Mocked at the hook rather than left real because
+  it reaches `AuthProvider` and the network, which this suite has neither of —
+  the same reason `../trips/queries` is mocked above.
+
+  **Defaults to on**, so every existing test in this file keeps asserting the
+  behaviour it was written for: the odometer is the platform's default and the
+  screens that ask for a reading should go on asking for one here.
+*/
+jest.mock('../trips/odometerSetting', () => ({
+  useOdometerEnabled: () => mockOdometerEnabled(),
+}));
 
 jest.mock('../offline/SyncProvider', () => ({
-  useSync: () => ({ queueTransition: mockQueueTransition, sync: jest.fn() }),
+  // `queued` is the outbox's pending transitions, keyed by trip — the header
+  // reads it so a queued arrival is not contradicted by the status the office
+  // last confirmed. Empty unless a test is about a move that has not gone out.
+  useSync: () => ({ queueTransition: mockQueueTransition, sync: jest.fn(), queued: mockQueued }),
 }));
 
 jest.mock('../ui/SyncBanner', () => ({ SyncBanner: () => null }));
@@ -47,9 +67,13 @@ jest.mock('../ui/SyncBanner', () => ({ SyncBanner: () => null }));
 const mockUseTrip = jest.fn();
 const mockUseTripEvents = jest.fn();
 const mockNavigate = jest.fn();
+const mockReplace = jest.fn();
 
 jest.mock('../trips/queries', () => ({
   useTrip: (id: number) => mockUseTrip(id),
+  // The road route is decoration over a map that already works; these
+  // suites are about the screen, so it is simply absent here.
+  useTripRoute: () => ({ data: null }),
   useTripEvents: (id: number) => mockUseTripEvents(id),
 }));
 
@@ -99,6 +123,7 @@ function trip(overrides: Partial<Trip> = {}): Trip {
     distance_km: null,
     gps_distance_km: null,
     distance_variance_flagged: null,
+    unplanned_stop_count: 0,
     started_at: null,
     completed_at: null,
     duration_minutes: null,
@@ -122,7 +147,7 @@ async function renderWaiting(
   const node: ReactElement = (
     <WaitingForPassengerScreen
       route={{ key: 'w', name: 'WaitingForPassenger', params: { tripId: value.id } }}
-      navigation={{ navigate: mockNavigate, goBack: jest.fn() } as never}
+      navigation={{ navigate: mockNavigate, replace: mockReplace, goBack: jest.fn() } as never}
     />
   );
 
@@ -130,8 +155,14 @@ async function renderWaiting(
 }
 
 beforeEach(() => {
+  // On by default in every test. A suite that wants the switch off says so,
+  // and must not leak that into the next one (ADR-0047).
+  mockOdometerEnabled.mockReturnValue(true);
   mockNavigate.mockClear();
+  mockReplace.mockClear();
   mockQueueTransition.mockClear();
+  // Nothing in flight is the ordinary case; the header test below sets it.
+  mockQueued = new Map();
   jest.useFakeTimers();
   // 105 seconds after the arrival — the mockup's own 01:45, so the figure on
   // screen can be compared against the picture this was built from.
@@ -156,6 +187,13 @@ afterEach(() => {
  */
 const VISUAL = { includeHiddenElements: true } as const;
 
+/** Enough turns of the microtask queue for a press that awaits two queue writes. */
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 6; i += 1) {
+    await Promise.resolve();
+  }
+}
+
 it('counts the wait from the arrival recorded on the timeline', async () => {
   const { getByText } = await renderWaiting();
 
@@ -174,33 +212,74 @@ it('renders an em dash, not a zero, when the arrival is not on the timeline yet'
   expect(getByText('Waiting time shows once your arrival reaches the office.')).toBeTruthy();
 });
 
-it('opens the opening reading without committing anything', async () => {
-  // This press used to queue `passenger_onboard` before the reading existed.
-  // A driver who then backed out of the form left the trip committed to a
-  // state whose only screen is that same form — no way back to here, and the
-  // server requires the reading before `trip_started` will move. Both
-  // transitions are now queued by the odometer's single submit.
-  const { getByText } = await renderWaiting();
+it('takes the opening reading at the kerb, and one press boards and starts', async () => {
+  // The owner's ruling: fewer clicks — "when we onboard the client it
+  // automatically starts the trip". Before this the press opened a second
+  // screen with its own button. Now the reading is typed here and the one
+  // press queues boarding and the start together, in order, from one act.
+  const { getByLabelText, getByText } = await renderWaiting();
 
-  void fireEvent.press(getByText('Start Trip'));
-
-  await waitFor(() => expect(mockNavigate).toHaveBeenCalled());
-
-  expect(mockQueueTransition).not.toHaveBeenCalled();
-  expect(mockNavigate).toHaveBeenCalledTimes(1);
-  // `from` is the trip's real status, not the one that used to be queued ahead
-  // of it: the odometer reads it to decide whether boarding still needs posting.
-  expect(mockNavigate).toHaveBeenCalledWith('Odometer', {
-    tripId: 42,
-    to: 'trip_started',
-    from: 'driver_arrived',
+  await fireEvent.changeText(getByLabelText('Kilometres'), '104320');
+  // Flushed inside `act` rather than polled with `waitFor`: this file runs on
+  // fake timers, and a polling `waitFor` here leaves every later render in
+  // the file empty. The press resolves in a handful of microtasks.
+  await act(async () => {
+    void fireEvent.press(getByText('Passenger on board'));
+    await flushMicrotasks();
   });
+
+  expect(mockQueueTransition).toHaveBeenCalledTimes(2);
+  expect(mockQueueTransition).toHaveBeenNthCalledWith(1, {
+    tripId: 42,
+    from: 'driver_arrived',
+    to: 'passenger_onboard',
+  });
+  expect(mockQueueTransition).toHaveBeenNthCalledWith(2, {
+    tripId: 42,
+    from: 'passenger_onboard',
+    to: 'trip_started',
+    odometerStart: 104320,
+    photoUri: null,
+  });
+
+  // Straight to the trip in progress, and not left in the stack behind it.
+  expect(mockReplace).toHaveBeenCalledWith('TripInProgress', { tripId: 42 });
+  expect(mockNavigate).not.toHaveBeenCalledWith('Odometer', expect.anything());
 });
 
-it('offers Start Trip and nothing that would be refused', async () => {
+it('commits nothing until the reading is there', async () => {
+  // The server requires `odometer_start` for `trip_started`, so a press
+  // without one would queue a boarding whose start could never follow — the
+  // stranded-at-passenger_onboard trip this screen was rewritten to prevent.
+  const { getByText } = await renderWaiting();
+
+  void fireEvent.press(getByText('Passenger on board'));
+
+  expect(mockQueueTransition).not.toHaveBeenCalled();
+  expect(mockReplace).not.toHaveBeenCalled();
+});
+
+it('keeps the reading on screen when the queue refuses it', async () => {
+  mockQueueTransition.mockRejectedValueOnce(new Error('database not open'));
+
+  const { getByLabelText, getByText } = await renderWaiting();
+
+  await fireEvent.changeText(getByLabelText('Kilometres'), '104320');
+  await act(async () => {
+    void fireEvent.press(getByText('Passenger on board'));
+    await flushMicrotasks();
+  });
+
+  expect(getByText(/Could not save/)).toBeTruthy();
+
+  expect(mockReplace).not.toHaveBeenCalled();
+});
+
+it('offers Passenger on board and nothing that would be refused', async () => {
   const { getByText, queryByText } = await renderWaiting();
 
-  expect(getByText('Start Trip')).toBeTruthy();
+  expect(getByText('Passenger on board')).toBeTruthy();
+  expect(queryByText('Start Trip')).toBeNull();
 
   // The mockup's red button. `TripPolicy::DRIVER_JOURNEY_STATES` withholds
   // both of these from a driver, so either would 403 on every press — even
@@ -257,4 +336,88 @@ it('announces the wait as one sentence rather than leaving digits to linearise',
   const { getByLabelText } = await renderWaiting();
 
   expect(getByLabelText('Waiting 1 minute 45 seconds.')).toBeTruthy();
+});
+
+it('says what the driver asked for, not what the office last confirmed', async () => {
+  // The owner's handset, in a dead zone: **"Waiting for Passenger" over "On
+  // the way"**, with "Sending 1 update…" between them. The screen is reached
+  // by queueing `driver_arrived` and replacing the pickup screen, so the
+  // subtitle was reporting a status the driver had already moved past — a
+  // title and a subtitle contradicting each other on the same header.
+  mockQueued = new Map([[42, 'driver_arrived']]);
+
+  const { getByText, queryByText } = await renderWaiting(
+    // What the office still believes, because the transition has not gone out.
+    trip({ status: 'driver_en_route' }),
+  );
+
+  expect(getByText('Arrived at pickup')).toBeTruthy();
+  expect(queryByText('On the way')).toBeNull();
+});
+
+it('falls back to the office when nothing is queued', async () => {
+  // The ordinary case, and the reason this reads the outbox rather than
+  // inventing a status: an item that drains — or one the server refuses —
+  // leaves `queued`, and the screen returns to the server's truth.
+  const { getByText } = await renderWaiting(trip({ status: 'driver_arrived' }));
+
+  expect(getByText('Arrived at pickup')).toBeTruthy();
+});
+
+// -- With the odometer switched off (ADR-0047) -----------------------------
+
+it('drops the opening reading entirely when the office has switched it off', async () => {
+  mockOdometerEnabled.mockReturnValue(false);
+
+  const { queryByText, queryByLabelText } = await renderWaiting();
+
+  // Gone, heading included. A disabled or optional field would be worse than
+  // either state: a driver reads a labelled input as something the office
+  // wants, and an empty one they were allowed to skip looks like it failed to
+  // save.
+  expect(queryByText('Opening odometer')).toBeNull();
+  expect(queryByLabelText('Kilometres')).toBeNull();
+});
+
+it('boards and starts in one press, sending no reading at all', async () => {
+  // **The failure this pins is `NaN`.** `Number.parseInt('', 10)` is `NaN`,
+  // which serialises to `null` and would reach a server willing to record it
+  // as a real opening of nothing — so the key must be absent, not empty.
+  mockOdometerEnabled.mockReturnValue(false);
+
+  const { getByText } = await renderWaiting();
+
+  await act(async () => {
+    void fireEvent.press(getByText('Passenger on board'));
+    await flushMicrotasks();
+  });
+
+  expect(mockQueueTransition).toHaveBeenCalledWith(
+    expect.objectContaining({ to: 'passenger_onboard' }),
+  );
+
+  expect(mockQueueTransition).toHaveBeenCalledWith(
+    expect.objectContaining({ to: 'trip_started' }),
+  );
+
+  // The key is absent, not present-and-empty. `expect.anything()` matches
+  // neither `undefined` nor `null`, so this fails the moment a reading of any
+  // kind is attached.
+  expect(mockQueueTransition).not.toHaveBeenCalledWith(
+    expect.objectContaining({ odometerStart: expect.anything() }),
+  );
+
+  expect(mockReplace).toHaveBeenCalled();
+});
+
+it('still refuses to commit without a reading while the odometer is on', async () => {
+  // The default path, pinned beside its opposite so a change to one cannot
+  // quietly alter the other.
+  mockOdometerEnabled.mockReturnValue(true);
+
+  const { getByText } = await renderWaiting();
+
+  void fireEvent.press(getByText('Passenger on board'));
+
+  expect(mockQueueTransition).not.toHaveBeenCalled();
 });

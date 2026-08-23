@@ -130,7 +130,10 @@ class TripController extends Controller
         // it is what `TripResource::driverEarningsFor()` reads to tell a
         // driver their share of the job, and it is unbounded per row.
         return ApiResponse::success(
-            new TripResource($trip->load(['vehicle', 'driver', 'orderRequest', 'ledgerEntries'])),
+            // `stops` rides with the bounded relations: one trip pays for
+            // one itinerary, and the driver's in-progress screen is a
+            // `show()` reader (ADR-0045).
+            new TripResource($trip->load(['vehicle', 'driver', 'orderRequest', 'ledgerEntries', 'stops'])),
         );
     }
 

@@ -149,8 +149,24 @@ export function CountdownRing({
 function useDrain(offerId: number, totalSeconds: number): Animated.Value {
   const [progress] = useState(() => new Animated.Value(0));
 
+  // **The window is read once, at mount, and never again** — the exact shape
+  // and contract of `useCountdown`'s `seeded`, for the same reason.
+  // `totalSeconds` arrives as `expires_in_seconds`, which the 5-second poll
+  // re-counts downward on every answer — so with it in the effect's
+  // dependencies, every poll re-ran the effect, `setValue(0)` snapped the arc
+  // back to full, and the ring did exactly what the docblock below promises
+  // it never does: jump backwards, three times per offer, on the most
+  // time-critical surface in the app.
+  //
+  // A genuinely different offer is therefore a **remount, not a reset**, and
+  // the caller owes the `key` that makes it one — `OfferScreen` is keyed on
+  // `offer.id` (see `OfferPresenter`). Render this ring somewhere new and
+  // that key comes with it, exactly as `useCountdown` demands of its own
+  // callers.
+  const [windowSeconds] = useState(() => totalSeconds);
+
   useEffect(() => {
-    const duration = Math.max(0, totalSeconds) * 1000;
+    const duration = Math.max(0, windowSeconds) * 1000;
 
     progress.setValue(0);
 
@@ -174,7 +190,7 @@ function useDrain(offerId: number, totalSeconds: number): Animated.Value {
     animation.start();
 
     return () => animation.stop();
-  }, [offerId, totalSeconds, progress]);
+  }, [offerId, windowSeconds, progress]);
 
   return progress;
 }

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
@@ -31,9 +31,12 @@ import { colors, radius, spacing, typography } from '../ui/theme';
  *
  * ## Why the pin is the driver and not the route
  *
- * `Trip` carries `origin` and `destination` as free text — the platform holds
- * no coordinates for either — so a pickup marker would be invented. This
- * position is the real fix `DriverPresence` reports, and when there is none
+ * Not because the platform lacks the coordinates — it has had them since
+ * `TripResource` grew `pickup`/`dropoff` places, and `PickupMap` draws the
+ * route (road-real when `GET /trips/{trip}/route` answers, dashed otherwise).
+ * This map answers a different question: the home card's glance is "does the
+ * app know where I am", and the trip's geography belongs to the trip screens.
+ * The pin is the real fix `DriverPresence` reports, and when there is none
  * the component says so rather than centring on a plausible-looking nowhere.
  */
 export function TripMap({
@@ -46,16 +49,67 @@ export function TripMap({
   /** The fix is too old for the matcher to act on (ADR-0024 §2). */
   stale?: boolean;
 }) {
+  const webRef = useRef<WebView>(null);
+
+  // The latest fix, held where the load handler can read it without being in
+  // the document's dependency list. Written in an effect rather than during
+  // render — a ref assigned in the render body is invisible to the React
+  // Compiler, which then cannot memoise this component at all.
+  const positionRef = useRef(
+    latitude === null || longitude === null ? null : [longitude, latitude],
+  );
+
+  useEffect(() => {
+    positionRef.current = latitude === null || longitude === null ? null : [longitude, latitude];
+    // A new fix is one marker gliding, not a page rebuilding. The document
+    // used to be rebuilt on every position change, and a changed
+    // `source.html` makes the WebView reload the whole page — white flash,
+    // tiles refetched — on a card whose position now refreshes with every
+    // presence heartbeat. `true;` because injectJavaScript evaluates the
+    // string; the guard tolerates a page that has not finished loading, which
+    // `onLoadEnd` below covers.
+    // Optional twice over: the page may not have finished loading (`onLoadEnd`
+    // below replays the fix), and the test harness mounts WebView as a bare
+    // view with no bridge at all.
+    webRef.current?.injectJavaScript?.(
+      `window.__setPosition && window.__setPosition(${JSON.stringify(positionRef.current)}); true;`,
+    );
+  }, [latitude, longitude]);
+
+  const hasFix = latitude !== null && longitude !== null;
+
+  // Built once per gained-or-lost fix, never per movement: the document is
+  // seeded from the ref and every later fix travels through the injection
+  // above. Keying on the coordinates — as this used to — reloaded the page
+  // each time they changed.
   const html = useMemo(
-    () => (latitude === null || longitude === null ? null : mapDocument(latitude, longitude)),
-    [latitude, longitude],
+    () => (hasFix ? mapDocument([longitude as number, latitude as number]) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the coordinates deliberately do not re-key the document; they seed it when it happens to build and travel via injection ever after
+    [hasFix],
   );
 
   if (html === null) {
     return (
       <View style={styles.placeholder}>
+        {/*
+          **Not "dispatch cannot offer you work until your phone reports one",
+          which is what this said and which is false.** A driver with no
+          reported position stays in the pool — `DatabaseDriverPresenceStore::
+          dispatchable()` keeps them through its `whereNull('latitude')` branch
+          and `WalkInRecommender` ranks them without distance, saying so on the
+          offer itself: "This driver has not reported a position, so distance
+          was not used."
+
+          Proved by running it: on an emulator that never delivered a fix, this
+          message sat on the screen while the same phone was offered a ride and
+          accepted it. Telling a driver they cannot be sent work while work is
+          arriving is the kind of copy that teaches them to distrust the app —
+          and the wording here now matches `DutyBar`'s, which was already
+          honest about it being a ranking problem rather than a shutout.
+        */}
         <Text style={styles.placeholderText}>
-          Waiting for a location fix. Dispatch cannot offer you work until your phone reports one.
+          Waiting for a location fix. Jobs can still reach you, but nearby ones may go to a driver
+          whose phone has reported one.
         </Text>
       </View>
     );
@@ -64,9 +118,18 @@ export function TripMap({
   return (
     <View style={styles.frame}>
       <WebView
+        ref={webRef}
         style={styles.web}
         originWhitelist={['*']}
         source={{ html }}
+        // The fix again once the page exists: the effect above can fire before
+        // the document has parsed, and an update injected into a page that is
+        // not there yet is silently dropped.
+        onLoadEnd={() =>
+          webRef.current?.injectJavaScript?.(
+            `window.__setPosition && window.__setPosition(${JSON.stringify(positionRef.current)}); true;`,
+          )
+        }
         // The card owns the tap; the map is a picture as far as touch goes.
         pointerEvents="none"
         scrollEnabled={false}
@@ -75,8 +138,6 @@ export function TripMap({
         // Tiles and the library are the same bytes every time this mounts.
         cacheEnabled
         androidLayerType="hardware"
-        // A transparent gap while the tiles arrive beats a white flash.
-        backgroundColor="transparent"
       />
 
       {stale === true && (
@@ -95,7 +156,7 @@ export function TripMap({
  * only inputs are two numbers and the brand green, and the style URL is the
  * same keyless CARTO one the console uses.
  */
-function mapDocument(latitude: number, longitude: number): string {
+function mapDocument(position: number[]): string {
   return `<!doctype html>
 <html>
 <head>
@@ -128,7 +189,7 @@ function mapDocument(latitude: number, longitude: number): string {
   var map = new maplibregl.Map({
     container: 'map',
     style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
-    center: [${longitude}, ${latitude}],
+    center: ${JSON.stringify(position)},
     // ~1.5km across: close enough to recognise the junction you are at, wide
     // enough that a poor fix does not look like a wild jump.
     zoom: 14.2,
@@ -140,8 +201,31 @@ function mapDocument(latitude: number, longitude: number): string {
   el.className = 'pin';
   el.innerHTML = '<i></i>';
 
+  var marker = null;
+  var pending = ${JSON.stringify(position)};
+  var loaded = false;
+
+  // The one entry point React Native injects into. A fix that arrives before
+  // the style has loaded is parked and replayed from the load handler.
+  window.__setPosition = function (lngLat) {
+    if (lngLat === null) { return; }
+    if (!loaded) { pending = lngLat; return; }
+
+    if (marker === null) {
+      marker = new maplibregl.Marker({ element: el }).setLngLat(lngLat).addTo(map);
+    } else {
+      marker.setLngLat(lngLat);
+    }
+
+    // Eased, never jumped: this map is the dot, so the camera follows it —
+    // smoothly, because a camera that teleports under the reader's eyes is
+    // the "shake" this file was rewritten to remove.
+    map.easeTo({ center: lngLat, duration: 600 });
+  };
+
   map.on('load', function () {
-    new maplibregl.Marker({ element: el }).setLngLat([${longitude}, ${latitude}]).addTo(map);
+    loaded = true;
+    window.__setPosition(pending);
   });
 </script>
 </body>

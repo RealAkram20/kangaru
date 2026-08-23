@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\AccessLevel;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Models\User;
@@ -24,7 +25,12 @@ use Modules\Administration\Services\SettingsService;
  */
 function enableReset(): void
 {
-    $admin = User::factory()->create(['tenant_id' => null, 'role' => UserRole::SUPER_ADMIN]);
+    $admin = User::factory()->create([
+        'tenant_id' => null,
+        'operator_id' => null,
+        'access_level' => AccessLevel::KANGARU,
+        'role' => UserRole::SUPER_ADMIN,
+    ]);
 
     test()->actingAs($admin, 'sanctum')
         ->patchJson('/api/v1/settings/mail', [
@@ -79,7 +85,12 @@ it('refuses both endpoints while the owner has the method off', function () {
  * `enabled()` and this fails.
  */
 it('stays off while the flag is on but mail is not configured', function () {
-    $admin = User::factory()->create(['tenant_id' => null, 'role' => UserRole::SUPER_ADMIN]);
+    $admin = User::factory()->create([
+        'tenant_id' => null,
+        'operator_id' => null,
+        'access_level' => AccessLevel::KANGARU,
+        'role' => UserRole::SUPER_ADMIN,
+    ]);
 
     $this->actingAs($admin, 'sanctum')
         ->patchJson('/api/v1/settings/auth', ['password_reset_enabled' => true])

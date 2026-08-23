@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { forwardRef, useCallback, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -139,13 +139,13 @@ export function Card({ children, style }: { children: ReactNode; style?: ViewSty
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
-export function Field({
-  label,
-  hint,
-  error,
-  revealable = false,
-  ...inputProps
-}: TextInputProps & {
+/**
+ * **Forwards a ref to the `TextInput`**, which it did not, and the omission had
+ * a cost: a screen could ask for `autoFocus` and had no way to focus the field
+ * itself. `OdometerScreen` needed exactly that — see its focus effect, and the
+ * device run that found this.
+ */
+export const Field = forwardRef<TextInput, TextInputProps & {
   label: string;
   hint?: string;
   error?: string | undefined;
@@ -164,7 +164,7 @@ export function Field({
    * three.
    */
   revealable?: boolean;
-}) {
+}>(function Field({ label, hint, error, revealable = false, ...inputProps }, ref) {
   const [revealed, setRevealed] = useState(false);
 
   // Only when the field is actually a password. `revealable` on a plain text
@@ -178,16 +178,37 @@ export function Field({
 
       <View style={canReveal ? styles.fieldRow : undefined}>
         <TextInput
+          ref={ref}
           accessibilityLabel={label}
           placeholderTextColor={colors.placeholder}
+          {...inputProps}
+          /*
+           * **After the spread, and merging the caller's `style` rather than
+           * being replaced by it.** This sat before the spread, so any caller
+           * passing `style` silently deleted the whole base look — border,
+           * background, padding, the lot — and got a bare run of text where a
+           * field should be.
+           *
+           * Both callers that pass one were disfigured by it and neither could
+           * have intended it: `OdometerScreen`'s reading was a borderless
+           * number (invisible once its placeholder was removed, which is how
+           * this was found — a driver reported being unable to enter the
+           * reading, because there was nothing on screen to enter it into), and
+           * `ReportIssueScreen`'s textarea re-states `borderRadius`, which is
+           * only meaningful if you expect to still have a border.
+           *
+           * Caller values still win per property, which is what "customise the
+           * type and the height" needs. Deleting the box is not something a
+           * `style` prop should be able to do by accident.
+           */
           style={[
             styles.input,
             error !== undefined && styles.inputError,
             canReveal && styles.inputWithTrailing,
+            inputProps.style,
           ]}
-          {...inputProps}
-          // After the spread, so revealing wins over the caller's own value
-          // rather than depending on prop order at every call site.
+          // Also after the spread, so revealing wins over the caller's own
+          // value rather than depending on prop order at every call site.
           secureTextEntry={canReveal ? !revealed : inputProps.secureTextEntry}
         />
 
@@ -205,7 +226,7 @@ export function Field({
       )}
     </View>
   );
-}
+});
 
 /**
  * The form control the sign-up and sign-in screens are built from: a leading
@@ -645,6 +666,114 @@ export function MenuRow({
   );
 }
 
+/**
+ * A settings row that flips something on or off in place.
+ *
+ * ## Why this exists next to `MenuRow` rather than as a flag on it
+ *
+ * They promise different things. A `MenuRow` has a chevron and takes the
+ * driver somewhere; this one changes state where it stands and never
+ * navigates. Folding the two together would mean a row whose chevron
+ * sometimes lies, and `docs/screen-rules.md` refuses a control that promises
+ * somewhere to go and does not.
+ *
+ * The **layout** is deliberately `MenuRow`'s, down to the icon column and the
+ * label's flex rules, because these sit in the same card as those rows and a
+ * settings list where the switch rows are a pixel out is a list that looks
+ * broken rather than varied.
+ *
+ * ## Not React Native's `Switch`
+ *
+ * That renders the platform control, which on Android is Material's green and
+ * on iOS is system blue — neither of them KangaruRide's `primary`, and both of
+ * them the one saturated element on an otherwise brand-coloured screen. The
+ * app already draws its own `Checkbox` for the same reason, with the same
+ * spring, and this reuses that parameterisation so the two feel like one
+ * family.
+ */
+export function SwitchRow({
+  icon,
+  label,
+  subtitle = null,
+  value,
+  onToggle,
+  announcement,
+}: {
+  icon: ReactNode;
+  label: string;
+  /** What turning it off actually costs. Worth a sentence on a settings row. */
+  subtitle?: string | null;
+  value: boolean;
+  onToggle: (next: boolean) => void;
+  announcement?: string;
+}) {
+  const [fill] = useState(() => new Animated.Value(value ? 1 : 0));
+
+  // Driven from the prop rather than from the press, so a switch whose owner
+  // refuses the change — or restores it from storage — animates to the truth
+  // instead of sitting in the position the finger left it.
+  useEffect(() => {
+    Animated.spring(fill, {
+      toValue: value ? 1 : 0,
+      useNativeDriver: true,
+      damping: 14,
+      stiffness: 220,
+      mass: 0.6,
+    }).start();
+  }, [value, fill]);
+
+  return (
+    <Pressable
+      accessibilityRole="switch"
+      accessibilityState={{ checked: value }}
+      accessibilityLabel={announcement ?? label}
+      onPress={() => onToggle(!value)}
+      hitSlop={6}
+      style={styles.menuRow}
+    >
+      <View style={styles.menuIcon}>{icon}</View>
+
+      {subtitle === null ? (
+        <Text style={styles.menuLabel} numberOfLines={1}>
+          {label}
+        </Text>
+      ) : (
+        <View style={styles.menuStack}>
+          <Text style={styles.menuStackLabel} numberOfLines={1}>
+            {label}
+          </Text>
+          <Text style={styles.menuSubtitle} numberOfLines={2}>
+            {subtitle}
+          </Text>
+        </View>
+      )}
+
+      <View style={styles.switchTrack}>
+        <Animated.View
+          style={[
+            styles.switchFill,
+            { opacity: fill },
+          ]}
+        />
+        <Animated.View
+          style={[
+            styles.switchKnob,
+            {
+              transform: [
+                {
+                  // 51 wide, 27 knob, 2 of padding each side: the travel is
+                  // the difference, so the knob lands flush at both ends.
+                  translateX: fill.interpolate({ inputRange: [0, 1], outputRange: [0, 20] }),
+                },
+              ],
+            },
+          ]}
+        />
+      </View>
+    </Pressable>
+  );
+}
+
 /** A word inside a sentence that is tappable. Green, per DESIGN.md §3. */
 export function TextLink({ label, onPress }: { label: string; onPress: () => void }) {
   return (
@@ -863,6 +992,42 @@ const styles = StyleSheet.create({
   /** `longValue`: the identifier gives up its tail instead. */
   menuValueYields: {
     flexShrink: 4,
+  },
+  switchTrack: {
+    width: 48,
+    height: 28,
+    borderRadius: 14,
+    // The off state reads as a recess rather than as a second colour: a grey
+    // track that is *lighter* than the card would look like a disabled
+    // control, which is not what off means.
+    backgroundColor: colors.border,
+    padding: 2,
+    justifyContent: 'center',
+    // Never allowed to shrink. Unlike a value, a control that loses width
+    // stops being tappable at its own size.
+    flexShrink: 0,
+  },
+  switchFill: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 14,
+    backgroundColor: colors.primary,
+  },
+  switchKnob: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+    // A shadow rather than a border, so the knob reads as sitting *on* the
+    // track in both positions — a border disappears against the green.
+    shadowColor: colors.navy,
+    shadowOpacity: 0.22,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 2,
   },
   headerBack: {
     width: 44,

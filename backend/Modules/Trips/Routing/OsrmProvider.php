@@ -43,17 +43,29 @@ use Modules\Administration\Services\SettingsService;
  * third-party HTTP call made on behalf of a screen somebody is reading in
  * traffic. Every failure is `null`, which the app draws as the dashed direct
  * line (ADR-0031 §3).
+ *
+ * ## Waypoints
+ *
+ * OSRM's `route` service takes any number of coordinates and visits them in
+ * the order given; `routes[0].distance` and `.duration` are already the
+ * totals across every leg, so a seven-stop circuit needs no summing here.
+ * The public demo server caps a request at a URL's worth of coordinates,
+ * which the 25-stop ceiling in `StoreClientRouteRequest` sits comfortably
+ * under.
  */
 class OsrmProvider implements RouteProvider
 {
     public function __construct(private readonly SettingsService $settings) {}
 
-    public function route(
-        float $fromLatitude,
-        float $fromLongitude,
-        float $toLatitude,
-        float $toLongitude,
-    ): ?Route {
+    /**
+     * @param  array<int, array{float, float}>  $points
+     */
+    public function via(array $points): ?Route
+    {
+        if (count($points) < 2) {
+            return null;
+        }
+
         if (! $this->settings->routingConfigured()) {
             return null;
         }
@@ -68,7 +80,15 @@ class OsrmProvider implements RouteProvider
         // the opposite of everything else in this codebase — and Uganda sits
         // near the equator, so a swap passes every range check either number
         // could face and routes somewhere in the Indian Ocean.
-        $path = "{$fromLongitude},{$fromLatitude};{$toLongitude},{$toLatitude}";
+        //
+        // Waypoints are the same list, semicolon-separated: OSRM visits them
+        // in the order given and never reorders (ADR-0045 §7 requires that
+        // it does not — `steps=false` and no `roundtrip` flag is the whole
+        // of it, since this is the `route` service rather than `trip`).
+        $path = implode(';', array_map(
+            static fn (array $point) => "{$point[1]},{$point[0]}",
+            $points,
+        ));
 
         try {
             $response = Http::timeout(6)->get("{$base}/route/v1/driving/{$path}", [

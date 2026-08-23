@@ -23,9 +23,13 @@ function booking(overrides: Partial<Booking> = {}): Booking {
     tenant_id: 1,
     requested_by_user_id: 9,
     requested_by: { id: 9, name: 'Moses Kato', email: 'moses@x.test', role: 'corporate_admin' },
+    passenger_user_id: null,
     passenger_name: 'Grace Amongin',
     passenger_phone: '+256700000000',
     passenger_count: 2,
+    // ADR-0051: required on the wire — `BookingResource` sends it
+    // unconditionally, and null is the "no preference" case.
+    vehicle_category: null,
     origin: 'Kampala',
     destination: 'Entebbe',
     scheduled_for: null,
@@ -68,6 +72,11 @@ function driver(overrides: Partial<Driver> = {}): Driver {
     license_number: 'DL-99881',
     license_expiry: '2028-01-01',
     status: 'active',
+    // ADR-0048 §7. Both are required on the wire: `DriverResource` sends them
+    // unconditionally, so a fixture that omits them is a fixture testing a
+    // response shape the server does not produce.
+    vehicle_id: null,
+    owns_vehicle: false,
     account: null,
     created_at: '2026-01-01T00:00:00.000000Z',
     updated_at: '2026-01-01T00:00:00.000000Z',

@@ -34,6 +34,22 @@ const mockUseTrip = jest.fn();
 const mockUseTripEvents = jest.fn();
 const mockQueueTransition = jest.fn(async () => undefined);
 
+// `mock` prefix required: Jest hoists mock factories above this line.
+const mockOdometerEnabled = jest.fn(() => true);
+
+/*
+  ADR-0047's odometer switch. Mocked at the hook rather than left real because
+  it reaches `AuthProvider` and the network, which this suite has neither of —
+  the same reason `../trips/queries` is mocked above.
+
+  **Defaults to on**, so every existing test in this file keeps asserting the
+  behaviour it was written for: the odometer is the platform's default and the
+  screens that ask for a reading should go on asking for one here.
+*/
+jest.mock('../trips/odometerSetting', () => ({
+  useOdometerEnabled: () => mockOdometerEnabled(),
+}));
+
 jest.mock('../trips/queries', () => ({
   useTrip: () => mockUseTrip(),
   useTripEvents: () => mockUseTripEvents(),
@@ -144,6 +160,7 @@ function trip(partial: Partial<Trip> = {}): Trip {
     distance_km: '12.60',
     gps_distance_km: '12.40',
     distance_variance_flagged: false,
+    unplanned_stop_count: 0,
     started_at: '2026-08-15T05:35:00Z',
     completed_at: '2026-08-15T06:22:00Z',
     duration_minutes: 32,
@@ -193,6 +210,9 @@ async function renderRecord(
 }
 
 beforeEach(() => {
+  // On by default in every test. A suite that wants the switch off says so,
+  // and must not leak that into the next one (ADR-0047).
+  mockOdometerEnabled.mockReturnValue(true);
   jest.clearAllMocks();
   jest.useFakeTimers();
   jest.setSystemTime(new Date('2026-08-15T09:30:00Z'));

@@ -5,10 +5,14 @@ namespace Modules\Drivers\Services;
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Modules\Drivers\Contracts\HoldsDocuments;
 use Modules\Drivers\Enums\DriverDocumentStatus;
 use Modules\Drivers\Enums\DriverDocumentType;
 use Modules\Drivers\Models\Driver;
+use Modules\Drivers\Models\DriverApplication;
 use Modules\Drivers\Models\DriverDocument;
+use Modules\Notifications\Notifications\DriverDocumentReviewedNotification;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
  * Uploading, replacing and reviewing a driver's papers (ADR-0033).
@@ -43,6 +47,22 @@ class DriverDocumentService
     }
 
     /**
+     * The document as a download, decrypted, or null when its file is gone
+     * (ADR-0053).
+     *
+     * A passthrough to the store, and it earns its line: both controllers that
+     * stream a document already hold this service and neither holds the store,
+     * so without it each would inject a second collaborator and one of them
+     * would eventually stream the raw bytes. The service stays the single door
+     * to `driver_documents` — the same property its class notes claim about
+     * writes, now true of reads.
+     */
+    public function download(DriverDocument $document): ?StreamedResponse
+    {
+        return $this->store->download($document);
+    }
+
+    /**
      * Files a driver's upload, replacing anything already held of that type.
      *
      * The order is deliberate and is the reason this is not two lines: the new
@@ -53,24 +73,26 @@ class DriverDocumentService
      * the office had already accepted.
      */
     public function upload(
-        Driver $driver,
+        HoldsDocuments $owner,
         DriverDocumentType $type,
         UploadedFile $file,
         ?string $expiresAt,
     ): DriverDocument {
-        $newPath = $this->store->store($driver, $type, $file);
+        $newPath = $this->store->store($owner, $type, $file);
+        $ownerColumn = self::ownerColumn($owner);
 
         /** @var DriverDocument $document */
         /** @var string|null $supersededPath */
         [$document, $supersededPath] = DB::transaction(function () use (
-            $driver,
+            $owner,
+            $ownerColumn,
             $type,
             $file,
             $expiresAt,
             $newPath,
         ): array {
             $existing = DriverDocument::query()
-                ->where('driver_id', $driver->getKey())
+                ->where($ownerColumn, $owner->getKey())
                 ->where('type', $type->value)
                 // The row is about to be rewritten from two places at once if
                 // a driver double-taps upload on a slow connection; the lock
@@ -80,13 +102,24 @@ class DriverDocumentService
                 ->first();
 
             $attributes = [
-                'driver_id' => $driver->getKey(),
+                // **Exactly one owner column is written, and the other is
+                // explicitly nulled** (ADR-0048 §3). Setting only the one that
+                // applies would leave a stale id behind when an approved
+                // driver re-uploads over a document they sent as an applicant.
+                'driver_id' => null,
+                'driver_application_id' => null,
+                $ownerColumn => $owner->getKey(),
                 'type' => $type->value,
                 // **The reset.** Every review field goes back to nothing: a
                 // replacement is a new document, not an amendment to the one
                 // somebody already approved.
                 'status' => DriverDocumentStatus::PENDING->value,
                 'file_path' => $newPath,
+                // Everything written from now on is ciphertext (ADR-0053).
+                // The flag *describes* the file rather than deciding anything:
+                // `DriverDocumentStore` always encrypts, and this records that
+                // it did so, for the benefit of rows written before it started.
+                'encrypted' => true,
                 'original_name' => $file->getClientOriginalName(),
                 'mime_type' => $file->getMimeType() ?? 'application/octet-stream',
                 'size_bytes' => $file->getSize() ?: 0,
@@ -128,6 +161,8 @@ class DriverDocumentService
             'rejection_reason' => null,
         ]);
 
+        $this->announce($document);
+
         return $document;
     }
 
@@ -141,7 +176,43 @@ class DriverDocumentService
             'rejection_reason' => $reason,
         ]);
 
+        $this->announce($document);
+
         return $document;
+    }
+
+    /**
+     * Tell the driver what was decided (ADR-0052).
+     *
+     * **Here rather than in the controller**, so that both decisions raise it
+     * and neither can forget to. A second reviewing surface — a bulk action, a
+     * console shortcut, an artisan command during a backlog — gets the
+     * notification by calling the same method, which is the property ADR-0033
+     * §4 relies on when it says this class is the only thing that writes a
+     * review.
+     *
+     * ## Three ways there is nobody to tell, and all of them are normal
+     *
+     * 1. **The document belongs to an application, not a driver.** Approval
+     *    carries these over as `pending` (ADR-0048 §5), so an
+     *    application-owned row should not be reviewable at all — but if one
+     *    ever is, the applicant holds no account and no device by
+     *    construction (ADR-0027 §1).
+     * 2. **The driver has no sign-in.** ADR-0016 makes the account optional;
+     *    a driver row created before the app existed has `user_id` null.
+     * 3. **The driver's account was closed.** ADR-0043 §5 detaches the link
+     *    and keeps the row.
+     *
+     * None of these is an error and none of them may throw: the review has
+     * already been recorded, and a notification failure must not present to
+     * the office as a failed decision. `?->` and a null check are the whole
+     * mechanism.
+     */
+    private function announce(DriverDocument $document): void
+    {
+        $user = $document->driver?->user;
+
+        $user?->notify(DriverDocumentReviewedNotification::for($document));
     }
 
     /**
@@ -157,18 +228,158 @@ class DriverDocumentService
      */
     public function forDriver(Driver $driver): array
     {
+        return $this->slotsFor($driver);
+    }
+
+    /**
+     * The same six slots, for an applicant with no driver profile yet
+     * (ADR-0048 §4).
+     *
+     * Deliberately the **same shape** as `forDriver()`, so the KYC screen is
+     * one screen rather than two that drifted apart: an applicant filling it
+     * in before approval and a driver filling it in after are doing the same
+     * thing, and only the endpoint differs.
+     *
+     * @return list<array{type: DriverDocumentType, document: DriverDocument|null}>
+     */
+    public function forApplication(DriverApplication $application): array
+    {
+        return $this->slotsFor($application);
+    }
+
+    /**
+     * @return list<array{type: DriverDocumentType, document: DriverDocument|null}>
+     */
+    private function slotsFor(HoldsDocuments $owner): array
+    {
         $held = DriverDocument::query()
-            ->where('driver_id', $driver->getKey())
+            ->where(self::ownerColumn($owner), $owner->getKey())
             ->get()
             ->keyBy(fn (DriverDocument $document): string => $document->type->value);
 
-        return array_map(
+        // `array_values` around the map: `array_map` over one array preserves
+        // its keys, so the result is an `array<int, …>` and the declared
+        // `list<…>` is a promise PHPStan level 8 will not take on trust.
+        // The keys are 0..n here anyway; this is the proof, not a change.
+        return array_values(array_map(
             static fn (DriverDocumentType $type): array => [
                 'type' => $type,
                 'document' => $held->get($type->value),
             ],
-            DriverDocumentType::cases(),
-        );
+            // `ordered()` rather than `cases()`: the reading order a reviewer
+            // relies on — identity, then the licence, then the vehicle — is
+            // fixed on the enum (ADR-0048 §1) so that both apps agree without
+            // either of them sorting for itself.
+            DriverDocumentType::ordered(),
+        ));
+    }
+
+    /**
+     * Which of the two owner columns applies (ADR-0048 §3).
+     *
+     * A `match` on the concrete class rather than a method on the interface,
+     * because a column name is this table's business and not something a
+     * `Driver` should have to know about itself.
+     */
+    private static function ownerColumn(HoldsDocuments $owner): string
+    {
+        return match (true) {
+            $owner instanceof Driver => 'driver_id',
+            $owner instanceof DriverApplication => 'driver_application_id',
+            default => throw new \InvalidArgumentException(sprintf(
+                '%s cannot own a driver document.',
+                $owner::class,
+            )),
+        };
+    }
+
+    /**
+     * Approval: the applicant's uploads become the new driver's
+     * (ADR-0048 §5).
+     *
+     * **`status` is left exactly as it is**, which is `pending`. Approval is
+     * not review — nobody has looked at these files, and marking them
+     * verified because a different decision went the applicant's way is the
+     * auto-verification ADR-0033 §4 refuses, arriving through a side door.
+     *
+     * The files do not move. The row is re-pointed and `file_path` stays, so
+     * an approved driver's earliest documents live under
+     * `driver-applications/` forever — re-pointing a row is atomic, and
+     * moving bytes across a disk is not.
+     *
+     * Called inside the approval transaction ADR-0027 §4 already runs.
+     *
+     * @return int how many documents were carried
+     */
+    public function carryToDriver(DriverApplication $application, Driver $driver): int
+    {
+        return DriverDocument::query()
+            ->where('driver_application_id', $application->getKey())
+            ->update([
+                'driver_id' => $driver->getKey(),
+                'driver_application_id' => null,
+            ]);
+    }
+
+    /**
+     * Destroys one document, row and file both.
+     *
+     * The withdraw an applicant reaches for after photographing the wrong
+     * side of a logbook (ADR-0048 §4). Row first, file second, for the reason
+     * `discardFor()` gives: a row pointing at a missing file is a 404 in the
+     * office, while a file with no row is bytes nobody can reach — both are
+     * wrong, and only one of them is a document somebody may be asked to
+     * produce.
+     *
+     * **Deliberately not offered to a driver.** ADR-0033 §2 made re-uploading
+     * the way a driver corrects a document, and it resets the review; a
+     * driver who could delete instead would be able to remove a document the
+     * office had already rejected, taking the objection with it.
+     */
+    public function discardOne(DriverDocument $document): void
+    {
+        $path = $document->file_path;
+
+        $document->delete();
+
+        $this->store->discard($path);
+    }
+
+    /**
+     * Rejection, or an abandoned application swept up: the files go
+     * (ADR-0048 §5).
+     *
+     * ADR-0027 clears a refused applicant's password on the same reasoning,
+     * and this is the stronger case — a photograph of a stranger's face and
+     * national ID, held against a person the platform decided against, is a
+     * liability with no corresponding use.
+     *
+     * Rows go first and files second, never the other way round: a row
+     * pointing at a file that is gone is a 404 in the office, while a file
+     * with no row is bytes nobody can reach. Both are wrong; only one of them
+     * is a document somebody may later be asked to produce.
+     *
+     * @return int how many documents were destroyed
+     */
+    public function discardFor(DriverApplication $application): int
+    {
+        $documents = DriverDocument::query()
+            ->where('driver_application_id', $application->getKey())
+            ->get();
+
+        if ($documents->isEmpty()) {
+            return 0;
+        }
+
+        DriverDocument::query()
+            ->whereIn('id', $documents->pluck('id'))
+            ->delete();
+
+        foreach ($documents as $document) {
+            $this->store->discard($document->file_path);
+        }
+
+        return $documents->count();
     }
 
     /**

@@ -129,8 +129,12 @@ stay in range. See ADR-0020's consequences.
 
 ## What's explicitly deferred
 
-1. **Multi-stop and return trips** — PROJECT.md lists both under Booking
-   Management; this pass models a single origin/destination pair only.
+1. **Multi-stop bookings, partially superseded by ADR-0045.** A *booking*
+   still models a single origin/destination pair, but stops now exist on the
+   trip side: `trip_stops` carries a run's itinerary, a driver extends a live
+   run through `POST /trips/{trip}/stops` (§4), and the copy-on-booking path
+   from a client route (§1) is the piece still deferred. Return trips remain
+   deferred entirely.
 2. **Company departments, cost centres and employee directories** — the
    passenger is free text plus a phone number, not a foreign key into an
    employee table that does not exist yet (`Modules/Clients` holds only

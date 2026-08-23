@@ -46,9 +46,19 @@ class BookingResource extends JsonResource
             }),
             'requested_by_user_id' => $this->requested_by_user_id,
             'requested_by' => new UserResource($this->whenLoaded('requestedBy')),
+            // The colleague this was raised for, when a client raised it.
+            // The name and number below stay authoritative — they are the
+            // snapshot the driver was dispatched against — and this is what
+            // lets a queue be read by employee rather than by spelling.
+            'passenger_user_id' => $this->passenger_user_id,
             'passenger_name' => $this->passenger_name,
             'passenger_phone' => $this->passenger_phone,
             'passenger_count' => $this->passenger_count,
+            // ADR-0051. Null means no preference was stated, which is not
+            // the same as a preference that was overridden — the office and
+            // a client's auditor both need to be able to tell those apart,
+            // so this is never coerced to a default.
+            'vehicle_category' => $this->vehicle_category,
             'origin' => $this->origin,
             'destination' => $this->destination,
             'scheduled_for' => $this->scheduled_for,

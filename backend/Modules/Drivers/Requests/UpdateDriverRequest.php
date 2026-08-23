@@ -4,10 +4,13 @@ namespace Modules\Drivers\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 use Modules\Drivers\Models\Driver;
 
 class UpdateDriverRequest extends FormRequest
 {
+    use ValidatesInlineVehicle;
+
     public function authorize(): bool
     {
         return true;
@@ -36,6 +39,7 @@ class UpdateDriverRequest extends FormRequest
             // so `exists` needs no tenant clause — adding one would be the
             // mistake, not the safeguard.
             'vehicle_id' => ['nullable', 'integer', Rule::exists('vehicles', 'id')->whereNull('deleted_at')],
+            'owns_vehicle' => ['sometimes', 'boolean'],
             'email' => ['sometimes', 'nullable', 'email'],
             'license_number' => [
                 'sometimes',
@@ -46,6 +50,20 @@ class UpdateDriverRequest extends FormRequest
             ],
             'license_expiry' => ['sometimes', 'date'],
             'status' => ['sometimes', 'string', 'in:active,suspended,inactive'],
+            ...$this->inlineVehicleRules(),
         ];
+    }
+
+    public function withValidator(Validator $validator): void
+    {
+        $this->validateInlineVehicle($validator);
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return $this->inlineVehicleMessages();
     }
 }

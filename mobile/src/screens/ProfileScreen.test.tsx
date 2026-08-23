@@ -3,6 +3,7 @@ import type { ReactElement } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import type { DriverClosureRequest, DriverProfile, DriverStats } from '../api/endpoints';
+import { ApiError, NetworkError } from '../api/errors';
 import { ProfileScreen } from './ProfileScreen';
 
 /**
@@ -479,7 +480,7 @@ it('refuses a blank value on the handset rather than asking the server', async (
 });
 
 it('says the save did not land, rather than pretending it did', async () => {
-  mockUpdateProfile.mockRejectedValueOnce(new Error('offline'));
+  mockUpdateProfile.mockRejectedValueOnce(new NetworkError('nothing arrived'));
 
   const screen = await renderProfile(<ProfileScreen navigation={navigation} route={{} as never} />);
 
@@ -489,6 +490,33 @@ it('says the save did not land, rather than pretending it did', async () => {
   // driver must not be left believing it is queued. ADR-0023 carries trip
   // transitions, not this.
   await waitFor(() => expect(screen.getByText(/not queued/)).toBeTruthy());
+});
+
+it('repeats the office’s own refusal rather than blaming the connection', async () => {
+  // **The defect this asserts against cost two rounds of hunting a network
+  // fault.** Every catch on this screen used to render one connection sentence
+  // whatever came back, so a server that had answered — and a 422 that named
+  // the field — was reported to the driver as a phone with no signal. A
+  // refusal that arrived is not a refusal that failed to arrive.
+  mockUpdateProfile.mockRejectedValueOnce(
+    new ApiError({
+      code: 'VALIDATION_FAILED',
+      message: 'The given data was invalid.',
+      status: 422,
+      errors: { phone: ['That phone number is already on another account.'] },
+    }),
+  );
+
+  const screen = await renderProfile(<ProfileScreen navigation={navigation} route={{} as never} />);
+
+  await editPhone(screen, '+256701999888');
+
+  await waitFor(() =>
+    expect(screen.getByText('That phone number is already on another account.')).toBeTruthy(),
+  );
+
+  // And never the connection wording, which is the whole point.
+  expect(screen.queryByText(/not queued/)).toBeNull();
 });
 
 it('names who manages what the driver cannot edit', async () => {

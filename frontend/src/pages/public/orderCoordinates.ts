@@ -1,4 +1,5 @@
 import { placeLabel, type PlaceHit } from './places'
+import type { PublicOrderPayload } from './publicOrder'
 
 /**
  * Whether a picked place's coordinates still describe what the field says
@@ -96,4 +97,60 @@ export function withCoordinateErrorsOnFields(flat: Record<string, string>): Reco
   }
 
   return mapped
+}
+
+/**
+ * Fills in whichever end of the trip the form could not place, by geocoding
+ * the text the customer typed — **before** the order is sent, so the platform
+ * learns the destination rather than only the map on this screen.
+ *
+ * `coordinatesFor` is deliberately strict: it sends coordinates only for a
+ * place picked from the list, and drops them the moment the text is edited.
+ * That is right for a *picked* place, and it left a hole for a *typed* one:
+ * an address keyed by hand, or arriving in the URL from the landing page's
+ * hero form, went up as a bare string. The customer's ride screen then
+ * geocoded it locally to draw its route — so the customer saw a line on a
+ * map while the order the driver received had `dropoff_latitude: null`. On
+ * the driver's phone that is an estimated fare of nothing, a journey of
+ * nothing, and no route to draw, because every one of them is priced or
+ * measured from the drop-off point (`TripResource::estimatedFare` →
+ * `WalkInFareService::quote`). Found on a live handset, on order KR-7J4XT8.
+ *
+ * Geocoding *the typed text* keeps the rule that motivated the strictness:
+ * "Acacia Mall, gate 3" is looked up as written, not replaced by the pin the
+ * customer moved away from in their head.
+ *
+ * Best-effort, and it must stay so. A geocoder that is down or finds nothing
+ * leaves the payload as it was — the order still goes, priced later by the
+ * desk — rather than turning a slow third party into a failed order.
+ */
+export async function withGeocodedEnds(
+  payload: PublicOrderPayload,
+  geocode: (query: string) => Promise<PlaceHit[]>,
+): Promise<PublicOrderPayload> {
+  const filled: PublicOrderPayload = { ...payload }
+
+  const ends = [
+    ['pickup_location', 'pickup_latitude', 'pickup_longitude'],
+    ['dropoff_location', 'dropoff_latitude', 'dropoff_longitude'],
+  ] as const
+
+  for (const [textKey, latKey, lngKey] of ends) {
+    const text = filled[textKey]
+
+    if (text === undefined || text.trim() === '') continue
+    if (filled[latKey] !== undefined && filled[lngKey] !== undefined) continue
+
+    try {
+      const point = (await geocode(text.trim())).find((hit) => hit.lngLat !== undefined)?.lngLat
+      if (point !== undefined) {
+        filled[lngKey] = point[0]
+        filled[latKey] = point[1]
+      }
+    } catch {
+      // Left unplaced, on purpose — see the docblock.
+    }
+  }
+
+  return filled
 }

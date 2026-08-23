@@ -2,10 +2,16 @@
 
 namespace App\Providers;
 
+use App\Enums\AccessLevel;
 use App\Enums\Permission;
 use App\Models\AuditLog;
 use App\Models\Customer;
+use App\Models\ImpersonationSession;
+use App\Models\Operator;
+use App\Models\OperatorClient;
 use App\Models\User;
+use App\Support\Access\AccessContext;
+use App\Support\Access\ImpersonationContext;
 use App\Support\Tenancy\TenantContext;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Eloquent\Relations\Relation;
@@ -13,6 +19,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
 use Modules\Administration\Models\Role;
 use Modules\Administration\Models\Setting;
@@ -38,8 +45,13 @@ use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Models\OrderRequest;
 use Modules\Bookings\Policies\BookingPolicy;
 use Modules\Bookings\Policies\OrderRequestPolicy;
+use Modules\Clients\Models\ClientPlace;
+use Modules\Clients\Models\ClientRoute;
 use Modules\Clients\Models\Company;
+use Modules\Clients\Policies\ClientPlacePolicy;
+use Modules\Clients\Policies\ClientRoutePolicy;
 use Modules\Clients\Policies\CompanyPolicy;
+use Modules\Clients\Policies\OperatorClientPolicy;
 use Modules\Customers\Policies\CustomerPolicy;
 use Modules\Dispatch\Models\DispatchOffer;
 use Modules\Drivers\Listeners\CreditDriverForCompletedTrip;
@@ -60,6 +72,7 @@ use Modules\Fleet\Models\DriverShiftWindow;
 use Modules\Fleet\Models\VehicleAllocation;
 use Modules\Fleet\Models\Zone;
 use Modules\Fleet\Policies\AvailabilityBlockPolicy;
+use Modules\Fleet\Policies\OperatorPolicy;
 use Modules\Fleet\Policies\VehicleAllocationPolicy;
 use Modules\Fleet\Policies\ZonePolicy;
 use Modules\Fleet\Support\DatabaseDriverPresenceStore;
@@ -67,6 +80,7 @@ use Modules\Fleet\Support\DriverPresenceStore;
 use Modules\Fleet\Support\RedisDriverPresenceStore;
 use Modules\Notifications\Listeners\SendBookingDecisionNotification;
 use Modules\Notifications\Listeners\SendReportExportReadyNotification;
+use Modules\Notifications\Listeners\SendTripProgressNotification;
 use Modules\Reports\Enums\ReportType;
 use Modules\Reports\Events\ReportExportCompleted;
 use Modules\Support\Models\SupportRequest;
@@ -77,6 +91,7 @@ use Modules\Trips\Distance\OsrmMeasurementRouter;
 use Modules\Trips\Events\TripCompleted;
 use Modules\Trips\Events\TripDistanceCleared;
 use Modules\Trips\Events\TripDistanceResolved;
+use Modules\Trips\Events\TripStatusChanged;
 use Modules\Trips\Listeners\ScheduleDistanceResolution;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Models\TripRating;
@@ -90,6 +105,8 @@ use Modules\Trips\Support\DirectContactChannel;
 use Modules\Trips\Support\LivePositionStore;
 use Modules\Trips\Support\RedisLivePositionStore;
 use Modules\Vehicles\Models\Vehicle;
+use Modules\Vehicles\Models\VehicleCategory;
+use Modules\Vehicles\Policies\VehicleCategoryPolicy;
 use Modules\Vehicles\Policies\VehiclePolicy;
 
 class AppServiceProvider extends ServiceProvider
@@ -100,6 +117,18 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(TenantContext::class);
+        // The fleet axis, bound by IdentifyTenant from the actor's own
+        // access_level (ADR-0055 §2). A singleton for the same reason
+        // TenantContext is one: it is set once per request and read by every
+        // owned model, so two instances would be two different answers to
+        // "who is asking".
+        $this->app->singleton(AccessContext::class);
+        // Who is really behind the request when it is not the person it looks
+        // like (ADR-0056). A singleton beside the two above, and read by the
+        // audit trail and the banner only — never by anything that builds a
+        // query, or an acting-as session would see the union of two people's
+        // reach.
+        $this->app->singleton(ImpersonationContext::class);
 
         // ADR-0024 §7: how the driver and the passenger reach each other.
         //
@@ -150,6 +179,49 @@ class AppServiceProvider extends ServiceProvider
      * that has Redis says so once in `.env` and every caller follows —
      * nothing in the codebase asks whether Redis exists.
      */
+    /**
+     * Generate `https://` links when the platform's own address is https.
+     *
+     * ## The bug this fixes, because it is not obvious from the symptom
+     *
+     * A driver uploads their portrait; the app keeps showing an empty circle.
+     * The upload in fact worked — file on disk, `photo_path` recorded,
+     * `GET me/photo` answering 200 with the right bytes. What was wrong was
+     * the *link*: `DriverProfileService` builds `photo_url` with `route()`,
+     * `route()` takes its scheme from the current request, and the request
+     * looked like plain HTTP. So the API handed the app
+     * `http://api.kangaruride.com/...`, and **a release Android build refuses
+     * cleartext HTTP by default** — the image request never leaves the phone
+     * and an `<Image>` that fails draws nothing at all.
+     *
+     * ## Why the request looked insecure when it was not
+     *
+     * Two layers each did half the job and neither noticed the other:
+     *
+     * - Traefik terminates TLS and forwards `X-Forwarded-Proto: https`.
+     *   Verified on the wire: nginx logs `xfp="https"`.
+     * - The nginx image ships `set_real_ip_from` for the Docker networks and
+     *   Cloudflare, so by the time PHP is reached `REMOTE_ADDR` is already the
+     *   real visitor — 102.86.7.251, not the proxy.
+     *
+     * That is *good* for `request()->ip()`, and it is exactly what stops the
+     * scheme working: Symfony will not read `X-Forwarded-Proto` from a peer
+     * that is not a trusted proxy, and the real visitor is quite rightly not
+     * one. Widening `trustProxies` to include them would mean trusting a
+     * header the visitor writes, which is the forgery this codebase refuses
+     * elsewhere.
+     *
+     * So the scheme is declared rather than sniffed. `APP_URL` already states
+     * what this deployment is: if it says https, every generated link says
+     * https. Local development, where `APP_URL` is http, is untouched.
+     */
+    private function forceHttpsWhenConfigured(): void
+    {
+        if (str_starts_with((string) config('app.url'), 'https://')) {
+            URL::forceScheme('https');
+        }
+    }
+
     private function bindLivePositionStore(): void
     {
         $this->app->bind(LivePositionStore::class, fn () => match (config('tracking.live_positions_driver')) {
@@ -177,6 +249,7 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->forceHttpsWhenConfigured();
         $this->bindLivePositionStore();
         $this->bindDriverPresenceStore();
 
@@ -185,6 +258,10 @@ class AppServiceProvider extends ServiceProvider
         // config. Resolved per request through the settings cache, so a
         // saved change applies to the very next request — floored at 1 so
         // no stored value can accidentally disable the limiter outright.
+        //
+        // Note this keys on `$request->ip()`, which is why the scheme fix
+        // above and `trustProxies` in bootstrap/app.php both matter: an IP
+        // that is really the proxy makes this one bucket for everybody.
         RateLimiter::for('public-orders', function (Request $request) {
             $perMinute = (int) app(SettingsService::class)->get('ordering', 'rate_limit_per_minute');
 
@@ -194,8 +271,20 @@ class AppServiceProvider extends ServiceProvider
         // Explicit registration rather than relying on Laravel's naming-
         // convention policy guesser across the Modules\ namespace.
         Gate::policy(Company::class, CompanyPolicy::class);
+        // ADR-0060. Three parties, three answers — a fleet asks, the client
+        // approves, either ends. No permission can express that.
+        Gate::policy(OperatorClient::class, OperatorClientPolicy::class);
+        // ADR-0045. Two policies rather than one: reading the register and
+        // building a circuit are different acts, and only the second is
+        // gated on `routes.manage`.
+        Gate::policy(ClientPlace::class, ClientPlacePolicy::class);
+        Gate::policy(ClientRoute::class, ClientRoutePolicy::class);
         Gate::policy(AuditLog::class, AuditLogPolicy::class);
+        // ADR-0059: the register of fleet companies. Kangaru-level only,
+        // enforced in the policy rather than by the permission alone.
+        Gate::policy(Operator::class, OperatorPolicy::class);
         Gate::policy(Vehicle::class, VehiclePolicy::class);
+        Gate::policy(VehicleCategory::class, VehicleCategoryPolicy::class);
         Gate::policy(Driver::class, DriverPolicy::class);
         Gate::policy(DriverApplication::class, DriverApplicationPolicy::class);
         Gate::policy(DriverSettlementRequest::class, DriverSettlementRequestPolicy::class);
@@ -220,6 +309,20 @@ class AppServiceProvider extends ServiceProvider
         // Drivers and Corporate Employees do not hold `reports.view` — a
         // report spans the whole tenant's fleet, which is more than either
         // should see.
+        // ADR-0056 §6. A Gate rather than a policy, because the thing being
+        // authorised is an *act* with no model behind it — there is no
+        // `ImpersonationSession` yet when the question is asked.
+        //
+        // The level is checked here as well as in the service. That is not
+        // belt-and-braces for its own sake: the Gate is what makes this an
+        // idiom-A route in the census, and a support agent who is refused
+        // should be refused before a request body is read.
+        Gate::define(
+            'act-as-another-user',
+            fn (User $user) => $user->access_level === AccessLevel::KANGARU
+                && $user->hasPermission(Permission::SUPPORT_ACT_AS),
+        );
+
         Gate::define('viewReports', fn (User $user) => $user->hasPermission(Permission::REPORTS_VIEW));
 
         // Per-report, because "may run a report" and "may see this report's
@@ -268,6 +371,9 @@ class AppServiceProvider extends ServiceProvider
 
         Event::listen(BookingApproved::class, [SendBookingDecisionNotification::class, 'approved']);
         Event::listen(BookingRejected::class, [SendBookingDecisionNotification::class, 'rejected']);
+        // The requester of a corporate booking hears when their car is
+        // assigned, when the driver arrives, and when the trip completes.
+        Event::listen(TripStatusChanged::class, SendTripProgressNotification::class);
         Event::listen(ReportExportCompleted::class, SendReportExportReadyNotification::class);
 
         // Stable short aliases for audit_logs.auditable_type instead of raw
@@ -290,8 +396,27 @@ class AppServiceProvider extends ServiceProvider
         // own row already covers them.
         Relation::enforceMorphMap([
             'company' => Company::class,
+            // ADR-0045. A moved pin changes where a driver is sent and a
+            // renamed one changes what a report groups by; a reordered
+            // circuit changes the run itself. Both are the client's own
+            // operational decisions, which is precisely why the client may
+            // need to account for them later. Route *stops* are absent on
+            // purpose — rewritten wholesale with their parent, and covered
+            // by the parent's row, as invoice lines are.
+            'client_place' => ClientPlace::class,
+            'client_route' => ClientRoute::class,
             'user' => User::class,
+            // ADR-0056. In the map because `Relation::enforceMorphMap` is
+            // enforced here: a morph type with no alias throws rather than
+            // writing a class name into a column, which is the behaviour that
+            // keeps a rename from silently orphaning every row that points at
+            // it.
+            'impersonation_session' => ImpersonationSession::class,
             'vehicle' => Vehicle::class,
+            // ADR-0050. Renaming or retiring a category changes what the
+            // fleet may record next and what a tariff may price; the office
+            // may be asked why a category stopped being offered.
+            'vehicle_category' => VehicleCategory::class,
             'driver' => Driver::class,
             // ADR-0027's applications queue. Approving one mints a principal
             // and rejecting one ends somebody's application — both are

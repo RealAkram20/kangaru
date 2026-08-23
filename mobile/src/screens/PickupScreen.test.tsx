@@ -34,6 +34,22 @@ const METRICS = {
 const mockQueueTransition = jest.fn(async () => undefined);
 let mockQueued = new Map<number, TripStatus>();
 
+// `mock` prefix required: Jest hoists mock factories above this line.
+const mockOdometerEnabled = jest.fn(() => true);
+
+/*
+  ADR-0047's odometer switch. Mocked at the hook rather than left real because
+  it reaches `AuthProvider` and the network, which this suite has neither of —
+  the same reason `../trips/queries` is mocked above.
+
+  **Defaults to on**, so every existing test in this file keeps asserting the
+  behaviour it was written for: the odometer is the platform's default and the
+  screens that ask for a reading should go on asking for one here.
+*/
+jest.mock('../trips/odometerSetting', () => ({
+  useOdometerEnabled: () => mockOdometerEnabled(),
+}));
+
 jest.mock('../offline/SyncProvider', () => ({
   useSync: () => ({
     queueTransition: mockQueueTransition,
@@ -50,9 +66,15 @@ jest.mock('../ui/SyncBanner', () => ({ SyncBanner: () => null }));
 // declaration, and only names matching /^mock/ are allowed to be referenced
 // from inside one.
 const mockUseTrip = jest.fn();
+const mockUseTripRoute = jest.fn();
 
 jest.mock('../trips/queries', () => ({
   useTrip: (id: number) => mockUseTrip(id),
+  // The road route itself is decoration over a map that already works, and
+  // stays absent through most of this suite. **Which leg it asks for is not
+  // decoration**, so the arguments are forwarded rather than swallowed — see
+  // the two tests at the foot of this file.
+  useTripRoute: (...args: unknown[]) => mockUseTripRoute(...args) ?? { data: null },
 }));
 
 function trip(overrides: Partial<Trip> = {}): Trip {
@@ -85,6 +107,7 @@ function trip(overrides: Partial<Trip> = {}): Trip {
     distance_km: null,
     gps_distance_km: null,
     distance_variance_flagged: null,
+    unplanned_stop_count: 0,
     started_at: null,
     completed_at: null,
     duration_minutes: null,
@@ -106,11 +129,23 @@ function trip(overrides: Partial<Trip> = {}): Trip {
 }
 
 beforeEach(() => {
+  // On by default in every test. A suite that wants the switch off says so,
+  // and must not leak that into the next one (ADR-0047).
+  mockOdometerEnabled.mockReturnValue(true);
   mockQueueTransition.mockClear();
+  mockNavigate.mockClear();
+  mockReplace.mockClear();
   // Nothing in flight is the ordinary case; the two tests about a queued
   // transition set it themselves.
   mockQueued = new Map();
+  // Cleared as well as re-stubbed: `mockReturnValue` leaves the call log
+  // alone, and the leg assertions read that log.
+  mockUseTripRoute.mockClear();
+  mockUseTripRoute.mockReturnValue({ data: null });
 });
+
+const mockNavigate = jest.fn();
+const mockReplace = jest.fn();
 
 async function renderPickup(value: Trip = trip()): Promise<ReturnType<typeof render>> {
   mockUseTrip.mockReturnValue({ data: value, isLoading: false });
@@ -118,10 +153,10 @@ async function renderPickup(value: Trip = trip()): Promise<ReturnType<typeof ren
   const node: ReactElement = (
     <PickupScreen
       route={{ key: 'p', name: 'Pickup', params: { tripId: value.id } }}
-      // Only `navigate` and `goBack` are reached; the rest of the navigation
-      // prop is not this screen's business and stubbing it whole would assert
-      // nothing.
-      navigation={{ navigate: jest.fn(), goBack: jest.fn() } as never}
+      // Only `navigate`, `replace` and `goBack` are reached; the rest of the
+      // navigation prop is not this screen's business and stubbing it whole
+      // would assert nothing.
+      navigation={{ navigate: mockNavigate, goBack: jest.fn(), replace: mockReplace } as never}
     />
   );
 
@@ -204,6 +239,29 @@ it('shows no pickup distance when the handset has no fix to measure from', async
 
   expect(getByText('To pickup')).toBeTruthy();
   expect(queryByText('straight line')).toBeNull();
+});
+
+it('releases the button and says so when the queue refuses the transition', async () => {
+  // The outbox can refuse — its SQLite failed to open, the enqueue itself
+  // threw. The caller is `void run(action)`, so before `run` grew its
+  // `try/catch/finally` the rejection escaped between `setBusy(true)` and
+  // `setBusy(false)`: every button on this screen spun for the rest of the
+  // session and the error was swallowed whole. This test is the mutation
+  // proof — remove the `finally` and the second press below never fires.
+  mockQueueTransition.mockRejectedValueOnce(new Error('The offline queue is not ready yet.'));
+
+  const { getByText, findByText } = await renderPickup();
+
+  void fireEvent.press(getByText("I've arrived"));
+
+  // The refusal is a sentence, not a spinner that never ends.
+  expect(await findByText('Could not save that. Try again in a moment.')).toBeTruthy();
+
+  // And the button came back: the next press queues again.
+  mockQueueTransition.mockClear();
+  mockQueueTransition.mockResolvedValueOnce(undefined);
+  void fireEvent.press(getByText("I've arrived"));
+  await waitFor(() => expect(mockQueueTransition).toHaveBeenCalledTimes(1));
 });
 
 it('calls an unsettled figure an estimate, and a settled one a fare', async () => {
@@ -305,4 +363,143 @@ it('queues a leg transition once per press', async () => {
   expect(mockQueueTransition).toHaveBeenCalledWith(
     expect.objectContaining({ tripId: 42, to: 'driver_arrived' }),
   );
+});
+
+it("hands the drive off to the waiting screen on I've arrived", async () => {
+  const { getByText } = await renderPickup();
+
+  void fireEvent.press(getByText("I've arrived"));
+
+  // The transition is queued first — the handoff must not outrun the record
+  // of the arrival it announces.
+  await waitFor(() => expect(mockQueueTransition).toHaveBeenCalled());
+  await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('WaitingForPassenger', { tripId: 42 }));
+
+  // `replace`, not `navigate` — the drive must not sit behind the wait.
+  expect(mockNavigate).not.toHaveBeenCalled();
+});
+
+it('stays put after a transition that is not the arrival', async () => {
+  const { getByText } = await renderPickup(
+    trip({ status: 'accepted', allowed_transitions: ['driver_en_route'] }),
+  );
+
+  void fireEvent.press(getByText('On my way'));
+
+  await waitFor(() => expect(mockQueueTransition).toHaveBeenCalled());
+
+  // "On my way" begins the drive this screen exists for; leaving it would
+  // hand the driver to a kerb they have not reached.
+  expect(mockReplace).not.toHaveBeenCalled();
+});
+
+it('sends the opening reading to the odometer, not the record view', async () => {
+  const { getByText } = await renderPickup(
+    // A trip resumed at `passenger_onboard` — the app was killed mid-capture,
+    // or the boarding was queued from this screen. The only legal move is
+    // `trip_started`, and it needs the reading.
+    trip({ status: 'passenger_onboard', allowed_transitions: ['trip_started'] }),
+  );
+
+  void fireEvent.press(getByText('Start trip'));
+
+  await waitFor(() =>
+    expect(mockNavigate).toHaveBeenCalledWith('Odometer', {
+      tripId: 42,
+      to: 'trip_started',
+      from: 'passenger_onboard',
+    }),
+  );
+
+  // The detour this replaces: a record view of em dashes whose one live
+  // button asked for the same press again.
+  expect(mockNavigate).not.toHaveBeenCalledWith('TripDetail', expect.anything());
+  // Nothing was queued — the reading has not been taken yet.
+  expect(mockQueueTransition).not.toHaveBeenCalled();
+});
+
+// ── The road to the passenger, and only that road ─────────────────────────
+
+/** The HTML handed to the WebView, dug out of the rendered tree. */
+function mapHtml(tree: unknown): string {
+  let found = '';
+
+  const walk = (node: unknown): void => {
+    const n = node as { type?: unknown; props?: Record<string, unknown>; children?: unknown[] };
+
+    if (typeof n !== 'object' || n === null) {
+      return;
+    }
+
+    if (n.type === 'WebView') {
+      const source = n.props?.source as { html?: string } | undefined;
+      found = source?.html ?? '';
+    }
+
+    for (const child of n.children ?? []) {
+      walk(child);
+    }
+  };
+
+  walk(tree);
+
+  return found;
+}
+
+it('asks for the road to the passenger, never the passenger journey', async () => {
+  // This screen is the drive *to* somebody. The drop-off is on its map as a
+  // pin and nothing else, and the leg named here is what keeps it that way.
+  jest.mocked(Location.getForegroundPermissionsAsync).mockResolvedValueOnce({
+    status: 'granted',
+    granted: true,
+  } as never);
+
+  await renderPickup();
+
+  // Both halves matter. `'pickup'` is the leg; the driver's own position is
+  // the origin, and the approach has no other honest one — routing from the
+  // pickup to the pickup is a zero-length line.
+  //
+  // `objectContaining` rather than the whole shape: a fix now carries the
+  // handset's heading as well as its coordinates, and this test is about
+  // *which leg is asked for from where*, not about the fields of a fix.
+  await waitFor(() =>
+    expect(mockUseTripRoute).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({ lat: expect.any(Number), lng: expect.any(Number) }),
+      'pickup',
+    ),
+  );
+});
+
+it('follows the driver instead of freezing at the kerb they set off from', async () => {
+  // A single fix was right while `here` fed only the "to pickup" figure. It
+  // became wrong when ADR-0031 made the same reading the *origin of the drawn
+  // route*: `useTripRoute` refetches on a changed position, so a frozen fix
+  // drew the road from wherever the screen opened and never redrew it.
+  jest.mocked(Location.watchPositionAsync).mockClear();
+  jest.mocked(Location.getForegroundPermissionsAsync).mockResolvedValueOnce({
+    status: 'granted',
+    granted: true,
+  } as never);
+
+  await renderPickup();
+
+  await waitFor(() => expect(Location.watchPositionAsync).toHaveBeenCalled());
+});
+
+it('draws nothing rather than the wrong leg when there is no fix', async () => {
+  // Permission is denied by default in `jest.setup.ts`, so there is no
+  // position and — the ordinary case — no route. The map used to fall back to
+  // the one line it still had, the pickup-to-drop-off leg, and drew the
+  // passenger's journey on the screen for driving to the passenger. The
+  // owner, from a handset: "i should be seeing where the client is and where
+  // i am going".
+  const view = await renderPickup();
+  const html = mapHtml(view.toJSON());
+
+  expect(html).toContain('"leg":"approach"');
+  expect(html).toContain("if (state.leg === 'approach')");
+  // And the branch that leaves it empty without a fix.
+  expect(html).toContain('if (state.here !== null)');
 });

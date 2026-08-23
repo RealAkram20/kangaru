@@ -24,6 +24,18 @@ npm-debug.log*
 
 # PHP / Laravel (backend, once scaffolded)
 vendor/
+# Laravel's **published** vendor views are source, not a dependency.
+# `vendor/` above means Composer's directory, but a bare pattern matches any
+# directory of that name at any depth — so it also swallowed
+# backend/resources/views/vendor/, where `php artisan vendor:publish` puts the
+# mail templates. The branded mail theme was written, referenced by
+# config/mail.php as MAIL_THEME=kangaru, and never committed.
+#
+# It worked on every machine that had published it and nowhere else: CI failed
+# with "View [themes.kangaru] not found" across every suite that sends mail,
+# and production would have 500'd on the first notification email rather than
+# at deploy time, which is the worse of the two.
+!backend/resources/views/vendor/
 .env
 .env.*
 !.env.example

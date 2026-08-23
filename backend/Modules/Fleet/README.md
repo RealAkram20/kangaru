@@ -21,6 +21,70 @@ ADR-0009 (3 August 2026) then answered what an allocation *does*. Until it
 landed, this module was a record nothing consulted. It now constrains
 dispatch.
 
+## The register of fleet companies (K2, ADR-0055 / ADR-0059)
+
+Added 22 August 2026, and it removes a rail that was up on purpose.
+
+`Operator` carried a docblock saying *"There is deliberately no way to create
+a second one"* — no endpoint, no policy, no factory, no seeder — because
+between `F0` and `F2` the operational tables carried `operator_id` and nothing
+filtered on it, so a second fleet's dispatcher would have read Shanitah's
+trips. `F2` closed that gap and `K0` proved the schema on MySQL 8.4, so
+creation is offered here. This was blocker number one in
+`docs/fleet-model-plan.md` §4b.
+
+**Four things a reader should not have to rediscover:**
+
+1. **The level is the control, not the permission.** Every Super Admin holds
+   `fleets.manage`, a fleet's own included — `StoreRoleRequest` refuses to let
+   anybody grant a permission they do not hold, so withholding it would make
+   it ungrantable rather than strict. `OperatorPolicy` requires
+   `access_level = kangaru` on every method. Same shape as `support.act-as`.
+2. **A fleet and its first account are created together or not at all.**
+   ADR-0056 acts as a *person*, not an organisation, so a fleet with no
+   account is permanently unreachable to support — and it fails when "the last
+   administrator left" and "we need support" coincide. `owner_name` and
+   `owner_email` are required for that reason.
+3. **Counts, never operational data.** `OperatorResource` carries four counts
+   and no trips, drivers by name, clients by name or revenue. ADR-0055 §2 is
+   easiest to breach by adding one more useful field, so
+   `OperatorRegisterTest` pins the key list rather than trusting review.
+4. **There is no delete.** Six operational tables carry `operator_id` and
+   `operator_client` restricts on delete; a removal would either fail against
+   its own history or orphan it. A fleet that leaves is suspended.
+
+**Still true, and carried here so it is not discovered:** `trip_events`,
+`trip_locations` and `trip_stops` are not independently fleet-scoped. They are
+reached through a trip and the trip is the gate. Sound today because no route
+reaches them without resolving a trip first; it stops being sound the moment
+somebody adds one.
+
+**Plans.** `K2` created the `plans` table and `operators.plan_id` to hold one
+invariant — ADR-0058 §1, no fleet exists without a plan, and creation *fails*
+rather than defaulting when nothing is flagged default. Everything that makes
+a plan commercial (price, period, limits, Kangaru's invoice to a fleet) is
+`K7`'s, and nothing here presumes its shape.
+
+### A new permission does nothing until `RoleSeeder` runs — and re-running it has a side effect
+
+Found the hard way while verifying `K3` in a browser. `fleets.view` and
+`fleets.manage` were added to `App\Enums\Permission` and `RoleSeeder` grants
+Super Admin `P::cases()`, so both looked granted. They were not: **role rows
+hold a snapshot of the permission list**, and the seeded row still carried the
+39 permissions that existed when it was written, against 42 in the enum. Every
+`/operators` request answered 403 to a Kangaru Super Admin, and nothing in the
+code said why.
+
+`php artisan db:seed --class=RoleSeeder --force` fixes it, and it is a
+**deployment step for this change**, not a local convenience.
+
+**The side effect, which cost more than the bug.** `RoleSeeder` also sets
+`roles.requires_mfa`, so re-running it switched MFA back **on** for Super Admin
+and Finance — an environment where it had been deliberately turned off. Three
+console accounts went to "must enrol" at the next sign-in with no warning. If
+you re-seed roles on an environment where MFA has been relaxed, check
+`roles.requires_mfa` on `super_admin` and `finance` afterwards and put it back.
+
 ## Responsibilities
 
 - Record that a vehicle is allocated to a corporate account from a date,
@@ -72,6 +136,8 @@ All under `/api/v1`, behind `auth:sanctum` + `tenant` + `subject-tenant`.
 | `GET /allocations/{allocation}` | `allocations.view` | Another client's 404s, never 403s. |
 | `POST /allocations` | `allocations.manage` | 409 `ALLOCATION_CONFLICT` when the overlap rule refuses. |
 | `PATCH /allocations/{allocation}` | `allocations.manage` | Ends the contract on a given day. The only mutation. |
+| `GET /driver-presence` | `drivers.view` | Who is on duty and where — the live map's pool (ADR-0024 §2, the office's read). See below. |
+| `GET /public/nearby-vehicles` | public, throttled 30/min | Anonymized available vehicles near a point — positions and silhouettes only. See below. |
 
 Ending is a PATCH rather than a DELETE, and it is the only change offered.
 Moving a contract's *start* after the fact would rewrite which days a client
@@ -235,6 +301,50 @@ Two consequences land on this module:
 
 Zone-based dispatch eligibility is still not built; the resolver is the
 input it will use.
+
+## The office's read of presence — `GET /driver-presence` (20 August 2026)
+
+`driver_presence` was written for the matcher and, until the live map was
+made real, only the matcher read it. `GET /driver-presence` lists every
+driver currently on duty — by name and plate, with their last reported
+position, `age_seconds`, `stale`, and the occupying trip that has them if
+one does — so a dispatcher can look at the map and count who is waiting
+for work.
+
+Two things it does on purpose:
+
+- **`DriverPresenceStore::onDuty()`, not `dispatchable()`.** The matcher hides
+  a driver whose position has gone stale, because it must not rank them
+  from a place they have left. The map shows that driver greyed and marked
+  `stale`, because the map's job is to get them phoned. A driver who has
+  never reported (location refused on the handset) is listed with null
+  coordinates — the page says "no position", it does not invent one.
+- **Allow-listed fields.** Driver id and name; vehicle id, plate, make,
+  model. No phone, no licence number, no VIN — the fleet register serves
+  those behind its own policy. Gated by `DriverPolicy::viewAny`
+  (`drivers.view`): the roles that operate the fleet, and not a client's
+  people (docs/security-gate.md F2) — the riders are Shanitah's.
+
+`/live-positions` (Trips) is the other half of the same map: the vehicles
+on a trip, named the same way. The two responses share `age_seconds` and
+`stale` so a page can merge them and sort by who needs attention.
+
+### The public read — `GET /public/nearby-vehicles` (20 August 2026)
+
+The same pool, for surfaces that may not know who is in it: the order
+page's ambient fleet (which used to be six sprites at hardcoded offsets)
+and a corporate client's live map (which `/driver-presence` refuses).
+Dispatchable drivers with a usable position, **minus anyone on an
+occupying trip**, nearest the given point first, within 15km, capped at
+twelve.
+
+Anonymized by construction: each entry is `key` (an hourly-rotating hash —
+markers glide within the hour, a day of polling follows nobody),
+`category`, a sprite `kind`, coordinates and `age_seconds`. No driver id,
+name, plate or phone, ever — the register stays behind `drivers.view`
+(docs/security-gate.md F2). Radius and cap mean one call can never dump
+the fleet. This is ADR-0005's deferred "nearby-driver search", buildable
+once ADR-0024 §2 built presence.
 
 ## Duty sessions (ADR-0038)
 

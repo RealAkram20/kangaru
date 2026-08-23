@@ -10,18 +10,14 @@ import { useSync } from '../offline/SyncProvider';
 import { dialPassenger } from '../trips/contact';
 import { PickupMap } from '../trips/PickupMap';
 import { greatCircleKm, located, toCoordinates } from '../trips/places';
-import { useTrip } from '../trips/queries';
+import { useHandover } from '../trips/handover';
+import { useTrip, useTripRoute } from '../trips/queries';
+import { useOdometerEnabled } from '../trips/odometerSetting';
 import { driverActions, statusLabel, type TripAction } from '../trips/transitions';
 import { Button, Notice, Screen, ScreenHeader } from '../ui/components';
-import { SkeletonCards } from '../ui/Skeleton';
+import { Handover } from '../ui/Handover';
 import { DetailRow, GLYPH, RouteRail, Stat, StatRow } from '../ui/facts';
-import {
-  NavigationIcon,
-  PhoneIcon,
-  RouteIcon,
-  UserIcon,
-  WalletIcon,
-} from '../ui/icons';
+import { NavigationIcon, PhoneIcon, RouteIcon, UserIcon, WalletIcon } from '../ui/icons';
 import { SyncBanner } from '../ui/SyncBanner';
 import { colors, radius, spacing, typography } from '../ui/theme';
 
@@ -60,19 +56,27 @@ const PASSENGER_LABEL = 'Passenger';
  *
  * ADR-0020 §3 refused to derive minutes from a straight line by name, and this
  * is the screen where the temptation is strongest: a driver on the way to a
- * pickup wants to know how long. The honest answer is that the platform does
- * not know — it has no routing engine, and the crow's-flight distance
- * under-reads against real roads. So the map overlay and the facts row both
- * show **distance, said to be straight-line**, and the driver's own maps app
- * is one tap away for the part we cannot answer.
+ * pickup wants to know how long. ADR-0031 §6 keeps that refusal even now there
+ * is a routing engine — a duration is shown only when a provider *sent* one,
+ * never computed here. So the map overlay and the facts row both show
+ * **distance, said to be straight-line**, and the driver's own maps app is one
+ * tap away for the turn-by-turn we do not attempt.
  *
- * ## The map is an orientation aid, not a route
+ * ## The map draws one leg: the way to the passenger
  *
- * Markers only — no line between them. The platform has no routing engine, and
- * a straight line is not a road; drawing one would tell a driver to go a way
- * that may not exist. `PickupMap` carries the rest of that argument, including
- * why it is MapLibre in a WebView rather than the native map a mockup implies:
- * `react-native-maps` needs a Google billing account to draw a street.
+ * The approach route (ADR-0031), from where the driver actually is to the
+ * pickup, refetched as they close in. The drop-off is on the map as a pin and
+ * nothing more — **the passenger's own journey is not this screen's line.**
+ * Drawing it here, which is what happened whenever there was no route and no
+ * fix, answers a question the driver is not yet asking and puts a road on
+ * screen that starts somewhere they are not. `PickupMap`'s `leg` prop is where
+ * that rule now lives.
+ *
+ * Where routing cannot reach — no signal, no fix, no pins — the line is dashed
+ * or absent, never invented: a straight line is not a road. `PickupMap`
+ * carries the rest of that argument, including why it is MapLibre in a WebView
+ * rather than the native map a mockup implies: `react-native-maps` needs a
+ * Google billing account to draw a street.
  *
  * The map is also allowed to be absent — a trip keyed in over the phone has no
  * coordinates at all. **Every fact on this screen is legible without it**,
@@ -83,15 +87,83 @@ export function PickupScreen({ route, navigation }: Props) {
   const { tripId } = route.params;
   const { data: trip, isLoading } = useTrip(tripId);
   const { queueTransition, queued } = useSync();
-  const here = usePosition();
+  // ADR-0047. Drives whether "Start trip" opens the reading form or
+  // simply starts the trip.
+  const odometerEnabled = useOdometerEnabled();
+
+  /*
+    Watched, not a single fix. This screen took one reading on mount, back
+    when `here` fed only the "to pickup" figure and a number that ticked while
+    the driver was looking at the road was motion for its own sake.
+
+    ADR-0031 changed what the reading is *for*. It is now the origin of the
+    approach route, and `useTripRoute` refetches on a changed position — so a
+    frozen fix meant the road was drawn from the kerb the driver set off from
+    and never redrawn, however far they got. The "You" pin stayed there too.
+    A route to the passenger that does not follow the driver is the thing this
+    screen exists to provide, not provided.
+
+    The tick the original comment worried about is bounded by the same 100 m
+    the figure is rendered to, so the number moves by 0.1 km at a time — real
+    progress toward the passenger rather than GPS jitter.
+  */
+  const here = usePosition({ watch: true });
+
+  /*
+    The road to the pickup (ADR-0031), from where the driver is. The approach
+    leg: this endpoint used to route only to the drop-off, so this screen kept
+    a dashed guess while the trip in progress got a road — the owner, from a
+    handset: "we all know that the trip can not be a straight line". Null
+    whenever routing is off, there is no fix yet, or the order has no pin;
+    `PickupMap` draws the dashed line it always drew.
+  */
+  const { data: approach, isLoading: routing } = useTripRoute(tripId, here, 'pickup');
 
   const [busy, setBusy] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
 
-  if (isLoading && trip === undefined) {
+  /*
+    The moment between accepting and driving — the owner's *"connecting to the
+    client, finding the best route"*.
+
+    Both lines are bound to a request actually in flight, which is what keeps
+    this clear of `docs/screen-rules.md` §1 and §5 at once: a driver on their
+    twentieth job has both answers cached and never sees this at all.
+    `useHandover` owns that argument, the delay that makes it true, and the
+    ceiling that stops a slow route holding the screen.
+
+    `isLoading` rather than `isPending` in both cases, deliberately: React
+    Query leaves a request *pending* while it is paused for want of a network,
+    and a hand-over that waits on a paused request would sit there until the
+    driver found signal. `isLoading` is pending **and fetching**, which is the
+    only state worth reporting.
+  */
+  const handover = useHandover([
+    { label: 'Connecting to the passenger', pending: isLoading && trip === undefined },
+    { label: 'Finding the road to the pickup', pending: routing },
+  ]);
+
+  if (handover.visible && handover.label !== null) {
     return (
       <Screen>
+        {/*
+          The header stays. It carries the status-bar inset — without it the
+          hand-over's own words paint under the clock, which is the bug this
+          screen's skeleton branch already recorded — and the back arrow keeps
+          working, so a driver is never held by a moment they did not ask for.
+        */}
+        <ScreenHeader title="Pickup passenger" subtitle={null} onBack={() => navigation.goBack()} />
         <SyncBanner />
-        <SkeletonCards count={1} style={styles.loading} />
+        <Handover
+          label={handover.label}
+          // The pickup, once the trip has landed. Null on the opening step
+          // because the platform genuinely does not know yet — ADR-0024 §7
+          // releases the passenger's details on the accept, and this surface
+          // is often on screen precisely because that fetch is in flight.
+          caption={trip?.pickup.label ?? null}
+          step={handover.step}
+          total={handover.total}
+        />
       </Screen>
     );
   }
@@ -99,6 +171,13 @@ export function PickupScreen({ route, navigation }: Props) {
   if (trip === undefined) {
     return (
       <Screen>
+        {/*
+          The header even while loading: it is what carries the status-bar
+          inset, and without it the banner — or the skeleton — paints under the
+          clock. The back arrow also works during the wait, which matters when
+          the office is unreachable and this screen cannot finish arriving.
+        */}
+        <ScreenHeader title="Pickup passenger" subtitle={null} onBack={() => navigation.goBack()} />
         <SyncBanner />
         <Notice message="This trip is not on this phone, and the office is unreachable." />
       </Screen>
@@ -106,7 +185,7 @@ export function PickupScreen({ route, navigation }: Props) {
   }
 
   const passenger = trip.passenger_contact;
-  const actions = driverActions(trip);
+  const actions = driverActions(trip, { odometerEnabled });
 
   // What this trip has been asked to become and has not yet been confirmed at.
   // Read off the outbox — see `SyncState.queued`, and the block above the
@@ -114,11 +193,27 @@ export function PickupScreen({ route, navigation }: Props) {
   const asked = queued.get(trip.id) ?? null;
 
   const run = async (action: TripAction) => {
-    // Odometer capture and a decline both need more than a tap, and both
-    // already have screens. This one only ever posts the plain transitions
-    // of the pickup leg — on my way, I've arrived — so anything asking for
-    // more is handed back to the full trip screen rather than half-built
-    // here.
+    // A reading goes to the screen built for readings. This branch is only
+    // reachable when the trip is already `passenger_onboard` on this screen —
+    // a resume after a kill, or a boarding queued from here — and it used to
+    // hand the driver to `TripDetail` instead: the record view, mostly em
+    // dashes this early, with one button on it that asked for the same press
+    // again. Two screens of detour between "Start trip" and the form the
+    // server requires. The odometer replaces itself with `TripInProgress`
+    // when the reading lands, so this is now one tap from the journey.
+    if (action.requires === 'odometer_start' || action.requires === 'odometer_end') {
+      navigation.navigate('Odometer', {
+        tripId: trip.id,
+        to: action.to as 'trip_started' | 'trip_completed',
+        from: trip.status,
+      });
+
+      return;
+    }
+
+    // A decline needs written notes, and `TripDetail` owns that sheet. The
+    // one remaining handoff to the record view from here, and the right one:
+    // declining is stepping out of the journey, not a step of it.
     if (action.requires !== null) {
       navigation.navigate('TripDetail', { tripId: trip.id });
 
@@ -126,25 +221,60 @@ export function PickupScreen({ route, navigation }: Props) {
     }
 
     setBusy(true);
-    // Queued, not posted. A pickup happens in a stairwell, a basement car
-    // park, a street with no signal — `SyncProvider` holds the transition and
-    // sends it when there is a network (ADR-0023), and `SyncBanner` says so.
-    await queueTransition({ tripId: trip.id, from: trip.status, to: action.to });
-    setBusy(false);
+    setSaveFailed(false);
+
+    // The `try/finally` is load-bearing, not defensive dressing. The caller
+    // is `void run(action)`, so a `queueTransition` that throws — the outbox's
+    // SQLite refused to open, the enqueue itself failed — used to escape
+    // between `setBusy(true)` and `setBusy(false)`: every button on this
+    // screen stayed spinning for the rest of the session and the error was
+    // swallowed whole. `WaitingForPassengerScreen` had this right first.
+    try {
+      // Queued, not posted. A pickup happens in a stairwell, a basement car
+      // park, a street with no signal — `SyncProvider` holds the transition and
+      // sends it when there is a network (ADR-0023), and `SyncBanner` says so.
+      await queueTransition({ tripId: trip.id, from: trip.status, to: action.to });
+    } catch {
+      setSaveFailed(true);
+
+      return;
+    } finally {
+      setBusy(false);
+    }
+
+    // "I've arrived" is the seam between the drive and the wait —
+    // `isPickupPhase` says so in as many words — so the press that ends the
+    // drive opens the waiting screen, where boarding, the opening reading and
+    // the start are one press. Without this the driver who taps through the
+    // leg here never meets that screen: they get "Passenger on board", then
+    // "Start trip", then the `TripDetail` detour above. Found on the
+    // emulator, reported as "we don't need this blank trip details".
+    //
+    // `replace`, not `navigate`: the drive must not sit in the stack behind
+    // the wait, or the back gesture returns to a kerb-approach screen whose
+    // buttons the queue has already outrun.
+    if (action.to === 'driver_arrived') {
+      navigation.replace('WaitingForPassenger', { tripId: trip.id });
+    }
   };
 
   return (
     <Screen>
-      <SyncBanner />
-
       <ScreenHeader
         title="Pickup passenger"
         subtitle={statusLabel(trip.status)}
         onBack={() => navigation.goBack()}
       />
 
+      {/*
+        Below the header, which carries the status-bar inset: mounted first,
+        the banner's text paints under the clock and the battery — the owner's
+        screenshot, and the same bug HomeScreen's own comment records.
+      */}
+      <SyncBanner />
+
       <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
-        <MapPanel trip={trip} here={here} />
+        <MapPanel trip={trip} here={here} routePolyline={approach?.polyline ?? null} />
 
         {passenger !== null && (
           <DetailRow
@@ -191,6 +321,10 @@ export function PickupScreen({ route, navigation }: Props) {
           so this cannot show a move the driver did not make, and a refused item
           drops out of it — returning the buttons rather than stranding them.
         */}
+        {saveFailed && (
+          <Notice tone="danger" message="Could not save that. Try again in a moment." />
+        )}
+
         {asked !== null ? (
           <Notice
             tone="info"
@@ -233,15 +367,40 @@ export function PickupScreen({ route, navigation }: Props) {
  * puts it, because a driver glancing at the map should not have to look
  * anywhere else to learn how close they are.
  */
-function MapPanel({ trip, here }: { trip: Trip; here: Coordinates | null }) {
+function MapPanel({
+  trip,
+  here,
+  routePolyline,
+}: {
+  trip: Trip;
+  here: Coordinates | null;
+  routePolyline: string | null;
+}) {
   const pickup = located(trip.pickup) ? toCoordinates(trip.pickup) : null;
   const dropoff = located(trip.dropoff) ? toCoordinates(trip.dropoff) : null;
 
-  const away = here === null || pickup === null ? null : formatKilometres(greatCircleKm(here, pickup));
+  const away =
+    here === null || pickup === null ? null : formatKilometres(greatCircleKm(here, pickup));
 
   return (
     <View>
-      <PickupMap pickup={pickup} dropoff={dropoff} here={here} />
+      {/*
+        `leg="approach"` and not the default. This map answers one question —
+        where is the passenger and how do I get to them — and the drop-off is
+        on it only as a pin. Left implicit, the map fell through to the fare
+        leg whenever there was no route and no fix, and drew the passenger's
+        journey on the screen for driving to the passenger.
+      */}
+      <PickupMap
+        pickup={pickup}
+        dropoff={dropoff}
+        here={here}
+        leg="approach"
+        // The distance badge below is floated over the map's bottom-left, so
+        // the map frames its pins clear of that corner.
+        overlay="bottom-left"
+        routePolyline={routePolyline}
+      />
 
       {away !== null && (
         <View style={styles.mapBadge}>
@@ -270,8 +429,10 @@ function Facts({ trip, here }: { trip: Trip; here: Coordinates | null }) {
   const pickup = located(trip.pickup) ? toCoordinates(trip.pickup) : null;
   const dropoff = located(trip.dropoff) ? toCoordinates(trip.dropoff) : null;
 
-  const away = here === null || pickup === null ? null : formatKilometres(greatCircleKm(here, pickup));
-  const journey = pickup === null || dropoff === null ? null : formatKilometres(greatCircleKm(pickup, dropoff));
+  const away =
+    here === null || pickup === null ? null : formatKilometres(greatCircleKm(here, pickup));
+  const journey =
+    pickup === null || dropoff === null ? null : formatKilometres(greatCircleKm(pickup, dropoff));
 
   const settled = trip.fare;
   const estimate = trip.estimated_fare;
@@ -300,11 +461,6 @@ function Facts({ trip, here }: { trip: Trip; here: Coordinates | null }) {
 }
 
 const styles = StyleSheet.create({
-  loading: {
-    // Was a Text style for the word "Loading…"; the placeholder that
-    // replaced it wants the gutter and nothing else.
-    padding: spacing.md,
-  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

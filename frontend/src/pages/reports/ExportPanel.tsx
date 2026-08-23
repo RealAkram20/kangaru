@@ -14,7 +14,7 @@ import { EmptyState } from '../../components/feedback/EmptyState'
 const FORMATS: { value: ExportFormat; label: string; icon: string; hint: string }[] = [
   { value: 'csv', label: 'CSV', icon: 'file-text', hint: 'For reconciliation in any tool' },
   { value: 'xlsx', label: 'Excel', icon: 'sheet', hint: 'Formatted workbook with totals' },
-  { value: 'pdf', label: 'PDF', icon: 'file-type-2', hint: 'For sending or filing' },
+  { value: 'pdf', label: 'PDF', icon: 'file-type', hint: 'For sending or filing' },
 ]
 
 const STATUS_TONE: Record<ReportExport['status'], 'neutral' | 'info' | 'success' | 'error'> = {

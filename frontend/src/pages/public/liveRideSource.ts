@@ -1,6 +1,17 @@
+import { isAxiosError } from 'axios'
+
 import { apiClient } from '../../lib/apiClient'
+import { apiError } from '../../lib/apiError'
 import type { VehicleKind } from './MapPanel'
-import { INITIAL_RIDE_STATE, type Captain, type RidePhase, type RideSource, type RideState } from './ride'
+import {
+  INITIAL_RIDE_STATE,
+  type Captain,
+  type Fare,
+  type RatingOutcome,
+  type RidePhase,
+  type RideSource,
+  type RideState,
+} from './ride'
 
 /**
  * The real thing behind the ride screen (ADR-0024).
@@ -57,7 +68,33 @@ interface RideResponse {
     plate: string | null
     vehicle_colour: string | null
   } | null
+  /** The quote while the ride runs (ADR-0026 §2); null before a captain or once settled. */
+  estimated_fare: ServedFare | null
+  /** The bill, once the trip is complete. */
+  fare: ServedFare | null
   created_at: string | null
+}
+
+interface ServedFare {
+  total_minor: number
+  currency: string | null
+  distance_km: number | null
+  is_estimate: boolean
+}
+
+/**
+ * The server's money shape into the screen's. Minor units are shillings
+ * already — UGX has no subunit — so `total_minor` is the figure as spoken.
+ * No breakdown: the platform stores the settled fare as one figure and the
+ * lines live on the invoice, and inventing three numbers that add up to it
+ * would be a bill nobody issued.
+ */
+function toFare(served: ServedFare | null | undefined): Fare | null {
+  // `undefined` too: a server a release behind does not send the field, and
+  // a throw inside the poll would stop every state after it.
+  if (served == null) return null
+
+  return { total: served.total_minor, distanceKm: served.distance_km }
 }
 
 export function liveRideSource(): RideSource {
@@ -86,6 +123,8 @@ export function liveRideSource(): RideSource {
     state = next
     listeners.forEach((listener) => listener(state))
   }
+
+  const mine = (generation_: number) => generation_ === generation
 
   const poll = async (mine: number) => {
     try {
@@ -182,17 +221,22 @@ export function liveRideSource(): RideSource {
       void (async () => {
         try {
           await apiClient.post('/customer/rides/active/cancellation', { reason })
-        } catch {
+        } catch (error) {
           /*
-           * Swallowed, and the poll is what corrects the screen.
+           * The state is left as it was — forcing `cancelled` locally would
+           * tell a passenger sitting in a moving car that their ride was
+           * called off — but the *reason* is no longer swallowed.
            *
-           * The interesting failure is a 409 — the driver started the journey
+           * The interesting failure is a 409: the driver started the journey
            * in the seconds between the sheet opening and the tap landing, and
-           * the ride genuinely cannot be cancelled any more. Forcing a
-           * `cancelled` state locally would tell a passenger sitting in a
-           * moving car that their ride was called off. The next tick brings
-           * the truth, whichever way it went.
+           * the ride genuinely cannot be cancelled any more. That used to be
+           * silence, and silence after a tap reads as a broken button — the
+           * owner's "the cancel trip is not working on the web app". The
+           * server's own sentence says what to do instead ("speak to your
+           * Captain"), so it is shown, verbatim, until the next tick.
            */
+          const message = refusalMessage(error)
+          if (message !== null && mine(generation)) emit({ ...state, notice: message })
         }
 
         /*
@@ -225,6 +269,44 @@ export function liveRideSource(): RideSource {
        * driver accepted.
        */
     },
+
+    async rate(stars): Promise<RatingOutcome> {
+      /*
+       * The passenger's stars, filed against the trip (ADR-0030 §1).
+       *
+       * This existed as a screen-side flag before it existed at all: the
+       * card said "You rated Grace 5 stars" while no request had been made
+       * — found the night the owner rated a real ride and the driver's
+       * numbers never moved. The endpoint had been sitting in the Customers
+       * module the whole time; this is the call that was missing.
+       *
+       * A result rather than a throw, both ways. The server's refusals are
+       * ordinary sentences a passenger can act on — "once it has been
+       * completed", "already rated … cannot be changed" — and the screen
+       * shows whichever it gets, verbatim, instead of a generic failure.
+       */
+      if (state.tripId === null) {
+        return { recorded: false, message: 'This ride cannot be rated yet.' }
+      }
+
+      try {
+        const response = await apiClient.post(`/customer/trips/${state.tripId}/rating`, { stars })
+        const message: unknown = response.data?.message
+
+        return {
+          recorded: true,
+          message:
+            typeof message === 'string' && message !== ''
+              ? message
+              : 'Thank you — your rating has been recorded.',
+        }
+      } catch (failure: unknown) {
+        return {
+          recorded: false,
+          message: apiError(failure, 'Your rating could not be sent. Please try again.').message,
+        }
+      }
+    },
   }
 }
 
@@ -235,12 +317,17 @@ function toRideState(ride: RideResponse, startedAt: number): RideState {
     // derives (`searching`, `offered`, `unmatched`).
     phase: ride.phase,
     captain: toCaptain(ride),
+    // What the rating files against. Served null until a captain accepts.
+    tripId: ride.trip_id,
     progress: searchProgress(ride.phase, startedAt),
     // No ETA: ranking is straight-line (ADR-0020 §3), and a minutes figure
     // derived from it is a promise the platform cannot keep.
     etaSeconds: null,
-    estimate: null,
-    fare: null,
+    // Both from the platform now (`CustomerRideResource`). They were hard-coded
+    // null here, so the passenger's own completion card — fare, pay, rate —
+    // could never appear, whatever the driver's phone showed.
+    estimate: toFare(ride.estimated_fare),
+    fare: toFare(ride.fare),
     cancelledReason: ride.phase === 'cancelled' ? 'The ride was called off.' : null,
     /*
      * There is an endpoint behind the button now (ADR-0024 §7), so this is
@@ -311,4 +398,17 @@ function vehicleKindFor(vehicle: string | null): VehicleKind {
   if (text.includes('harrier') || text.includes('prado') || text.includes('suv')) return 'suv'
 
   return 'sedan'
+}
+
+/**
+ * The server's own words for a refusal, or null when there are none to show.
+ * Only a 4xx with a message qualifies: a network failure has nothing to say
+ * about the ride, and the poll already knows how to wait one out.
+ */
+function refusalMessage(error: unknown): string | null {
+  if (!isAxiosError(error)) return null
+  const status = error.response?.status ?? 0
+  if (status < 400 || status >= 500) return null
+  const message = (error.response?.data as { message?: unknown } | undefined)?.message
+  return typeof message === 'string' && message !== '' ? message : null
 }

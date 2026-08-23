@@ -1,8 +1,11 @@
 <?php
 
+use App\Enums\AccessLevel;
 use App\Enums\UserRole;
 use App\Models\User;
+use App\Support\Auth\ClientScope;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Route;
 use Modules\Drivers\Enums\DriverApplicationStatus;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverApplication;
@@ -36,29 +39,164 @@ function reviewerWhoMayDecide(): User
 }
 
 it('accepts an application from a stranger with no token at all', function () {
-    $this->postJson('/api/v1/driver-applications', applicationPayload())
-        ->assertStatus(202)
-        ->assertJsonPath('data', null);
+    $response = $this->postJson('/api/v1/driver-applications', applicationPayload())
+        ->assertStatus(202);
 
     $application = DriverApplication::sole();
     expect($application->status)->toBe(DriverApplicationStatus::PENDING);
     expect($application->terms_accepted_at)->not->toBeNull();
+
+    /**
+     * ADR-0048 §4 changed this response, and the change is narrow.
+     *
+     * **The id is still not returned** — it would be a handle for guessing at
+     * other people's applications. What comes back is the claim ticket: an
+     * opaque secret that resolves to this row and nothing else on the
+     * platform.
+     */
+    expect($response->json('data.id'))->toBeNull();
+    expect($response->json('data.upload_token'))->toBeString()->toHaveLength(64);
+    expect($response->json('data.upload_expires_at'))->toBeString();
+
+    // Stored hashed, never in the clear — a database dump must not hand out
+    // the ability to overwrite anybody's documents.
+    expect($application->upload_token_hash)
+        ->toBe(hash('sha256', $response->json('data.upload_token')));
 });
 
 /**
- * ADR-0027 §1: an application is not an account. Mutation check — make the
- * service create a `users` row at submission and this fails.
+ * **This test used to assert the opposite, and the reversal is ADR-0057 §5.**
+ *
+ * ADR-0027 §1 refused an account at submission so that no authorisation path
+ * would have to learn a third state: *"the cost of missing one is a login
+ * that works before anybody approved it."* An applicant now gets one, because
+ * a refused document is unanswerable without a way back in.
+ *
+ * **The objection is answered rather than dropped, and this is where.** There
+ * is no third `UserStatus` — the account is `active` and inert, because
+ * authority comes from `drivers.user_id` and approval is what creates it.
+ * `AccessLevel::APPLICANT` keeps every scoped read at `1 = 0`.
+ *
+ * So the guarantee worth testing is no longer "nothing can sign in". It is
+ * **"it signs in and reaches nothing of anybody else's"** — their own
+ * application is theirs, and everything else must refuse or come back empty.
+ * A stronger claim than the old one, and a weaker position to be wrong about — hence the walk over every route a
+ * driver token is scoped to, read from `ClientScope` rather than copied, so
+ * a route added later is covered by a test written today.
  */
-it('creates no account, no driver, and nothing that can sign in', function () {
+it('creates an account that signs in and reaches nothing', function () {
     $this->postJson('/api/v1/driver-applications', applicationPayload())->assertStatus(202);
 
-    expect(User::query()->where('email', 'musa.applies@kangaruride.test')->exists())->toBeFalse();
-    expect(Driver::query()->where('email', 'musa.applies@kangaruride.test')->exists())->toBeFalse();
+    $applicant = User::query()->where('email', 'musa.applies@kangaruride.test')->sole();
 
-    $this->postJson('/api/v1/auth/login', [
+    // Declared, never inferred (ADR-0055 §4). The two nulls it shares with
+    // head office are why the column has to say which.
+    expect($applicant->access_level)->toBe(AccessLevel::APPLICANT);
+    expect($applicant->operator_id)->toBeNull();
+
+    // No driver profile, which is the thing that grants.
+    expect(Driver::query()->where('user_id', $applicant->getKey())->exists())->toBeFalse();
+
+    $token = $this->postJson('/api/v1/auth/login', [
         'email' => 'musa.applies@kangaruride.test',
         'password' => 'a-password-i-chose',
-    ])->assertStatus(401);
+    ])->assertOk()->json('data.token');
+
+    expect($token)->toBeString();
+
+    $scoped = ClientScope::routesFor(ClientScope::DRIVER);
+    $checked = 0;
+
+    foreach (Route::getRoutes() as $route) {
+        $name = $route->getName();
+
+        // The session verbs stay usable, or the account is not a login at
+        // all. Everything else must refuse.
+        if ($name === null || ! in_array($name, $scoped, true) || str_starts_with($name, 'auth.')) {
+            continue;
+        }
+
+        // Only the routes needing no path parameter — one with an id would be
+        // asserting about a missing record rather than a missing driver.
+        if (str_contains($route->uri(), '{')) {
+            continue;
+        }
+
+        $method = collect($route->methods())->first(fn ($verb) => $verb !== 'HEAD');
+
+        $response = $this->actingAs($applicant, 'sanctum')->json($method, '/'.$route->uri());
+        $status = $response->status();
+
+        /*
+            **A 200 carrying nothing is not a leak, and demanding a 4xx here
+            was the wrong claim.** The guarantee is "reaches nothing", and a
+            list scoped to empty by `InheritsKangaruDefaults` — which answers
+            `1 = 0` for an applicant — satisfies it exactly. `GET /zones` is
+            the real case: reference data, correctly scoped, returning `[]`.
+            Refusing it outright would be a different and worse design, since
+            the same endpoint has to work for everybody else.
+        */
+        if ($status < 400) {
+            $data = $response->json('data');
+
+            /*
+                A 200 is allowed only where it can carry nothing of anybody's.
+
+                Two routes answer an applicant successfully and both are
+                correct, so they are named with their reason rather than
+                letting an empty-check quietly cover them:
+
+                - `zones.index` is reference data, scoped by
+                  `InheritsKangaruDefaults` to `1 = 0` for an applicant. It
+                  returns `[]`. Refusing it outright would be worse design —
+                  the same endpoint serves everybody.
+                - `notifications.read-all` marks the applicant's own
+                  notifications read, of which they have none. It acts on
+                  nothing and reports that.
+
+                **A third one appearing here is the finding.** Adding a name
+                to this list is a decision somebody has to write a reason
+                beside, which is the point.
+            */
+            $harmless = [
+                'zones.index',
+                'notifications.read-all',
+
+                // **Their own application, and the point of having an
+                // account at all** (ADR-0057 §5). Resolved from
+                // `$request->user()` with no id in the path or the body, so
+                // there is no parameter to change to reach somebody else's —
+                // the question "may I?" cannot be asked.
+                'me.application.documents.index',
+                'me.application.documents.store',
+            ];
+
+            $this->assertTrue(
+                $data === [] || $data === null || in_array($name, $harmless, true),
+                "An applicant reached [{$method} /{$route->uri()}] ({$name}) and it returned data. "
+                .'Authority on this platform is the `drivers.user_id` link, not the role '
+                .'(ADR-0057 §5): a route a driver can read must be empty for an applicant, or '
+                .'be listed here with a reason it cannot carry anybody\'s data.'
+            );
+
+            $checked++;
+
+            continue;
+        }
+
+        // Never a success. *Which* refusal differs by controller — 403 from a
+        // policy, 404 from "not a driver", 422 from a form request that ran
+        // first — and pinning one would make this a test about error codes
+        // rather than about authority.
+        //
+        expect($status)->toBeGreaterThanOrEqual(400);
+
+        $checked++;
+    }
+
+    // The walk has to have walked something: a filter that quietly excluded
+    // every route would leave this green and worthless.
+    expect($checked)->toBeGreaterThan(3);
 });
 
 it('stores the password as a hash, never as what was typed', function () {
@@ -87,6 +225,20 @@ it('answers identically whether or not the email is already known', function () 
     $fresh->assertStatus(202);
     $duplicate->assertStatus(202);
     expect($duplicate->json('message'))->toBe($fresh->json('message'));
+
+    /**
+     * ADR-0048 §4 added a body to this response and must not have added an
+     * oracle with it.
+     *
+     * The **shape** is what has to match, not the values: a claim ticket is
+     * random by construction, so two identical tickets would be the bug. What
+     * would leak is a known email getting no ticket, or a different set of
+     * keys — either of which answers "does this person already drive for
+     * KangaruRide" to anybody who cares to ask twice.
+     */
+    expect(array_keys($duplicate->json('data')))->toBe(array_keys($fresh->json('data')));
+    expect($duplicate->json('data.upload_token'))->toBeString()->toHaveLength(64);
+    expect($duplicate->json('data.upload_token'))->not->toBe($fresh->json('data.upload_token'));
 });
 
 it('refuses an application without affirmative consent', function () {

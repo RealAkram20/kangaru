@@ -75,6 +75,101 @@ abstract class KangaruNotification extends LaravelNotification implements Should
     abstract public function context(): array;
 
     /**
+     * How this message should be *delivered* by push, as opposed to what it
+     * says (ADR-0046 §2).
+     *
+     * Empty for almost everything, and that is the intended answer: a
+     * notification with nothing to add here gets Expo's defaults, which is a
+     * quiet entry in the shade. Overriding it is a claim that this particular
+     * message earns an interruption, which AGENTS.md asks for an argument for
+     * rather than a use case.
+     *
+     * ## Why this lives on the notification and not in the channel
+     *
+     * `ExpoPushChannel` deliberately knows nothing about dispatch, bookings or
+     * trips — it is a transport, and its docblock argues that keeping it that
+     * way is what makes going direct to FCM and APNs a second implementation
+     * rather than a rewrite. A `match` on notification type inside it would
+     * put dispatch's ringtone, dispatch's expiry and dispatch's Android
+     * channel id into the one class that must stay ignorant of them.
+     *
+     * ## The keys that are honoured
+     *
+     * Whatever Expo's push API accepts, merged over the ticket. In practice:
+     * `channelId` (Android — which notification channel, and therefore which
+     * sound and importance), `sound`, `priority`, `ttl`, `categoryId`,
+     * `interruptionLevel` (iOS), `collapseId`, `_contentAvailable`.
+     *
+     * **`ttl` is the one worth naming.** Expo's default keeps a message
+     * deliverable long after the thing it describes has gone, so a push held
+     * by FCM while a handset was in a dead zone arrives later and rings for a
+     * job that expired. Anything with a clock on it should set it.
+     *
+     * @return array<string, mixed>
+     */
+    public function pushOptions(): array
+    {
+        return [];
+    }
+
+    /**
+     * Whether this push should reach the app without showing anything
+     * (ADR-0046 §4).
+     *
+     * False for everything except a withdrawal, and it should stay that way:
+     * a silent push is a message that spends a driver's battery and their
+     * data to say something they are never told, so it has to be earning its
+     * place by *acting* rather than by informing.
+     *
+     * When true, `ExpoPushChannel` sends `data` with no title and no body,
+     * which is what makes the delivery silent — Expo decides on the presence
+     * of those fields, not on a flag.
+     *
+     * **It is not reliable when the app has been killed**, and must never be
+     * the only path to anything. Android does not hand a data-only message to
+     * a terminated process (expo/expo#38223), so this is a message to a
+     * *running* app. That is exactly the case a withdrawal needs — the app is
+     * running, because it is ringing — and it is why nothing may depend on it.
+     */
+    public function pushIsSilent(): bool
+    {
+        return false;
+    }
+
+    /**
+     * Whether a push that reached nobody is worth telling the office about.
+     *
+     * False for everything except a job offer, and the default has to be false
+     * because **a recipient with no registered device is the ordinary state of
+     * this platform**: every staff account, every driver who declined the OS
+     * permission, everyone who has never installed the app.
+     * `ExpoPushChannel` says so at its own guard, and logging there
+     * unconditionally would produce a warning per notification per office
+     * worker, which is a stream nobody reads and therefore a stream that hides
+     * the one line that matters.
+     *
+     * **The one line that matters is this, and it went unlogged for the whole
+     * life of the feature.** A driver who is on duty, whose handset has no push
+     * token, is a driver the matcher is about to offer a job to and who will
+     * never hear it. That is not a quiet normality — it is a passenger on a
+     * kerb. `device_tokens` was empty for the entire fleet and nothing anywhere
+     * said so, because the only code that could have noticed was documented as
+     * having nothing worth saying.
+     *
+     * ## Why the notification answers this and not the channel
+     *
+     * Same argument `pushOptions()` makes, and it is the one that keeps
+     * `ExpoPushChannel` a transport: the channel must not learn what dispatch
+     * is, what duty is, or which types have a passenger waiting at the end of
+     * them. It asks the message *"does it matter that this went nowhere?"* and
+     * the message — which knows what it is — answers.
+     */
+    public function pushIsCritical(): bool
+    {
+        return false;
+    }
+
+    /**
      * Channels for this type, from configuration.
      *
      * Config decides, the enum only supplies the fallback (AGENTS.md

@@ -33,12 +33,15 @@ class GoogleDirectionsProvider implements RouteProvider
 
     public function __construct(private readonly SettingsService $settings) {}
 
-    public function route(
-        float $fromLatitude,
-        float $fromLongitude,
-        float $toLatitude,
-        float $toLongitude,
-    ): ?Route {
+    /**
+     * @param  array<int, array{float, float}>  $points
+     */
+    public function via(array $points): ?Route
+    {
+        if (count($points) < 2) {
+            return null;
+        }
+
         // Both halves: the switch and the credential. `routingConfigured()`
         // is the one place that knows, because `all()` never returns the key.
         if (! $this->settings->routingConfigured()) {
@@ -51,18 +54,38 @@ class GoogleDirectionsProvider implements RouteProvider
             return null;
         }
 
+        // Indexed off a list rather than `array_shift`/`array_pop`, which
+        // return a nullable even when the count has just been checked.
+        $points = array_values($points);
+        $origin = $points[0];
+        $destination = $points[count($points) - 1];
+        $waypoints = array_slice($points, 1, -1);
+
+        $query = [
+            'origin' => "{$origin[0]},{$origin[1]}",
+            'destination' => "{$destination[0]},{$destination[1]}",
+            // Driving, and departing now — which is what makes the
+            // duration a traffic prediction rather than a free-flow
+            // figure. Without it Google returns the empty-road time,
+            // which in Kampala at five o'clock is fiction.
+            'mode' => 'driving',
+            'departure_time' => 'now',
+            'key' => $key,
+        ];
+
+        if ($waypoints !== []) {
+            // **No `optimize:true` prefix, deliberately.** Google will happily
+            // reorder waypoints to shorten the drive and ADR-0045 §7 refuses
+            // it: a cash run's sequence is decided by which ATM is empty and
+            // which is safe at which hour, not by total kilometres.
+            $query['waypoints'] = implode('|', array_map(
+                static fn (array $point) => "{$point[0]},{$point[1]}",
+                $waypoints,
+            ));
+        }
+
         try {
-            $response = Http::timeout(6)->get(self::ENDPOINT, [
-                'origin' => "{$fromLatitude},{$fromLongitude}",
-                'destination' => "{$toLatitude},{$toLongitude}",
-                // Driving, and departing now — which is what makes the
-                // duration a traffic prediction rather than a free-flow
-                // figure. Without it Google returns the empty-road time,
-                // which in Kampala at five o'clock is fiction.
-                'mode' => 'driving',
-                'departure_time' => 'now',
-                'key' => $key,
-            ]);
+            $response = Http::timeout(6)->get(self::ENDPOINT, $query);
         } catch (\Throwable $e) {
             // A timeout or a DNS failure. The map falls back; the trip does
             // not care.
@@ -93,30 +116,64 @@ class GoogleDirectionsProvider implements RouteProvider
             return null;
         }
 
-        $leg = $body['routes'][0]['legs'][0] ?? null;
+        $legs = $body['routes'][0]['legs'] ?? null;
         $polyline = $body['routes'][0]['overview_polyline']['points'] ?? null;
 
-        if (! is_array($leg) || ! is_string($polyline) || $polyline === '') {
+        if (! is_array($legs) || $legs === [] || ! is_string($polyline) || $polyline === '') {
             return null;
         }
 
-        $metres = $leg['distance']['value'] ?? null;
+        $metres = 0.0;
 
-        if (! is_numeric($metres)) {
-            return null;
+        foreach ($legs as $leg) {
+            $value = is_array($leg) ? ($leg['distance']['value'] ?? null) : null;
+
+            // One unmeasurable leg makes the whole circuit unmeasurable.
+            // Summing the rest would state a distance shorter than the drive,
+            // which is the understatement ADR-0031 exists to stop.
+            if (! is_numeric($value)) {
+                return null;
+            }
+
+            $metres += (float) $value;
         }
 
         return new Route(
             polyline: $polyline,
-            distanceKm: (float) $metres / 1000,
-            // `duration_in_traffic` when the departure time bought us one,
-            // falling back to the free-flow figure. **Null if neither is
-            // there** — ADR-0031 §6 forbids deriving one, and a missing
-            // duration means the screen shows no minutes rather than minutes
-            // somebody made up.
-            durationSeconds: $this->seconds($leg),
+            distanceKm: $metres / 1000,
+            durationSeconds: $this->totalSeconds($legs),
             provider: 'google',
         );
+    }
+
+    /**
+     * The circuit's duration, or null if any leg has none.
+     *
+     * ADR-0031 §6 forbids deriving a duration, and a partial sum is a
+     * derivation wearing a total's clothes: it would read as "the whole run"
+     * while describing six legs of seven.
+     *
+     * @param  array<int, mixed>  $legs
+     */
+    private function totalSeconds(array $legs): ?int
+    {
+        $total = 0;
+
+        foreach ($legs as $leg) {
+            if (! is_array($leg)) {
+                return null;
+            }
+
+            $seconds = $this->seconds($leg);
+
+            if ($seconds === null) {
+                return null;
+            }
+
+            $total += $seconds;
+        }
+
+        return $total;
     }
 
     /**

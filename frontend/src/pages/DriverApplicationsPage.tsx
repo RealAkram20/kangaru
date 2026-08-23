@@ -8,10 +8,12 @@ import { Badge } from '../components/core/Badge'
 import { Button } from '../components/core/Button'
 import { Card } from '../components/core/Card'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
+import { ApplicationDocuments } from './ApplicationDocuments'
 import { Alert } from '../components/feedback/Alert'
 import { Dialog } from '../components/feedback/Dialog'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { PageFill } from '../components/layout/PageFill'
 import { Select } from '../components/forms/Select'
 import { Textarea } from '../components/forms/Textarea'
 
@@ -68,13 +70,14 @@ export function DriverApplicationsPage() {
 
   const columns: DataColumn<DriverApplication>[] = useMemo(
     () => [
-      { key: 'name', header: 'Name', sortable: true },
+      { key: 'name', card: 'title', header: 'Name', sortable: true },
       // The number the office actually rings: ADR-0027 §6 gives an applicant
       // no way to check their own status, so this is how they hear anything.
-      { key: 'phone', header: 'Phone' },
-      { key: 'email', header: 'Email' },
+      { key: 'phone', card: 'meta', header: 'Phone' },
+      { key: 'email', card: 'meta', header: 'Email' },
       {
         key: 'created_at',
+        card: 'meta',
         header: 'Applied',
         sortable: true,
         // The raw ISO string is what the API sends and is unreadable in a
@@ -83,11 +86,13 @@ export function DriverApplicationsPage() {
       },
       {
         key: 'status',
+        card: 'status',
         header: 'Status',
         render: (row) => <Badge tone={STATUS_TONE[row.status]}>{row.status_label}</Badge>,
       },
       {
         key: 'id',
+        card: 'meta',
         header: '',
         render: (row) =>
           row.status === 'pending' ? (
@@ -107,8 +112,10 @@ export function DriverApplicationsPage() {
   )
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+    <PageFill>
+      <PageFill.Flex>
       <Card
+        fill
         title="Driver applications"
         subtitle={
           applications === null
@@ -138,6 +145,7 @@ export function DriverApplicationsPage() {
           <DataTable<DriverApplication>
             columns={columns}
             rows={applications ?? []}
+            fill
             emptyMessage={
               applications === null
                 ? 'Loading…'
@@ -148,6 +156,7 @@ export function DriverApplicationsPage() {
           />
         )}
       </Card>
+      </PageFill.Flex>
 
       {deciding && (
         <DecisionDialog
@@ -159,7 +168,7 @@ export function DriverApplicationsPage() {
           }}
         />
       )}
-    </div>
+    </PageFill>
   )
 }
 
@@ -296,6 +305,15 @@ function DecisionDialog({
           <dt style={{ color: 'var(--text-secondary)' }}>Terms accepted</dt>
           <dd style={{ margin: 0 }}>{formatTimestamp(application.terms_accepted_at)}</dd>
         </dl>
+
+        {/*
+          Above the licence-number field on purpose. That field's hint reads
+          "From the licence you checked, not the applicant's form" — an
+          instruction the console gave with no way to follow it, because
+          nothing here could show the licence. The evidence now sits directly
+          above the box that is transcribed from it.
+        */}
+        <ApplicationDocuments applicationId={application.id} />
 
         {mode === 'approve' ? (
           <>

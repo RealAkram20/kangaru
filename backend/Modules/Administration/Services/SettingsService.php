@@ -2,6 +2,7 @@
 
 namespace Modules\Administration\Services;
 
+use App\Models\Operator;
 use Illuminate\Contracts\Mail\Mailer;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
@@ -132,6 +133,18 @@ This is a short-form notice. Ask the office for the full safety policy.",
             'google_client_ids' => ['default' => '', 'rules' => ['nullable', 'string', 'max:2000'], 'public' => true],
             'facebook_app_id' => ['default' => '', 'rules' => ['nullable', 'string', 'max:100'], 'public' => true],
             'facebook_app_secret' => ['default' => null, 'rules' => ['nullable', 'string', 'max:255'], 'secret' => true],
+            // ADR-0061. The platform-wide half of the second-factor
+            // requirement; the other half is `roles.requires_mfa`.
+            //
+            // **Deliberately not public.** Every other flag in this group
+            // is, because the login screen has to know which buttons to
+            // draw. This one tells an anonymous visitor whether the
+            // platform's second factor is switched off, which is a
+            // sentence worth saying to nobody.
+            //
+            // Default true: a fresh installation behaves exactly as it
+            // did before this setting existed (AGENTS.md Security).
+            'mfa_enforced' => ['default' => true, 'rules' => ['required', 'boolean']],
         ],
         'regional' => [
             'currency' => ['default' => 'UGX', 'rules' => ['required', 'string', 'size:3'], 'public' => true],
@@ -274,6 +287,59 @@ This is a short-form notice. Ask the office for the full safety policy.",
          * existing deployment behaves identically until somebody changes them.
          */
         'tracking' => [
+            /*
+             * Whether drivers record opening and closing odometer readings
+             * at all (ADR-0047).
+             *
+             * **On by default, and turning it off has a contractual cost the
+             * settings screen states in words.** PROJECT.md lists "opening and
+             * closing odometer (mileage) readings" as the Bank's **acceptance
+             * criterion #4** for the Phase 1 MVP. A deployment that turns this
+             * off stops producing that figure for every trip, corporate ones
+             * included. The owner asked for a platform-wide switch knowing
+             * that, having been offered a walk-in-only version; the honest
+             * implementation is therefore to make it work and to make the
+             * consequence impossible to miss, not to quietly narrow it.
+             *
+             * **`public`, because the Driver's Application renders from it.**
+             * With the odometer off, Start Trip and Complete Trip are single
+             * taps and the odometer screens leave the flow entirely — a field
+             * that looks required and is not is worse than no field.
+             *
+             * When this is off the billable distance comes from the recorded
+             * GPS trace, bounded by what the road allows — see
+             * `TripDistanceResolver`, which is where the real design of this
+             * feature lives. Nothing invents a distance: a trip with no usable
+             * trace completes with a null distance and a flag, because a fare
+             * guessed from nothing is worse than a fare somebody has to look
+             * at.
+             */
+            'odometer_enabled' => [
+                'default' => true,
+                'rules' => ['required', 'boolean'],
+                'public' => true,
+            ],
+            /*
+             * How far past the road route a measured trace may run before it
+             * stops being believable, as a percentage (ADR-0047).
+             *
+             * Only consulted when `odometer_enabled` is off, and it is the
+             * ceiling that makes a GPS-priced fare safe to bill. Real drives
+             * genuinely run longer than the route: traffic diversions, a
+             * one-way system, a passenger asking for a stop. Thirty percent
+             * covers that comfortably while still catching the failure that
+             * matters — a jittery or spoofed trace inflating a fare with
+             * nothing to check it against.
+             *
+             * A trace over the ceiling is **billed at the ceiling and
+             * flagged**, never refused: the passenger is standing at the kerb
+             * and the driver did drive somewhere. The flag is what a human
+             * looks at.
+             */
+            'trace_route_ceiling_percent' => [
+                'default' => 30,
+                'rules' => ['required', 'numeric', 'min:0', 'max:200'],
+            ],
             /*
              * PROJECT.md: "variances beyond a configurable threshold are
              * flagged for review." This is that threshold, as a percentage of
@@ -619,9 +685,70 @@ This is a short-form notice. Ask the office for the full safety policy.",
         ];
     }
 
+    /**
+     * Settings groups that belong to Kangaru and to no fleet (ADR-0059).
+     *
+     * A fleet's settings write is already scoped to that fleet — `setGroup`
+     * resolves `operator_id` from the `AccessContext`, so nobody can change
+     * Kangaru's own defaults by accident. That makes this an **information
+     * architecture** rule rather than a security one, and it is worth being
+     * precise about which: the danger is not a leak, it is a fleet being
+     * offered controls that make no sense for it and quietly overriding the
+     * platform's identity for its own console.
+     *
+     * The four below are Kangaru's copy of itself:
+     *
+     * - `branding` — the app's name, tagline and marks. "One app, one brand,
+     *   for now" is settled (`docs/platform-plan.md` §7), so a fleet
+     *   rebranding KangaruRide is a feature nobody decided to build.
+     * - `legal` — the terms, privacy notice and safety page a member of the
+     *   public reads before handing over their data. Kangaru is the
+     *   controller of that relationship, not the fleet that drove the car.
+     * - `ordering` — the public order page, which is Kangaru's walk-in
+     *   economy end to end.
+     * - `auth` — how people sign in, and since ADR-0061 whether a second
+     *   factor is asked for at all. §5 of that decision already refuses a
+     *   fleet the per-role switch; leaving them the group it lives in would
+     *   have been the same control by another door.
+     *
+     * Everything else — regional formats, booking rules, distance checks, the
+     * driver app, maps, mail, SMS, payments — is genuinely a fleet's to set,
+     * and a fleet overriding those is the whole point of `F1`.
+     *
+     * @var list<string>
+     */
+    public const KANGARU_ONLY_GROUPS = ['branding', 'legal', 'ordering', 'auth'];
+
     public function get(string $group, string $key): mixed
     {
         return $this->all()[$group][$key] ?? null;
+    }
+
+    /**
+     * Whether the platform is asking for a second factor at all (ADR-0061).
+     *
+     * **Only `User::requiresMfa()` may call this.** It is the platform-wide
+     * half of a two-part rule, and a caller that read it alongside
+     * `roles.requires_mfa` and combined them itself would be a second copy of
+     * a decision that has already drifted once — a person in the half-state
+     * signs in with a 200 and a token and is then refused every route but
+     * five, which resembles nothing.
+     *
+     * A missing row means **true**, and the guarantee is the catalogue default
+     * above rather than the null-coalesce below: `all()` fills every key from
+     * the catalogue, so `get()` returning null is already unreachable. The
+     * coalesce stays as cheap defence against `all()` changing shape, and it
+     * is deliberately **not** what the test pins — mutating it changes
+     * nothing, which is how it was found to be unreachable.
+     *
+     * Either way the failure direction is the same: a settings table that
+     * cannot be read must never be a way to switch authentication off.
+     */
+    public function mfaEnforced(): bool
+    {
+        $value = $this->get('auth', 'mfa_enforced');
+
+        return $value === null ? true : (bool) $value;
     }
 
     /**
@@ -711,6 +838,8 @@ This is a short-form notice. Ask the office for the full safety policy.",
             throw ValidationException::withMessages(['group' => ["Unknown settings group '$group'."]]);
         }
 
+        $operatorId = Setting::actingFleetId();
+
         foreach ($values as $key => $value) {
             $spec = $keys[$key] ?? null;
 
@@ -718,8 +847,17 @@ This is a short-form notice. Ask the office for the full safety policy.",
                 throw ValidationException::withMessages([$key => ["Unknown setting '$group.$key'."]]);
             }
 
+            // A fleet editing a setting writes **its own override**, beside
+            // Kangaru's default rather than over it (ADR-0055 §5). Reads
+            // resolve the override first, so the fleet sees what it chose and
+            // every other fleet keeps the default.
+            //
+            // Kangaru itself has a null fleet here, so head office editing a
+            // setting edits the default — which is exactly the asymmetry the
+            // ADR asks for: one party can change what everybody inherits, and
+            // it is not a fleet.
             Setting::query()->updateOrCreate(
-                ['group' => $group, 'key' => $key],
+                ['operator_id' => $operatorId, 'group' => $group, 'key' => $key],
                 [
                     'value' => ($spec['secret'] ?? false) && $value !== null
                         ? Crypt::encryptString((string) $value)
@@ -729,7 +867,23 @@ This is a short-form notice. Ask the office for the full safety policy.",
             );
         }
 
-        Cache::forget(self::CACHE_KEY);
+        Cache::forget(self::cacheKeyFor($operatorId));
+
+        // A change to a **default** changes what every fleet inherits, so each
+        // fleet's entry is stale too — and forgetting only the writer's key
+        // would leave them serving the old value indefinitely, because these
+        // entries are remembered forever.
+        //
+        // Enumerated rather than tagged: the cache driver here is `database`,
+        // which does not support tags, and a fleet count that makes this loop
+        // expensive is a fleet count this platform does not have. It cannot
+        // fire today — F0 created no Kangaru accounts, so nothing can reach
+        // this branch — which is precisely why it is written now rather than
+        // discovered later by a fleet reading a price nobody set.
+        if ($operatorId === null) {
+            Operator::query()->pluck('id')
+                ->each(fn ($id) => Cache::forget(self::cacheKeyFor((int) $id)));
+        }
     }
 
     /**
@@ -740,7 +894,17 @@ This is a short-form notice. Ask the office for the full safety policy.",
      */
     public function secret(string $group, string $key): ?string
     {
-        $row = Setting::query()->where(['group' => $group, 'key' => $key])->first();
+        // Resolved the same way `stored()` resolves a value: the acting
+        // fleet's own row first, Kangaru's default behind it. Ordering by
+        // `operator_id` descending puts the fleet's row ahead of the null,
+        // because a secret a fleet has set is the one that fleet's mailer or
+        // gateway must use — reading everybody's default here would sign a
+        // fleet's traffic with somebody else's key.
+        $row = Setting::query()
+            ->visibleToFleet(Setting::actingFleetId())
+            ->where(['group' => $group, 'key' => $key])
+            ->orderByDesc('operator_id')
+            ->first();
 
         if ($row === null || ! $row->is_secret || $row->value === null) {
             return null;
@@ -758,9 +922,24 @@ This is a short-form notice. Ask the office for the full safety policy.",
      */
     private function stored(): array
     {
+        $operatorId = Setting::actingFleetId();
+
         /** @var array{values: array<string, mixed>, secrets: array<int, string>} */
-        return Cache::rememberForever(self::CACHE_KEY, function () {
-            $rows = Setting::query()->get();
+        return Cache::rememberForever(self::cacheKeyFor($operatorId), function () use ($operatorId) {
+            // Kangaru's defaults plus this fleet's overrides, with the fleet's
+            // own row winning (ADR-0055 §5).
+            //
+            // The sort is what implements "winning" and it is doing real work:
+            // `keyBy` keeps the **last** row it sees for a repeated key, so
+            // putting the defaults first means a fleet's row overwrites the
+            // default it shadows. Reverse the sort and every override silently
+            // stops applying — which is why `FleetReferenceDataTest` asserts
+            // the resolved value rather than the presence of two rows.
+            $rows = Setting::query()
+                ->visibleToFleet($operatorId)
+                ->get()
+                ->sortBy(fn (Setting $s) => $s->operator_id === null ? 0 : 1)
+                ->keyBy(fn (Setting $s) => "{$s->group}.{$s->key}");
 
             return [
                 'values' => $rows->where('is_secret', false)
@@ -773,5 +952,19 @@ This is a short-form notice. Ask the office for the full safety policy.",
                     ->all(),
             ];
         });
+    }
+
+    /**
+     * One cache entry per fleet, because one entry for everybody would serve
+     * Shanitah's overrides to every other fleet (ADR-0055 §5).
+     *
+     * Follows ADR-0001's own convention for the client axis — *"cache keys are
+     * prefixed `tenant:{id}:`"* — one level up. Kangaru gets a named key rather
+     * than a bare `settings.all`, so a key that resolves to the defaults is
+     * visibly the defaults and not a fleet's entry somebody forgot to scope.
+     */
+    private static function cacheKeyFor(?int $operatorId): string
+    {
+        return self::CACHE_KEY.':'.($operatorId === null ? 'kangaru' : "operator:{$operatorId}");
     }
 }

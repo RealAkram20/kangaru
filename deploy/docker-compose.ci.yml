@@ -1,0 +1,12 @@
+# CI overlay for docker-compose.yml (W1-a). Publishes the two HTTP services
+# on the runner so deploy/smoke.sh can curl them. Nothing else differs from
+# production — that is the point of running the same file.
+#
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.ci.yml ...
+services:
+  app:
+    ports:
+      - "18080:8080"
+  web:
+    ports:
+      - "18081:80"

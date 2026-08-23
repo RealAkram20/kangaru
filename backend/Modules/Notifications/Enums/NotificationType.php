@@ -25,6 +25,16 @@ enum NotificationType: string
     case BOOKING_APPROVED = 'booking.approved';
     case BOOKING_REJECTED = 'booking.rejected';
     case REPORT_EXPORT_READY = 'report.export.ready';
+
+    /**
+     * The three moments after approval that the requester of a corporate
+     * booking is told about (TripProgressNotification): a car and driver
+     * exist, the driver is at the kerb, the trip is done — the last with
+     * the six data points the client is billed by.
+     */
+    case TRIP_ASSIGNED = 'trip.assigned';
+    case TRIP_DRIVER_ARRIVED = 'trip.driver_arrived';
+    case TRIP_COMPLETED = 'trip.completed';
     case ORDER_REQUEST_RECEIVED = 'order_request.received';
 
     /**
@@ -36,6 +46,30 @@ enum NotificationType: string
      * here reaches somebody already sitting at a screen.
      */
     case TRIP_OFFERED = 'trip.offered';
+
+    /**
+     * That job is gone — stop ringing (ADR-0046 §4).
+     *
+     * **The only silent notification in this platform**, and the only one
+     * whose entire purpose is to *undo* an interruption rather than cause
+     * one. It shows nothing and says nothing; the app reads `offer_id` and
+     * stops the ringtone.
+     *
+     * ## Why it is needed at all
+     *
+     * The handset already stops on its own: `Ringtone` arms a deadline from
+     * the offer's own window, so the worst case without this is silence a
+     * couple of seconds after the offer would have expired anyway. That is
+     * correct but slow. With a forty-five second window it means a phone
+     * ringing in a driver's pocket for the better part of a minute over a
+     * ride the passenger has already cancelled — and a driver who pulls over
+     * for that twice stops trusting the sound.
+     *
+     * So this is an **accelerator, not the mechanism** — the same shape
+     * ADR-0024 §5 gives the expiry command it sits beside. The guarantee is
+     * the clock on the device; this makes the common case immediate.
+     */
+    case TRIP_OFFER_WITHDRAWN = 'trip.offer_withdrawn';
 
     /**
      * What the office decided about closing a driver's account (ADR-0043 §4).
@@ -59,16 +93,79 @@ enum NotificationType: string
      */
     case DRIVER_SUPPORT_ANSWERED = 'driver.support.answered';
 
+    /**
+     * What the office decided about one of a driver's documents (ADR-0052).
+     *
+     * **The argument this enum demands, and it is AGENTS.md's own:** *Document
+     * Expiring* is on the prescriptive list at the top of this file, and a
+     * document being refused is the same obligation arriving sooner. A driver
+     * whose licence the office could not accept is unverified and does not
+     * know it.
+     *
+     * ADR-0033 §6 refused this in 2026-08 on consistency grounds — settlements
+     * and ratings had no notification either, so adding one here would have
+     * been an outlier. Two cases above (`DRIVER_CLOSURE_ANSWERED`,
+     * `DRIVER_SUPPORT_ANSWERED`) have since made the opposite true: documents
+     * were the last office decision a driver could only find by looking.
+     */
+    case DRIVER_DOCUMENT_REVIEWED = 'driver.document.reviewed';
+
+    /**
+     * One of an *applicant's* documents was refused (ADR-0057 §3).
+     *
+     * **Mail only, and not by preference.** The recipient holds no account and
+     * no registered device by construction (ADR-0027 §1), so there is no row
+     * to write a database notification against and nothing to push to. This is
+     * delivered to an address with `Notification::route('mail', ...)`, and the
+     * database channel would fail on a notifiable that is not a model.
+     *
+     * The message carries a **fresh claim ticket**, which is the whole reason
+     * it exists: a refusal the applicant cannot answer costs them the job
+     * while they wait for a call. ADR-0057 §3 records why that is not the
+     * enumeration oracle ADR-0027 §5 refuses — the trigger is a signed-in
+     * reviewer, not a stranger.
+     */
+    case DRIVER_APPLICATION_DOCUMENT_REJECTED = 'driver_application.document.rejected';
+
+    /**
+     * Kangaru support held this person's account for a while (ADR-0056 §5).
+     *
+     * **The half of the disclosure the person actually reads.** Their audit
+     * trail already records it, and a trail nobody is told to look at deters
+     * nothing — ADR-0056 exists because an admin resetting a password is *"the
+     * one act an audit trail cannot tell apart from impersonation"*, and the
+     * answer to that is only complete when the person on the other end knows
+     * it happened.
+     *
+     * Sent to **individuals**, which the ADR names as drivers and walk-in
+     * customers. A client's transport officer and a fleet's dispatcher act in
+     * a corporate capacity and their organisation reads the same event in its
+     * own audit log; a driver's account is their livelihood and they have no
+     * compliance office reading anything on their behalf.
+     *
+     * Mail as well as the in-app row, and the reason is the whole point: a
+     * notice about somebody else using your account has to reach you
+     * **without** you signing in to the thing they were using.
+     */
+    case ACCOUNT_ACCESSED_BY_SUPPORT = 'account.accessed_by_support';
+
     public function label(): string
     {
         return match ($this) {
             self::BOOKING_APPROVED => 'Booking approved',
             self::BOOKING_REJECTED => 'Booking rejected',
             self::REPORT_EXPORT_READY => 'Export ready',
+            self::TRIP_ASSIGNED => 'Vehicle assigned',
+            self::TRIP_DRIVER_ARRIVED => 'Driver arrived',
+            self::TRIP_COMPLETED => 'Trip completed',
             self::ORDER_REQUEST_RECEIVED => 'Walk-in order received',
             self::TRIP_OFFERED => 'New job',
+            self::TRIP_OFFER_WITHDRAWN => 'Job withdrawn',
             self::DRIVER_CLOSURE_ANSWERED => 'Account closure',
             self::DRIVER_SUPPORT_ANSWERED => 'Report answered',
+            self::DRIVER_DOCUMENT_REVIEWED => 'Document checked',
+            self::DRIVER_APPLICATION_DOCUMENT_REJECTED => 'Document needs resending',
+            self::ACCOUNT_ACCESSED_BY_SUPPORT => 'Support opened your account',
         };
     }
 
@@ -92,6 +189,12 @@ enum NotificationType: string
                 NotificationChannel::MAIL,
             ],
             self::REPORT_EXPORT_READY => [NotificationChannel::DATABASE],
+            // In-app and mail, like a booking decision: the requester may
+            // not have the console open when their car arrives.
+            self::TRIP_ASSIGNED, self::TRIP_DRIVER_ARRIVED, self::TRIP_COMPLETED => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::MAIL,
+            ],
             // In-app only: the desk lives in the dashboard, and a walk-in
             // request emailed to every dispatcher is inbox noise, not
             // dispatch. Config can widen it per deployment.
@@ -101,12 +204,27 @@ enum NotificationType: string
             // ADR-0025 §3 makes push best-effort, and a driver who declined
             // the OS permission must still be told something.
             //
-            // Never mail: an offer expires in fifteen seconds, and an email
-            // about one would arrive as an apology.
+            // Never mail: an offer expires in under a minute
+            // (`dispatch.offer_ttl_seconds`), and an email about one would
+            // arrive as an apology.
             self::TRIP_OFFERED => [
                 NotificationChannel::PUSH,
                 NotificationChannel::DATABASE,
             ],
+            /*
+             * **Push alone, and the absence of `DATABASE` is the point.**
+             *
+             * Every other type here writes an in-app row because a driver
+             * should be able to find out what happened after the fact. This
+             * one has nothing to tell them: it exists to stop a sound, and a
+             * row saying "a job you never answered was withdrawn" is an inbox
+             * entry for a non-event — the notification fatigue AGENTS.md
+             * warns about, generated automatically, once per cancelled ride.
+             *
+             * Never mail, for the reason `TRIP_OFFERED` is never mailed, only
+             * more so.
+             */
+            self::TRIP_OFFER_WITHDRAWN => [NotificationChannel::PUSH],
             /*
              * **Mail only, and the omissions are the point.** A confirmed
              * closure has just detached this driver's sign-in, so a `DATABASE`
@@ -130,6 +248,44 @@ enum NotificationType: string
             self::DRIVER_SUPPORT_ANSWERED => [
                 NotificationChannel::DATABASE,
                 NotificationChannel::PUSH,
+            ],
+            /*
+             * **All three, and it is the only type here that takes all
+             * three** (ADR-0052 §3).
+             *
+             * The in-app row is the record, and it is the one channel that
+             * cannot fail: push is best-effort by ADR-0025 §3 and a driver may
+             * have declined the OS permission outright.
+             *
+             * The push is what makes a *rejection* reach somebody the same
+             * day. That is the whole feature — a driver who does not know
+             * their licence was refused believes they are compliant, and every
+             * day until they next open the app is a day the office waits.
+             *
+             * Mail is here for the reason the closure answer takes it: it is
+             * the only channel that survives the app being uninstalled, off,
+             * or signed out — and it is the only one that can carry the
+             * office's rejection reason in words, which neither of the other
+             * two may (see the notification class).
+             *
+             * The fatigue AGENTS.md warns about is bounded by construction:
+             * six documents, one message per human decision, and nothing here
+             * fires on a schedule.
+             */
+            // Mail alone. See the case's own note: an applicant has no account
+            // to notify and no device to push to.
+            self::DRIVER_APPLICATION_DOCUMENT_REJECTED => [NotificationChannel::MAIL],
+            // Both, deliberately. The in-app row is the record they can go
+            // back to; the mail is what reaches them without signing in to the
+            // account somebody else was just holding.
+            self::ACCOUNT_ACCESSED_BY_SUPPORT => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::MAIL,
+            ],
+            self::DRIVER_DOCUMENT_REVIEWED => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::PUSH,
+                NotificationChannel::MAIL,
             ],
         };
     }

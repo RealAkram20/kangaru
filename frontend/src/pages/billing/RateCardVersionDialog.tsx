@@ -8,7 +8,8 @@ import { Input } from '../../components/forms/Input'
 import { Select } from '../../components/forms/Select'
 import { apiClient } from '../../lib/apiClient'
 import { apiError, fieldErrors } from '../../lib/apiError'
-import { ROUNDING_OPTIONS, VEHICLE_CATEGORIES } from '../../lib/billing'
+import { ROUNDING_OPTIONS } from '../../lib/billing'
+import { categoryOptions, useVehicleCategories } from '../../lib/vehicleCategories'
 import type { ApiSuccess } from '../../types/api'
 import type { RateCard, RateCardVersion, RoundingMode } from '../../types/billing'
 import { isPriceableZone, type Zone } from '../../types/zone'
@@ -138,11 +139,26 @@ function amountsPayload(draft: AmountDraft) {
  */
 export function RateCardVersionDialog({
   card,
+  addCategory,
   onClose,
   onSaved,
 }: {
   /** Null creates a new card; otherwise a version is added to this one. */
   card: RateCard | null
+  /**
+   * A category key to open with, already added as a blank row (ADR-0050 §5).
+   *
+   * Set when the vehicle categories screen sent somebody here from "Price
+   * it" on a category this card does not price. A rate card version is
+   * immutable, so there is no way to add a price to the version that exists
+   * — the only mechanism is a new version, and this saves the officer from
+   * having to work out which of the nine rows is missing.
+   *
+   * It is added **blank**, never at zero: a zero base fare and zero per-km
+   * is a free trip, and `docs/screen-rules.md` §1 forbids substituting a
+   * number for one nobody has decided.
+   */
+  addCategory?: string
   onClose: () => void
   onSaved: (message: string) => void
 }) {
@@ -199,10 +215,28 @@ export function RateCardVersionDialog({
    * every invoice already priced by it stays reproducible; what is submitted
    * is an ordinary new version.
    */
-  const [rates, setRates] = useState<RateDraft[]>(() =>
-    basis !== null && (basis.rates ?? []).length > 0 ? draftsFromVersion(basis) : [emptyRate('sedan')],
-  )
+  const [rates, setRates] = useState<RateDraft[]>(() => {
+    const copied = basis !== null && (basis.rates ?? []).length > 0 ? draftsFromVersion(basis) : []
+
+    // The category somebody arrived here to price, appended blank — unless
+    // this version already prices it, in which case they were sent by a
+    // stale screen and a second row would be a duplicate the server refuses.
+    const missing =
+      addCategory !== undefined && !copied.some((rate) => rate.vehicle_category === addCategory)
+        ? [emptyRate(addCategory)]
+        : []
+
+    // A brand-new card with no basis and no requested category still opens
+    // with one empty row to fill in, as it always did. It is blank rather
+    // than defaulted to `sedan`: the office's first category may not be a
+    // sedan, and a preselected value is one somebody has to notice is wrong.
+    return copied.length + missing.length > 0 ? [...copied, ...missing] : [emptyRate('')]
+  })
   const [zones, setZones] = useState<Zone[]>([])
+  // ADR-0050. One fetch for every category select in this dialog; a failure
+  // leaves the selects empty and disabled rather than offering a stale list
+  // the server would refuse.
+  const { categories, error: categoriesError } = useVehicleCategories()
 
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [failure, setFailure] = useState<string | null>(null)
@@ -239,7 +273,10 @@ export function RateCardVersionDialog({
   const nightEnabled = nightFrom !== '' || nightTo !== ''
 
   const usedCategories = new Set(rates.map((r) => r.vehicle_category))
-  const availableCategory = VEHICLE_CATEGORIES.find((c) => !usedCategories.has(c))
+  // ADR-0050: the fleet's live vocabulary, not a literal. The list this
+  // replaced was one of four hand-mirrored copies, two of which had drifted.
+  const options = categoryOptions(categories ?? [])
+  const availableCategory = options.find((option) => !usedCategories.has(option.value))?.value
 
   const duplicateCategory = usedCategories.size !== rates.length
   const zoneRateIncomplete = rates.some((rate) => rate.zone_rates.some((z) => z.zone_id === ''))
@@ -251,6 +288,11 @@ export function RateCardVersionDialog({
     name.trim() === '' ||
     effectiveFrom === '' ||
     rates.length === 0 ||
+    // A row with no category chosen. Reachable since ADR-0050 made the
+    // first row open blank rather than defaulted to `sedan`; the server
+    // refuses it, and being refused after typing five figures is worse than
+    // a disabled Save that says which row is unfinished.
+    rates.some((rate) => rate.vehicle_category === '') ||
     duplicateCategory ||
     duplicateZone ||
     zoneRateIncomplete ||
@@ -435,9 +477,16 @@ export function RateCardVersionDialog({
           </Alert>
         )}
 
+        {categoriesError !== null && (
+          <Alert tone="error" title="Categories unavailable">
+            {categoriesError} A version prices vehicle categories, so it cannot be saved until the
+            list loads — reload the page and try again.
+          </Alert>
+        )}
+
         <Alert tone="info" title="Prices here are permanent">
-          A version cannot be edited once created. Correcting a mistake means adding another version, and
-          any invoice raised in between keeps the figures it was billed under.
+          A version cannot be edited once created. Correcting a mistake means adding another
+          version, and any invoice raised in between keeps the figures it was billed under.
         </Alert>
 
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 'var(--space-4)' }}>
@@ -507,7 +556,13 @@ export function RateCardVersionDialog({
           />
         </FormField>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 'var(--space-4)' }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
+            gap: 'var(--space-4)',
+          }}
+        >
           <FormField
             label="Effective from"
             htmlFor="rc-effective"
@@ -522,7 +577,11 @@ export function RateCardVersionDialog({
               onChange={(e) => setEffectiveFrom(e.target.value)}
             />
           </FormField>
-          <FormField label="Rounding" htmlFor="rc-rounding" error={errors[`${prefix}rounding_mode`]}>
+          <FormField
+            label="Rounding"
+            htmlFor="rc-rounding"
+            error={errors[`${prefix}rounding_mode`]}
+          >
             <Select
               id="rc-rounding"
               value={rounding}
@@ -549,21 +608,45 @@ export function RateCardVersionDialog({
           </FormField>
         </div>
 
-        <fieldset style={{ border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)', padding: 'var(--space-4)' }}>
-          <legend style={{ font: 'var(--type-label)', color: 'var(--text-secondary)', padding: '0 6px' }}>
+        <fieldset
+          style={{
+            border: '1px solid var(--border-default)',
+            borderRadius: 'var(--radius-md)',
+            padding: 'var(--space-4)',
+          }}
+        >
+          <legend
+            style={{ font: 'var(--type-label)', color: 'var(--text-secondary)', padding: '0 6px' }}
+          >
             Night rate
           </legend>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--space-4)' }}>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+              gap: 'var(--space-4)',
+            }}
+          >
             <FormField
               label="From"
               htmlFor="rc-nightfrom"
               hint="Leave both blank for none."
               error={errors[`${prefix}night_starts_at`]}
             >
-              <Input id="rc-nightfrom" type="time" value={nightFrom} onChange={(e) => setNightFrom(e.target.value)} />
+              <Input
+                id="rc-nightfrom"
+                type="time"
+                value={nightFrom}
+                onChange={(e) => setNightFrom(e.target.value)}
+              />
             </FormField>
             <FormField label="To" htmlFor="rc-nightto" error={errors[`${prefix}night_ends_at`]}>
-              <Input id="rc-nightto" type="time" value={nightTo} onChange={(e) => setNightTo(e.target.value)} />
+              <Input
+                id="rc-nightto"
+                type="time"
+                value={nightTo}
+                onChange={(e) => setNightTo(e.target.value)}
+              />
             </FormField>
             <FormField
               label="Multiplier"
@@ -586,14 +669,27 @@ export function RateCardVersionDialog({
             </FormField>
           </div>
           {nightEnabled && nightFrom !== '' && nightTo !== '' && nightFrom > nightTo && (
-            <p style={{ font: 'var(--type-caption)', color: 'var(--text-secondary)', marginTop: 'var(--space-2)' }}>
+            <p
+              style={{
+                font: 'var(--type-caption)',
+                color: 'var(--text-secondary)',
+                marginTop: 'var(--space-2)',
+              }}
+            >
               This window wraps midnight, which is expected for a night rate.
             </p>
           )}
         </fieldset>
 
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-2)' }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 'var(--space-2)',
+            }}
+          >
             <span style={{ font: 'var(--type-label)', color: 'var(--text-secondary)' }}>
               Prices per vehicle category — whole shillings (UGX)
             </span>
@@ -602,7 +698,9 @@ export function RateCardVersionDialog({
               variant="secondary"
               iconLeft="plus"
               disabled={availableCategory === undefined}
-              onClick={() => availableCategory && setRates([...rates, emptyRate(availableCategory)])}
+              onClick={() =>
+                availableCategory && setRates([...rates, emptyRate(availableCategory)])
+              }
             >
               Add category
             </Button>
@@ -610,15 +708,15 @@ export function RateCardVersionDialog({
 
           {duplicateCategory && (
             <Alert tone="warning" title="A category is priced twice">
-              Each vehicle category may appear once. Two rows for one category would leave it ambiguous which
-              price applies.
+              Each vehicle category may appear once. Two rows for one category would leave it
+              ambiguous which price applies.
             </Alert>
           )}
 
           {duplicateZone && (
             <Alert tone="warning" title="A zone is priced twice">
-              Each zone may appear once per vehicle category, for the same reason: two prices for one zone
-              leave it ambiguous which one a trip picked up there is charged.
+              Each zone may appear once per vehicle category, for the same reason: two prices for
+              one zone leave it ambiguous which one a trip picked up there is charged.
             </Alert>
           )}
 
@@ -653,8 +751,16 @@ export function RateCardVersionDialog({
                       id={`rc-rate-${index}-category`}
                       size="sm"
                       value={rate.vehicle_category}
-                      onChange={(e) => updateRate(index, { ...rate, vehicle_category: e.target.value })}
-                      options={VEHICLE_CATEGORIES.map((c) => ({ value: c, label: c }))}
+                      onChange={(e) =>
+                        updateRate(index, { ...rate, vehicle_category: e.target.value })
+                      }
+                      // `alsoAllow` is this row's own value, so a version
+                      // copied from one that priced a since-retired category
+                      // still shows it. Without it the select would fall
+                      // back to rendering its first option, silently
+                      // changing which category the officer is editing.
+                      options={categoryOptions(categories ?? [], rate.vehicle_category)}
+                      placeholder={categories === null ? 'Loading…' : 'Choose a category'}
                     />
                   </FormField>
                   {AMOUNT_FIELDS.map(([field, label]) => (
@@ -690,7 +796,8 @@ export function RateCardVersionDialog({
                       padding: '0 8px',
                       border: 'none',
                       background: 'transparent',
-                      color: rates.length === 1 ? 'var(--text-placeholder)' : 'var(--text-secondary)',
+                      color:
+                        rates.length === 1 ? 'var(--text-placeholder)' : 'var(--text-secondary)',
                       cursor: rates.length === 1 ? 'not-allowed' : 'pointer',
                     }}
                   >
@@ -711,9 +818,15 @@ export function RateCardVersionDialog({
             ))}
           </div>
 
-          <p style={{ font: 'var(--type-caption)', color: 'var(--text-secondary)', marginTop: 'var(--space-3)' }}>
-            UGX is a zero-decimal currency, so the figure you type is the figure stored — no cents, no
-            conversion. Leave Maximum blank for no cap.
+          <p
+            style={{
+              font: 'var(--type-caption)',
+              color: 'var(--text-secondary)',
+              marginTop: 'var(--space-3)',
+            }}
+          >
+            UGX is a zero-decimal currency, so the figure you type is the figure stored — no cents,
+            no conversion. Leave Maximum blank for no cap.
           </p>
         </div>
       </div>
@@ -775,8 +888,8 @@ function ZonePrices({
 
       {zones.length === 0 && (
         <p style={{ font: 'var(--type-caption)', color: 'var(--text-secondary)' }}>
-          No pricing zones have been drawn yet, so there is nothing to price differently. Trips are charged
-          the rates above wherever they start.
+          No pricing zones have been drawn yet, so there is nothing to price differently. Trips are
+          charged the rates above wherever they start.
         </p>
       )}
 

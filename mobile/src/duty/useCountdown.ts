@@ -42,6 +42,16 @@ export function useCountdown(offer: DispatchOffer): number {
   // if you ever render this hook somewhere new, key that component too.
   const [elapsed, setElapsed] = useState(0);
 
+  // **The server's number is read once, at mount, and never again.** The
+  // offer prop is replaced on every poll with a fresher — smaller —
+  // `expires_in_seconds`, and this hook used to subtract the locally elapsed
+  // seconds from *that*: at mount 15 − 0 = 15; five seconds later the poll
+  // said 10 and the clock said 5, so the ring showed 5; five more and it
+  // showed 0 with the offer still open. Two clocks running against each
+  // other, and the countdown ran at double speed. The owner, from a handset:
+  // "the count down is not working right." One reading, one clock.
+  const [seeded] = useState(() => offer.expires_in_seconds);
+
   useEffect(() => {
     const timer = setInterval(() => {
       setElapsed((seconds) => seconds + 1);
@@ -50,5 +60,5 @@ export function useCountdown(offer: DispatchOffer): number {
     return () => clearInterval(timer);
   }, [offer.id]);
 
-  return secondsRemaining(offer, elapsed);
+  return secondsRemaining({ expires_in_seconds: seeded }, elapsed);
 }

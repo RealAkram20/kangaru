@@ -112,6 +112,7 @@ it('keeps the coordinates a staff-created booking was raised with', function () 
     $staff = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::CORPORATE_ADMIN]);
 
     test()->actingAs($staff, 'sanctum')->postJson('/api/v1/bookings', [
+        'passenger_user_id' => $staff->id,
         'passenger_name' => 'Grace Amongin',
         'passenger_phone' => '+256700123456',
         'passenger_count' => 2,
@@ -133,6 +134,7 @@ it('makes the matcher rank by distance once a booking has coordinates', function
     Vehicle::factory()->create(['seating_capacity' => 5]);
 
     test()->actingAs($staff, 'sanctum')->postJson('/api/v1/bookings', [
+        'passenger_user_id' => $staff->id,
         'passenger_name' => 'Grace Amongin',
         'passenger_phone' => '+256700123456',
         'passenger_count' => 2,

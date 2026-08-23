@@ -50,6 +50,7 @@ function trip(earnings: TripEarnings | null): Trip {
     distance_km: '12.00',
     gps_distance_km: null,
     distance_variance_flagged: false,
+    unplanned_stop_count: 0,
     started_at: '2026-08-15T08:00:00+03:00',
     completed_at: '2026-08-15T08:40:00+03:00',
     duration_minutes: 40,

@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Modules\Administration\Services\SettingsService;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Events\TripCompleted;
+use Modules\Trips\Events\TripStatusChanged;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Models\TripEvent;
 
@@ -23,6 +24,8 @@ class TripStateMachine
         private readonly RouteDistanceCalculator $routeDistance,
         private readonly OdometerPhotoStore $photos,
         private readonly SettingsService $settings,
+        private readonly TripDistanceResolver $distances,
+        private readonly TripStopService $stops,
     ) {}
 
     /**
@@ -62,12 +65,29 @@ class TripStateMachine
 
         try {
             return DB::transaction(function () use ($trip, $from, $to, $actor, $payload, $photoPath) {
-                $this->applySideEffects($trip, $from, $to, $payload, $photoPath);
+                $remark = $this->applySideEffects($trip, $from, $to, $payload, $photoPath);
+
+                // ADR-0045 §2: arrive/continue ride the very transitions
+                // billing derives waiting from, so a stop's dwell and the
+                // billable pause can never disagree about when the vehicle
+                // stood still. Both null on every point-to-point trip.
+                [$stopRemark, $stopId] = $this->stops->applyTransition(
+                    $trip,
+                    $to,
+                    isset($payload['stop_id']) ? (int) $payload['stop_id'] : null,
+                );
 
                 $trip->status = $to;
                 $trip->save();
 
-                TripEvent::record($trip, $from, $to, $actor, $payload['notes'] ?? null);
+                TripEvent::record(
+                    $trip,
+                    $from,
+                    $to,
+                    $actor,
+                    $this->note($payload['notes'] ?? null, $remark, $stopRemark),
+                    $stopId,
+                );
 
                 // Announced, not acted on. `trip_completed` is the
                 // transition that captures the closing odometer and computes
@@ -79,6 +99,11 @@ class TripStateMachine
                     TripCompleted::dispatch($trip);
                 }
 
+                // Every move, for whoever is waiting on the car; see the
+                // event's docblock for why this is not folded into the one
+                // above.
+                TripStatusChanged::dispatch($trip, $from, $to);
+
                 return $trip->refresh();
             });
         } catch (\Throwable $e) {
@@ -89,40 +114,131 @@ class TripStateMachine
     }
 
     /**
+     * Applies the transition's side effects, and returns anything the
+     * timeline should say about them beyond what the caller wrote.
+     *
+     * Only the closing transition has such a thing to say today: with the
+     * odometer off, *why* a trip was priced at the figure it was — measured,
+     * capped at the road ceiling, or not measurable at all — is not deducible
+     * from the columns, and a reviewer opening a flagged trip should not have
+     * to infer it (ADR-0047 §2).
+     *
+     * Returned rather than held on the service. This class is resolved as a
+     * singleton, so a property written here would outlive the trip that set
+     * it and land on the next one — a note about somebody else's journey,
+     * appearing on a timeline that is treated as evidence.
+     *
      * @param  array<string, mixed>  $payload
      */
-    private function applySideEffects(Trip $trip, TripStatus $from, TripStatus $to, array $payload, ?string $photoPath = null): void
+    private function applySideEffects(Trip $trip, TripStatus $from, TripStatus $to, array $payload, ?string $photoPath = null): ?string
     {
-        match ($to) {
+        return match ($to) {
             TripStatus::TRIP_STARTED => $this->captureOpeningOdometer($trip, $payload, $photoPath),
             TripStatus::TRIP_COMPLETED => $this->captureClosingOdometer($trip, $payload, $photoPath),
-            TripStatus::CANCELLED => $trip->cancellation_charge_applicable
-                = $payload['cancellation_charge_applicable'] ?? null,
-            TripStatus::ASSIGNED => $this->applyReassignment($trip, $from, $payload),
+            TripStatus::CANCELLED => (function () use ($trip, $payload) {
+                $trip->cancellation_charge_applicable = $payload['cancellation_charge_applicable'] ?? null;
+
+                return null;
+            })(),
+            TripStatus::ASSIGNED => (function () use ($trip, $from, $payload) {
+                $this->applyReassignment($trip, $from, $payload);
+
+                return null;
+            })(),
             default => null,
         };
     }
 
     /**
+     * The driver's own note and the platform's, as one paragraph.
+     *
+     * The driver's comes first: they wrote it, and a reviewer reading a
+     * timeline wants the human sentence before the machine's. Either half may
+     * be absent, and both absent is null rather than an empty string — an
+     * empty note renders as a blank line on the timeline and reads as
+     * something having failed to save.
+     */
+    private function note(?string $written, ?string ...$remarks): ?string
+    {
+        $parts = array_filter([
+            is_string($written) && trim($written) !== '' ? trim($written) : null,
+            ...$remarks,
+        ]);
+
+        return $parts === [] ? null : implode("\n\n", $parts);
+    }
+
+    /**
+     * Declared `null` rather than `?string`: starting a trip never produces a
+     * note. Its sibling below does — the trace's own account of how the
+     * distance was arrived at — and `applySideEffects` returns `?string` for
+     * that one. Saying so here keeps the difference visible.
+     *
      * @param  array<string, mixed>  $payload
      */
-    private function captureOpeningOdometer(Trip $trip, array $payload, ?string $photoPath = null): void
+    private function captureOpeningOdometer(Trip $trip, array $payload, ?string $photoPath = null): null
     {
-        $trip->odometer_start = $payload['odometer_start'];
+        // **`started_at` is unconditional; the reading is not** (ADR-0047).
+        // The timestamp is the Bank's acceptance criterion #1 and has nothing
+        // to do with the odometer — an early version of this guarded the whole
+        // method on the switch and produced trips that had started with no
+        // record of when, which broke a criterion the switch was never meant
+        // to touch.
         $trip->started_at = now();
+
+        if (! $this->distances->odometerEnabled()) {
+            return null;
+        }
+
+        $trip->odometer_start = $payload['odometer_start'];
 
         if ($photoPath !== null) {
             $trip->odometer_start_photo_path = $photoPath;
         }
+
+        return null;
     }
 
     /**
      * @param  array<string, mixed>  $payload
      */
-    private function captureClosingOdometer(Trip $trip, array $payload, ?string $photoPath = null): void
+    private function captureClosingOdometer(Trip $trip, array $payload, ?string $photoPath = null): ?string
     {
-        $trip->odometer_end = $payload['odometer_end'];
+        // Unconditional, like `started_at` above and for the same reason:
+        // acceptance criteria #1 and #6 are about the clock, not the dial.
         $trip->completed_at = now();
+
+        // **The odometer is off, so the trace prices the trip** (ADR-0047 §2).
+        // `TripDistanceResolver` owns that decision entirely, including the
+        // road ceiling that keeps a jittery or spoofed trace from inflating a
+        // fare, and including the case where it cannot answer at all.
+        if (! $this->distances->odometerEnabled()) {
+            $measured = $this->distances->resolve($trip->id);
+
+            // Null distance is written as null, not coerced. A trip the
+            // platform could not measure must reach billing as unpriced work
+            // somebody resolves — never as a zero-kilometre journey, which
+            // reads as "the vehicle did not move" and invites nobody to look.
+            $trip->distance_km = $measured->kilometres === null
+                ? null
+                : (string) $measured->kilometres;
+
+            // The raw trace is kept even when the ceiling overrode it. It is
+            // the evidence a reviewer needs to answer a disputed fare: "the
+            // trace said 41 km, the road allows 15.6, we billed 15.6".
+            $trip->gps_distance_km = $measured->traceKilometres === null
+                ? null
+                : (string) $measured->traceKilometres;
+
+            $trip->distance_variance_flagged = $measured->flagged;
+
+            // Returned to `transition()`, which writes it onto the timeline
+            // row — so *why* this trip was priced the way it was is readable
+            // beside the status change rather than deduced from three columns.
+            return $measured->note;
+        }
+
+        $trip->odometer_end = $payload['odometer_end'];
 
         if ($photoPath !== null) {
             $trip->odometer_end_photo_path = $photoPath;
@@ -139,6 +255,8 @@ class TripStateMachine
         }
 
         $this->reconcileAgainstGps($trip);
+
+        return null;
     }
 
     /**

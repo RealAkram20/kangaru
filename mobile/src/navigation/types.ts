@@ -89,6 +89,15 @@ export type TripsStackParams = {
    */
   TripInProgress: { tripId: number };
   /**
+   * The next drop-off, searched and added mid-run (ADR-0045 §4).
+   *
+   * Pushed from `TripInProgress` and returns there — a modal in spirit, like
+   * `Odometer`: pick a destination or abandon the idea, no state worth
+   * keeping in between. The search is the client's own place register (§10);
+   * a walk-in trip gets the free-text row alone.
+   */
+  AddDropoff: { tripId: number };
+  /**
    * The map, full screen. Where *Navigate* goes, so a driver checking the
    * route does not lose the app with a passenger in the car.
    */
@@ -163,6 +172,18 @@ export type ProfileStackParams = {
   ProfileHome: undefined;
   TimeOff: undefined;
   ChangePassword: undefined;
+  /**
+   * Everything this phone has to allow before a job can reach it (ADR-0046,
+   * ADR-0049).
+   *
+   * On the Profile stack because it is a fact about *this handset* rather than
+   * about the work — the same reason `BankDetails` sits here. It replaces the
+   * single "Show jobs over the lock screen" row that used to live inline on
+   * `ProfileHome`: that row was one of six permissions the offer path depends
+   * on, and being the only one with a door made it look like the only one that
+   * could be wrong.
+   */
+  Permissions: undefined;
   /**
    * The ADR-0033 agent's, added here so their `ProfileScreen` compiles against
    * this stack — their screen navigates to both and appeared in the tree while

@@ -69,6 +69,58 @@ class RouteDistanceCalculator
     }
 
     /**
+     * Where the trace starts and where it ends (ADR-0047 §2).
+     *
+     * Two `[latitude, longitude]` pairs, or null when the trip has fewer than
+     * two points. `TripDistanceResolver` routes between them to bound a
+     * GPS-priced fare.
+     *
+     * **The trace's own endpoints, not the order request's pickup and
+     * drop-off**, and the difference matters. A corporate trip frequently has
+     * no drop-off pin at all — `order_requests` carries a pickup and the
+     * destination is prose — so a bound built from the order would simply be
+     * unavailable for the trips this platform mostly carries. The trace
+     * always has two ends, and they describe the journey that was actually
+     * driven rather than the one that was booked.
+     *
+     * Read with two small ordered queries rather than by draining the cursor
+     * in `kilometresFor`: a long upcountry trip is tens of thousands of rows
+     * and this needs exactly two of them.
+     *
+     * @return array{0: array{float, float}, 1: array{float, float}}|null
+     */
+    public function endpointsFor(int $tripId): ?array
+    {
+        $first = $this->edge($tripId, 'asc');
+        $last = $this->edge($tripId, 'desc');
+
+        // The same row at both ends means a single ping. That is not a
+        // journey to bound, and `kilometresFor` returns null for it too.
+        if ($first === null || $last === null || $first->id === $last->id) {
+            return null;
+        }
+
+        return [
+            [(float) $first->latitude, (float) $first->longitude],
+            [(float) $last->latitude, (float) $last->longitude],
+        ];
+    }
+
+    private function edge(int $tripId, string $direction): ?\stdClass
+    {
+        return DB::table('trip_locations')
+            ->select('latitude', 'longitude', 'id')
+            ->where('trip_id', $tripId)
+            // Ordered exactly as `points()` orders, `id` tie-break included,
+            // so the endpoints are the same rows the distance was measured
+            // between. Two orderings over one table is how a bound ends up
+            // being computed against a different journey than the trace.
+            ->orderBy('recorded_at', $direction)
+            ->orderBy('id', $direction)
+            ->first();
+    }
+
+    /**
      * Streams the trip's points in recorded order.
      *
      * A query-builder cursor rather than an Eloquent get(): a long upcountry

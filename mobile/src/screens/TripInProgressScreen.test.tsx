@@ -1,8 +1,8 @@
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import type { ReactElement } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import type { Trip, TripEvent, TripStatus } from '../api/types';
+import type { Trip, TripEvent, TripStatus, TripStop } from '../api/types';
 import { TripInProgressScreen } from './TripInProgressScreen';
 
 /**
@@ -31,6 +31,22 @@ const METRICS = {
 
 const STARTED_AT = '2026-08-14T09:18:00.000Z';
 
+// `mock` prefix required: Jest hoists mock factories above this line.
+const mockOdometerEnabled = jest.fn(() => true);
+
+/*
+  ADR-0047's odometer switch. Mocked at the hook rather than left real because
+  it reaches `AuthProvider` and the network, which this suite has neither of —
+  the same reason `../trips/queries` is mocked above.
+
+  **Defaults to on**, so every existing test in this file keeps asserting the
+  behaviour it was written for: the odometer is the platform's default and the
+  screens that ask for a reading should go on asking for one here.
+*/
+jest.mock('../trips/odometerSetting', () => ({
+  useOdometerEnabled: () => mockOdometerEnabled(),
+}));
+
 jest.mock('../ui/SyncBanner', () => ({ SyncBanner: () => null }));
 
 // `mock` prefix required: Jest hoists the factory below above this line.
@@ -56,7 +72,11 @@ const mockUseTripRoute = jest.fn();
 jest.mock('../trips/queries', () => ({
   useTrip: (id: number) => mockUseTrip(id),
   useTripEvents: (id: number) => mockUseTripEvents(id),
-  useTripRoute: () => mockUseTripRoute(),
+  // Arguments forwarded rather than swallowed, for the reason
+  // `TripMapScreen.test.tsx` records: which leg this screen asks for, and
+  // from where, is the assertion at the bottom of this file — and a mock that
+  // drops its arguments is how the wrong leg shipped once already.
+  useTripRoute: (...args: unknown[]) => mockUseTripRoute(...args),
 }));
 
 jest.mock('../location/usePosition', () => ({
@@ -110,6 +130,7 @@ function trip(overrides: Partial<Trip> = {}): Trip {
     distance_km: null,
     gps_distance_km: null,
     distance_variance_flagged: null,
+    unplanned_stop_count: 0,
     started_at: STARTED_AT,
     completed_at: null,
     duration_minutes: null,
@@ -131,6 +152,7 @@ function trip(overrides: Partial<Trip> = {}): Trip {
 }
 
 const navigate = jest.fn();
+const replace = jest.fn();
 
 async function renderProgress(
   value: Trip = trip(),
@@ -146,7 +168,7 @@ async function renderProgress(
   const node: ReactElement = (
     <TripInProgressScreen
       route={{ key: 't', name: 'TripInProgress', params: { tripId: value.id } }}
-      navigation={{ navigate, goBack: jest.fn() } as never}
+      navigation={{ navigate, replace, goBack: jest.fn() } as never}
     />
   );
 
@@ -154,7 +176,11 @@ async function renderProgress(
 }
 
 beforeEach(() => {
+  // On by default in every test. A suite that wants the switch off says so,
+  // and must not leak that into the next one (ADR-0047).
+  mockOdometerEnabled.mockReturnValue(true);
   navigate.mockClear();
+  replace.mockClear();
   mockQueueTransition.mockClear();
   // Nothing in flight is the ordinary case; the tests about an unconfirmed
   // pause set it themselves.
@@ -273,6 +299,45 @@ it('sends End trip to the odometer, because completing needs the closing reading
     to: 'trip_completed',
     from: 'trip_started',
   });
+});
+
+it('leaves for the completion screen when the odometer is off, rather than sitting on a finished trip', async () => {
+  // Found on a handset on go-live day: the owner's fleet runs with the
+  // odometer off (ADR-0047), End trip queued the completion and stayed put —
+  // the subtitle flipped to "Completed" over a screen still offering Pause
+  // and End. The odometer-on path always left via `OdometerScreen`;
+  // this branch never left at all.
+  //
+  // Flushed inside `act` rather than `waitFor`: this file runs fake timers,
+  // and `waitFor` under them is the trap `jest.setup.ts` documents.
+  mockOdometerEnabled.mockReturnValue(false);
+
+  const { getByLabelText } = await renderProgress();
+
+  await act(async () => {
+    void fireEvent.press(getByLabelText('End trip'));
+  });
+
+  expect(mockQueueTransition).toHaveBeenCalledWith(
+    expect.objectContaining({ tripId: 42, from: 'trip_started', to: 'trip_completed' }),
+  );
+  expect(replace).toHaveBeenCalledWith('RideComplete', { tripId: 42 });
+  // `replace`, not `navigate`: the back gesture must not reopen an ended trip.
+  expect(navigate).not.toHaveBeenCalled();
+});
+
+it('stays put, button usable again, when the completion could not even be queued', async () => {
+  mockOdometerEnabled.mockReturnValue(false);
+  mockQueueTransition.mockRejectedValueOnce(new Error('outbox closed'));
+
+  const { getByLabelText } = await renderProgress();
+
+  await act(async () => {
+    void fireEvent.press(getByLabelText('End trip'));
+  });
+
+  expect(mockQueueTransition).toHaveBeenCalled();
+  expect(replace).not.toHaveBeenCalled();
 });
 
 it('completes from whichever of the three statuses the trip is actually in', async () => {
@@ -470,6 +535,144 @@ it('does not date an unconfirmed hold from the last time the driver stopped', as
   expect(queryByText(/On hold for /)).toBeNull();
 });
 
+// ── The itinerary, and adding a drop-off (ADR-0045) ──────────────────────
+
+function itineraryStop(overrides: Partial<TripStop> = {}): TripStop {
+  return {
+    id: 5,
+    sequence: 1,
+    label: 'Ntinda ATM',
+    latitude: 0.382,
+    longitude: 32.5825,
+    source: 'added_by_driver',
+    status: 'pending',
+    arrived_at: null,
+    departed_at: null,
+    skip_reason: null,
+    client_place_id: 11,
+    ...overrides,
+  };
+}
+
+it('offers Add a drop-off on a running trip', async () => {
+  const { getByLabelText } = await renderProgress();
+
+  void fireEvent.press(getByLabelText('Add a drop-off'));
+
+  expect(navigate).toHaveBeenCalledWith('AddDropoff', { tripId: 42 });
+});
+
+it('offers Add a drop-off while paused too — the bank flow adds the next site at this one', async () => {
+  // Hiding the button behind a resume would make the driver lie about where
+  // they are to extend their own run (ADR-0045 §4).
+  const { getByLabelText } = await renderProgress(pausedTrip(), heldEvents());
+
+  void fireEvent.press(getByLabelText('Add a drop-off'));
+
+  expect(navigate).toHaveBeenCalledWith('AddDropoff', { tripId: 42 });
+});
+
+it('renders the itinerary as a worklist, ending at the trip\'s own drop-off', async () => {
+  const { getByText } = await renderProgress(
+    trip({
+      stops: [
+        itineraryStop({ id: 4, sequence: 1, label: 'Bugolobi branch', status: 'done' }),
+        itineraryStop({ id: 5, sequence: 2 }),
+      ],
+    }),
+  );
+
+  expect(getByText('1. Bugolobi branch')).toBeTruthy();
+  expect(getByText('Visited')).toBeTruthy();
+  expect(getByText('2. Ntinda ATM')).toBeTruthy();
+  expect(getByText('Next')).toBeTruthy();
+  expect(getByText('Final drop-off')).toBeTruthy();
+});
+
+it('makes the next pending stop the drop-off row, numbered so the driver knows where they are in the run', async () => {
+  const { getByText, queryByText } = await renderProgress(
+    trip({
+      stops: [
+        itineraryStop({ id: 4, sequence: 1, label: 'Bugolobi branch', status: 'done' }),
+        itineraryStop({ id: 5, sequence: 2 }),
+      ],
+    }),
+  );
+
+  expect(getByText('Next drop-off')).toBeTruthy();
+  expect(getByText('Stop 2 of 2')).toBeTruthy();
+  // The row's value is the stop, not the terminus — that ends the worklist.
+  expect(queryByText('Drop-off')).toBeNull();
+});
+
+it('withholds the Journey figure on a circuit rather than calling a morning\'s driving 100 m', async () => {
+  // A bank run starts and ends at head office, so the straight line between
+  // the trip's two ends is ~0 — this read "Under 100 m" for a three-stop
+  // circuit. Found by rendering the screen, not by any assertion here.
+  const { queryByText } = await renderProgress(
+    trip({
+      pickup: { label: 'Head Office', latitude: 0.3136, longitude: 32.5811 },
+      dropoff: { label: 'Head Office', latitude: 0.3136, longitude: 32.5811 },
+      stops: [itineraryStop()],
+    }),
+  );
+
+  expect(queryByText('Under 100 m')).toBeNull();
+});
+
+it('still shows the Journey figure on an ordinary point-to-point trip', async () => {
+  // The guard above must not cost the figure on the job it is right for.
+  const { getByText } = await renderProgress();
+
+  expect(getByText('2.2 km')).toBeTruthy();
+});
+
+it('measures the badge to the next stop, not the journey\'s end', async () => {
+  // `here` is 0.3532; the trip drop-off is 0.3676 (1.6 km); the stop is
+  // 0.3820 — 3.2 km away. The badge, the row and the route endpoint must all
+  // mean the same place by "the drop-off", and this is the badge's half.
+  const { getByText, queryByText } = await renderProgress(
+    trip({ stops: [itineraryStop()] }),
+  );
+
+  expect(getByText('3.2 km')).toBeTruthy();
+  expect(queryByText('1.6 km')).toBeNull();
+});
+
+it('queues the arrival with the stop\'s id — the pause that names a stop is an arrival at it', async () => {
+  const { getByLabelText } = await renderProgress(trip({ stops: [itineraryStop()] }));
+
+  void fireEvent.press(getByLabelText('Arrived at Ntinda ATM'));
+
+  expect(mockQueueTransition).toHaveBeenCalledWith({
+    tripId: 42,
+    from: 'trip_started',
+    to: 'waiting',
+    stopId: 5,
+  });
+});
+
+it('withdraws Arrived while the trip is held — arriving is the pause, and the trip is already paused', async () => {
+  const { queryByLabelText } = await renderProgress(
+    trip({ status: 'waiting', stops: [itineraryStop()] }),
+    heldEvents(),
+  );
+
+  expect(queryByLabelText('Arrived at Ntinda ATM')).toBeNull();
+});
+
+it('leaves a plain pause plain — the Pause button queues no stop id', async () => {
+  const { getByLabelText } = await renderProgress(trip({ stops: [itineraryStop()] }));
+
+  void fireEvent.press(getByLabelText('Pause trip'));
+
+  expect(mockQueueTransition).toHaveBeenCalledWith({
+    tripId: 42,
+    from: 'trip_started',
+    to: 'waiting',
+  });
+});
+
 it('queues the hold from the status it will actually depart from', async () => {
   // A pause and a resume in one dead zone: the resume departs from the pause
   // still sitting in the outbox, not from the status the office last confirmed.
@@ -490,4 +693,170 @@ it('queues the hold from the status it will actually depart from', async () => {
     from: 'waiting',
     to: 'trip_resumed',
   });
+});
+
+it('asks for the whole leg as well as the road ahead, so the map can show progress', async () => {
+  // The screen a driver actually sits on for the length of a job. It draws the
+  // same two roads the full-screen map does — the muted whole leg underneath,
+  // the green road still to drive on top, the vehicle at the seam — because
+  // the complaint that produced this was about not being able to read progress
+  // at a glance, and a glance is what this 220pt panel is for.
+  //
+  // No origin in the second request: that is what keeps the query key constant
+  // and the answer usually a cache read rather than a billed one, which is
+  // ADR-0031 §5's whole argument.
+  mockUseTripRoute.mockClear();
+
+  await renderProgress();
+
+  expect(mockUseTripRoute).toHaveBeenCalledWith(
+    42,
+    expect.objectContaining({ lat: expect.any(Number), lng: expect.any(Number) }),
+  );
+  expect(mockUseTripRoute).toHaveBeenCalledWith(42, null, 'dropoff', true);
+});
+
+it('stops asking for a whole leg once the circuit has worked a stop', async () => {
+  // Mid-circuit the leg runs stop to stop and no longer starts at the pickup,
+  // so the road this would return is a different journey from the one being
+  // driven. Withheld rather than drawn wrong — and withheld costs nothing,
+  // which is the easy half of the decision.
+  mockUseTripRoute.mockClear();
+
+  await renderProgress(
+    trip({
+      stops: [
+        {
+          id: 1,
+          sequence: 1,
+          label: 'Centenary Bank, Kabalagala',
+          latitude: 0.3,
+          longitude: 32.6,
+          source: 'planned',
+          status: 'done',
+          arrived_at: null,
+          departed_at: null,
+          skip_reason: null,
+          client_place_id: null,
+        },
+      ],
+    }),
+  );
+
+  expect(mockUseTripRoute).toHaveBeenCalledWith(42, null, 'dropoff', false);
+});
+
+/** The HTML handed to the WebView, dug out of the rendered tree. */
+function tripMapHtml(tree: unknown): string {
+  let found = '';
+
+  const walk = (node: unknown): void => {
+    const n = node as { type?: unknown; props?: Record<string, unknown>; children?: unknown[] };
+
+    if (typeof n !== 'object' || n === null) {
+      return;
+    }
+
+    if (n.type === 'WebView') {
+      const source = n.props?.source as { html?: string } | undefined;
+      found = source?.html ?? '';
+    }
+
+    for (const child of n.children ?? []) {
+      walk(child);
+    }
+  };
+
+  walk(tree);
+
+  return found;
+}
+
+const ROAD_AHEAD = 'a~l~Fjk~uOwHJy@P';
+const WHOLE_LEG_POLYLINE = 'wzl~F|k~uOaBcAoC_BsDkB';
+
+/**
+ * Two answers for two questions, and the cache answers **even when the query
+ * is disabled** — which is what a warm key does and what the bug below turned
+ * on.
+ *
+ * Not routed through `renderProgress`: that helper stubs the route to null as
+ * its last act, so an implementation set before it would be thrown away.
+ */
+async function renderWithWarmCache(value: Trip = trip()) {
+  mockUseTrip.mockReturnValue({ data: value, isLoading: false });
+  mockUseTripEvents.mockReturnValue({ data: [startEvent()] });
+  mockPosition.mockReturnValue({ lat: 0.3532, lng: 32.5825 });
+  mockUseTripRoute.mockImplementation((_id: number, from: unknown) => ({
+    data:
+      from === null
+        ? {
+            polyline: WHOLE_LEG_POLYLINE,
+            distance_km: 12.2,
+            duration_seconds: 1500,
+            provider: 'osrm',
+            is_estimate: true,
+          }
+        : {
+            polyline: ROAD_AHEAD,
+            distance_km: 6.1,
+            duration_seconds: 780,
+            provider: 'osrm',
+            is_estimate: true,
+          },
+  }));
+
+  return render(
+    <SafeAreaProvider initialMetrics={METRICS}>
+      <TripInProgressScreen
+        route={{ key: 't', name: 'TripInProgress', params: { tripId: value.id } }}
+        navigation={{ navigate, replace, goBack: jest.fn() } as never}
+      />
+    </SafeAreaProvider>,
+  );
+}
+
+it('draws the whole leg under the road ahead when the pickup is still the origin', async () => {
+  const view = await renderWithWarmCache();
+
+  expect(tripMapHtml(view.toJSON())).toContain(WHOLE_LEG_POLYLINE);
+});
+
+it('draws no whole leg mid-circuit even when the cache still holds one', async () => {
+  /*
+    The outcome rather than the mechanism, and the distinction is a bug that
+    shipped once: `enabled: false` withholds the *request*, not the *answer*.
+    A disabled `useQuery` still serves whatever its key already holds, and
+    `WaitingForPassengerScreen` warms this exact key on every job — so the
+    road from the pickup went on being drawn on a circuit that had left it.
+
+    The mock answers regardless of the enabled flag, which is what a warm
+    cache does.
+  */
+  const view = await renderWithWarmCache(
+    trip({
+      stops: [
+        {
+          id: 1,
+          sequence: 1,
+          label: 'Jinja Main Market',
+          latitude: 0.44,
+          longitude: 33.2,
+          source: 'planned',
+          status: 'done',
+          arrived_at: null,
+          departed_at: null,
+          skip_reason: null,
+          client_place_id: null,
+        },
+      ],
+    }),
+  );
+
+  const html = tripMapHtml(view.toJSON());
+
+  // The road ahead is still drawn — it is measured from where the driver
+  // actually is, and is true whatever the circuit has done.
+  expect(html).toContain(ROAD_AHEAD);
+  expect(html).not.toContain(WHOLE_LEG_POLYLINE);
 });

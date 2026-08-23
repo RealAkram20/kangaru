@@ -3,6 +3,7 @@
 namespace Modules\Vehicles\Models;
 
 use App\Concerns\Auditable;
+use App\Concerns\BelongsToOperator;
 use Database\Factories\VehicleFactory;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -18,10 +19,13 @@ use Modules\Fleet\Models\VehicleAllocation;
  * means by "vehicles supplied to the Bank"; that lives on
  * `vehicle_allocations`, not here.
  *
- * Deliberately NOT BelongsToTenant. Minimal Phase-1 slice: category and
- * status are validated strings, not reference tables (vehicle categories,
- * branches, depots, maintenance and documents are deferred — see
- * Modules/Vehicles/README.md).
+ * Deliberately NOT BelongsToTenant. `status` is still a validated string;
+ * **`category` is no longer** — ADR-0050 made it a reference table,
+ * `vehicle_categories`. The column stays a plain string with no foreign key
+ * on purpose, so that the categories table can be renamed and reordered
+ * without a rate card rate or an invoice line re-rendering through it.
+ * Branches, depots, maintenance and documents remain deferred — see
+ * Modules/Vehicles/README.md.
  *
  * @property int $id
  * @property string $registration_number
@@ -30,13 +34,29 @@ use Modules\Fleet\Models\VehicleAllocation;
  */
 class Vehicle extends Model
 {
-    use Auditable, HasFactory, SoftDeletes;
+    use Auditable, BelongsToOperator, HasFactory, SoftDeletes;
 
     /**
-     * The Phase-1 vehicle categories. Not a reference table yet (see the
-     * class docblock), but no longer a string literal repeated per call
-     * site: Modules/Billing prices per category, so a category that exists
-     * in one list and not another would be a vehicle nobody can invoice.
+     * **No longer the validation source — see ADR-0050.** The categories a
+     * vehicle may be given now live in the `vehicle_categories` table, and
+     * `Modules\Vehicles\Rules\ActiveVehicleCategory` is the one rule that
+     * reads it. Adding a category is an afternoon in the console, not a
+     * deploy.
+     *
+     * This constant is kept, and has two remaining jobs:
+     *
+     * 1. **The migration seeds from it.** `create_vehicle_categories_table`
+     *    reads this array so the nine keys land without a hand-typed tenth
+     *    copy of the very list the table exists to stop copying.
+     * 2. **`RideVehicleClass` points at these names.** Its class-to-category
+     *    mapping is a recorded product decision naming `sedan`, `suv`,
+     *    `van` and `boda`; deleting the constant would strand it.
+     *
+     * Do not add a case here expecting it to become choosable. It will not.
+     * Add a row through the console, or, if it must exist from a fresh
+     * database, add it here **and** in a migration.
+     *
+     * The history below is kept because it is the argument for ADR-0050.
      *
      * **`boda` and `tricycle` were missing, and the failure this docblock
      * predicted had already happened.** The walk-in tariff priced both, a
@@ -51,7 +71,14 @@ class Vehicle extends Model
      * Ordered smallest first, which is how a chooser should read. Nothing
      * depends on the order; the lists are compared by content.
      *
-     * Mirrored in `frontend/src/lib/billing.ts` and `docs/api/openapi.yaml`.
+     * **It then happened a second time, which is what ended the argument.**
+     * `DriverFormDialog` shipped its own seven-item copy that omitted `boda`
+     * and `tricycle` — on the form built precisely so a rider arriving on
+     * their own boda could be onboarded. Two days, two mirrors, one drift.
+     * Both are now gone: the web app reads the table and falls back to
+     * `VEHICLE_CATEGORIES` in `frontend/src/lib/billing.ts` only when the
+     * request fails.
+     *
      * The self-drive subset in `StorePublicOrderRequest` is deliberately
      * narrower and is not this list — nobody self-drives a boda.
      *
@@ -84,6 +111,11 @@ class Vehicle extends Model
     }
 
     protected $fillable = [
+        // The fleet that owns this vehicle (ADR-0055). ADR-0005 removed
+        // `tenant_id` from this table because a client owns no vehicle; that
+        // stays true. What changed is that "the platform" is now one fleet
+        // among several, so the owner has a name instead of being implied.
+        'operator_id',
         'registration_number',
         'make',
         'model',

@@ -43,6 +43,11 @@ function slot(overrides: Partial<DriverDocumentSlot> = {}): DriverDocumentSlot {
     type_label: 'Driving licence',
     hint: 'Both sides if the details are split across them.',
     requires_expiry: true,
+    // Required since ADR-0048 §1 grouped the six slots into the KYC screen's
+    // three headed sections. Served rather than inferred, so a fixture has to
+    // carry it exactly as the server does.
+    group: 'driver',
+    group_label: 'Driver information',
     document: null,
     ...overrides,
   };
@@ -125,6 +130,26 @@ async function renderDocuments(element: ReactElement) {
   return render(<SafeAreaProvider initialMetrics={METRICS}>{element}</SafeAreaProvider>);
 }
 
+/**
+ * The interaction the grouped list introduced: **tap the row, then choose a
+ * source on the sheet.**
+ *
+ * The screen used to draw a "Take a photo" button per card and launch the
+ * camera straight from it. It now draws the mockup's rows (ADR-0048 §1) and
+ * `MediaPickerSheet` offers camera *or* library — the driver whose insurance
+ * certificate is already a photograph in their gallery had no way to send it
+ * before.
+ *
+ * The label is the row's composed screen-reader sentence, so matching on its
+ * start is matching on the document, not on the state beside it.
+ */
+// `Awaited<...>`: RTL v14's `render` is async, so its own return type is a
+// promise and the helper takes what a caller has already awaited.
+async function openCameraFor(screen: Awaited<ReturnType<typeof render>>, typeLabel: string) {
+  await fireEvent.press(screen.getByLabelText(new RegExp(`^${typeLabel}\.`, 'i')));
+  await fireEvent.press(await screen.findByLabelText(/Take a photo/i));
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockUseDriverDocuments.mockReturnValue({
@@ -170,7 +195,10 @@ it('draws a type never sent as an empty slot, not as an omission', async () => {
 
   expect(screen.getByText('Not sent yet')).toBeTruthy();
   expect(screen.getByText('Both sides if the details are split across them.')).toBeTruthy();
-  expect(screen.getByLabelText('Take a photo: driving licence')).toBeTruthy();
+  // The verb moved from a button label to the row's accessibility hint: the
+  // mockup's row carries only a chevron, and six rows reading "Take a photo"
+  // is a column of repeated words.
+  expect(screen.getByHintText(/Take a photo/i)).toBeTruthy();
 });
 
 it("shows the office's reason on a rejection", async () => {
@@ -220,7 +248,7 @@ it('asks when a licence expires before sending it', async () => {
     <DocumentsScreen navigation={navigation} route={{} as never} />,
   );
 
-  await fireEvent.press(screen.getByLabelText('Replace it: driving licence'));
+  await openCameraFor(screen, 'Driving licence');
 
   // The picker appears and nothing has been uploaded: the server refuses a
   // licence with no expiry, and learning that as a validation error on a photo
@@ -246,7 +274,7 @@ it('uploads with the date the driver picked', async () => {
     <DocumentsScreen navigation={navigation} route={{} as never} />,
   );
 
-  await fireEvent.press(screen.getByLabelText('Replace it: driving licence'));
+  await openCameraFor(screen, 'Driving licence');
   await waitFor(() => expect(screen.getByTestId('expiry-picker')).toBeTruthy());
 
   await fireEvent(
@@ -275,7 +303,7 @@ it('uploads nothing when the driver cancels the expiry picker', async () => {
     <DocumentsScreen navigation={navigation} route={{} as never} />,
   );
 
-  await fireEvent.press(screen.getByLabelText('Replace it: driving licence'));
+  await openCameraFor(screen, 'Driving licence');
   await waitFor(() => expect(screen.getByTestId('expiry-picker')).toBeTruthy());
 
   await fireEvent(screen.getByTestId('expiry-picker'), 'dismiss');
@@ -296,7 +324,7 @@ it('sends without asking for a date when the type does not carry one', async () 
     <DocumentsScreen navigation={navigation} route={{} as never} />,
   );
 
-  await fireEvent.press(screen.getByLabelText('Replace it: identity document'));
+  await openCameraFor(screen, 'Identity document');
 
   await waitFor(() =>
     expect(mockUpload).toHaveBeenCalledWith({
@@ -321,7 +349,7 @@ it('says a failed upload needed a connection, because it is not queued', async (
     <DocumentsScreen navigation={navigation} route={{} as never} />,
   );
 
-  await fireEvent.press(screen.getByLabelText('Replace it: identity document'));
+  await openCameraFor(screen, 'Identity document');
 
   // Every other mutation in this app goes through the outbox. A driver who
   // assumed this one did too would walk away believing the office had their
@@ -334,16 +362,58 @@ it('warns about replacing only where there is a verification to lose', async () 
     <DocumentsScreen navigation={navigation} route={{} as never} />,
   );
 
-  // ADR-0033 §2. A driver who has just been verified deserves to know before
-  // they retake a photo out of habit.
-  //
-  // **Two of the four rows, not four.** Reading the rendered screen caught the
-  // first version showing this under the *rejected* row, where sending another
-  // photo is precisely what the office asked for, and under the *pending* one,
-  // where there is no review to restart.
+  /*
+    ADR-0033 §2, and **the warning moved**. It used to sit permanently under
+    every verified row, where it was a standing caution about an action nobody
+    was taking. It is now on the picker sheet, which is the only moment it can
+    change a decision: the driver has said "replace this" and has not yet taken
+    the photograph.
+
+    It is still only shown where there is a verification to lose. Reading the
+    rendered screen originally caught it appearing under the *rejected* row,
+    where sending another photo is precisely what the office asked for, and
+    under the *pending* one, where there is no review to restart.
+  */
+  await fireEvent.press(screen.getByLabelText(/^Driving licence\./i));
+  // A substring match, because the note now composes two facts: this one, and
+  // the expiry question that follows the photo. Pinning the whole string would
+  // fail the next time either sentence is added to, which is not what this
+  // test is about.
+  expect(await screen.findByText(/A new photo is checked again\./)).toBeTruthy();
+});
+
+/*
+  The expiry half of the same note.
+
+  A driving licence cannot be sent without a date, and the calendar arrives
+  unannounced the instant the camera closes — reported from a handset as not
+  realising the date being asked for *was* the expiry. `DocumentSlotList` says
+  it on the row, but that is two screens behind by then, and the native dialog
+  cannot carry a title (`datetimepicker` gates `title` behind Material 3).
+*/
+it('warns that an expiry date is coming, before the camera opens', async () => {
+  const screen = await renderDocuments(
+    <DocumentsScreen navigation={navigation} route={{} as never} />,
+  );
+
+  await fireEvent.press(screen.getByLabelText(/^Driving licence\./i));
+
   expect(
-    screen.getAllByText('A new photo is checked again.'),
-  ).toHaveLength(2);
+    await screen.findByText(/you will be asked for the date this expires/i),
+  ).toBeTruthy();
+});
+
+it('does not warn about replacing a document the office refused', async () => {
+  const screen = await renderDocuments(
+    <DocumentsScreen navigation={navigation} route={{} as never} />,
+  );
+
+  await fireEvent.press(screen.getByLabelText(/^Vehicle registration\./i));
+
+  // The sheet is open — matching on its own heading rather than on the row
+  // behind it, which carries the same words.
+  expect(await screen.findByLabelText(/Take a photo/i)).toBeTruthy();
+  expect(screen.queryByText('A new photo is checked again.')).toBeNull();
 });
 
 it('asks a rejected document to be sent again, not replaced', async () => {
@@ -353,7 +423,7 @@ it('asks a rejected document to be sent again, not replaced', async () => {
 
   // "Replace it" describes swapping out something that worked. The office has
   // asked for this one again.
-  expect(screen.getByLabelText('Send it again: vehicle registration')).toBeTruthy();
+  expect(screen.getByHintText(/Send it again/i)).toBeTruthy();
 });
 
 it('does not tell a verified driver to do what they have already done', async () => {

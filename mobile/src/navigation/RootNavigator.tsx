@@ -4,11 +4,16 @@ import { DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, BackHandler, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '../auth/AuthProvider';
 import { OfferPresenter } from '../duty/OfferPresenter';
+import { navigationRef } from './navigationRef';
+import { registerNavigationForTracing } from '../tracing';
 import { PresenceController } from '../duty/PresenceController';
+import { FirstRunPermissions } from '../permissions/FirstRunPermissions';
 import { PushRegistrar } from '../push/PushRegistrar';
+import { PushRouter } from '../push/PushRouter';
 import { GpsController } from '../location/GpsController';
 import { DrawerContent } from './DrawerContent';
 import { DocumentsScreen } from '../screens/DocumentsScreen';
@@ -28,12 +33,15 @@ import { SafetyScreen } from '../screens/SafetyScreen';
 import { SupportScreen } from '../screens/SupportScreen';
 import { RideCompleteScreen } from '../screens/RideCompleteScreen';
 import { SignInScreen } from '../screens/SignInScreen';
+import { KycVerificationScreen } from '../screens/KycVerificationScreen';
 import { SignUpScreen } from '../screens/SignUpScreen';
 import { BankDetailsScreen } from '../screens/BankDetailsScreen';
 import { CloseAccountScreen } from '../screens/CloseAccountScreen';
+import { PermissionsScreen } from '../screens/PermissionsScreen';
 import { SyncQueueScreen } from '../screens/SyncQueueScreen';
 import { TimeOffScreen } from '../screens/TimeOffScreen';
 import { WelcomeScreen } from '../screens/WelcomeScreen';
+import { AddDropoffScreen } from '../screens/AddDropoffScreen';
 import { TripDetailScreen } from '../screens/TripDetailScreen';
 import { TripInProgressScreen } from '../screens/TripInProgressScreen';
 import { TransactionsScreen } from '../screens/TransactionsScreen';
@@ -42,6 +50,7 @@ import { WaitingForPassengerScreen } from '../screens/WaitingForPassengerScreen'
 import { WalletScreen } from '../screens/WalletScreen';
 import { HouseIcon, ReceiptIcon, UserIcon, WalletIcon } from '../ui/icons';
 import { colors } from '../ui/theme';
+import { ApplicantGate } from './ApplicantGate';
 import { TripsHistoryScreen } from '../screens/TripsHistoryScreen';
 import type {
   EarningsStackParams,
@@ -82,7 +91,9 @@ const theme = {
  * not asked for anything yet.
  */
 function AuthScreens() {
-  const [screen, setScreen] = useState<'welcome' | 'signin' | 'signup' | 'forgot'>('welcome');
+  const [screen, setScreen] = useState<'welcome' | 'signin' | 'signup' | 'kyc' | 'forgot'>(
+    'welcome',
+  );
 
   /**
    * The verified name and email a social sign-in handed back for a stranger
@@ -90,6 +101,19 @@ function AuthScreens() {
    * their phone number and nothing they already proved.
    */
   const [prefill, setPrefill] = useState<{ name: string; email: string } | null>(null);
+
+  /**
+   * The claim ticket a submitted application returns (ADR-0048 §4), and the
+   * number the confirmation says the office will ring.
+   *
+   * **Held in memory and nowhere else.** It is a live credential for somebody's
+   * identity documents, valid for 24 hours, belonging to a person with no
+   * account — so there is nothing to persist it *to* that would not be a worse
+   * place than this. Losing it by backgrounding the app costs an applicant
+   * their upload step and not their application, which is the right way round
+   * for that trade.
+   */
+  const [ticket, setTicket] = useState<{ token: string; phone: string } | null>(null);
 
   // The hardware back button walks back to the front door rather than out of
   // the app. Plain state gets no back handling for free — without this,
@@ -124,7 +148,34 @@ function AuthScreens() {
         <SignUpScreen
           onSignIn={() => setScreen('signin')}
           onBack={() => setScreen('welcome')}
+          onSubmitted={(token, phone) => {
+            setTicket({ token, phone });
+            setScreen('kyc');
+          }}
           prefill={prefill}
+        />
+      );
+    case 'kyc':
+      // Guarded rather than asserted: `ticket` and `screen` are two pieces of
+      // state and only the transition above sets both. A `kyc` screen with no
+      // ticket cannot happen today, and must not render a broken screen if it
+      // ever does.
+      return ticket === null ? (
+        <SignInScreen
+          onSignUp={() => setScreen('signup')}
+          onBack={() => setScreen('welcome')}
+          onForgot={() => setScreen('forgot')}
+        />
+      ) : (
+        <KycVerificationScreen
+          uploadToken={ticket.token}
+          phone={ticket.phone}
+          onDone={() => {
+            // Dropped on the way out. Nothing later in this session has any
+            // business holding it.
+            setTicket(null);
+            setScreen('signin');
+          }}
         />
       );
     case 'forgot':
@@ -152,6 +203,12 @@ function TripsNavigator() {
       screenOptions={{
         headerStyle: { backgroundColor: colors.surface },
         headerTintColor: colors.text,
+        // With `enableFreeze(true)` in index.ts, a screen this stack has
+        // navigated past stops rendering. This stack is the one that earns
+        // it: Home keeps a map WebView at the bottom of the stack for a
+        // whole trip, and TripInProgress ticks a clock every second — work
+        // that was all still running behind the screen on display.
+        freezeOnBlur: true,
       }}
     >
       {/* Home has its own top bar — brand, notifications, avatar — so the
@@ -180,6 +237,12 @@ function TripsNavigator() {
       <TripsStack.Screen
         name="TripInProgress"
         component={TripInProgressScreen}
+        options={{ headerShown: false }}
+      />
+      {/* The next drop-off, searched and added mid-run (ADR-0045 §4). */}
+      <TripsStack.Screen
+        name="AddDropoff"
+        component={AddDropoffScreen}
         options={{ headerShown: false }}
       />
       <TripsStack.Screen
@@ -220,7 +283,15 @@ function TripsNavigator() {
         // A modal, because a half-entered odometer reading is not a state
         // worth keeping: the form is completed or abandoned as a unit, and
         // backing out leaves the trip exactly as it was.
-        options={{ presentation: 'modal', title: 'Odometer' }}
+        //
+        // **`headerShown: false` like every other screen in this app.** This
+        // was the one route that kept React Navigation's stock header, so the
+        // screen wore a system title bar reading "Odometer" while the content
+        // below it said "Opening odometer" — the app's chrome nowhere, the
+        // same word twice, and a back arrow that matched nothing else a driver
+        // had seen. The owner's *"it looks nothing like our design"* was that.
+        // `OdometerScreen` draws its own `ScreenHeader`.
+        options={{ presentation: 'modal', headerShown: false }}
       />
     </TripsStack.Navigator>
   );
@@ -320,6 +391,15 @@ function ProfileNavigator() {
         component={SyncQueueScreen}
         options={{ headerShown: false }}
       />
+      {/*
+        ADR-0046 / ADR-0049. Draws its own `ScreenHeader`, like every screen on
+        this stack.
+      */}
+      <ProfileStack.Screen
+        name="Permissions"
+        component={PermissionsScreen}
+        options={{ headerShown: false }}
+      />
       {/* ADR-0042. Draws its own `ScreenHeader`, like every screen on this stack. */}
       <ProfileStack.Screen
         name="BankDetails"
@@ -402,25 +482,54 @@ export function RootNavigator() {
   }
 
   return (
-    <NavigationContainer theme={theme}>
+    /* `onReady` is Sentry's, and it is the only moment it can be done:
+      the SDK reads `navigationRef.current` when it is handed the container,
+      and that is null until this fires (ADR-0054 §4, `src/tracing.ts`). */
+    <NavigationContainer
+      ref={navigationRef}
+      theme={theme}
+      onReady={() => registerNavigationForTracing(navigationRef)}
+    >
       {user === null ? (
         <AuthScreens />
       ) : (
-        <>
-          {/* Both render nothing, and both are mounted here rather than on a
-            screen for the same reason: a driver who switches tabs must not
-            silently stop being tracked or stop being findable. */}
+        /*
+          An account is not yet a driver (ADR-0057 §5). Since accounts are
+          minted at application time, somebody can sign in while the office is
+          still reading their papers — and the four controllers below all
+          assume a driver profile that does not exist yet. `ApplicantGate`
+          answers the one question that separates them and shows the waiting
+          screen instead, rather than a home screen where every panel 404s.
+        */
+        <ApplicantGate>
+          {/* All four render nothing, and all four are mounted here rather
+            than on a screen for the same reason: a driver who switches tabs
+            must not silently stop being tracked, stop being findable, or
+            stop being reachable.
+
+            `PushRouter` in particular has to be mounted before the driver
+            can touch anything — a tap on a notification that launched the
+            app from a killed process is waiting to be read at start-up, and
+            nothing else in the app will ever ask for it. */}
           <GpsController />
           <PresenceController />
           <PushRegistrar />
+          {/*
+            ADR-0046. Asks for notifications, both location permissions and the
+            camera in one sequence, once. Renders nothing, and sits beside
+            `PushRegistrar` because both need a signed-in driver and neither
+            belongs to a screen.
+          */}
+          <FirstRunPermissions />
+          <PushRouter />
           <MainNavigator />
 
           {/* Last, and outside the navigator on purpose. A job has a
-            fifteen-second clock and has to appear over whatever the driver
+            countdown on it and has to appear over whatever the driver
             is doing — including a modal — so it is painted above the tabs
             rather than pushed into one of them. See `OfferPresenter`. */}
           <OfferPresenter />
-        </>
+        </ApplicantGate>
       )}
     </NavigationContainer>
   );
@@ -459,15 +568,47 @@ function MainNavigator() {
   );
 }
 
+/**
+ * The tab row's own height, before the system's navigation bar is added to it.
+ *
+ * React Navigation's Android default, stated here rather than inherited so the
+ * arithmetic below is visible: the bar must be this tall *plus* whatever the
+ * system takes at the bottom, or the two overlap and the labels lose their
+ * descenders — *Earnings* and *Profile* are the two that show it first.
+ */
+const TAB_BAR_HEIGHT = 56;
+
 function TabsNavigator() {
+  /**
+   * **The bottom inset is applied here, and leaving it to the navigator was
+   * wrong on three-button Android.**
+   *
+   * The comment this replaces said the navigator adds the safe-area inset
+   * itself — true under gesture navigation, where the inset is a few points and
+   * nothing visibly collided. Reproduced on the emulator with
+   * `com.android.internal.systemui.navbar.threebutton` enabled, which is what
+   * the owner's handset uses: the system navigation bar draws **over** the
+   * bottom of the tab bar and clips the descenders off *Earnings* and
+   * *Profile*. The app is edge-to-edge, so the window extends under that bar
+   * and something has to pay for it.
+   *
+   * `height` and `paddingBottom` move together deliberately: padding alone
+   * shrinks the row into the same fixed height and pushes the labels up into
+   * the icons, which is the failure the old comment was warning about. The
+   * base is the navigator's own default rather than a number chosen by eye.
+   */
+  const insets = useSafeAreaInsets();
+
   return (
     <Tabs.Navigator
       screenOptions={{
         headerShown: false,
-        // No explicit height or bottom padding: the navigator adds the
-        // safe-area inset itself, and overriding the height made the
-        // labels sit underneath Android's gesture bar.
-        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
+        tabBarStyle: {
+          backgroundColor: colors.surface,
+          borderTopColor: colors.border,
+          height: TAB_BAR_HEIGHT + insets.bottom,
+          paddingBottom: insets.bottom,
+        },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textMuted,
         tabBarLabelStyle: { fontSize: 13, fontWeight: '600' },

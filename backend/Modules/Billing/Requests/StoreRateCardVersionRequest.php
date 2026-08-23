@@ -12,6 +12,7 @@ use Modules\Fleet\Enums\ZoneKind;
 use Modules\Fleet\Models\Zone;
 use Modules\Trips\Distance\DistancePolicy;
 use Modules\Vehicles\Models\Vehicle;
+use Modules\Vehicles\Rules\ActiveVehicleCategory;
 
 /**
  * Validates one immutable rate card version and its per-category rates.
@@ -71,7 +72,12 @@ class StoreRateCardVersionRequest extends FormRequest
             // At least one category must be priced, or the version cannot
             // invoice anything.
             $prefix.'rates' => ['required', 'array', 'min:1'],
-            $prefix.'rates.*.vehicle_category' => ['required', 'string', Rule::in(Vehicle::CATEGORIES)],
+            // ADR-0050. Read from the `vehicle_categories` table, so a
+            // category the office adds on Tuesday can be priced on Tuesday
+            // rather than after a deploy. Active only: a retired category
+            // must not gain a *new* price, while every version that already
+            // prices it stays exactly as it is and keeps invoicing.
+            $prefix.'rates.*.vehicle_category' => ['required', 'string', new ActiveVehicleCategory],
             $prefix.'rates.*.base_fare_minor' => ['nullable', 'integer', 'min:0'],
             $prefix.'rates.*.per_km_minor' => ['nullable', 'integer', 'min:0'],
             $prefix.'rates.*.per_waiting_minute_minor' => ['nullable', 'integer', 'min:0'],

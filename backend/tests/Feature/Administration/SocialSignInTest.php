@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\AccessLevel;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Models\User;
@@ -21,7 +22,12 @@ const GOOGLE_CLIENT = '1234-android.apps.googleusercontent.com';
 
 function enableGoogle(): void
 {
-    $admin = User::factory()->create(['tenant_id' => null, 'role' => UserRole::SUPER_ADMIN]);
+    $admin = User::factory()->create([
+        'tenant_id' => null,
+        'operator_id' => null,
+        'access_level' => AccessLevel::KANGARU,
+        'role' => UserRole::SUPER_ADMIN,
+    ]);
 
     test()->actingAs($admin, 'sanctum')->patchJson('/api/v1/settings/auth', [
         'google_enabled' => true,
@@ -254,7 +260,12 @@ it('treats a suspended account exactly like no account', function () {
 });
 
 it('verifies Facebook tokens against the stored app credentials', function () {
-    $admin = User::factory()->create(['tenant_id' => null, 'role' => UserRole::SUPER_ADMIN]);
+    $admin = User::factory()->create([
+        'tenant_id' => null,
+        'operator_id' => null,
+        'access_level' => AccessLevel::KANGARU,
+        'role' => UserRole::SUPER_ADMIN,
+    ]);
     $this->actingAs($admin, 'sanctum')->patchJson('/api/v1/settings/auth', [
         'facebook_enabled' => true,
         'facebook_app_id' => 'fb-app-1',
@@ -286,7 +297,12 @@ it('verifies Facebook tokens against the stored app credentials', function () {
 });
 
 it('refuses a Facebook token minted for another app', function () {
-    $admin = User::factory()->create(['tenant_id' => null, 'role' => UserRole::SUPER_ADMIN]);
+    $admin = User::factory()->create([
+        'tenant_id' => null,
+        'operator_id' => null,
+        'access_level' => AccessLevel::KANGARU,
+        'role' => UserRole::SUPER_ADMIN,
+    ]);
     $this->actingAs($admin, 'sanctum')->patchJson('/api/v1/settings/auth', [
         'facebook_enabled' => true,
         'facebook_app_id' => 'fb-app-1',

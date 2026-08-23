@@ -165,6 +165,64 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  # Acting as somebody else, for support (ADR-0056)
+  /api/v1/support/act-as:
+    get:
+      summary: >
+        Whether this request is being made by somebody acting as the account,
+        and until when. Null for everybody who is simply themselves.
+      responses:
+        '200':
+          description: The live session, or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string, nullable: true }
+                  data:
+                    nullable: true
+                    type: object
+                    required: [subject_name, expires_at]
+                    additionalProperties: false
+                    properties:
+                      subject_name: { type: string }
+                      expires_at: { $ref: '#/components/schemas/Timestamp' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: >
+        Begins a support session: the caller acts as another user for thirty
+        minutes. Every action taken is recorded against both names.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject_id, reason]
+              additionalProperties: false
+              properties:
+                subject_id: { type: integer }
+                reason: { type: string, minLength: 8, maxLength: 255 }
+      responses:
+        '201':
+          $ref: '#/components/responses/ImpersonationSessionResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: >
+        Ends the caller's support session. Idempotent — ending one that has
+        already lapsed is a success, because stopping must never fail.
+      responses:
+        '204':
+          description: No content.
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/auth/password/forgot:
     post:
       summary: >
@@ -393,9 +451,22 @@ paths:
                     items: { $ref: '#/components/schemas/User' }
                   meta:
                     type: object
-                    required: [assignable_roles]
+                    required: [assignable_roles, capabilities, routes]
                     additionalProperties: false
                     properties:
+                      routes:
+                        type: array
+                        description: >
+                          The client's active routes this administrator may put a
+                          colleague on (ADR-0045 §8). Empty for a platform account,
+                          which belongs to no tenant and so has no routes of its own.
+                        items:
+                          type: object
+                          required: [id, name]
+                          additionalProperties: false
+                          properties:
+                            id: { type: integer }
+                            name: { type: string }
                       assignable_roles:
                         type: array
                         items:
@@ -406,6 +477,17 @@ paths:
                             value: { type: string }
                             label: { type: string }
                             description: { type: ['string', 'null'] }
+                      capabilities:
+                        type: array
+                        description: The per-person switches a client's administrator may set (ClientCapability), with labels.
+                        items:
+                          type: object
+                          required: [slug, label, description]
+                          additionalProperties: false
+                          properties:
+                            slug: { $ref: '#/components/schemas/ClientCapability' }
+                            label: { type: string }
+                            description: { type: string }
         default:
           $ref: '#/components/responses/Error'
     post:
@@ -416,14 +498,27 @@ paths:
           application/json:
             schema:
               type: object
-              required: [name, email, role, password]
+              required: [name, email, phone, role, password]
               additionalProperties: false
               properties:
                 name: { type: string, maxLength: 255 }
                 email: { type: string, format: email }
+                phone: { type: string, maxLength: 32 }
                 role: { type: string }
                 password: { type: string, minLength: 12 }
                 tenant_id: { type: integer, description: Super Admin only. }
+                capabilities:
+                  type: array
+                  items: { $ref: '#/components/schemas/ClientCapability' }
+                books_without_approval: { type: boolean }
+                route_ids:
+                  type: array
+                  maxItems: 50
+                  description: >
+                    The client's routes this colleague rides (ADR-0045 §8). The full
+                    list, replacing what was there. Refused for a platform account,
+                    which has no routes, and for a route belonging to another client.
+                  items: { type: integer }
       responses:
         '201':
           $ref: '#/components/responses/UserResponse'
@@ -452,11 +547,54 @@ paths:
               properties:
                 name: { type: string, maxLength: 255 }
                 email: { type: string, format: email }
+                phone: { type: string, maxLength: 32 }
                 role: { type: string }
                 status: { enum: [active, suspended] }
+                capabilities:
+                  type: array
+                  description: The full list, replacing what was there — a switch panel is saved whole.
+                  items: { $ref: '#/components/schemas/ClientCapability' }
+                books_without_approval: { type: boolean }
+                route_ids:
+                  type: array
+                  maxItems: 50
+                  description: The full list, replacing what was there — a roster is saved whole (ADR-0045 §8).
+                  items: { type: integer }
       responses:
         '200':
           $ref: '#/components/responses/UserResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/colleagues:
+    get:
+      summary: >
+        The people you may raise a booking for — your own organisation's
+        staff, by name or email. Deliberately not a filter on /users: that
+        one is gated on `staff.view` and answers with roles, capabilities
+        and MFA state, and the Corporate Employee naming a passenger holds
+        none of it. Gated on `bookings.create` instead — you may look up a
+        colleague if you may book a car for one. `q` is required and the
+        result is capped, so this is a lookup and never a directory dump.
+        Empty for platform staff, who belong to no tenant and so have no
+        colleagues; they book walk-ins by name.
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 2, maxLength: 120 } }
+      responses:
+        '200':
+          description: At most fifteen matching colleagues.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Colleague' }
         default:
           $ref: '#/components/responses/Error'
 
@@ -487,6 +625,56 @@ paths:
                     additionalProperties: false
                     properties:
                       settings: { $ref: '#/components/schemas/PublicSettings' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/public/fare-quotes:
+    get:
+      summary: >
+        What a ride would cost, per class, before it is ordered — the public
+        tariff (ADR-0026) answering the order form. Unauthenticated: read on
+        the form before anybody has an account (ADR-0015 §1 requires one to
+        order, not to look), and it reveals only the public tariff's
+        arithmetic. Every class is priced through the same
+        `WalkInFareService::quote()` the driver's estimate uses, mapped
+        through `RideVehicleClass`, so passenger and driver are told one
+        number. A class the tariff does not price, or no tariff at all, is
+        `null` for that class and 200 — the form falls back to its "from"
+        figure. Throttled 30/min/IP.
+      parameters:
+        - { name: pickup_latitude, in: query, required: true, schema: { type: number } }
+        - { name: pickup_longitude, in: query, required: true, schema: { type: number } }
+        - { name: dropoff_latitude, in: query, required: true, schema: { type: number } }
+        - { name: dropoff_longitude, in: query, required: true, schema: { type: number } }
+      responses:
+        '200':
+          description: One quote per ride class, or null where the tariff is silent.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [quotes]
+                    additionalProperties: false
+                    properties:
+                      quotes:
+                        type: object
+                        required: [economy, standard, xl, boda, electric_boda]
+                        additionalProperties: false
+                        properties:
+                          economy: { $ref: '#/components/schemas/NullableWalkInFareEstimate' }
+                          standard: { $ref: '#/components/schemas/NullableWalkInFareEstimate' }
+                          xl: { $ref: '#/components/schemas/NullableWalkInFareEstimate' }
+                          boda: { $ref: '#/components/schemas/NullableWalkInFareEstimate' }
+                          electric_boda: { $ref: '#/components/schemas/NullableWalkInFareEstimate' }
+        '429':
+          $ref: '#/components/responses/Throttled'
         default:
           $ref: '#/components/responses/Error'
 
@@ -641,7 +829,7 @@ paths:
                     items: { $ref: '#/components/schemas/Role' }
                   meta:
                     type: object
-                    required: [catalogue, grantable, can_manage]
+                    required: [catalogue, grantable, can_manage, mfa_enforced, can_manage_mfa]
                     additionalProperties: false
                     properties:
                       catalogue:
@@ -654,6 +842,25 @@ paths:
                         type: array
                         items: { type: string }
                       can_manage: { type: boolean }
+                      mfa_enforced:
+                        type: boolean
+                        description: >
+                          Whether the platform is asking for a second factor at
+                          all (ADR-0061). Sent here rather than left to the
+                          console to fetch from /settings, which needs
+                          settings.manage — a Corporate Admin reads this page
+                          and holds no such thing, and a per-role badge that
+                          could not say "off platform-wide" would be a control
+                          that looks live and does nothing.
+                      can_manage_mfa:
+                        type: boolean
+                        description: >
+                          Whether this actor may change the per-role half.
+                          Kangaru head office only (ADR-0061 §5) — a control
+                          that weakens authentication must not be reachable by
+                          the account it would weaken. The console reads this
+                          rather than holding its own copy of the rule, and
+                          omits the field from its payload entirely when false.
         default:
           $ref: '#/components/responses/Error'
     post:
@@ -684,7 +891,7 @@ paths:
     parameters:
       - { name: role, in: path, required: true, schema: { type: integer } }
     patch:
-      summary: Updates a role's name, description or permissions.
+      summary: Updates a role's name, description, permissions or second-factor requirement.
       requestBody:
         required: true
         content:
@@ -699,6 +906,15 @@ paths:
                   type: array
                   minItems: 1
                   items: { type: string }
+                requires_mfa:
+                  type: boolean
+                  description: >
+                    ADR-0061. Kangaru head office only — a fleet's own Super
+                    Admin is refused with a 422 on this field, in both
+                    directions, because a control that weakens authentication
+                    must not be reachable by the account it would weaken.
+                    Refused on the field alone: a fleet may still rename its
+                    own custom roles and change their permissions.
       responses:
         '200':
           $ref: '#/components/responses/RoleResponse'
@@ -802,9 +1018,26 @@ paths:
               required: [passenger_name, passenger_phone, origin, destination]
               additionalProperties: false
               properties:
+                passenger_user_id:
+                  type: ['integer', 'null']
+                  description: >
+                    The colleague travelling. **Required** when a client's own
+                    staff raise the booking — their bookings are for their own
+                    people — and `passenger_name` is then taken from that
+                    account rather than from this request, so one employee
+                    cannot arrive spelled three ways. Optional for Shanitah's
+                    own staff, who book walk-ins and callers with no account.
                 passenger_name: { type: string, maxLength: 255 }
                 passenger_phone: { type: string, maxLength: 32 }
                 passenger_count: { type: ['integer', 'null'], minimum: 1, maximum: 60 }
+                vehicle_category:
+                  description: >
+                    ADR-0051. Optional; omit or send null for no preference.
+                    Validated against the **active** categories — a client
+                    may not request one the fleet has stopped running.
+                  anyOf:
+                    - { $ref: '#/components/schemas/VehicleCategoryKey' }
+                    - { enum: [null] }
                 origin: { type: string, maxLength: 255 }
                 destination: { type: string, maxLength: 255 }
                 scheduled_for:
@@ -1464,6 +1697,245 @@ paths:
           $ref: '#/components/responses/Error'
 
   # ------------------------------------------------------------------
+  # Client places and routes (Modules/Clients) - ADR-0045
+  # The plan half: what a corporate client pins, and the circuits built
+  # from them. Trip stops (the evidence half) are a later pass.
+  # ------------------------------------------------------------------
+  /api/v1/places:
+    get:
+      summary: The client's saved places, by name.
+      responses:
+        '200':
+          description: Saved places.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ClientPlace' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Pins a location for this client.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, latitude, longitude]
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                address: { type: ['string', 'null'], maxLength: 255 }
+                latitude: { type: number, minimum: -90, maximum: 90 }
+                longitude: { type: number, minimum: -180, maximum: 180 }
+                arrival_radius_m: { type: ['integer', 'null'], minimum: 25, maximum: 5000 }
+                notes: { type: ['string', 'null'], maxLength: 2000 }
+                is_active: { type: boolean }
+      responses:
+        '201':
+          $ref: '#/components/responses/ClientPlaceResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/places/{place}:
+    parameters:
+      - { name: place, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: One saved place.
+      responses:
+        '200':
+          $ref: '#/components/responses/ClientPlaceResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    patch:
+      summary: Moves, renames or retires a saved place.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                address: { type: ['string', 'null'], maxLength: 255 }
+                latitude: { type: number, minimum: -90, maximum: 90 }
+                longitude: { type: number, minimum: -180, maximum: 180 }
+                arrival_radius_m: { type: ['integer', 'null'], minimum: 25, maximum: 5000 }
+                notes: { type: ['string', 'null'], maxLength: 2000 }
+                is_active: { type: boolean }
+      responses:
+        '200':
+          $ref: '#/components/responses/ClientPlaceResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: >
+        Deletes a saved place. Refused 409 CLIENT_PLACE_IN_USE while any
+        route still visits it - the message names those routes.
+      responses:
+        '204':
+          description: Deleted. No content.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/routes:
+    get:
+      summary: The client's routes, by name, with their stops in order.
+      responses:
+        '200':
+          description: Routes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ClientRoute' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: >
+        Builds a route. Stop order is the array's order - a `sequence` sent
+        by a caller is ignored. Refused 422 UNKNOWN_CLIENT_PLACE or
+        UNKNOWN_ROUTE_MEMBER if any id is not this client's.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                reference: { type: ['string', 'null'], maxLength: 40 }
+                notes: { type: ['string', 'null'], maxLength: 2000 }
+                is_active: { type: boolean }
+                stops:
+                  type: array
+                  maxItems: 25
+                  items: { $ref: '#/components/schemas/ClientRouteStopInput' }
+                member_ids:
+                  type: array
+                  maxItems: 50
+                  items: { type: integer }
+      responses:
+        '201':
+          $ref: '#/components/responses/ClientRouteResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/routes/preview:
+    post:
+      summary: >
+        The road through an ordered list of the client's places, for a
+        circuit that is still being dragged into shape and has no id yet.
+        A POST for a read, because 25 ids in a query string is a URL long
+        enough for a proxy to truncate - and a truncated list draws a
+        shorter circuit rather than failing.
+
+        `data` is null when routing is switched off or the provider
+        declined (ADR-0031 §2). That means no line and no distance, never a
+        straight line between the stops and never a crow's-flight figure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [place_ids]
+              additionalProperties: false
+              properties:
+                place_ids:
+                  description: >
+                    Ordered, origin first. A place may legitimately appear
+                    twice - head office at both ends is the ordinary shape
+                    of a cash run.
+                  type: array
+                  minItems: 2
+                  maxItems: 25
+                  items: { type: integer }
+      responses:
+        '200':
+          description: The circuit's shape, or null if none could be drawn.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    oneOf:
+                      - { $ref: '#/components/schemas/DrawnRoute' }
+                      - { type: 'null' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/routes/{route}:
+    parameters:
+      - { name: route, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: One route, with its stops in order and the team who ride it.
+      responses:
+        '200':
+          $ref: '#/components/responses/ClientRouteResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    patch:
+      summary: >
+        Edits a route. Omitting `stops` or `member_ids` leaves them
+        untouched; sending an empty array empties them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                reference: { type: ['string', 'null'], maxLength: 40 }
+                notes: { type: ['string', 'null'], maxLength: 2000 }
+                is_active: { type: boolean }
+                stops:
+                  type: array
+                  maxItems: 25
+                  items: { $ref: '#/components/schemas/ClientRouteStopInput' }
+                member_ids:
+                  type: array
+                  maxItems: 50
+                  items: { type: integer }
+      responses:
+        '200':
+          $ref: '#/components/responses/ClientRouteResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Retires a route (soft delete).
+      responses:
+        '204':
+          description: Deleted. No content.
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
   # Drivers (Modules/Drivers) — the platform's, not a tenant's (ADR-0005)
   # ------------------------------------------------------------------
   /api/v1/drivers:
@@ -1610,9 +2082,16 @@ paths:
         profile, no credential that can sign in. Deliberately answers
         identically whether or not the email is already known — a duplicate
         is refused at approval, in front of a human, not at submission in
-        front of a script. 202 with no body on success; an id would be a
+        front of a script.
+
+        202 on success. **The id is still not returned** — it would be a
         handle for guessing at other people's applications, and there is no
-        status checker to use it on (§6).
+        status checker to use it on (§6). What comes back is the claim ticket
+        (ADR-0048 §4): an opaque secret that resolves to this row and nothing
+        else on the platform, so the KYC screen can send photographs one at a
+        time instead of staking the whole form on a single 48 MB request.
+        Returned exactly once — the column holds a SHA-256 of it, and an
+        endpoint that would send it again is the oracle §5 refuses.
       requestBody:
         required: true
         content:
@@ -1653,7 +2132,33 @@ paths:
                   enum: [true, 'true', 1, '1', 'yes', 'on']
       responses:
         '202':
-          $ref: '#/components/responses/MessageOnly'
+          description: Accepted for review, with a claim ticket for the documents.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [upload_token, upload_expires_at]
+                    additionalProperties: false
+                    properties:
+                      upload_token:
+                        type: string
+                        minLength: 64
+                        maxLength: 64
+                        description: >
+                          64 opaque random characters. Not the application id,
+                          not derived from it, and cannot be walked to a
+                          neighbouring row.
+                      upload_expires_at:
+                        type: string
+                        format: date-time
+                        description: 24 hours (ADR-0048 §4).
         default:
           $ref: '#/components/responses/Error'
     get:
@@ -1692,6 +2197,140 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/driver-applications/documents:
+    get:
+      summary: >
+        The six KYC slots an applicant has filled, by claim ticket
+        (ADR-0048 §4). Unauthenticated, throttled 5/min/IP.
+      description: >
+        **Not the status checker ADR-0027 §6 refuses.** It takes an opaque
+        secret minted at submission, never an email address, and answers with
+        which document slots the holder has filled — not with a decision, and
+        never with file bytes. Unknown, expired and already-decided tickets all
+        get the same 404, so the status code cannot be used as an oracle.
+
+        There is deliberately no `{application}` segment: the row is whichever
+        one the ticket resolves to, so there is no id in the URL to change.
+      parameters:
+        - name: upload_token
+          in: query
+          required: true
+          schema: { type: string, minLength: 64, maxLength: 64 }
+          description: >
+            Accepted here for the GET only. Writes take it in the body or the
+            `X-Upload-Token` header — a query string is written to access
+            logs, proxy logs and browser history as a matter of course.
+      responses:
+        '200':
+          description: The six slots, grouped and ordered.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DriverDocumentSlot' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: >
+        An applicant sending one of their papers before approval
+        (ADR-0048 §4). Unauthenticated, throttled 5/min/IP.
+      description: >
+        Same mime list and same 8 MB ceiling as the driver's own upload, by
+        extension rather than by copy: the file lands on the same private disk
+        and becomes the same row on the same driver, so a looser limit here
+        would be a way past the fleet's limits by applying instead of being
+        hired.
+
+        One request per file rather than the whole set with the application —
+        six photographs at 8 MB is a 48 MB request from a handset on a Ugandan
+        mobile connection, and when it fails at 80% the applicant loses the
+        form as well as the files.
+
+        Re-sending a type **replaces** it (ADR-0033 §2). Optional in every
+        sense: approval requires no documents at all (ADR-0048 §6).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [upload_token, type, file]
+              additionalProperties: false
+              properties:
+                upload_token: { type: string, minLength: 64, maxLength: 64 }
+                type: { $ref: '#/components/schemas/DriverDocumentType' }
+                file:
+                  type: string
+                  format: binary
+                  description: Image or PDF, 8 MB.
+                expires_at:
+                  type: ['string', 'null']
+                  format: date
+                  description: >
+                    Required for driving_licence and vehicle_insurance, whose
+                    entire meaning is a date. Must not be in the past.
+      responses:
+        '201':
+          description: Received. `file_url` is null — metadata, never bytes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DriverDocument' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/driver-applications/documents/{type}:
+    parameters:
+      - name: type
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/DriverDocumentType' }
+    delete:
+      summary: >
+        Withdraws one document before anybody has decided (ADR-0048 §4).
+        Unauthenticated, throttled 5/min/IP.
+      description: >
+        For the applicant who realises they sent a document they did not mean
+        to send at all — uploading over it fixes a bad photograph, and does
+        not help with that. The file is destroyed, not merely unlinked.
+
+        204 whether or not anything was held of that type: nothing held is the
+        state the caller asked for, and a 404 would make a retried withdrawal
+        look broken.
+
+        **Deliberately not offered to a driver.** ADR-0033 §2 makes
+        re-uploading the way a driver corrects a document, and it resets the
+        review; a driver who could delete instead could remove a document the
+        office had already rejected, taking the objection with it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [upload_token]
+              additionalProperties: false
+              properties:
+                upload_token: { type: string, minLength: 64, maxLength: 64 }
+      responses:
+        '204':
+          description: Withdrawn, or nothing was held.
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/driver-applications/{driverApplication}:
     parameters:
       - { name: driverApplication, in: path, required: true, schema: { type: integer } }
@@ -1700,6 +2339,139 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/DriverApplicationResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/driver-applications/{driverApplication}/documents:
+    parameters:
+      - { name: driverApplication, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: What the applicant sent, for the office.
+      description: >
+        The papers uploaded against the applicant's claim ticket (ADR-0048 s4),
+        read back by the people deciding. Gated on the **application's** own
+        policy rather than a document permission: whoever may read the
+        application may read what was attached to it, and a second gate would
+        let the queue list an application whose papers it then refused to show.
+
+
+        The same `DriverDocumentSlot` shape the driver-facing endpoints serve,
+        empty slots included — a reviewer asking "can I decide this yet" is
+        asking what is missing.
+      responses:
+        '200':
+          description: Every document type, with what is held against it.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DriverDocumentSlot' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/driver-applications/{driverApplication}/documents/{document}/file:
+    parameters:
+      - { name: driverApplication, in: path, required: true, schema: { type: integer } }
+      - { name: document, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: The applicant's document file, for the office.
+      description: >
+        Decrypted on the way out (ADR-0053). A document that does not belong to
+        the application in the path is a **404, not a 403** — the same rule and
+        the same reason as the driver route: the reviewer's permission covers
+        every application, so the policy alone would let a mismatched pair
+        address a stranger's national ID, and a 403 would confirm the document
+        id exists.
+      responses:
+        '200':
+          description: The file.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/driver-applications/{driverApplication}/documents/{document}/verify:
+    parameters:
+      - { name: driverApplication, in: path, required: true, schema: { type: integer } }
+      - { name: document, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: Accept one of an applicant's documents (ADR-0057).
+      description: >
+        `drivers.manage` + `staff.manage`, the same pair that decides the
+        application. Writes through the one service that records a review, so
+        there is no second notion of an accepted document.
+
+
+        A document that does not belong to the application in the path is a
+        **404, not a 403** — the reviewer's permission covers every
+        application, so the policy alone would let a mismatched pair address a
+        stranger's national ID.
+      responses:
+        '200':
+          description: The document, now accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DriverDocument' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/driver-applications/{driverApplication}/documents/{document}/reject:
+    parameters:
+      - { name: driverApplication, in: path, required: true, schema: { type: integer } }
+      - { name: document, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: Ask the applicant to send one document again (ADR-0057).
+      description: >
+        **Does not close the application.** The other verdicts stand, the files
+        survive, and the applicant is emailed a fresh claim ticket so they can
+        send a replacement — a refusal they cannot answer costs them the job
+        while they wait. Refusing the *person* is
+        `/driver-applications/{driverApplication}/reject`, which is a different
+        act and still available.
+
+
+        The reason is required, for the reason ADR-0033 gives about a driver's
+        document: a refusal with no reason is how somebody stops using a
+        feature, because they cannot tell whether the photograph was blurred
+        or the document was wrong.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: { type: string, minLength: 3, maxLength: 255 }
+      responses:
+        '200':
+          description: The document, now refused. The applicant has been emailed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DriverDocument' }
         default:
           $ref: '#/components/responses/Error'
 
@@ -1715,7 +2487,10 @@ paths:
       description: >
         The reviewer supplies what the applicant could not be trusted to:
         the licence they verified in person, and optionally the vehicle and
-        role. 409 DRIVER_APPLICATION_CLOSED if somebody decided it already;
+        role. 409 DRIVER_APPLICATION_DOCUMENTS_PENDING while any document sent
+        has not been accepted (ADR-0057 §2) — a document nobody sent does not
+        block, because every document is optional at submission.
+        409 DRIVER_APPLICATION_CLOSED if somebody decided it already;
         409 DRIVER_ACCOUNT_CONFLICT if the email turned out to be an
         account after all — the duplicate §5 deliberately let through,
         surfacing in front of a human.
@@ -1731,6 +2506,24 @@ paths:
                 license_number: { type: string, maxLength: 64 }
                 license_expiry: { type: string, format: date, description: Must be in the future. }
                 vehicle_id: { type: [integer, 'null'] }
+                owns_vehicle:
+                  type: boolean
+                  description: >
+                    Whether the machine is theirs (ADR-0048 §7). A rider
+                    recruited at a stage almost always owns the boda they
+                    applied on, and the reviewer is the first person on the
+                    platform in a position to say so.
+                vehicle:
+                  description: >
+                    Registers the driver's own vehicle in the same transaction
+                    as the approval (ADR-0048 §8), for the very common case
+                    where the fleet has never seen it. Mutually exclusive with
+                    `vehicle_id` — a request carrying both is refused rather
+                    than resolved. Needs `vehicles.manage` on top of the
+                    approval permissions.
+                  oneOf:
+                    - type: 'null'
+                    - { $ref: '#/components/schemas/InlineVehicle' }
                 role: { type: string, description: 'Role slug. Defaults to driver.' }
       responses:
         '201':
@@ -2017,6 +2810,17 @@ paths:
                   data:
                     type: array
                     items: { $ref: '#/components/schemas/LivePosition' }
+                  meta:
+                    description: >
+                      Same contract as /trips — whether this list spans
+                      clients, and the clients a platform reader may narrow
+                      to with `tenant_id`.
+                    type: object
+                    required: [scope, filters]
+                    additionalProperties: false
+                    properties:
+                      scope: { $ref: '#/components/schemas/Scope' }
+                      filters: { $ref: '#/components/schemas/ClientsFilter' }
         default:
           $ref: '#/components/responses/Error'
 
@@ -2963,6 +3767,77 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/me/application/documents:
+    get:
+      summary: The signed-in applicant's own application documents (ADR-0057).
+      description: >
+        For somebody who has applied and not yet been approved. Since
+        ADR-0057 s5 an account is minted at submission, so an applicant can
+        sign in and see what the office said about each document — including
+        the reason a refused one was refused, which is what makes "send it
+        again" actionable.
+
+
+        **The subject is the token.** There is no id in the path or the body,
+        so a caller cannot ask for somebody else's application by changing a
+        number. A decided application answers 404 like an absent one:
+        distinguishing them would report a rejection through an HTTP status.
+
+
+        Distinct from `/me/documents`, which resolves a driver through
+        `drivers.user_id` and answers "not a driver" for an applicant.
+      responses:
+        '200':
+          description: Every document type, with what is held against it.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DriverDocumentSlot' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Send one application document again (ADR-0057).
+      description: >
+        Replaces whatever was held of that type, which is what makes answering
+        a refusal a single photograph rather than a fresh application. Same
+        rules as the driver's own upload: the same types, the same mime list,
+        and an expiry required on the types whose meaning is a date.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [type, file]
+              additionalProperties: false
+              properties:
+                type: { $ref: '#/components/schemas/DriverDocumentType' }
+                file: { type: string, format: binary }
+                expires_at: { type: string, format: date, nullable: true }
+      responses:
+        '201':
+          description: Received. It goes back to the office as pending.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DriverDocument' }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/me/documents:
     get:
       summary: The signed-in driver's papers — every type, held or not.
@@ -3114,6 +3989,63 @@ paths:
                     additionalProperties: false
                     properties:
                       compliance: { $ref: '#/components/schemas/DriverDocumentCompliance' }
+        default:
+          $ref: '#/components/responses/Error'
+
+    post:
+      summary: The office filing a document on a driver's behalf (ADR-0052 §5).
+      description: >
+        `drivers.manage`. A driver hands their licence across the counter, or
+        emails a scan, or photographs it badly six times and gives up. Until
+        this endpoint the only way a document reached the platform was the
+        handset in that driver's pocket.
+
+        **Filing is not verifying.** The row lands `pending` with every review
+        field cleared, exactly as the driver's own upload does — ADR-0033 §4's
+        "nothing is auto-verified, ever" applies to the office as much as to a
+        machine, and accepting it is a second act with its own audit entry.
+
+        Same request shape, mime list, 8 MB ceiling and per-type expiry rule as
+        `/me/documents`, by sharing the form request rather than restating it.
+        Re-sending a type **replaces** what is held (ADR-0033 §2).
+      parameters:
+        - in: path
+          name: driver
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [type, file]
+              additionalProperties: false
+              properties:
+                type: { $ref: '#/components/schemas/DriverDocumentType' }
+                file:
+                  type: string
+                  format: binary
+                  description: Image or PDF, 8 MB.
+                expires_at:
+                  type: ['string', 'null']
+                  format: date
+                  description: >
+                    Required for driving_licence and vehicle_insurance, whose
+                    entire meaning is a date. Must not be in the past.
+      responses:
+        '201':
+          description: Filed, and waiting for somebody to check it.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DriverDocument' }
         default:
           $ref: '#/components/responses/Error'
 
@@ -4157,8 +5089,417 @@ paths:
           $ref: '#/components/responses/Error'
 
   # ------------------------------------------------------------------
+  # Nearby vehicles (Modules/Fleet) — public by design.
+  # The real fleet behind the order page's ambient vehicles and the client
+  # live map's capacity view. Anonymized: positions and silhouettes only.
+  # ------------------------------------------------------------------
+  /api/v1/public/nearby-vehicles:
+    get:
+      summary: The vehicles available near a point, for anyone to see.
+      description: >
+        The dispatchable pool — on duty, position fresh, not on a trip —
+        nearest the given point first, radius-bounded and capped so one
+        call can never dump the fleet. Each entry is a position and a
+        silhouette; the `key` is an hourly-rotating opaque marker id, so a
+        map can move markers smoothly between polls while a day of polling
+        follows nobody. No driver id, name, plate or phone, ever.
+        Throttled to 30/min.
+      parameters:
+        - name: latitude
+          in: query
+          required: true
+          schema: { type: number, minimum: -90, maximum: 90 }
+        - name: longitude
+          in: query
+          required: true
+          schema: { type: number, minimum: -180, maximum: 180 }
+      responses:
+        '200':
+          description: Up to twelve vehicles within 15km, nearest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/NearbyVehicle' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
+  # On-duty drivers (Modules/Fleet) — ADR-0024 section 2, the office's read.
+  # `/live-positions` is where the vehicles on a trip are; this is the
+  # pool waiting for one. Together they are the live map.
+  # ------------------------------------------------------------------
+  /api/v1/driver-presence:
+    get:
+      summary: Who is on duty, and where.
+      description: >
+        Every driver currently on duty, with their last reported position,
+        the vehicle they are in, and the occupying trip that has them if
+        one does. Includes drivers the matcher would hide — a stale
+        position, or none at all — marked `stale`, because the map's job is
+        to get them phoned. `drivers.view` (DriverPolicy::viewAny): the
+        roles that operate the fleet; a client's people are refused, as
+        they are from the fleet register — the riders are Shanitah's.
+      responses:
+        '200':
+          description: The pool, by driver id.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/OnDutyDriver' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  # ------------------------------------------------------------------
   # Zones (Modules/Fleet) — the geofencing engine, ADR-0021
   # ------------------------------------------------------------------
+  /api/v1/operators:
+    get:
+      summary: The register of fleet companies.
+      description: >
+        Head office's, and nobody else's. Every method here needs
+        `access_level = kangaru` on top of `fleets.view` — a fleet's own Super
+        Admin holds the permission and is refused (ADR-0059, OperatorPolicy).
+        Counts only: head office counts what a fleet has and reads none of it
+        (ADR-0055 §2). To look at a fleet's trips, drivers or clients, act as
+        somebody there (ADR-0056).
+      responses:
+        '200':
+          description: Fleet companies, by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Operator' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Onboards a fleet company, with its first account.
+      description: >
+        The fleet and its owner account are created together or not at all.
+        ADR-0056 acts as a **person**, not an organisation, so a fleet with no
+        account is permanently unreachable to support — `owner_name` and
+        `owner_email` are required for that reason, not for completeness
+        (ADR-0059 §5). Refused with 500 if no plan is flagged default: an
+        unpriced fleet is a configuration error, not a state (ADR-0058 §1).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, owner_name, owner_email]
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                slug:
+                  type: ['string', 'null']
+                  description: Generated from the name when absent. Unique across the platform.
+                owner_name: { type: string, maxLength: 255 }
+                owner_email: { type: string, format: email }
+      responses:
+        '201':
+          $ref: '#/components/responses/OperatorResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/operators/{operator}:
+    parameters:
+      - { name: operator, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: One fleet company.
+      responses:
+        '200':
+          $ref: '#/components/responses/OperatorResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    patch:
+      summary: Edits or suspends a fleet company.
+      description: >
+        There is no delete. Six operational tables carry `operator_id` and
+        `operator_client` restricts on delete, so removing a fleet would
+        either fail against its own history or orphan it. A fleet that leaves
+        the platform is suspended, which keeps its trips explicable and its
+        invoices reconcilable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                status: { enum: [active, suspended] }
+                plan_id:
+                  type: integer
+                  description: Which plan this fleet is on. What a plan *means* — limits, price, period — is K7's.
+      responses:
+        '200':
+          $ref: '#/components/responses/OperatorResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/contracts:
+    get:
+      summary: The fleets serving this client, and the ones that have asked to.
+      description: >
+        ADR-0060. The client's own view, under "Our fleets" — and **the only
+        surface anywhere on which a `requested` contract is visible**. It is
+        visible to the party being asked and to nobody else: a fleet reading
+        this would learn which of its competitors had asked to serve the same
+        client. Client-level accounts only; a fleet and head office are both
+        refused.
+      responses:
+        '200':
+          description: Every contract naming this client, requests first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Contract' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: A fleet asks to serve a client already on Kangaru.
+      description: >
+        ADR-0060 §4, path B. **Grants no read.** The response carries the
+        request's own status and nothing whatever about the client — not their
+        name, not their city, not whether anybody else serves them. A fleet
+        that asks learns exactly what it knew before: that the number is taken.
+        Idempotent, so clicking twice does not queue two requests for the
+        client to answer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [registration_number]
+              additionalProperties: false
+              properties:
+                registration_number: { type: string, maxLength: 100 }
+      responses:
+        '201':
+          description: The request's own status, and nothing about the client.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [status]
+                    additionalProperties: false
+                    properties:
+                      status: { enum: [requested, active, ended] }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/contracts/{contract}/approval:
+    parameters:
+      - { name: contract, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: The client accepts a fleet that asked.
+      description: >
+        ADR-0060 §5. **The client alone** — not Kangaru, and not the incumbent
+        fleet. If any other party could reach this, a fleet could approve its
+        own request and ask-and-wait would collapse into a self-service read of
+        somebody else's client.
+      responses:
+        '200':
+          $ref: '#/components/responses/ContractResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/contracts/{contract}:
+    parameters:
+      - { name: contract, in: path, required: true, schema: { type: integer } }
+    delete:
+      summary: End a contract, from either side.
+      description: >
+        ADR-0060 §7. The row survives: the trips and invoices it explains are
+        still the client's history, and a year of work attributed to nobody is
+        worse than a row that says this ended. Head office is not a party and
+        is refused.
+      responses:
+        '200':
+          $ref: '#/components/responses/ContractResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/clients/lookup:
+    get:
+      summary: Is this company already on Kangaru?
+      description: >
+        ADR-0060 §3. Answers a boolean and nothing else — no name, no address,
+        no contact, no status, no count, and no indication of which fleet or
+        how many fleets serve them. A fleet onboarding a client asks this
+        first, before any other field is enabled, because finding out at save
+        time is the moment when the pressure to work around the check is
+        highest and the easiest workaround is a slightly different spelling of
+        the name. But "is Centenary on Kangaru?" is not a question one fleet
+        may ask about another fleet's client, so the body carries one key.
+        Exact match only: no search, no prefix, no listing.
+      parameters:
+        - name: registration_number
+          in: query
+          required: true
+          schema: { type: string, maxLength: 100 }
+      responses:
+        '200':
+          description: Whether a client already holds that registration number.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [exists]
+                    additionalProperties: false
+                    properties:
+                      exists: { type: boolean }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/kangaru/overview:
+    get:
+      summary: What head office sees when it signs in.
+      description: >
+        Counts, and deliberately nothing else — every figure is a scalar.
+        ADR-0055 §2 leaves no account able to read every fleet's data in one
+        query, Super Admin included, so there is no list, no row and no name
+        here. A count is Kangaru's own business metric and a billing input
+        (ADR-0058); a list would be the cross-fleet read §2 forbids, and the
+        difference between the two is one endpoint. To look at any of it, act
+        as somebody in the fleet it belongs to.
+      responses:
+        '200':
+          description: Network counts, the queues only head office can clear, and governance.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [network, queues, governance]
+                    additionalProperties: false
+                    properties:
+                      network:
+                        type: object
+                        required: [fleets, fleets_active, clients, walk_in_clients, drivers, vehicles]
+                        additionalProperties: false
+                        properties:
+                          fleets: { type: integer }
+                          fleets_active: { type: integer }
+                          clients:
+                            type: integer
+                            description: >
+                              A count, never a list. The whole of what Kangaru
+                              may know about the corporate clients on the
+                              platform without acting as a fleet.
+                          walk_in_clients: { type: integer }
+                          drivers: { type: integer }
+                          vehicles: { type: integer }
+                      queues:
+                        type: object
+                        required: [driver_applications, driver_reports, settlement_requests, fleets_without_an_account]
+                        additionalProperties: false
+                        properties:
+                          driver_applications: { type: integer }
+                          driver_reports: { type: integer }
+                          settlement_requests: { type: integer }
+                          fleets_without_an_account:
+                            type: integer
+                            description: >
+                              Should always be nought, which is why it is
+                              shown. A fleet with no account is unreachable to
+                              support for ever (ADR-0059 §5), and onboarding
+                              creates one in the same transaction — a number
+                              here means that invariant has been broken.
+                      governance:
+                        type: object
+                        required: [acting_as_now, kangaru_staff]
+                        additionalProperties: false
+                        properties:
+                          acting_as_now: { type: integer }
+                          kangaru_staff: { type: integer }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/operators/{operator}/accounts:
+    parameters:
+      - { name: operator, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: Who head office can act as at this fleet.
+      description: >
+        ADR-0056 acts as a **person**, not an organisation — there is no "act
+        as Shanitah", there is "act as Shanitah's fleet owner" — so Log in as
+        needs somebody to name. Separate from the fleet resource, which is
+        counts-only on purpose (ADR-0055 §2); the disclosure is explicit here
+        rather than smuggled in as one more useful field. Kangaru-level only:
+        a fleet reads its own people through /users, correctly scoped.
+      responses:
+        '200':
+          description: Accounts at this fleet, by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/User' }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/zones:
     get:
       summary: The geofences this caller may see.
@@ -4264,6 +5605,128 @@ paths:
   # ------------------------------------------------------------------
   # Vehicles (Modules/Vehicles) — the platform's fleet (ADR-0005)
   # ------------------------------------------------------------------
+  # ------------------------------------------------------------------
+  # Vehicle categories (ADR-0050) — the fleet's own vocabulary.
+  #
+  # The list is what every category chooser renders: the vehicle form, the
+  # driver form's inline vehicle, and the rate card version dialog. It
+  # replaces a constant that was hand-mirrored into four files and had
+  # already drifted in two of them.
+  # ------------------------------------------------------------------
+  /api/v1/vehicle-categories:
+    get:
+      summary: >
+        The fleet's vehicle categories, in the office's display order, each
+        with what is holding it and which tariffs do not price it.
+      description: >
+        Needs `vehicles.view`, which every system role holds — Finance must
+        be able to render the choices on the rate card dialog.
+
+
+        Unpaginated: nine rows today, and a chooser cannot page through the
+        options it offers.
+      responses:
+        '200':
+          description: Categories.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/VehicleCategory' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Adds a category to the fleet's vocabulary.
+      description: >
+        Needs `vehicles.manage`. **Creating a category never sets a price**,
+        so this grants no money power — and the new category is unpriced on
+        every existing tariff, because a rate card version is immutable and
+        nothing can add a rate to one. The 201 message says so, and the list
+        response names the cards.
+
+
+        `key` is writable here and nowhere else, ever (ADR-0050 §2).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, name]
+              additionalProperties: false
+              properties:
+                key: { $ref: '#/components/schemas/VehicleCategoryKey' }
+                name: { type: string, maxLength: 80 }
+                description: { type: ['string', 'null'], maxLength: 255 }
+                active: { type: boolean }
+      responses:
+        '201':
+          $ref: '#/components/responses/VehicleCategoryResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/vehicle-categories/{vehicleCategory}:
+    parameters:
+      - { name: vehicleCategory, in: path, required: true, schema: { type: integer } }
+    patch:
+      summary: Renames, redescribes, reorders or retires a category.
+      description: >
+        Needs `vehicles.manage`.
+
+
+        **`key` is absent from this body and that absence is the decision.**
+        Renaming a key would leave every historical invoice line and every
+        immutable rate card rate holding a string that names nothing —
+        silently, with no error, visible only as a document that no longer
+        reproduces from stored data.
+
+
+        `active: false` retires the category: no new vehicle and no new rate
+        card version may choose it, while every vehicle and every version
+        that already does carries on unchanged. Never refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 80 }
+                description: { type: ['string', 'null'], maxLength: 255 }
+                active: { type: boolean }
+                position: { type: integer, minimum: 0, maximum: 9999 }
+      responses:
+        '200':
+          $ref: '#/components/responses/VehicleCategoryResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Deletes a category that nothing has ever used.
+      description: >
+        Needs `vehicles.manage`.
+
+
+        Answers **409 `VEHICLE_CATEGORY_IN_USE`** when any vehicle, rate card
+        price or invoice line names the key, with a message giving the counts
+        and pointing at retirement. No foreign key enforces this — those
+        columns are deliberately plain strings so an invoice reproduces
+        without joining a mutable table — so the refusal is the only thing
+        standing between a delete and an immutable rate card rate naming
+        nothing.
+      responses:
+        '204':
+          description: Deleted. No content.
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/vehicles:
     get:
       summary: The platform's fleet.
@@ -4299,7 +5762,7 @@ paths:
                 make: { type: string, maxLength: 100 }
                 model: { type: string, maxLength: 100 }
                 year: { type: integer, minimum: 1980 }
-                category: { $ref: '#/components/schemas/VehicleCategory' }
+                category: { $ref: '#/components/schemas/VehicleCategoryKey' }
                 seating_capacity: { type: integer, minimum: 1, maximum: 100 }
                 color: { type: ['string', 'null'], maxLength: 50 }
                 vin: { type: ['string', 'null'], maxLength: 50 }
@@ -4334,7 +5797,7 @@ paths:
                 make: { type: string, maxLength: 100 }
                 model: { type: string, maxLength: 100 }
                 year: { type: integer, minimum: 1980 }
-                category: { $ref: '#/components/schemas/VehicleCategory' }
+                category: { $ref: '#/components/schemas/VehicleCategoryKey' }
                 seating_capacity: { type: integer, minimum: 1, maximum: 100 }
                 color: { type: ['string', 'null'], maxLength: 50 }
                 vin: { type: ['string', 'null'], maxLength: 50 }
@@ -4661,10 +6124,17 @@ paths:
 
   /api/v1/trips/{trip}/route:
     get:
-      summary: The road between the driver and the drop-off (ADR-0031).
+      summary: The road between the driver and where they are going (ADR-0031).
       description: >
-        A road-following route from the driver's position — or from the pickup
-        when they have not sent one — to the trip's drop-off.
+        A road-following route from the driver's position to one end of the
+        job — the pickup while they are on their way to the passenger, the
+        drop-off once the passenger is in the car. `to` picks which.
+
+
+        **The two are different roads and a client must not confuse them.**
+        On a real Kampala order, the approach measured 7.3 km and the fare
+        71.0 km from the same origin; a screen that draws the wrong one sends
+        a driver away from the person waiting for them.
 
 
         **`route` is null far more often than not, and null is always a 200.**
@@ -4684,12 +6154,23 @@ paths:
         - name: from_latitude
           in: query
           required: false
-          description: Where to route from. Defaults to the pickup when absent.
+          description: >
+            Where to route from. Defaults to the pickup when absent — except
+            for `to=pickup`, where routing from the pickup to the pickup is a
+            zero-length line, so an absent origin answers `null` instead.
           schema: { type: number, minimum: -90, maximum: 90 }
         - name: from_longitude
           in: query
           required: false
           schema: { type: number, minimum: -180, maximum: 180 }
+        - name: to
+          in: query
+          required: false
+          description: >
+            Which end of the job to route to. `dropoff` is the fare itself and
+            the default; `pickup` is the approach, the road a driver is on
+            between accepting and arriving.
+          schema: { type: string, enum: [pickup, dropoff], default: dropoff }
       responses:
         '200':
           description: The route, or null when none can be drawn.
@@ -4741,6 +6222,151 @@ paths:
                                   A forecast, never a promise of arrival. The
                                   flag travels with the figure so a client
                                   cannot forget the rule.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}/stops:
+    post:
+      summary: Extends a live run with the next drop-off (ADR-0045 §4).
+      description: >
+        The driver standing at a kerb appends a stop without waiting for
+        anyone to tap approve; the deviation is counted on
+        `unplanned_stop_count`, shown, and never billed. An office acting
+        through `trips.transition.any` may use the same endpoint and is
+        stamped `added_by_dispatch`.
+
+
+        Two request shapes: a saved-place pick sends `client_place_id` alone —
+        the label and pin are copied from the client's register, so a handset
+        cannot mislabel an ATM — or free text sends `label`, with an optional
+        coordinate pair (both or neither).
+
+
+        Only while the trip is running (`trip_started`, `waiting`,
+        `trip_resumed`): anything else answers 409 TRIP_NOT_ACTIVE. Evidence
+        does not grow after the run.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                client_place_id: { type: ['integer', 'null'] }
+                label: { type: ['string', 'null'], maxLength: 160 }
+                latitude: { type: ['number', 'null'], minimum: -90, maximum: 90 }
+                longitude: { type: ['number', 'null'], minimum: -180, maximum: 180 }
+      responses:
+        '201':
+          description: The stop, appended to the run.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/TripStop' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}/stop-candidates:
+    get:
+      summary: The add-a-drop-off search over the client's place register (ADR-0045 §10).
+      description: >
+        Bounded exactly as §10 rules: the trip's own driver, the client whose
+        trip they are currently driving, while the run is live — and none at
+        all between jobs (409 TRIP_NOT_ACTIVE) or for anyone else (403,
+        including dispatchers, who read the register through `/places`). A
+        bank's estate in service order is a cash-logistics document
+        (`docs/security-gate.md` F2); this serves name, address and pin,
+        capped at twelve rows.
+
+
+        A walk-in trip has no tenant and therefore no register: the ordinary
+        answer is an empty list, and the app's free-text row carries the rest.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+        - { name: q, in: query, required: false, schema: { type: string, maxLength: 80 } }
+      responses:
+        '200':
+          description: Matching places, by name, at most twelve.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    maxItems: 12
+                    items:
+                      type: object
+                      required: [id, name, address, latitude, longitude]
+                      additionalProperties: false
+                      properties:
+                        id: { type: integer }
+                        name: { type: string }
+                        address: { type: ['string', 'null'] }
+                        latitude: { type: number }
+                        longitude: { type: number }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}/place-suggestions:
+    get:
+      summary: Geocoder suggestions for a stop the register does not know (§10 follow-up, 2026-08-22).
+      description: >
+        The owner's decision of 2026-08-22: when the client's register has no
+        answer — every walk-in trip, and any site nobody has pinned — the
+        server asks a public geocoder (Photon, Kampala-biased) on the
+        driver's behalf. The handset never talks to a third party and no key
+        ships in the app bundle; what the geocoder receives is the typed
+        query alone. Same policy and same active-trip gate as
+        `stop-candidates` beside it: the trip's own driver, while the run is
+        live (409 TRIP_NOT_ACTIVE otherwise, 403 for anyone else).
+
+
+        Fails soft by design: a geocoder outage, timeout or malformed answer
+        is an empty list, never an error — the screen's free-text row is the
+        floor. Every row returned is located; features without a usable
+        coordinate pair are dropped, because the pin is the whole value of a
+        suggestion over free text.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 3, maxLength: 80 } }
+      responses:
+        '200':
+          description: Mapped, deduplicated suggestions, at most six.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    maxItems: 6
+                    items:
+                      type: object
+                      required: [name, detail, latitude, longitude]
+                      additionalProperties: false
+                      properties:
+                        name: { type: string }
+                        detail: { type: ['string', 'null'] }
+                        latitude: { type: number }
+                        longitude: { type: number }
         default:
           $ref: '#/components/responses/Error'
 
@@ -5502,6 +7128,18 @@ components:
               reason: { type: string, maxLength: 1000 }
 
   responses:
+    ContractResponse:
+      description: One contract between a fleet and a client.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/Contract' }
     SupportRequestResponse:
       description: One driver report, with the office's answer if it has one.
       content:
@@ -5659,6 +7297,27 @@ components:
               message: { type: string }
               data: { $ref: '#/components/schemas/User' }
 
+    ImpersonationSessionResponse:
+      description: A support session, and when it lapses on its own.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data:
+                type: object
+                required: [id, subject_id, subject_name, expires_at]
+                additionalProperties: false
+                properties:
+                  id: { type: integer }
+                  subject_id: { type: integer }
+                  subject_name: { type: string }
+                  expires_at: { $ref: '#/components/schemas/Timestamp' }
+
     RoleResponse:
       description: One role.
       content:
@@ -5711,6 +7370,32 @@ components:
               message: { type: string }
               data: { $ref: '#/components/schemas/Company' }
 
+    ClientPlaceResponse:
+      description: One saved place.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/ClientPlace' }
+
+    ClientRouteResponse:
+      description: One route.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/ClientRoute' }
+
     AvailabilityBlockResponse:
       description: One availability block.
       content:
@@ -5749,6 +7434,19 @@ components:
               success: { enum: [true] }
               message: { type: string }
               data: { $ref: '#/components/schemas/Zone' }
+
+    OperatorResponse:
+      description: One fleet company.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/Operator' }
 
     CustomerProfileResponse:
       description: One customer, as staff see them.
@@ -5801,6 +7499,19 @@ components:
               success: { enum: [true] }
               message: { type: string }
               data: { $ref: '#/components/schemas/Vehicle' }
+
+    VehicleCategoryResponse:
+      description: One vehicle category.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/VehicleCategory' }
 
     InvoiceResponse:
       description: One invoice.
@@ -6060,8 +7771,13 @@ components:
         - ROLE_IN_USE
         - ORDERING_PAUSED
         - MAIL_DELIVERY_FAILED
+        - UNKNOWN_CLIENT_PLACE
+        - UNKNOWN_ROUTE_MEMBER
+        - CLIENT_PLACE_IN_USE
+        - VEHICLE_CATEGORY_IN_USE
         - DRIVER_ACCOUNT_CONFLICT
         - DRIVER_APPLICATION_CLOSED
+        - DRIVER_APPLICATION_DOCUMENTS_PENDING
         - AUTH_METHOD_DISABLED
         - SOCIAL_TOKEN_INVALID
         - AVAILABILITY_ALREADY_ANSWERED
@@ -6073,6 +7789,9 @@ components:
         - OFFER_HAS_NO_VEHICLE
         - TOKEN_SCOPE_EXCEEDED
         - SETTLEMENT_REQUEST_ALREADY_OPEN
+        # ADR-0045. The itinerary only grows while the trip is running, and
+        # the place search is open exactly as long (§10: "currently driving").
+        - TRIP_NOT_ACTIVE
         # ADR-0043. One open closure request per driver; withdraw it to change it.
         - CLOSURE_REQUEST_ALREADY_OPEN
         # ADR-0043. A second reviewer answering a row a colleague just answered —
@@ -6120,18 +7839,79 @@ components:
     BookingStatus:
       enum: [pending, approved, rejected, assigned, cancelled]
 
+    VehicleCategoryKey:
+      description: >
+        The stored category key — the string that lives on
+        `vehicles.category`, `rate_card_rates.vehicle_category` and
+        `invoice_lines.vehicle_category`.
+
+
+        **Not an enum, since ADR-0050.** It was
+        `[boda, tricycle, sedan, suv, van, minibus, bus, pickup, truck]`,
+        which was the same frozen list as `Vehicle::CATEGORIES` held in a
+        third file — and pinning it here would defeat the whole point of the
+        `vehicle_categories` table, which is that the office adds a category
+        without a deploy. A client that hard-codes these nine will break on
+        the tenth. Fetch `GET /api/v1/vehicle-categories` for the live list
+        and render `name`, never the key.
+
+
+        Immutable once created: a key is never renamed, because an issued
+        invoice line stores it and must keep reproducing (ADR-0050 §2). The
+        self-drive subset on the public order endpoint is deliberately
+        narrower than the fleet's own list.
+      type: string
+      maxLength: 40
+      pattern: '^[a-z0-9]+(_[a-z0-9]+)*$'
+
     VehicleCategory:
       description: >
-        Mirrors `Vehicle::CATEGORIES`. A category priced on a rate card but
-        absent here is a vehicle nobody can invoice.
+        One row of the fleet's category vocabulary (ADR-0050).
 
 
-        `boda` and `tricycle` were missing while the walk-in tariff already
-        priced both and a fleet vehicle was already recorded as a boda — the
-        rows had been inserted by seeders, which skips the validation that
-        would have refused them. The self-drive subset on the public order
-        endpoint is deliberately narrower than this list.
-      enum: [boda, tricycle, sedan, suv, van, minibus, bus, pickup, truck]
+        `vehicles_count`, `rate_cards_total` and `unpriced_rate_cards` are
+        present on the list response only, and are **absent** rather than
+        zero on a create or an update — an empty `unpriced_rate_cards` reads
+        as "priced on every tariff", which is precisely the claim the list
+        exists to make honestly.
+      type: object
+      required: [id, key, name, description, active, position, created_at, updated_at]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        key: { $ref: '#/components/schemas/VehicleCategoryKey' }
+        name: { type: string, maxLength: 80 }
+        description: { type: ['string', 'null'], maxLength: 255 }
+        active:
+          description: >
+            Whether a new vehicle or a new rate card version may choose it.
+            Retiring (`false`) is the only "delete" available once anything
+            uses the key; it changes no price and voids no record.
+          type: boolean
+        position: { type: integer }
+        vehicles_count:
+          description: Live fleet vehicles carrying this key; soft-deleted ones excluded.
+          type: integer
+        rate_cards_total:
+          description: Active rate cards visible to this actor.
+          type: integer
+        unpriced_rate_cards:
+          description: >
+            The active rate cards whose **newest** version does not price
+            this category. A vehicle of this kind cannot be quoted or
+            invoiced on any card listed here until a new version prices it —
+            and a version is immutable, so nothing can add the price to the
+            one that exists.
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            additionalProperties: false
+            properties:
+              id: { type: integer }
+              name: { type: string }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
 
     # -------------------------- envelopes ----------------------------
     ErrorEnvelope:
@@ -6145,6 +7925,20 @@ components:
         errors: { $ref: '#/components/schemas/EmptyableStringListMap' }
 
     # -------------------------- resources ----------------------------
+    Colleague:
+      type: object
+      description: >
+        A colleague as a booking's passenger picker needs them. Three fields,
+        and the shortness is the point — the full User carries roles,
+        capabilities and MFA state, none of which belongs behind
+        `bookings.create`.
+      required: [id, name, phone]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        phone: { type: ['string', 'null'] }
+
     User:
       type: object
       required:
@@ -6152,8 +7946,11 @@ components:
         - tenant_id
         - name
         - email
+        - phone
         - role
         - role_label
+        - capabilities
+        - books_without_approval
         - status
         - status_label
         - is_active
@@ -6162,14 +7959,56 @@ components:
         - mfa_enabled
         - must_enrol_mfa
         - mfa_recovery_codes_low
+        - access_level
       additionalProperties: false
       properties:
         id: { type: integer }
         tenant_id: { type: ['integer', 'null'] }
+        access_level:
+          enum: [kangaru, fleet, client, applicant]
+          description: >
+            Which level this account belongs to (ADR-0055 §4). Stated on the
+            row, never inferred from tenant_id and operator_id being null —
+            "no client and no fleet" describes Kangaru, the most privileged
+            level, and inference would promote every driver to it. The console
+            chooses which menu exists from this before role narrows it
+            (ADR-0059 §1). Always present.
+        tenant_name:
+          type: ['string', 'null']
+          description: The client's display name ("Centenary Bank"); null for platform staff, who have none (ADR-0006). Present on /auth/* and /users* responses; a nested actor (a booking's requester, an audit row's user) omits it.
+        operator_name:
+          type: ['string', 'null']
+          description: >
+            The fleet's display name ("Shanitah General Enterprises Ltd"); null
+            for a client's people and for Kangaru's own staff, who belong to no
+            fleet (ADR-0055). The chrome needs it because tenant_id is null for
+            a fleet account and null for a Kangaru account alike - without it
+            the topbar said "Platform" to both, so a Super Admin at Shanitah
+            and a Super Admin at head office got an identical chip and two
+            different menus. Present on /auth/* and /users*; a nested actor
+            omits it.
         name: { type: string }
         email: { type: string }
+        phone:
+          type: ['string', 'null']
+          description: The work number a booking raised for this person is dispatched against. Null on accounts created before the column existed.
         role: { type: string, description: Role slug — the external reference. }
         role_label: { type: string }
+        capabilities:
+          type: array
+          description: Per-person switches a client's administrator set, unioned onto the role's permissions (ClientCapability).
+          items: { $ref: '#/components/schemas/ClientCapability' }
+        books_without_approval:
+          type: boolean
+          description: A booking this person creates is approved on their behalf.
+        route_ids:
+          type: array
+          description: >
+            The client's routes this person rides (ADR-0045 §8) — a roster,
+            never a permission; nothing authorises off it. Present only on
+            /users* responses, which load the relation; a nested actor (a
+            booking's requester, an audit row's user) omits the key.
+          items: { type: integer }
         status: { enum: [active, suspended] }
         status_label: { type: string }
         is_active: { type: boolean }
@@ -6182,9 +8021,39 @@ components:
           description: Present only when a factor is enrolled (ADR-0010).
         mfa_recovery_codes_low: { type: boolean }
 
+    ClientCapability:
+      type: string
+      description: A named bundle of permissions a corporate client's administrator may switch on for one of their own people (App\Enums\ClientCapability).
+      enum: [approves_bookings, sees_finance, manages_staff, manages_routes]
+
+    Contract:
+      type: object
+      required: [id, status, started_on, ended_on]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        status: { enum: [requested, active, ended] }
+        started_on: { type: ['string', 'null'], format: date }
+        ended_on: { type: ['string', 'null'], format: date }
+        fleet:
+          description: >
+            The fleet asking, or serving. Named because a client cannot answer
+            a request from somebody anonymous — that disclosure is
+            one-directional and is the point. Nothing else about the fleet is
+            served, and the contract's own credit limit and billing email are
+            withheld: they are the fleet's commercial terms, and a client
+            seeing one fleet's beside another's would be reading a number
+            neither offered to share.
+          type: object
+          required: [id, name]
+          additionalProperties: false
+          properties:
+            id: { type: integer }
+            name: { type: string }
+
     Role:
       type: object
-      required: [slug, name, description, is_system, permissions, created_at]
+      required: [slug, name, description, is_system, permissions, requires_mfa, created_at]
       additionalProperties: false
       properties:
         slug: { type: string }
@@ -6194,6 +8063,23 @@ components:
         permissions:
           type: array
           items: { type: string }
+        requires_mfa:
+          type: boolean
+          description: >
+            Whether holders of this role need a second factor (ADR-0061). The
+            per-role half of a two-part rule; the other half is the
+            platform-wide auth.mfa_enforced setting, and the two are resolved
+            in exactly one place, User::requiresMfa(). Writable by Kangaru
+            head office only — a control that weakens authentication must not
+            be reachable by the account it would weaken.
+        unenrolled_count:
+          type: integer
+          description: >
+            Holders of this role who have not set a second factor up. Turning
+            requires_mfa on puts exactly these people into the state where
+            they sign in successfully and are then refused every route but
+            five until they enrol, so the console names the number before
+            saving. Present on the listing only.
         users_count:
           type: integer
           description: Present on the listing only.
@@ -6265,6 +8151,106 @@ components:
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
         updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
 
+    ClientPlace:
+      description: >
+        A location the client has pinned (ADR-0045). Both coordinates are
+        always present - the column is NOT NULL, so there is no
+        partially-located state for a client to handle.
+      type: object
+      required: [id, name, address, latitude, longitude, arrival_radius_m, notes, is_active, created_at, updated_at]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        address: { type: ['string', 'null'] }
+        latitude: { type: number }
+        longitude: { type: number }
+        arrival_radius_m: { type: ['integer', 'null'] }
+        notes: { type: ['string', 'null'] }
+        is_active: { type: boolean }
+        route_count:
+          description: Only on the single-place read, where the delete path loads it.
+          type: integer
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    DrawnRoute:
+      description: >
+        A road drawn by the configured provider (ADR-0031). `is_estimate` is
+        always true and travels with the payload rather than being a rule in
+        a docblock - a client that renders these must label them estimates.
+        `duration_seconds` is null unless the provider supplied one for
+        every leg; nothing derives it.
+      type: object
+      required: [polyline, distance_km, duration_seconds, provider, is_estimate]
+      additionalProperties: false
+      properties:
+        polyline:
+          description: Precision-5 encoded polyline, the encoding both providers emit.
+          type: string
+        distance_km: { type: number }
+        duration_seconds: { type: ['integer', 'null'] }
+        provider: { enum: [google, osrm] }
+        is_estimate: { enum: [true] }
+
+    ClientRouteStopInput:
+      type: object
+      required: [client_place_id]
+      additionalProperties: false
+      properties:
+        client_place_id: { type: integer }
+        expected_dwell_minutes: { type: ['integer', 'null'], minimum: 0, maximum: 1440 }
+        driver_notes: { type: ['string', 'null'], maxLength: 1000 }
+
+    ClientRouteStop:
+      description: >
+        A place's position in a route. The place is nested rather than
+        flattened, because it is a live reference and not a snapshot -
+        moving a pin moves it on every route at once.
+      type: object
+      required: [id, sequence, expected_dwell_minutes, driver_notes]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        sequence: { type: integer }
+        expected_dwell_minutes: { type: ['integer', 'null'] }
+        driver_notes: { type: ['string', 'null'] }
+        place: { $ref: '#/components/schemas/ClientPlace' }
+
+    ClientRoute:
+      description: >
+        A circuit the client built (ADR-0045). Carries no distance or
+        duration: those are the routing provider's to state per draw
+        (ADR-0031), and a stored one would describe the route as it was
+        drawn rather than as it is.
+      type: object
+      required: [id, name, reference, notes, is_active, created_at, updated_at]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        reference: { type: ['string', 'null'] }
+        notes: { type: ['string', 'null'] }
+        is_active: { type: boolean }
+        stop_count: { type: integer }
+        stops:
+          type: array
+          items: { $ref: '#/components/schemas/ClientRouteStop' }
+        members:
+          description: >
+            Who rides this route. Allow-listed to an id and a name - these
+            are User rows and a route needs nothing else from them.
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            additionalProperties: false
+            properties:
+              id: { type: integer }
+              name: { type: string }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
     ContactDetails:
       description: >
         A number to dial and who answers it. `label` is not decoration —
@@ -6286,7 +8272,7 @@ components:
         names are `RidePhase`'s own in the web client, so the mapping is an
         identity function rather than a translation table.
       type: object
-      required: [reference, service_type, phase, pickup, dropoff, trip_id, captain, created_at]
+      required: [reference, service_type, phase, pickup, dropoff, trip_id, captain, estimated_fare, fare, created_at]
       additionalProperties: false
       properties:
         reference: { type: string }
@@ -6322,7 +8308,35 @@ components:
           anyOf:
             - { $ref: '#/components/schemas/RideCaptain' }
             - { enum: [null] }
+        estimated_fare:
+          description: >
+            What the ride is expected to cost, priced from the captain's own
+            vehicle — the same quote the driver sees (ADR-0026 §2). Null before
+            a captain is assigned, once a settled fare exists, when either end
+            has no pin, or when no public tariff prices the category.
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/WalkInFareEstimate'
+        fare:
+          description: >
+            What the ride cost, once settled at Trip Completed. The passenger's
+            screen renders its fare-pay-rate card from this; without it the
+            card could never appear. `distance_km` is the measured trip
+            distance the fare was priced from.
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/CustomerSettledFare'
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    CustomerSettledFare:
+      type: object
+      required: [total_minor, currency, distance_km, is_estimate]
+      additionalProperties: false
+      properties:
+        total_minor: { type: integer, minimum: 0 }
+        currency: { type: ['string', 'null'] }
+        distance_km: { type: ['number', 'null'] }
+        is_estimate: { type: boolean, enum: [false] }
 
     RideCaptain:
       description: >
@@ -6493,6 +8507,11 @@ components:
           description: Which end of a delivery settles the bill. Null on a ride, where there is only one end.
           enum: [sender, receiver, null]
 
+    NullableWalkInFareEstimate:
+      oneOf:
+        - type: 'null'
+        - $ref: '#/components/schemas/WalkInFareEstimate'
+
     WalkInFareEstimate:
       description: >
         A price before anybody has driven anywhere (ADR-0026 §2).
@@ -6655,6 +8674,35 @@ components:
         active: { type: boolean }
         notes: { type: ['string', 'null'], maxLength: 255 }
 
+    Operator:
+      type: object
+      description: >
+        A fleet company — the outer axis of ADR-0055. Shanitah is row 1.
+        Counts only: nothing here is a fleet's operational data, and the
+        easiest way to breach ADR-0055 §2 is to add "one more useful field".
+      required: [id, name, slug, status, is_active, created_at]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        slug: { type: string }
+        status: { enum: [active, suspended] }
+        is_active: { type: boolean }
+        plan:
+          type: object
+          description: What this fleet pays to be on Kangaru (ADR-0058). Present when the relation was loaded; never null on a loaded fleet.
+          required: [id, name, is_default]
+          additionalProperties: false
+          properties:
+            id: { type: integer }
+            name: { type: string }
+            is_default: { type: boolean }
+        users_count: { type: integer, description: Staff and drivers both — every account whose fleet this is. }
+        drivers_count: { type: integer }
+        vehicles_count: { type: integer }
+        clients_count: { type: integer, description: Corporate clients under contract (operator_client). }
+        created_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
     Zone:
       type: object
       required: [id, tenant_id, name, kind, boundary, priority, active, notes, created_at, updated_at]
@@ -6708,6 +8756,138 @@ components:
             ambiguous until you know whether it is a parked vehicle or a
             dead phone.
           type: boolean
+        vehicle:
+          description: >
+            Who this marker is, so the map can name it. Allow-listed — no
+            VIN; the fleet register serves that behind its own policy. Null
+            only if the trip's vehicle row is gone.
+          $ref: '#/components/schemas/LiveMapVehicle'
+        driver:
+          description: Allow-listed — name only, no phone or licence number.
+          $ref: '#/components/schemas/LiveMapDriver'
+        trip:
+          description: >
+            The occupying trip the position was read through. Deliberately
+            carries no passenger: ADR-0024 §7 governs who sees a rider's
+            name, and the trip record behind "Open trip" is where it lives.
+          type: ['object', 'null']
+          required: [id, status, origin, destination, client]
+          additionalProperties: false
+          properties:
+            id: { type: integer }
+            status: { $ref: '#/components/schemas/TripStatus' }
+            origin: { type: ['string', 'null'] }
+            destination: { type: ['string', 'null'] }
+            client:
+              description: Null on a walk-in (ADR-0024 §1) — Shanitah's own ride.
+              type: ['object', 'null']
+              required: [id, name]
+              additionalProperties: false
+              properties:
+                id: { type: integer }
+                name: { type: string }
+
+    LiveMapVehicle:
+      description: >
+        A vehicle as the live map names it — plate, make, model, category;
+        nothing a register would hold. The category is what picks the
+        silhouette the map draws, the same source the public nearby read
+        maps to `kind`.
+      type: ['object', 'null']
+      required: [id, registration_number, make, model, category]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        registration_number: { type: string }
+        make: { type: ['string', 'null'] }
+        model: { type: ['string', 'null'] }
+        category: { type: ['string', 'null'] }
+
+    LiveMapDriver:
+      description: A driver as the live map names them — id and name only.
+      type: ['object', 'null']
+      required: [id, name]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+
+    NearbyVehicle:
+      description: >
+        One available vehicle near a point, anonymized for the public
+        surfaces. A position and a silhouette — deliberately nothing that
+        joins back to the fleet register.
+      type: object
+      required: [key, category, kind, latitude, longitude, age_seconds]
+      additionalProperties: false
+      properties:
+        key:
+          description: Opaque marker id, stable within the hour, rotating across hours.
+          type: string
+        category:
+          description: The vehicle's platform category; null when the driver has no vehicle on record.
+          type: ['string', 'null']
+        kind:
+          description: Which sprite family a map should draw.
+          enum: [sedan, suv, pickup, boda]
+        latitude: { type: number }
+        longitude: { type: number }
+        age_seconds:
+          description: Seconds since the position was reported, device clock.
+          type: ['integer', 'null']
+      # `age_seconds` is null only in the degenerate case of a store row
+      # with no timestamp; dispatchable() should never serve one.
+
+    OnDutyDriver:
+      description: >
+        One on-duty driver, for the live map (ADR-0024 §2, the office's
+        read). Shaped like LivePosition on purpose — `age_seconds` and
+        `stale` mean the same in both — so a page can merge the two lists
+        and sort them by who needs attention.
+      type: object
+      required:
+        - driver_id
+        - driver
+        - vehicle_id
+        - vehicle
+        - latitude
+        - longitude
+        - accuracy_metres
+        - recorded_at
+        - age_seconds
+        - stale
+        - trip
+      additionalProperties: false
+      properties:
+        driver_id: { type: integer }
+        driver: { $ref: '#/components/schemas/LiveMapDriver' }
+        vehicle_id:
+          description: The shift's vehicle, else the one on the driver's profile; null when neither.
+          type: ['integer', 'null']
+        vehicle: { $ref: '#/components/schemas/LiveMapVehicle' }
+        latitude:
+          description: Null, not zero, when the handset has never reported.
+          type: ['number', 'null']
+        longitude: { type: ['number', 'null'] }
+        accuracy_metres: { type: ['number', 'null'] }
+        recorded_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        age_seconds:
+          description: Null when never reported, like recorded_at.
+          type: ['integer', 'null']
+        stale:
+          description: >
+            Older than dispatch.presence_ttl_seconds, or never reported.
+            The matcher hides such a driver; the map shows them greyed, so
+            that somebody phones them.
+          type: boolean
+        trip:
+          description: The occupying trip that has them, or null when they are waiting for work.
+          type: ['object', 'null']
+          required: [id, status]
+          additionalProperties: false
+          properties:
+            id: { type: integer }
+            status: { $ref: '#/components/schemas/TripStatus' }
 
     CustomerProfile:
       description: >
@@ -6766,6 +8946,7 @@ components:
         - license_expiry
         - status
         - vehicle_id
+        - owns_vehicle
         - account
         - created_at
         - updated_at
@@ -6779,6 +8960,28 @@ components:
         email: { type: ['string', 'null'] }
         license_number: { type: string }
         license_expiry: { $ref: '#/components/schemas/NullableTimestamp' }
+        owns_vehicle:
+          description: >
+            Whether `vehicle_id` names the driver's **own** vehicle
+            (ADR-0048 §7) rather than one the depot handed them. Not derivable
+            from `vehicle_id`, which is why it is stored and sent.
+          type: boolean
+        vehicle:
+          description: >
+            Flat vehicle summary, present only when the relation was
+            eager-loaded. Absent (not null) when it was not, so a list that
+            stopped eager-loading is visible in development rather than quietly
+            slow in production.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [id, registration_number, make, model]
+              additionalProperties: false
+              properties:
+                id: { type: integer }
+                registration_number: { type: string }
+                make: { type: string }
+                model: { type: string }
         status: { enum: [active, suspended, inactive] }
         vehicle_id:
           description: >
@@ -6861,6 +9064,7 @@ components:
         - license_expiry
         - status
         - vehicle_id
+        - owns_vehicle
         - account
         - created_at
         - updated_at
@@ -6882,6 +9086,39 @@ components:
             `driver_presence.vehicle_id` remains the per-shift answer and
             still wins when it is set.
           type: ['integer', 'null']
+        owns_vehicle:
+          description: >
+            Whether `vehicle_id` names the driver's **own** vehicle
+            (ADR-0048 §7), rather than one the depot handed them.
+
+            Not derivable from `vehicle_id`, which is why it is stored: a boda
+            rider whose machine is their livelihood and a driver holding the
+            keys to a depot car this week set the same column to the same kind
+            of value, and the two differ in who insures it, who repairs it,
+            and whether the vehicle papers on file are the driver's or the
+            platform's.
+
+            `owns_vehicle: true` with `vehicle_id: null` is a real and
+            meaningful state: a driver the office recorded as owning a machine
+            the fleet has not registered yet.
+          type: boolean
+        vehicle:
+          description: >
+            Enough of the vehicle to name it on a row, and no more — a driver
+            list is read to answer "who is out in what", and the answer is a
+            number plate. Present only when the relation was eager-loaded;
+            absent rather than null when it was not, so a slow list is visible
+            in development instead of quiet in production.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [id, registration_number, make, model]
+              additionalProperties: false
+              properties:
+                id: { type: integer }
+                registration_number: { type: string }
+                make: { type: string }
+                model: { type: string }
         account:
           description: >
             The account this driver signs in with, or null if they cannot sign
@@ -6899,6 +9136,35 @@ components:
                 status: { enum: [active, suspended] }
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
         updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    InlineVehicle:
+      description: >
+        A vehicle registered from the driver form (ADR-0048 §8), so a clerk
+        onboarding a boda rider does not have to abandon a half-typed form to
+        register the machine on another screen.
+
+        **Every rule is the fleet screen's own**, deliberately: the same plate
+        uniqueness, the same year window, the same category list. A vehicle
+        created this way is an ordinary fleet vehicle — it appears on the
+        vehicles list, it dispatches, and nothing marks it as having arrived
+        by a side door. If it were validated more loosely than one typed on
+        the fleet screen, the side door is exactly what it would be.
+
+        `status` is deliberately absent: a vehicle registered alongside its
+        driver is active, and a form with no way to say what is being
+        maintained should not be able to create one that cannot work.
+      type: object
+      required: [registration_number, make, model, year, category, seating_capacity]
+      additionalProperties: false
+      properties:
+        registration_number: { type: string, maxLength: 50 }
+        make: { type: string, maxLength: 100 }
+        model: { type: string, maxLength: 100 }
+        year: { type: integer, minimum: 1980 }
+        category: { enum: [sedan, suv, van, minibus, bus, pickup, truck] }
+        seating_capacity: { type: integer, minimum: 1, maximum: 100 }
+        color: { type: ['string', 'null'], maxLength: 50 }
+        vin: { type: ['string', 'null'], maxLength: 50 }
 
     Vehicle:
       type: object
@@ -6922,7 +9188,7 @@ components:
         make: { type: string }
         model: { type: string }
         year: { type: integer }
-        category: { $ref: '#/components/schemas/VehicleCategory' }
+        category: { $ref: '#/components/schemas/VehicleCategoryKey' }
         seating_capacity: { type: integer }
         color: { type: ['string', 'null'] }
         vin: { type: ['string', 'null'] }
@@ -6996,6 +9262,7 @@ components:
             - google_client_ids
             - facebook_app_id
             - facebook_app_secret
+            - mfa_enforced
           additionalProperties: false
           properties:
             password_reset_enabled: { type: boolean }
@@ -7004,6 +9271,18 @@ components:
             google_client_ids: { type: ['string', 'null'] }
             facebook_app_id: { type: ['string', 'null'] }
             facebook_app_secret: { $ref: '#/components/schemas/SecretValue' }
+            mfa_enforced:
+              type: boolean
+              description: >
+                Whether the platform asks for a second factor at all
+                (ADR-0061). The platform-wide half of a two-part rule; the
+                other half is roles.requires_mfa, and the two are resolved in
+                exactly one place, User::requiresMfa(). Relaxes only: turning
+                it off suspends the requirement without disabling anybody's
+                existing factor, so turning it back on returns every role to
+                what it already said. Deliberately absent from the public
+                subset — the login screen must not advertise that the
+                platform's second factor is off.
         regional:
           type: object
           required: [currency, timezone, date_format]
@@ -7171,6 +9450,8 @@ components:
             than business rules.
           type: object
           required:
+            - odometer_enabled
+            - trace_route_ceiling_percent
             - variance_threshold_percent
             - odometer_max_km_per_trip
             - trace_matching_enabled
@@ -7188,6 +9469,49 @@ components:
             - held_blocks_billing
           additionalProperties: false
           properties:
+            odometer_enabled:
+              type: boolean
+              description: >
+                Whether drivers record opening and closing odometer readings
+                at all (ADR-0047). On by default.
+
+
+                Turning it off has a contractual cost: PROJECT.md lists
+                "opening and closing odometer (mileage) readings" as the
+                Bank's acceptance criterion #4 for the Phase 1 MVP, and this
+                switch is platform-wide — corporate trips included.
+
+
+                With it off, the billable distance comes from the recorded GPS
+                trace, bounded by what the road between the trip's start and
+                end allows. A trip with no usable trace completes with a null
+                distance and a review flag rather than an invented figure.
+
+
+                Public: the Driver's Application renders from it, dropping the
+                odometer screens out of the trip flow entirely so that Start
+                Trip and Complete Trip become single taps.
+            trace_route_ceiling_percent:
+              type: number
+              minimum: 0
+              maximum: 200
+              description: >
+                How far past the road route a measured GPS trace may run
+                before it stops being believable, as a percentage. Only
+                consulted when `odometer_enabled` is false.
+
+
+                Real drives run longer than the route — diversions, one-way
+                systems, a passenger asking for a stop — so the margin is
+                generous. It exists to catch the failure that matters once the
+                trace prices the fare rather than merely checking it: jitter or
+                a spoofed location inflating a distance with nothing to check
+                it against.
+
+
+                A trace over the ceiling is billed at the ceiling and flagged,
+                never refused. The passenger is at the kerb and the driver did
+                drive somewhere.
             variance_threshold_percent:
               type: number
               minimum: 1
@@ -7399,10 +9723,26 @@ components:
         The unauthenticated branding subset: catalogue keys flagged
         public only, asset paths as absolute URLs.
       type: object
-      required: [branding, auth, regional, ordering, safety]
+      required: [branding, auth, regional, ordering, safety, tracking]
       additionalProperties: false
       properties:
         branding: { $ref: '#/components/schemas/BrandingSettings' }
+        tracking:
+          description: >
+            Whether the Driver's Application should ask for odometer readings
+            (ADR-0047), and nothing else from that group — the variance
+            threshold and the per-trip ceiling are operator business the app
+            has no use for.
+
+
+            Public because the app renders its trip flow from it: with the
+            odometer off, the odometer screens leave the flow and Start Trip
+            and Complete Trip become single taps.
+          type: object
+          required: [odometer_enabled]
+          additionalProperties: false
+          properties:
+            odometer_enabled: { type: boolean }
         safety:
           description: >
             The emergency number, and nothing else from that group (ADR-0040).
@@ -7648,7 +9988,7 @@ components:
         make: { type: string }
         model: { type: string }
         year: { type: integer }
-        category: { $ref: '#/components/schemas/VehicleCategory' }
+        category: { $ref: '#/components/schemas/VehicleCategoryKey' }
         seating_capacity: { type: integer }
         color: { type: ['string', 'null'] }
         vin: { type: ['string', 'null'] }
@@ -7674,9 +10014,11 @@ components:
         - id
         - tenant_id
         - requested_by_user_id
+        - passenger_user_id
         - passenger_name
         - passenger_phone
         - passenger_count
+        - vehicle_category
         - origin
         - destination
         - scheduled_for
@@ -7698,9 +10040,35 @@ components:
           anyOf:
             - { $ref: '#/components/schemas/User' }
             - { enum: [null] }
+        passenger_user_id:
+          type: ['integer', 'null']
+          description: >
+            The colleague this was raised for, when a client raised it; null
+            for the walk-ins and callers Shanitah's own desk books. The link,
+            not the source — `passenger_name` and `passenger_phone` below stay
+            authoritative, because they are the snapshot the driver was
+            dispatched against.
         passenger_name: { type: string }
         passenger_phone: { type: string }
         passenger_count: { type: ['integer', 'null'] }
+        vehicle_category:
+          description: >
+            The kind of vehicle the client asked for (ADR-0051), or null
+            when they stated no preference.
+
+
+            **A preference, not a constraint.** `DispatchRecommender` ranks a
+            matching vehicle above everything except one contracted to this
+            client, and still offers the others with a reason line saying
+            which is which. Nothing refuses a mismatch.
+
+
+            Null is a real answer and is never defaulted: "did not mind" and
+            "asked for a van and was sent a sedan" are different facts, and a
+            client's auditor is entitled to tell them apart.
+          anyOf:
+            - { $ref: '#/components/schemas/VehicleCategoryKey' }
+            - { enum: [null] }
         origin: { type: string }
         destination: { type: string }
         scheduled_for: { $ref: '#/components/schemas/NullableTimestamp' }
@@ -7765,8 +10133,30 @@ components:
         this schema and every shipped handset, and is then untouchable.
         `identity_document` covers a national ID in Kampala and a passport in
         Nairobi with no migration between them.
+        `identity_selfie` and `vehicle_photo` were added by ADR-0048 §1 on
+        the same terms: a face is a face in Kampala and in Nairobi, and a
+        photograph of a car is not a jurisdiction's paperwork. The set is six
+        and is closed again.
       type: string
-      enum: [driving_licence, identity_document, vehicle_insurance, vehicle_registration]
+      enum:
+        - driving_licence
+        - identity_document
+        - vehicle_insurance
+        - vehicle_registration
+        - identity_selfie
+        - vehicle_photo
+
+    DriverDocumentGroup:
+      description: >
+        Which headed section of the KYC screen a type belongs under
+        (ADR-0048 §1).
+
+        Served rather than inferred client-side, so the driver app and the
+        console group the six slots the same way without either of them
+        holding a list of type names. A seventh type then reaches both screens
+        correctly grouped with no client release.
+      type: string
+      enum: [personal, driver, vehicle]
 
     DriverDocumentStatus:
       description: >
@@ -7795,8 +10185,11 @@ components:
       required:
         - id
         - driver_id
+        - driver_application_id
         - type
         - type_label
+        - group
+        - group_label
         - status
         - status_label
         - compliance_state
@@ -7812,9 +10205,23 @@ components:
       additionalProperties: false
       properties:
         id: { type: integer }
-        driver_id: { type: integer }
+        driver_id:
+          type: ['integer', 'null']
+          description: >
+            Null only while the document belongs to an applicant nobody has
+            approved yet (ADR-0048 §3). Exactly one of this and
+            `driver_application_id` is ever set.
+        driver_application_id:
+          type: ['integer', 'null']
+          description: >
+            Set only while the row is still an applicant's. A `pending`
+            document against a driver is somebody the office already employs;
+            the same state against an application is somebody it has not
+            decided about.
         type: { $ref: '#/components/schemas/DriverDocumentType' }
         type_label: { type: string }
+        group: { $ref: '#/components/schemas/DriverDocumentGroup' }
+        group_label: { type: string }
         status: { $ref: '#/components/schemas/DriverDocumentStatus' }
         status_label: { type: string }
         compliance_state: { $ref: '#/components/schemas/DriverDocumentComplianceState' }
@@ -7837,12 +10244,17 @@ components:
           description: Present only on a rejection, and never empty when it is.
         reviewed_at: { type: ['string', 'null'], format: date-time }
         file_url:
-          type: string
+          type: ['string', 'null']
           description: >
             A route path, not a storage URL, and **chosen by who is asking** —
             the owner gets `/me/documents/{id}/file`, the office gets the
             driver-scoped one. A handset building the office path would be
             asking for a route its token cannot reach (`ClientScope`).
+
+            **Null while the document belongs to an application** (ADR-0048
+            §4), and that is a refusal rather than a missing route: an
+            applicant's claim ticket gets metadata and never file bytes, so a
+            stolen ticket cannot become a way to read somebody's national ID.
 
     DriverDocumentSlot:
       description: >
@@ -7852,11 +10264,13 @@ components:
         reason this wrapper exists.** Omitting absent types would answer "what
         have I sent" when the question is "what do I still owe you".
       type: object
-      required: [type, type_label, hint, requires_expiry, document]
+      required: [type, type_label, hint, requires_expiry, group, group_label, document]
       additionalProperties: false
       properties:
         type: { $ref: '#/components/schemas/DriverDocumentType' }
         type_label: { type: string }
+        group: { $ref: '#/components/schemas/DriverDocumentGroup' }
+        group_label: { type: string }
         hint:
           type: string
           description: What to photograph, in the driver's words rather than the schema's.
@@ -8745,6 +11159,7 @@ components:
         - distance_km
         - gps_distance_km
         - distance_variance_flagged
+        - unplanned_stop_count
         - cancellation_charge_applicable
         - started_at
         - completed_at
@@ -8797,6 +11212,21 @@ components:
             off Ghana — the swap ADR-0020 records this codebase hitting.
           $ref: '#/components/schemas/TripPlace'
         dropoff: { $ref: '#/components/schemas/TripPlace' }
+        stops:
+          description: >
+            The run's itinerary in order (ADR-0045) — an empty array on every
+            point-to-point trip, so no client needs a null branch. Present on
+            `GET /trips/{trip}` and absent on lists, the same bound
+            `estimated_fare` and `earnings` carry: a dispatch board must not
+            pay fifty itinerary queries for a column nobody renders there.
+          type: array
+          items: { $ref: '#/components/schemas/TripStop' }
+        unplanned_stop_count:
+          type: integer
+          description: >
+            How many stops were added mid-run rather than planned (ADR-0045
+            §4). A note, not a charge — the client sees that the run deviated
+            and where; nobody bills for the deviation.
         service_type:
           description: >
             What kind of job this was — `ride`, `delivery` or `self_drive`, from
@@ -9031,6 +11461,53 @@ components:
         accuracy_metres: { type: ['number', 'null'] }
         recorded_at: { $ref: '#/components/schemas/NullableTimestamp' }
 
+    TripStop:
+      description: >
+        One stop on one journey — evidence, never a plan (ADR-0045 §1). The
+        label is frozen at creation and stays right when the register's place
+        is later renamed; `client_place_id` rides along for report grouping
+        only and is never read back to re-derive what the trip did.
+      type: object
+      required:
+        - id
+        - sequence
+        - label
+        - latitude
+        - longitude
+        - source
+        - status
+        - arrived_at
+        - departed_at
+        - skip_reason
+        - client_place_id
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        sequence:
+          type: integer
+          description: 1-based position on the run. Appended, never reordered (§7).
+        label: { type: string }
+        latitude:
+          type: ['number', 'null']
+          description: >
+            Both coordinates present or both null — a label-only stop (typed
+            in a dead zone, or free text with no pin) renders as prose, never
+            as a pin at 0°,0°.
+        longitude: { type: ['number', 'null'] }
+        source:
+          enum: [planned, added_by_driver, added_by_dispatch, added_by_client]
+          description: Who put this stop on the run (§4). Only added_by_driver counts toward unplanned_stop_count.
+        status:
+          enum: [pending, arrived, done, skipped]
+          description: >
+            Moved only by the transitions §2 reuses — a `waiting` carrying
+            `stop_id` marks the arrival, the resume marks the departure.
+            `skipped` is §6's first-class case; no surface writes it yet.
+        arrived_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        departed_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        skip_reason: { type: ['string', 'null'] }
+        client_place_id: { type: ['integer', 'null'] }
+
     TripTransitionRequest:
       type: object
       required: [to]
@@ -9077,6 +11554,14 @@ components:
             tariff, so the driver has an honest figure to show at the kerb.
         odometer_photo:
           description: Dashboard photo (multipart only). Optional — the reading is an acceptance criterion, the photo is not.
+        stop_id:
+          type: ['integer', 'null']
+          description: >
+            ADR-0045 §2 — which stop this pause is an arrival at. Only
+            meaningful with `to=waiting`; the resume pairs itself with
+            whichever stop is open and carries none. Refused (422) on any
+            other transition, and when the stop is not this trip's or not
+            pending.
         cancellation_charge_applicable: { type: ['boolean', 'null'] }
         vehicle_id:
           type: ['integer', 'null']
@@ -9282,7 +11767,7 @@ components:
               - zone_rates
             additionalProperties: false
             properties:
-              vehicle_category: { $ref: '#/components/schemas/VehicleCategory' }
+              vehicle_category: { $ref: '#/components/schemas/VehicleCategoryKey' }
               base_fare_minor: { type: integer }
               per_km_minor: { type: integer }
               per_waiting_minute_minor: { type: integer }
@@ -9357,7 +11842,7 @@ components:
             required: [vehicle_category]
             additionalProperties: false
             properties:
-              vehicle_category: { $ref: '#/components/schemas/VehicleCategory' }
+              vehicle_category: { $ref: '#/components/schemas/VehicleCategoryKey' }
               base_fare_minor: { type: ['integer', 'null'], minimum: 0 }
               per_km_minor: { type: ['integer', 'null'], minimum: 0 }
               per_waiting_minute_minor: { type: ['integer', 'null'], minimum: 0 }
@@ -9390,7 +11875,7 @@ components:
       additionalProperties: false
       properties:
         id: { type: integer }
-        type: { enum: [booking.approved, booking.rejected, report.export.ready, order_request.received, trip.offered] }
+        type: { enum: [booking.approved, booking.rejected, report.export.ready, order_request.received, trip.offered, trip.assigned, trip.driver_arrived, trip.completed] }
         type_label: { type: string }
         subject: { type: string }
         body: { type: string }

@@ -29,6 +29,11 @@ function driver(): Driver {
     license_number: 'DL-99881',
     license_expiry: '2028-01-01',
     status: 'active',
+    // ADR-0048 §7. Both are required on the wire: `DriverResource` sends them
+    // unconditionally, so a fixture that omits them is a fixture testing a
+    // response shape the server does not produce.
+    vehicle_id: null,
+    owns_vehicle: false,
     account: null,
     created_at: '2026-01-01T00:00:00.000000Z',
     updated_at: '2026-01-01T00:00:00.000000Z',
@@ -38,13 +43,18 @@ function driver(): Driver {
 function slot(overrides: Partial<DriverDocumentSlot> = {}): DriverDocumentSlot {
   return {
     type: 'driving_licence',
+    group: 'driver',
+    group_label: 'Driver information',
     type_label: 'Driving licence',
     hint: 'Both sides if the details are split across them.',
     requires_expiry: true,
     document: {
       id: 11,
       driver_id: 3,
+      driver_application_id: null,
       type: 'driving_licence',
+      group: 'driver',
+      group_label: 'Driver information',
       type_label: 'Driving licence',
       status: 'pending',
       status_label: 'Waiting for the office',
@@ -164,4 +174,141 @@ describe('DriverDocumentsDialog', () => {
       }),
     )
   })
+
+/**
+ * The office's own KYC surface (ADR-0052 §5): filing a document a driver
+ * handed over, and reading the set without leaving the dialog.
+ */
+describe('filing and browsing', () => {
+  /** A second, held document so there is a set to browse. */
+  function selfie(): DriverDocumentSlot {
+    return slot({
+      type: 'identity_selfie',
+      type_label: 'Selfie',
+      group: 'personal',
+      group_label: 'Personal information',
+      requires_expiry: false,
+      document: { ...slot().document!, id: 12, type: 'identity_selfie', type_label: 'Selfie' },
+    })
+  }
+
+  /** An empty slot — the case the upload button exists for. */
+  function empty(): DriverDocumentSlot {
+    return slot({
+      type: 'vehicle_photo',
+      type_label: 'Vehicle photo',
+      group: 'vehicle',
+      group_label: 'Vehicle information',
+      requires_expiry: false,
+      document: null,
+    })
+  }
+
+  it('offers Upload on an empty slot, where there is nothing to replace', async () => {
+    get.mockResolvedValue(apiOk([empty()]))
+
+    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, makeUser())
+
+    // The whole point of the endpoint: before it, a driver who handed their
+    // papers across the counter had no way onto the platform at all.
+    expect(await screen.findByRole('button', { name: 'Upload' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Verify' })).not.toBeInTheDocument()
+  })
+
+  it('files a document, and says plainly that filing is not verifying', async () => {
+    get.mockResolvedValue(apiOk([empty()]))
+    post.mockResolvedValue(apiOk({}))
+
+    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, makeUser())
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Upload' }))
+
+    // ADR-0033 §4 survives this surface, and the clerk is told so before they
+    // choose a file rather than discovering the row still says "waiting".
+    expect(screen.getByText(/does not verify it/i)).toBeInTheDocument()
+
+    const file = new File(['bytes'], 'car.jpg', { type: 'image/jpeg' })
+
+    await userEvent.upload(screen.getByLabelText(/^File$/), file)
+    await userEvent.click(screen.getByRole('button', { name: 'File document' }))
+
+    await waitFor(() => expect(post).toHaveBeenCalled())
+
+    const [path, body] = post.mock.calls.at(-1)!
+
+    expect(path).toBe('/drivers/3/documents')
+    expect(body).toBeInstanceOf(FormData)
+    expect((body as FormData).get('type')).toBe('vehicle_photo')
+    expect((body as FormData).get('file')).toBe(file)
+  })
+
+  /**
+   * The expiry rule comes from the server's `requires_expiry`, never from a
+   * copy of it here — which is how a console ends up asserting a rule the
+   * office has since changed. Asked before the upload, so nobody meets it as a
+   * 422 on a file they already chose.
+   */
+  it('will not file a licence without the date the server requires', async () => {
+    get.mockResolvedValue(apiOk([slot({ document: null })]))
+
+    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, makeUser())
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Upload' }))
+    await userEvent.upload(
+      screen.getByLabelText(/^File$/),
+      new File(['bytes'], 'licence.pdf', { type: 'application/pdf' }),
+    )
+
+    const file = screen.getByRole('button', { name: 'File document' })
+
+    expect(file).toBeDisabled()
+
+    await userEvent.type(screen.getByLabelText(/Expires on/), '2029-04-01')
+
+    expect(file).toBeEnabled()
+  })
+
+  it('warns that replacing discards the review, before a file is chosen', async () => {
+    get.mockResolvedValue(apiOk([slot()]))
+
+    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, makeUser())
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Replace' }))
+
+    // ADR-0033 §2, said where it can still change the decision.
+    expect(screen.getByText(/starts as unchecked/i)).toBeInTheDocument()
+  })
+
+  /**
+   * Reviewing a driver means comparing a selfie against an identity document.
+   * A previewer that has to be closed and reopened between each pair is the
+   * friction that makes a reviewer stop comparing.
+   */
+  it('browses the held documents without closing the previewer', async () => {
+    get.mockResolvedValue(apiOk([slot(), selfie(), empty()]))
+
+    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, makeUser())
+
+    await userEvent.click((await screen.findAllByRole('button', { name: 'View' }))[0]!)
+
+    // Two of two, not three: the empty slot is not a document, and an arrow
+    // that lands on "Not sent" is an arrow that wasted a click.
+    expect(await screen.findByText('1 of 2')).toBeInTheDocument()
+
+    // Null at the ends rather than wrapping — a silent wrap is how somebody
+    // reads four of six twice and the last two never.
+    expect(screen.getByRole('button', { name: 'Previous document' })).toBeDisabled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Next document' }))
+
+    expect(await screen.findByText('2 of 2')).toBeInTheDocument()
+
+    // Re-queried rather than held from before the click: the previewer is
+    // keyed by the document, so moving on **remounts** it — which is the point
+    // (zoom and rotation reset to fit) and which detaches the old nodes.
+    expect(screen.getByRole('button', { name: 'Next document' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Previous document' })).toBeEnabled()
+  })
+})
+
 })

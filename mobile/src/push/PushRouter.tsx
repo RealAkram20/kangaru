@@ -1,0 +1,298 @@
+import { useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
+
+import { fetchOffers } from '../api/endpoints';
+import { useAuth } from '../auth/AuthProvider';
+import { offerRingtone } from '../duty/offerRingtone';
+import { openTrip } from '../navigation/navigationRef';
+import { hideCallNotification, showCallNotification } from './callNotification';
+import { loadNotifications } from './expoNotifications';
+import { intentFrom, type PushIntent } from './routing';
+
+/**
+ * Acts on a notification (ADR-0046 §4).
+ *
+ * ## What was missing before this
+ *
+ * Everything. The app registered a push token and then had no
+ * `setNotificationHandler`, no response listener and no cold-start check — so
+ * a job offer arriving while the app was open was **silently swallowed by the
+ * OS**, and a tap on one from the shade opened the app on whatever screen it
+ * happened to be showing. The offer was then found, or not, by the
+ * five-second poll. The push shortened nothing.
+ *
+ * ## The four arrivals, which are four different problems
+ *
+ * 1. **App open.** Android suppresses a notification whose app is in the
+ *    foreground unless a handler says otherwise. Without one the driver gets
+ *    no banner and no ring while staring at the app — the state they are in
+ *    most of a shift.
+ * 2. **App backgrounded, then tapped.** `addNotificationResponseReceivedListener`
+ *    fires. Ordinary, and the case everyone implements.
+ * 3. **App killed, launched by the tap.** No listener exists yet when the tap
+ *    happens — the process is being created *because* of it.
+ *    `getLastNotificationResponseAsync` is the only way to see it, and it must
+ *    be asked once at start-up. This is the case that matters most on cheap
+ *    Android hardware, where the process is trimmed constantly, and it is the
+ *    one that silently does nothing if forgotten.
+ * 4. **Arrived, untouched.** The one that matters most since ADR-0049, and the
+ *    only one where the driver has not yet looked at the phone. A withdrawal
+ *    has to stop a ring nobody is watching, and an offer has to become a
+ *    full-screen call over the lock screen — both before any tap exists to
+ *    react to. Handled on `addNotificationReceivedListener`, which fires
+ *    whenever this app's JavaScript is alive; ADR-0046 §1's foreground service
+ *    is what keeps it alive through a locked screen and a closed app.
+ *
+ * ## Why it invalidates rather than navigates
+ *
+ * An offer is painted by `OfferPresenter`, an overlay outside the navigator,
+ * from `useOffers`. So the honest response to "a job is waiting" is to make
+ * that query refetch: the overlay then appears over whatever the driver was
+ * doing, with the server's own current answer.
+ *
+ * Navigating instead would fight the overlay, and worse, would trust the push
+ * — a payload from before an update, or one describing an offer another driver
+ * has since taken. Refetching asks the platform rather than the notification,
+ * which is ADR-0025 §3 applied to routing: push shortens the latency and is
+ * never the source of truth.
+ */
+export function PushRouter() {
+  const { api, user } = useAuth();
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    // Signed out, there is nothing to open and nothing this driver owns. A
+    // handset that acted on a push while signed out would be acting on the
+    // *previous* driver's job (ADR-0025 §4).
+    if (user === null) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const act = (intent: PushIntent) => {
+      if (cancelled) {
+        return;
+      }
+
+      switch (intent.kind) {
+        case 'open_offer':
+          // Ask the platform, do not believe the payload. `OfferPresenter`
+          // paints whatever comes back — including nothing, if the job was
+          // taken while the phone was ringing, which is the correct outcome.
+          void queryClient.invalidateQueries({ queryKey: ['offers'] });
+
+          // And put the call screen up, if this handset can (ADR-0049 §3).
+          void raiseCall(intent.offerId);
+          break;
+
+        case 'withdraw_offer':
+          // Silence first: the driver is holding a phone that is ringing for
+          // a job that no longer exists, and every further second of it is
+          // the app wasting their attention. The refetch then removes the
+          // overlay, but it crosses a network and the ring should not wait
+          // for it.
+          offerRingtone.stopFor(intent.offerId);
+          void dismissOffer(intent.offerId);
+
+          // The call screen goes too. A withdrawal exists to *undo* an
+          // interruption (ADR-0046 §4), and leaving a full-screen-intent
+          // notification up for a job that no longer exists is the worst
+          // version of the thing it was sent to prevent — it can still take
+          // over the lock screen, and its Accept button leads to "you were
+          // too late" for a job nobody was ever offered in time.
+          void hideCallNotification(intent.offerId);
+
+          void queryClient.invalidateQueries({ queryKey: ['offers'] });
+          break;
+
+        case 'open_trip':
+          void queryClient.invalidateQueries({ queryKey: ['trips'] });
+          openTrip(intent.tripId);
+          break;
+
+        case 'ignore':
+          break;
+      }
+    };
+
+    /**
+     * Builds the incoming-call screen for an offer (ADR-0049 §3).
+     *
+     * **Fetched, not read off the push.** `TripOfferedNotification::context()`
+     * carries three fields — the id, the window and the pickup distance — and
+     * the call screen needs the pickup address and the fare as well. Those are
+     * deliberately not in the payload: it reaches a lock screen, and ADR-0025
+     * §5 keeps that surface to what a driver needs to judge a job.
+     *
+     * So this asks `GET /me/offers` for the job the push named. Which is the
+     * same rule the invalidation above follows, and it buys the same thing:
+     * an offer another driver took while the phone was ringing simply is not
+     * in the answer, and no call screen is raised for it.
+     */
+    const raiseCall = async (offerId: number) => {
+      try {
+        const live = await fetchOffers(api);
+        const match = live.find((candidate) => candidate.id === offerId);
+
+        if (match !== undefined && !cancelled) {
+          await showCallNotification(match);
+
+          /*
+           * **One job, one notification.**
+           *
+           * Two arrive for every offer: the push Android posted from
+           * `offers.v2`, and the call notification just raised above. Since
+           * the ring moved onto the call channel they would now *both* ring,
+           * and a driver would be looking at two rows for one job — one that
+           * can be answered and one that cannot.
+           *
+           * So the plain push is withdrawn the moment the answerable one is
+           * up. Cancelling stops its sound with it, and the overlap is the
+           * few milliseconds between Android posting it and this listener
+           * running — the same event, so there is no waiting in between.
+           *
+           * **The push is still the floor and is still worth sending.** This
+           * only runs when the app is alive to hear the notification. On a
+           * handset whose foreground service an OEM battery manager has
+           * killed, nothing here executes, nothing is dismissed, and the push
+           * rings on its own exactly as it did before (ADR-0046 §6).
+           */
+          void dismissOffer(offerId);
+        }
+      } catch {
+        // A dead zone between the push arriving and this request. The driver
+        // keeps the ringtone and the heads-up banner that `offers.v2` already
+        // delivered — stage one, doing exactly the job ADR-0046 §6 built it
+        // for.
+      }
+    };
+
+    /** Clears the notification for an offer that is over, if one is showing. */
+    const dismissOffer = async (offerId: number) => {
+      const Notifications = await loadNotifications();
+
+      // Presented notifications carry the same `data` the push arrived with,
+      // so the one to clear is found by the offer it names rather than by an
+      // identifier we would otherwise have to store across a process death.
+      const showing = (await Notifications?.getPresentedNotificationsAsync()) ?? [];
+
+      await Promise.all(
+        showing
+          .filter(
+            (item) => intentFrom(item.request.content.data).kind !== 'ignore' &&
+              (item.request.content.data as { offer_id?: unknown }).offer_id?.toString() ===
+                offerId.toString(),
+          )
+          .map((item) => Notifications?.dismissNotificationAsync(item.request.identifier)),
+      );
+    };
+
+    const subscribe = async () => {
+      const Notifications = await loadNotifications();
+
+      if (Notifications === null || cancelled) {
+        return;
+      }
+
+      // (1) Arrival while the app is open. Without this Android decides, and
+      // it decides to suppress.
+      Notifications.setNotificationHandler({
+        handleNotification: async () => ({
+          // **False since ADR-0049 §5, and it is not a downgrade either.**
+          //
+          // This handler only ever runs with the app in the foreground, and in
+          // that state `OfferPresenter` is already painting `OfferBanner` over
+          // whatever the driver is looking at. An OS heads-up on top of it is
+          // two banners announcing one job, stacked, with two different sets
+          // of buttons — and the OS one cannot show the countdown or answer in
+          // place.
+          //
+          // The shade row stays (`shouldShowList`), so the job is still
+          // findable if the driver swipes down.
+          shouldShowBanner: false,
+          shouldShowList: true,
+          // **Both false, deliberately, and this is not a downgrade.**
+          //
+          // The app is on screen, so `OfferPresenter` is already painting the
+          // offer and `offerRingtone` is already ringing it — from the app's
+          // own player, which loops for the whole countdown. Letting the OS
+          // play the channel sound as well would layer a second, unsynchronised
+          // ring over the first, and neither would stop when the other did.
+          shouldPlaySound: false,
+          shouldSetBadge: false,
+        }),
+      });
+
+      // (3) Launched by a tap on a notification, from a killed process. Asked
+      // once, at start-up, because no listener can have been present for it.
+      //
+      // Guarded on its own, because of what stands *after* it: a rejection
+      // here — a native module mid-initialisation, an OEM quirk — used to
+      // escape `subscribe()` before the two listeners below were registered,
+      // and push was then dead for the whole session with nothing logged and
+      // nothing on screen. A missed launch tap costs one navigation; a
+      // rejection must not also cost every offer that follows.
+      try {
+        const launch = await Notifications.getLastNotificationResponseAsync();
+
+        if (launch !== null) {
+          act(intentFrom(launch.notification.request.content.data));
+        }
+      } catch {
+        // The launch intent is gone; the listeners below still matter more.
+      }
+
+      // (2) Tapped while the app was alive.
+      const tapped = Notifications.addNotificationResponseReceivedListener((response) =>
+        act(intentFrom(response.notification.request.content.data)),
+      );
+
+      // **(4) Arrival, without anybody touching anything.**
+      //
+      // Two of the three intents are answered here rather than on a response,
+      // and for the same underlying reason: *the driver has not looked at the
+      // phone yet, and the whole point is what happens before they do.*
+      //
+      // - A **withdrawal** is a data push whose job is to stop a ring nobody
+      //   is looking at. Waiting for a tap would defeat it entirely.
+      // - An **offer** has to become the call screen *now* (ADR-0049 §3). The
+      //   full-screen intent is what wakes a dark handset and draws the job
+      //   over the keyguard, and it is set by `showCallNotification` when the
+      //   notification is built — so building it on a tap would mean building
+      //   it after the driver has already found the phone, read the banner and
+      //   pressed it. There would be nothing left for it to do.
+      //
+      // This is the listener that carries the feature, and it is also the one
+      // with a precondition: it only fires while this app's JavaScript is
+      // alive. ADR-0046 §1 is what makes that true through a locked screen and
+      // a closed app — the location foreground service holds the process for
+      // as long as the driver is on duty. Off duty it does not run, and off
+      // duty nothing is sent.
+      const received = Notifications.addNotificationReceivedListener((notification) => {
+        const intent = intentFrom(notification.request.content.data);
+
+        if (intent.kind === 'withdraw_offer' || intent.kind === 'open_offer') {
+          act(intent);
+        }
+      });
+
+      return () => {
+        tapped.remove();
+        received.remove();
+      };
+    };
+
+    // The `catch` is the backstop for anything the guard above did not cover:
+    // an unhandled rejection out of an effect is invisible in a release build,
+    // and this particular one would take the session's push with it.
+    const pending = subscribe().catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+      void pending.then((unsubscribe) => unsubscribe?.());
+    };
+  }, [api, user, queryClient]);
+
+  return null;
+}

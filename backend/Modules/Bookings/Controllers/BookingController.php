@@ -137,7 +137,23 @@ class BookingController extends Controller
         /** @var User $user */
         $user = $request->user();
 
-        $booking = $this->bookings->create($request->validated(), $user);
+        $attributes = $request->validated();
+
+        // The name comes off the account, never off the payload. Half the
+        // point of naming a colleague is that "J. Mukasa" and "Joseph
+        // Mukasa" stop being two passengers, and a client-supplied name
+        // beside a client-supplied id would let them diverge on the one
+        // record a driver is dispatched against. The *number* is still the
+        // caller's to set — the account's is prefilled, and the person
+        // raising it may know a better one for today.
+        $passenger = $request->passenger();
+
+        if ($passenger !== null) {
+            $attributes['passenger_user_id'] = $passenger->id;
+            $attributes['passenger_name'] = $passenger->name;
+        }
+
+        $booking = $this->bookings->create($attributes, $user);
 
         return ApiResponse::success(
             new BookingResource($booking->load('requestedBy')),

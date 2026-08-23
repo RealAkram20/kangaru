@@ -50,6 +50,10 @@ jest.mock('expo-location', () => ({
   // branch that renders an em dash, which is the one a handset in a basement
   // takes.
   getForegroundPermissionsAsync: jest.fn(async () => ({ status: 'denied', granted: false })),
+  // Read by the Permissions screen. Denied by default, matching the
+  // foreground reader above, so a suite that does not care about permissions
+  // gets the same shape from both.
+  getBackgroundPermissionsAsync: jest.fn(async () => ({ status: 'denied', granted: false })),
   getCurrentPositionAsync: jest.fn(async () => ({
     coords: { latitude: 0.3476, longitude: 32.5825, accuracy: 12 },
     timestamp: 0,
@@ -62,15 +66,94 @@ jest.mock('expo-location', () => ({
   ActivityType: { AutomotiveNavigation: 3 },
 }));
 
+/*
+ * Battery Saver, read by the Permissions screen.
+ *
+ * **Off by default, and that is the honest default rather than the convenient
+ * one**: a mock reporting saver-on would put a warning on every suite that
+ * happens to render the screen, and the state that needs proving is the
+ * warning appearing — not it being there already.
+ */
+jest.mock('expo-battery', () => ({
+  isLowPowerModeEnabledAsync: jest.fn(async () => false),
+}));
+
 jest.mock('expo-task-manager', () => ({
   defineTask: jest.fn(),
   isTaskRegisteredAsync: jest.fn(async () => false),
 }));
 
+/*
+  The ringtone's native half.
+
+  Nothing asserts against these: the rules that matter live in
+  `duty/ringtone.ts` and are covered there over fake ports, which is the whole
+  reason that file was separated from `duty/offerRingtone.ts`. This mock exists
+  so that a screen test which happens to mount `OfferPresenter` does not reach
+  a native module — and so `seekTo` returns a promise, since the real one does
+  and the code `void`s it.
+*/
+jest.mock('expo-audio', () => ({
+  createAudioPlayer: jest.fn(() => ({
+    loop: false,
+    play: jest.fn(),
+    pause: jest.fn(),
+    seekTo: jest.fn(async () => undefined),
+    remove: jest.fn(),
+  })),
+  setAudioModeAsync: jest.fn(async () => undefined),
+}));
+
+/*
+  The library's own mock, not a hand-written stand-in.
+
+  It is a real in-memory store rather than a set of stubs that resolve `null`,
+  which is what `duty/dutyStore` needs to be worth testing at all: the thing
+  that can go wrong there is a record written in one shape and read back in
+  another, and stubs that never return what was put in cannot catch it.
+
+  Unmocked, the native module throws on import — and it throws from whichever
+  file happened to import it first, which is why the failure surfaced in
+  `PresenceController.test.tsx` rather than anywhere near the storage code.
+*/
+jest.mock('@react-native-async-storage/async-storage', () =>
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
+
 jest.mock('expo-image-picker', () => ({
   requestCameraPermissionsAsync: jest.fn(async () => ({ granted: true })),
+  getCameraPermissionsAsync: jest.fn(async () => ({ granted: true })),
   launchCameraAsync: jest.fn(async () => ({ canceled: true })),
   MediaTypeOptions: { Images: 'Images' },
+}));
+
+/*
+  `expo-file-system`'s `File` is a native class, and every upload builds one
+  (`api/formFile.ts`). The stand-in keeps the three members the code and the
+  assertions actually use — a name, a mime type and the promise of bytes — so a
+  test can read back what a form part was labelled as, which is the thing the
+  real `FormData` will not hand over.
+*/
+jest.mock('expo-file-system', () => ({
+  File: class {
+    readonly uri: string;
+
+    constructor(uri: string) {
+      this.uri = uri;
+    }
+
+    get name(): string {
+      return this.uri.split('/').pop() ?? '';
+    }
+
+    get type(): string {
+      return this.uri.endsWith('.png') ? 'image/png' : 'image/jpeg';
+    }
+
+    async bytes(): Promise<Uint8Array> {
+      return new Uint8Array();
+    }
+  },
 }));
 
 jest.mock('expo-crypto', () => ({
@@ -224,7 +307,31 @@ jest.mock('react-native-reanimated', () => {
 // change every time `app.json` does.
 jest.mock('expo-constants', () => ({
   __esModule: true,
-  default: { expoConfig: { version: '1.0.0' } },
+  default: {
+    expoConfig: { version: '1.0.0' },
+    /*
+     * **`bare`, meaning a development build, and it was missing entirely.**
+     *
+     * `expoNotifications.ts` reads this and compares it against the
+     * `ExecutionEnvironment` enum below — which the mock did not export, so
+     * `ExecutionEnvironment.StoreClient` was a property read on `undefined`
+     * and would throw in any suite that reached it. Nothing did, only because
+     * `canShowCallScreen()` short-circuits on `Platform.OS !== 'android'`
+     * first. That is a guard held up by an unrelated one.
+     *
+     * `bare` rather than `storeClient` so the default path here is a real
+     * build: `expo-device`'s `isDevice: false` is then what makes
+     * `pushUnavailableReason()` answer `simulator`, which is both true of this
+     * runner and the same answer `canReceivePush()` gave before.
+     */
+    executionEnvironment: 'bare',
+  },
+  // The real enum, transcribed — same rule the notify-kit mock below follows.
+  ExecutionEnvironment: {
+    Bare: 'bare',
+    Standalone: 'standalone',
+    StoreClient: 'storeClient',
+  },
 }));
 
 /*
@@ -241,3 +348,136 @@ jest.mock('expo-image', () => {
 
   return { Image, __esModule: true };
 });
+
+/*
+ * `requestIdleCallback` / `cancelIdleCallback` are React Native runtime globals
+ * that this environment does not provide.
+ *
+ * `OdometerScreen` uses them to raise the keypad once the modal's entry
+ * animation is done — `autoFocus` fires mid-transition on Android and the
+ * keyboard never comes up, which is a defect a driver reported as being unable
+ * to enter the reading at all. React Native deprecated `InteractionManager`
+ * and names these as the replacement.
+ *
+ * Polyfilled as a macrotask, which is the closest honest analogue under fake
+ * timers: "after the work already queued". Deliberately *not* synchronous — a
+ * focus that lands during render would be a different behaviour from the one
+ * that ships, and the test would then be asserting something the device never
+ * does.
+ */
+type IdleHandle = ReturnType<typeof setTimeout>;
+
+globalThis.requestIdleCallback ??= ((callback: (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void): IdleHandle =>
+  setTimeout(() => callback({ didTimeout: false, timeRemaining: () => 0 }), 0)) as typeof globalThis.requestIdleCallback;
+
+globalThis.cancelIdleCallback ??= ((handle: IdleHandle) =>
+  clearTimeout(handle)) as typeof globalThis.cancelIdleCallback;
+
+/*
+ * `react-native-notify-kit` is the full-screen call screen (ADR-0049 §3), and
+ * it is a TurboModule — importing it under Jest reaches for native code that
+ * does not exist.
+ *
+ * Every path in the app that touches it goes through `loadNotifyKit`, which
+ * returns null on anything that is not an Android development build, so most
+ * suites never get here at all. This exists for the ones that assert *what*
+ * would have been displayed: the mock records calls rather than pretending to
+ * be a notification system.
+ *
+ * The enums are the real numbers, transcribed. `offerEvent.ts` carries its own
+ * copy of `EventType` and explains why it cannot import this one; a test that
+ * used a made-up value here would agree with that copy while both were wrong.
+ */
+jest.mock('react-native-notify-kit', () => ({
+  __esModule: true,
+  default: {
+    displayNotification: jest.fn(async () => 'notification-id'),
+    cancelNotification: jest.fn(async () => undefined),
+    getDisplayedNotifications: jest.fn(async () => []),
+    getInitialNotification: jest.fn(async () => null),
+    onBackgroundEvent: jest.fn(),
+    onForegroundEvent: jest.fn(() => () => undefined),
+    createChannel: jest.fn(async () => 'channel-id'),
+  },
+  EventType: { DISMISSED: 0, PRESS: 1, ACTION_PRESS: 2, DELIVERED: 3 },
+  AndroidCategory: { CALL: 'call' },
+  AndroidImportance: { NONE: 0, MIN: 1, LOW: 2, DEFAULT: 3, HIGH: 4 },
+  AndroidVisibility: { SECRET: -1, PRIVATE: 0, PUBLIC: 1 },
+}));
+
+// `expo-intent-launcher` opens Android's own settings screen for the
+// full-screen-intent permission. There is no Android under Jest; the mock is
+// here so importing `fullScreenIntent.ts` does not fail a suite that only
+// wanted the `Platform.Version` check next to it.
+jest.mock('expo-intent-launcher', () => ({
+  startActivityAsync: jest.fn(async () => ({ resultCode: -1 })),
+}));
+
+/*
+ * `@sentry/react-native` is mocked for a different reason from everything
+ * else in this file, and the reason is worth stating: it is not that the
+ * native module is missing, it is that **the package ships ESM and is not in
+ * `transformIgnorePatterns`**. Any module a suite touches that imports it
+ * fails the whole file with `SyntaxError: Unexpected token 'export'` — which
+ * is why, until logs were wired in, the SDK was imported only from
+ * `index.ts`, a file no test loads.
+ *
+ * Adding it to `transformIgnorePatterns` was the alternative. It would make
+ * every suite transform `@sentry/react-native`, `@sentry/core`,
+ * `@sentry/browser` and `@sentry/react` for the sake of an SDK that is inert
+ * without a DSN — which is exactly what it is in this runner.
+ *
+ * The functions are listed rather than proxied: a call to something the real
+ * SDK does not have should fail here too, not silently record.
+ */
+/*
+ * `mock`-prefixed because `jest.mock` factories are hoisted above it and
+ * babel-plugin-jest-hoist refuses any other out-of-scope reference.
+ */
+const mockSentryGlobalScope = { setAttributes: jest.fn() };
+
+jest.mock('@sentry/react-native', () => ({
+  __esModule: true,
+  init: jest.fn(),
+  wrap: <T>(component: T): T => component,
+  captureException: jest.fn(),
+  // Awaited by the notification background handler before its runtime is torn
+  // down. Resolves true, like a real flush with nothing queued.
+  flush: jest.fn(async () => true),
+  captureMessage: jest.fn(),
+  setUser: jest.fn(),
+  setTag: jest.fn(),
+  setContext: jest.fn(),
+  // One scope object for the whole run, not a fresh one per call: a test that
+  // asserts what was attached globally has to be able to reach the same
+  // `setAttributes` the code under test called.
+  getGlobalScope: jest.fn(() => mockSentryGlobalScope),
+  consoleLoggingIntegration: jest.fn(() => ({ name: 'ConsoleLogs' })),
+  // The tracing half (`src/tracing.ts`), which is reached from `outbox.ts`
+  // and therefore from the suite this app trusts most. `startSpan` runs the
+  // callback rather than swallowing it: the spans are instrumentation, and a
+  // mock that dropped the work would silently disable everything wrapped in
+  // one.
+  addIntegration: jest.fn(),
+  reactNavigationIntegration: jest.fn(() => ({
+    name: 'ReactNavigation',
+    registerNavigationContainer: jest.fn(),
+  })),
+  startSpan: jest.fn((_options: unknown, callback: (span: unknown) => unknown) =>
+    callback({ setAttributes: jest.fn(), setAttribute: jest.fn() }),
+  ),
+  getActiveSpan: jest.fn(() => null),
+  logger: {
+    trace: jest.fn(),
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    fatal: jest.fn(),
+    // The real `fmt` is a tagged template that keeps the interpolated values
+    // as searchable parameters. Under test the flattened string is what an
+    // assertion wants to read.
+    fmt: (strings: TemplateStringsArray, ...values: unknown[]): string =>
+      strings.reduce((text, part, index) => text + part + (index < values.length ? String(values[index]) : ''), ''),
+  },
+}));

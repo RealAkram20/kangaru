@@ -193,6 +193,13 @@ it('refuses to invoice an unresolved trip under gps_primary, and an unverified o
         'tenant_id' => $ctx['tenant']->id,
         'vehicle_id' => $ctx['vehicle']->id,
         'driver_id' => $ctx['driver']->id,
+        // The fleet whose driver ran it (ADR-0055 §6). `RecordsActingFleet`
+        // fills this from the `AccessContext`, and `bindTenant` above binds a
+        // **client** context — so a trip built this way carried no fleet, and
+        // `InvoiceService` refused it with "names no fleet" before the 409
+        // this test is actually about. Named explicitly rather than left to a
+        // binding that means something else.
+        'operator_id' => $ctx['driver']->operator_id,
         'status' => TripStatus::TRIP_COMPLETED,
         'odometer_start' => 100,
         'odometer_end' => 142,

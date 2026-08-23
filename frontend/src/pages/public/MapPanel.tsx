@@ -3,6 +3,7 @@ import { CircleDot, Crosshair, MapPin } from 'lucide-react'
 import { fetchRoute } from './places'
 import { googleMapsAvailable } from './googleMaps'
 import { GoogleMapPanel } from './GoogleMapPanel'
+import type { FleetSprite } from './nearbyVehicles'
 import './landing.css'
 
 /** Kampala city centre; the map opens on the service area, not the world. */
@@ -45,21 +46,14 @@ async function loadMapEngine(token: string | undefined): Promise<{ gl: MapEngine
 }
 
 /**
- * The decorative fleet, placed as offsets from wherever the map is centred
- * so the cars sit around *you* rather than around a hardcoded city centre.
- * Static on purpose: these are ambience, not live positions (the public API
- * exposes none), and idle motion on every visit would be noise.
+ * The ambient fleet is **real** now: `GET /public/nearby-vehicles` serves
+ * the actual dispatchable pool, anonymized to positions and silhouettes,
+ * and the caller polls it and passes the result in as `fleet`. This
+ * replaces six vehicles drawn at hardcoded offsets from the map centre —
+ * honest ambience when the public API exposed no positions, a lie the
+ * moment it did.
  */
 export type VehicleKind = 'sedan' | 'suv' | 'pickup' | 'boda'
-
-const NEARBY_VEHICLES: { offset: [number, number]; heading: number; kind: VehicleKind }[] = [
-  { offset: [0.0031, 0.002], heading: 40, kind: 'sedan' },
-  { offset: [-0.003, 0.003], heading: 205, kind: 'suv' },
-  { offset: [0.0026, -0.003], heading: 120, kind: 'sedan' },
-  { offset: [-0.0035, -0.0026], heading: 320, kind: 'boda' },
-  { offset: [0.0032, -0.0006], heading: 85, kind: 'pickup' },
-  { offset: [-0.0016, 0.0042], heading: 10, kind: 'boda' },
-]
 
 /** The fleet sprite set (see public/assets/vehicles/): one unified top-down
  * family, all on the same 512 canvas scale so relative sizes stay honest. */
@@ -210,13 +204,19 @@ export interface MapPanelProps {
   /**
    * The order is placed and this map now belongs to one trip. The ambient
    * fleet stands down for the whole of it, not just while the search runs:
-   * those six cars answered "how many are near me", and once a captain is
-   * assigned they would read as six live vehicles we are tracking. The
-   * marker also turns green — it is the pickup point now, not the phone.
+   * it answered "how many are near me", and once a captain is assigned it
+   * would read as a fleet we are tracking for this ride. The marker also
+   * turns green — it is the pickup point now, not the phone.
    */
   matching?: boolean
   /** Within matching, dispatch is still looking: draw the search radius. */
   searching?: boolean
+  /**
+   * The real vehicles nearby, from `/public/nearby-vehicles` via
+   * `mergeFleet`. Absent or empty means none are drawn — an honest empty
+   * street, never a decorative one.
+   */
+  fleet?: FleetSprite[]
   /** The matched captain's live position, once there is one to show. */
   captainAt?: [number, number] | null
   captainKind?: VehicleKind
@@ -238,6 +238,7 @@ function GlMapPanel({
   to,
   matching = false,
   searching = false,
+  fleet = [],
   captainAt = null,
   captainKind = 'sedan',
   sheetFraction,
@@ -245,6 +246,7 @@ function GlMapPanel({
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<import('maplibre-gl').Map | null>(null)
   const followersRef = useRef<import('maplibre-gl').Marker[]>([])
+  const fleetRef = useRef(new Map<string, import('maplibre-gl').Marker>())
   const endMarkersRef = useRef<import('maplibre-gl').Marker[]>([])
   const captainRef = useRef<import('maplibre-gl').Marker | null>(null)
   const markerCtorRef = useRef<MapEngine['Marker'] | null>(null)
@@ -259,6 +261,10 @@ function GlMapPanel({
 
     let map: import('maplibre-gl').Map | undefined
     let cancelled = false
+    // Captured once so the cleanup does not read `.current` after unmount —
+    // the same shape FleetMap documents; safe because it is a reference to
+    // a mutated Map, not a snapshot.
+    const fleetOnMap = fleetRef.current
 
     void (async () => {
       try {
@@ -294,21 +300,10 @@ function GlMapPanel({
         // the drawn route running underneath the sheet. Each move states
         // its own framing instead — see `lift` and the route's fitBounds.
 
-        // Everything that should travel with the person: the halo, and the
-        // fleet whose whole job is to say how many cars are near *them*.
+        // The one thing that travels with the person: the halo. The fleet
+        // is live data now and its own effect below owns it.
         const you = new gl.Marker({ element: userLocationElement() }).setLngLat(start).addTo(m)
-        followersRef.current = [
-          you,
-          ...NEARBY_VEHICLES.map((vehicle) =>
-            new gl.Marker({
-              element: vehicleElement(vehicle.kind),
-              rotation: vehicle.heading,
-              rotationAlignment: 'map',
-            })
-              .setLngLat([start[0] + vehicle.offset[0], start[1] + vehicle.offset[1]])
-              .addTo(m),
-          ),
-        ]
+        followersRef.current = [you]
         setReady(true)
       } catch {
         // No WebGL or blocked tile hosts — show the flat embed, never a blank pane.
@@ -319,6 +314,8 @@ function GlMapPanel({
     return () => {
       cancelled = true
       followersRef.current = []
+      fleetOnMap.forEach((marker) => marker.remove())
+      fleetOnMap.clear()
       endMarkersRef.current = []
       captainRef.current = null
       markerCtorRef.current = null
@@ -349,8 +346,9 @@ function GlMapPanel({
 
     if (from === null || to === null) {
       clear()
-      // Once matching, the fleet stays down for good: the marker effect
-      // below owns their visibility and this must not fight it back on.
+      // The halo comes back when the route goes — unless matching, where
+      // the pickup marker owns the point. The live fleet is not touched
+      // here; its own effect owns its visibility.
       if (!matching) {
         followersRef.current.forEach((marker) => {
           marker.getElement().style.display = ''
@@ -394,7 +392,9 @@ function GlMapPanel({
         new markerCtorRef.current!({ element: routeEndElement('start') }).setLngLat(from).addTo(m),
         new markerCtorRef.current!({ element: routeEndElement('end') }).setLngLat(to).addTo(m),
       ]
-      // The trip is the subject now; the ambient fleet would only crowd it.
+      // The trip is the subject now: the route ends replace the halo, and
+      // the fleet effect below sees `from`/`to` set and stands the fleet
+      // down on the same render.
       followersRef.current.forEach((marker) => {
         marker.getElement().style.display = 'none'
       })
@@ -429,18 +429,60 @@ function GlMapPanel({
    */
   useEffect(() => {
     if (!ready) return
-    const [you, ...vehicles] = followersRef.current
-    const el = you?.getElement()
+    const el = followersRef.current[0]?.getElement()
     if (el !== undefined) {
       el.classList.toggle('kr-loc--green', matching)
       el.classList.toggle('kr-loc--searching', searching)
     }
-    if (matching) {
-      vehicles.forEach((marker) => {
-        marker.getElement().style.display = 'none'
-      })
-    }
   }, [ready, matching, searching])
+
+  /**
+   * The live fleet. One marker per key, moved rather than rebuilt (the
+   * same rule as the console's map: a rebuilt marker blinks; a moved one
+   * travels), rotated to the heading `mergeFleet` derived from movement.
+   *
+   * Visibility is data plus two vetoes: a drawn route or a running match
+   * stands the fleet down — those cars answered "how many are near me", a
+   * question already settled by then — and standing down means *removing*
+   * the markers, so a poll landing mid-ride cannot repaint them behind the
+   * route.
+   */
+  useEffect(() => {
+    const m = mapRef.current
+    const Marker = markerCtorRef.current
+    if (!ready || m === null || Marker === null) return
+
+    const visible = !matching && (from === null || to === null)
+    const wanted = visible ? fleet : []
+    const onMap = fleetRef.current
+    const incoming = new Set(wanted.map((vehicle) => vehicle.key))
+
+    for (const [key, marker] of onMap) {
+      if (!incoming.has(key)) {
+        marker.remove()
+        onMap.delete(key)
+      }
+    }
+
+    for (const vehicle of wanted) {
+      const existing = onMap.get(vehicle.key)
+      if (existing !== undefined) {
+        existing.setLngLat(vehicle.lngLat)
+        existing.setRotation(vehicle.heading)
+      } else {
+        onMap.set(
+          vehicle.key,
+          new Marker({
+            element: vehicleElement(vehicle.kind),
+            rotation: vehicle.heading,
+            rotationAlignment: 'map',
+          })
+            .setLngLat(vehicle.lngLat)
+            .addTo(m),
+        )
+      }
+    }
+  }, [ready, fleet, matching, from, to])
 
   /** The matched captain, moving toward the pickup. */
   useEffect(() => {
@@ -491,7 +533,8 @@ function GlMapPanel({
   }, [ready, captainAt, captainKind, center, from, to, sheetFraction])
 
   // A fix usually lands after the map is already up: glide to it and bring
-  // the halo and the fleet along, so the cars stay "near me" wherever me is.
+  // the halo along. The fleet does not follow — real vehicles are where
+  // they are, which is the whole point of them being real.
   useEffect(() => {
     const m = mapRef.current
     if (!ready || m === null || (from !== null && to !== null)) return
@@ -516,22 +559,59 @@ function GlMapPanel({
     m.easeTo({ center: target, offset: [0, -lift], duration: 600 })
 
     if (center === null) return
-    const [you, ...vehicles] = followersRef.current
-    you?.setLngLat(center)
-    vehicles.forEach((marker, i) => {
-      const offset = NEARBY_VEHICLES[i]?.offset
-      if (offset !== undefined) marker.setLngLat([center[0] + offset[0], center[1] + offset[1]])
-    })
+    followersRef.current[0]?.setLngLat(center)
   }, [center, ready, from, to, sheetFraction])
 
   /** Puts the subject back in frame after the map has been panned around. */
+  /**
+   * What the crosshair goes back to, in order of what the map is about.
+   *
+   * A drawn trip outranks a fix: once both ends are known the subject of the
+   * map is the journey, and centring on one end of it while the other is off
+   * screen is the framing this button exists to undo. With no trip, your own
+   * position; with no fix — declined, or not asked yet — the pickup, which is
+   * the only place the order is about.
+   */
+  const recentreTarget = (): [number, number] | null =>
+    from !== null && to !== null ? null : (center ?? from)
+
+  /**
+   * Whether there is anywhere to go back to at all.
+   *
+   * `sheetFraction` counts as one on its own, and that is not a leftover:
+   * with a sheet up, pressing this lifts whatever is centred out from behind
+   * it, which is a real move even before any fix has landed. That was the
+   * button's whole job on the matching screen before it appeared anywhere
+   * else, and it still is.
+   */
+  const canRecentre = center !== null || from !== null || sheetFraction !== undefined
+
   const recentre = () => {
     const m = mapRef.current
-    if (m === null || sheetFraction === undefined) return
-    const lift = window.matchMedia('(min-width: 1024px)').matches
-      ? 0
-      : Math.round(window.innerHeight * (sheetFraction / 2))
-    m.easeTo({ center: center ?? m.getCenter(), offset: [0, -lift], duration: 500 })
+    if (m === null) return
+
+    // No sheet, no lift: the order page's map is unobstructed, so the
+    // subject belongs in the middle of it rather than pushed up by half of
+    // nothing.
+    const lift =
+      sheetFraction === undefined || window.matchMedia('(min-width: 1024px)').matches
+        ? 0
+        : Math.round(window.innerHeight * (sheetFraction / 2))
+
+    const target = recentreTarget()
+    if (target === null && from !== null && to !== null) {
+      m.fitBounds(
+        [
+          [Math.min(from[0], to[0]), Math.min(from[1], to[1])],
+          [Math.max(from[0], to[0]), Math.max(from[1], to[1])],
+        ],
+        { padding: 90, offset: [0, -lift], maxZoom: 15, duration: 500 },
+      )
+
+      return
+    }
+
+    m.easeTo({ center: target ?? m.getCenter(), offset: [0, -lift], duration: 500 })
   }
 
   return (
@@ -549,7 +629,13 @@ function GlMapPanel({
             loading="lazy"
           />
         )}
-        {sheetFraction !== undefined && (
+        {/* Shown whenever there is somewhere to go back to, not only on
+            the matching screen. The order page draws the same map, gives it
+            the same fix, and had no way back to it — you panned across
+            Kampala to check a landmark and that was that. `center` is your
+            own position here (`myPosition`), so this is Google's crosshair
+            doing Google's job. */}
+        {canRecentre && (
           <button
             type="button"
             onClick={recentre}
@@ -557,7 +643,7 @@ function GlMapPanel({
             // The sheet's height rides in a custom property so the desktop
             // override still wins — an inline `bottom` would outrank it.
             className="absolute right-5 z-20 flex h-12 w-12 items-center justify-center rounded-full bg-surface-card text-text-heading shadow-lg transition-transform duration-150 ease-[var(--kr-ease-out)] active:scale-95 bottom-[calc(var(--kr-sheet)*1dvh+1rem)] lg:bottom-6"
-            style={{ '--kr-sheet': sheetFraction * 100 } as CSSProperties}
+            style={{ '--kr-sheet': (sheetFraction ?? 0) * 100 } as CSSProperties}
           >
             <Crosshair className="h-5 w-5" aria-hidden />
           </button>

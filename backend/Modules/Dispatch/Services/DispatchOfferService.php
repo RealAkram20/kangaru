@@ -3,15 +3,18 @@
 namespace Modules\Dispatch\Services;
 
 use App\Models\User;
+use App\Support\Observability\Trace;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Modules\Bookings\Enums\OrderRequestServiceType;
 use Modules\Bookings\Enums\OrderRequestStatus;
 use Modules\Bookings\Models\OrderRequest;
 use Modules\Dispatch\Enums\DispatchOfferStatus;
 use Modules\Dispatch\Models\DispatchOffer;
 use Modules\Drivers\Models\Driver;
 use Modules\Notifications\Notifications\TripOfferedNotification;
+use Modules\Notifications\Notifications\TripOfferWithdrawnNotification;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Services\DriverUnavailableException;
@@ -73,6 +76,40 @@ class DispatchOfferService
      */
     public function dispatch(OrderRequest $request): Collection
     {
+        /*
+         * Traced (ADR-0054 §4). This is the method behind *"why is the
+         * passenger still watching a spinner"*, and the auto-instrumentation
+         * cannot answer it: the search is a run of SELECTs against duty,
+         * rosters, allocations and vehicles, and on the waterfall it is
+         * indistinguishable from the listing that renders alongside it.
+         *
+         * `offers` is the half that makes the timing readable. A 700 ms
+         * search that opened three offers is the platform working; a 700 ms
+         * search that opened none is a fleet with nobody on duty, and the
+         * two are the same row without it.
+         */
+        return Trace::span('dispatch.search', 'find a driver', function () use ($request) {
+            $offers = $this->search($request);
+
+            Trace::annotate(['offers' => $offers->count()]);
+
+            return $offers;
+        }, ['order_request_id' => $request->id]);
+    }
+
+    /**
+     * The search itself.
+     *
+     * Split from {@see dispatch()} so that the span above has a body to wrap
+     * and this one keeps its shape — every early return below is a *reason*
+     * the search stopped, and folding them into a closure would have meant
+     * either restructuring them or nesting the whole method one level deeper
+     * for a monitoring call.
+     *
+     * @return Collection<int, DispatchOffer>
+     */
+    private function search(OrderRequest $request): Collection
+    {
         // Lapsed-but-open offers are settled first, so "is anything live"
         // is asked of a table that has been brought up to date with the
         // clock. Skipping this is how an order sits forever behind an offer
@@ -80,6 +117,15 @@ class DispatchOfferService
         $this->settleLapsedFor($request);
 
         if ($request->trip_id !== null) {
+            return collect();
+        }
+
+        // A self-drive rental is not a journey and has nobody to collect
+        // (`OrderRequestServiceType::dispatchesToDriver`). Refused here rather
+        // than only at the two call sites, because this method is the single
+        // door into `dispatch_offers` and a guard on the door cannot be walked
+        // past by a caller added later.
+        if (! $request->service_type->dispatchesToDriver()) {
             return collect();
         }
 
@@ -123,7 +169,19 @@ class DispatchOfferService
      */
     public function accept(DispatchOffer $offer, User $actor): Trip
     {
-        return DB::transaction(function () use ($offer, $actor) {
+        /*
+         * Traced (ADR-0054 §4), and of everything instrumented on this
+         * platform this is the one a driver feels directly: the gap between
+         * their thumb landing on Accept and the pickup screen appearing,
+         * with a passenger watching them.
+         *
+         * The whole span sits **inside** one `lockForUpdate` transaction, so
+         * its duration is also how long every other driver racing for this
+         * job is held at the lock. That makes it the number to watch when
+         * the fleet grows — a figure the request's own transaction cannot
+         * show, because the request contains more than the lock.
+         */
+        return Trace::span('dispatch.accept', 'driver takes the job', fn () => DB::transaction(function () use ($offer, $actor) {
             // Lock and re-read before deciding, exactly as
             // `DispatchService::assign` does with its booking: the status on
             // the model passed in was read outside this transaction and may
@@ -184,6 +242,24 @@ class DispatchOfferService
             // should show both. ADR-0024 §3 said this; only the code did not.
             $trip = $this->stateMachine->transition($trip, TripStatus::ACCEPTED, $actor);
 
+            // And straight on to the road. A walk-in offer is answered from
+            // the driver's seat with the passenger already standing at a
+            // kerb (ADR-0024 §7 withholds the number until now, so nothing
+            // has happened yet that would need them anywhere else); saying
+            // yes *is* setting off. Asking for a second press — "On my way",
+            // on another screen — was one more tap on the moment a driver's
+            // hands are busiest, and until it was pressed the passenger's
+            // screen sat on "Captain assigned" while the captain was already
+            // moving. The owner's ruling: automatic the moment they accept.
+            //
+            // Two transitions, not a new edge: `accepted -> driver_en_route`
+            // is the graph as it stands, both rows land on the timeline, and
+            // a corporate trip assigned by a dispatcher for four o'clock —
+            // which comes through `DispatchService::assign`, not here — still
+            // stops at `accepted`, because a driver saying yes to Tuesday is
+            // not a driver setting off now.
+            $trip = $this->stateMachine->transition($trip, TripStatus::DRIVER_EN_ROUTE, $actor);
+
             $locked->update([
                 'status' => DispatchOfferStatus::ACCEPTED,
                 'responded_at' => now(),
@@ -195,14 +271,29 @@ class DispatchOfferService
             // written for that case rather than against today's default —
             // a wave size that silently leaks stale offers the first time
             // somebody raises it is a trap set for a config change.
-            DispatchOffer::query()
+            //
+            // Read before the update, because after it there is nothing left
+            // to find: `->live()` is what identifies them, and the update is
+            // what stops them being live. The rows are needed either way to
+            // reach each driver's handset.
+            $losers = DispatchOffer::query()
                 ->where('order_request_id', $request->id)
                 ->whereKeyNot($locked->id)
                 ->live()
+                ->with('driver.user')
+                ->get();
+
+            DispatchOffer::query()
+                ->whereKey($losers->modelKeys())
                 ->update([
                     'status' => DispatchOfferStatus::SUPERSEDED,
                     'responded_at' => now(),
                 ]);
+
+            // After the write, never before: a handset told to stop and then
+            // re-fetching `GET /me/offers` against un-updated rows would be
+            // handed the job straight back, and start ringing again.
+            $this->withdraw($losers);
 
             $request->forceFill([
                 'trip_id' => $trip->id,
@@ -213,7 +304,7 @@ class DispatchOfferService
             ])->save();
 
             return $trip;
-        });
+        }), ['offer_id' => $offer->id]);
     }
 
     /**
@@ -274,9 +365,23 @@ class DispatchOfferService
         // until they gave up.
         //
         // Found by watching exactly that happen on a live server.
-        $this->retryUnoffered();
+        //
+        // Traced on its own (ADR-0054 §4). The scheduler already opens a
+        // `console.command.scheduled` transaction around this whole command,
+        // so the command's duration is recorded without any help — what that
+        // transaction cannot say is which of its two halves spent the time,
+        // and this half runs a query per unfulfilled order in the retry
+        // window. At `everyTenSeconds()` a slow half is a sweep that starts
+        // overlapping itself, which `withoutOverlapping()` then silently
+        // turns into skipped ticks.
+        Trace::span('dispatch.retry_unoffered', 'orders nobody could take', fn () => $this->retryUnoffered());
 
         $lapsed = DispatchOffer::query()->lapsed()->get();
+
+        // Onto the command's own transaction, not a new span: a count is not
+        // a duration, and this is the number that says whether a tick did
+        // anything at all.
+        Trace::annotate(['lapsed' => $lapsed->count()]);
 
         if ($lapsed->isEmpty()) {
             return 0;
@@ -326,6 +431,11 @@ class DispatchOfferService
         $stale = OrderRequest::query()
             ->whereNull('trip_id')
             ->whereIn('status', [OrderRequestStatus::NEW, OrderRequestStatus::CONTACTED])
+            // Rides and deliveries only. `dispatch()` refuses a rental anyway,
+            // so this is not the guard — it is here so the sweep does not load
+            // every rental in the retry window on every tick to refuse it one
+            // by one, ten times a minute.
+            ->whereIn('service_type', OrderRequestServiceType::dispatchableToDriver())
             ->where('created_at', '>=', now()->subMinutes($window))
             // Immediate rides only, matching `receive()`: a booking for this
             // evening is not something to offer now.
@@ -535,6 +645,47 @@ class DispatchOfferService
     private function close(DispatchOffer $offer, DispatchOfferStatus $status): void
     {
         $offer->update(['status' => $status, 'responded_at' => now()]);
+    }
+
+    /**
+     * Stops the phones still ringing for offers that are over (ADR-0046 §4).
+     *
+     * Public because two callers kill an offer under a driver and both owe
+     * them silence: the accept path here, which supersedes the rest of a
+     * wave, and `CustomerRideController`, where the passenger cancelled.
+     *
+     * ## Everything about this is best-effort, on purpose
+     *
+     * The device stops on its own. `Ringtone` arms a deadline from the offer's
+     * own window when it starts, so a handset falls quiet shortly after the
+     * offer could no longer be live whether this arrives or not — and Android
+     * will not deliver a silent push to an app it has killed at all. This
+     * makes the common case immediate; it does not make it correct, because
+     * it already was.
+     *
+     * So it swallows, exactly as `ring()` above does and for the same reason:
+     * it runs inside the transaction that accepted a ride, and a passenger's
+     * trip must not roll back because a third-party push service timed out.
+     *
+     * **Called after the status write, never before.** A driver whose handset
+     * received this and re-fetched `GET /me/offers` before the row was
+     * updated would be handed the offer straight back, and the ringing would
+     * resume — the one failure mode this method can create rather than fix.
+     *
+     * @param  iterable<DispatchOffer>  $offers
+     */
+    public function withdraw(iterable $offers): void
+    {
+        foreach ($offers as $offer) {
+            try {
+                $offer->driver?->user?->notify(TripOfferWithdrawnNotification::for($offer));
+            } catch (\Throwable $e) {
+                Log::warning('dispatch.offer_withdrawal_failed', [
+                    'offer_id' => $offer->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
     }
 
     /**

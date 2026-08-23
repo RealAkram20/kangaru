@@ -35,11 +35,58 @@ function zone(overrides: Partial<Zone> = {}): Zone {
   }
 }
 
+
+/**
+ * The categories the fleet runs, as the server sends them (ADR-0050).
+ *
+ * The literal this dialog used to read was one of four hand-mirrored copies
+ * of `Vehicle::CATEGORIES`, two of which had drifted. It now fetches the
+ * live list — which is why every `get` mock below has to be routed by URL
+ * rather than answering every request with the same body.
+ */
+const CATEGORIES = [
+  { id: 1, key: 'boda', name: 'Boda', description: null, active: true, position: 0,
+    created_at: '2026-01-01T00:00:00.000000Z', updated_at: '2026-01-01T00:00:00.000000Z' },
+  { id: 2, key: 'sedan', name: 'sedan', description: null, active: true, position: 1,
+    created_at: '2026-01-01T00:00:00.000000Z', updated_at: '2026-01-01T00:00:00.000000Z' },
+  { id: 3, key: 'van', name: 'van', description: null, active: true, position: 2,
+    created_at: '2026-01-01T00:00:00.000000Z', updated_at: '2026-01-01T00:00:00.000000Z' },
+]
+
+/**
+ * Answers `/vehicle-categories` from the list above and every other GET with
+ * `other` — which is what a blanket `mockResolvedValue` can no longer do:
+ * it would hand the category select a list of zones, and every option would
+ * be filtered out as inactive.
+ */
+function getAnswers(other: () => Promise<unknown>) {
+  get.mockImplementation((url: string) =>
+    (url.includes('/vehicle-categories')
+      ? Promise.resolve(apiOk(CATEGORIES))
+      : other()) as never,
+  )
+}
+
 beforeEach(() => {
   get.mockReset()
   post.mockReset()
   patch.mockReset()
 })
+
+
+/**
+ * Chooses the category for the first (and, on a fresh card, only) rate row.
+ *
+ * A new card's first row **opens blank** since ADR-0050. It used to default
+ * to `'sedan'`, which was a tenth hand-written copy of a category key in the
+ * one file that had just stopped hard-coding them — and a preselected
+ * category is an answer a finance officer has to notice is wrong rather than
+ * one they have to give. The rows are labelled from their category, so the
+ * choice has to be made before "Remove sedan" exists.
+ */
+async function chooseFirstCategory(user: ReturnType<typeof userEvent.setup>, key = 'sedan') {
+  await user.selectOptions(await screen.findByLabelText(/^Category/), key)
+}
 
 /** The zone-price row's controls, which carry no labels after the first row. */
 function zonePriceRow() {
@@ -47,11 +94,12 @@ function zonePriceRow() {
 }
 
 it('sends zone prices nested under the vehicle category they override', async () => {
-  get.mockResolvedValue(apiOk([zone()]))
+  getAnswers(() => Promise.resolve(apiOk([zone()])))
   post.mockResolvedValue(apiOk({ id: 1, name: 'Corporate Standard' }))
 
   const user = userEvent.setup()
   renderAs(<RateCardVersionDialog card={null} onClose={vi.fn()} onSaved={vi.fn()} />)
+  await chooseFirstCategory(user)
 
   await user.type(screen.getByLabelText(/Card name/), 'Corporate Standard')
 
@@ -100,17 +148,18 @@ it('offers only the zones a rate card may actually be priced in', async () => {
   // and a switched-off zone are never returned by ZoneResolver::pricingZoneAt,
   // so a price attached to either would be stored and used by no invoice.
   // Offering them would make the 422 the first anybody hears of it.
-  get.mockResolvedValue(
+  getAnswers(() => Promise.resolve(
     apiOk([
       zone(),
       zone({ id: 8, name: 'Bank campus', kind: 'client', tenant_id: 1, priority: 10 }),
       zone({ id: 9, name: 'Nakawa depot', kind: 'depot' }),
       zone({ id: 10, name: 'Retired band', active: false }),
     ]),
-  )
+  ))
 
   const user = userEvent.setup()
   renderAs(<RateCardVersionDialog card={null} onClose={vi.fn()} onSaved={vi.fn()} />)
+  await chooseFirstCategory(user)
 
   await user.click(await screen.findByRole('button', { name: /Add zone price/ }))
 
@@ -125,11 +174,12 @@ it('still lets prices be set when zones cannot be read at all', async () => {
   // card; they are not a prerequisite for having one, and a finance officer
   // blocked from setting ordinary prices by an optional lookup would be a
   // worse outcome than an unexplained absence.
-  get.mockRejectedValue(apiFailure(403, 'FORBIDDEN', 'This action is unauthorized.'))
+  getAnswers(() => Promise.reject(apiFailure(403, 'FORBIDDEN', 'This action is unauthorized.')))
   post.mockResolvedValue(apiOk({ id: 1, name: 'Corporate Standard' }))
 
   const user = userEvent.setup()
   renderAs(<RateCardVersionDialog card={null} onClose={vi.fn()} onSaved={vi.fn()} />)
+  await chooseFirstCategory(user)
 
   expect(await screen.findByText(/No pricing zones have been drawn yet/)).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /Add zone price/ })).toBeDisabled()
@@ -141,10 +191,11 @@ it('still lets prices be set when zones cannot be read at all', async () => {
 })
 
 it('refuses to submit while one zone is priced twice for a category', async () => {
-  get.mockResolvedValue(apiOk([zone(), zone({ id: 8, name: 'Bank campus', kind: 'client' })]))
+  getAnswers(() => Promise.resolve(apiOk([zone(), zone({ id: 8, name: 'Bank campus', kind: 'client' })])))
 
   const user = userEvent.setup()
   renderAs(<RateCardVersionDialog card={null} onClose={vi.fn()} onSaved={vi.fn()} />)
+  await chooseFirstCategory(user)
 
   await user.type(screen.getByLabelText(/Card name/), 'Corporate Standard')
 
@@ -161,7 +212,7 @@ it('refuses to submit while one zone is priced twice for a category', async () =
 })
 
 it('shows a rejected zone price against the row that carries it', async () => {
-  get.mockResolvedValue(apiOk([zone()]))
+  getAnswers(() => Promise.resolve(apiOk([zone()])))
   post.mockRejectedValue(
     apiFailure(422, 'VALIDATION_FAILED', 'The given data was invalid.', {
       'version.rates.0.zone_rates.0.zone_id': [
@@ -172,6 +223,7 @@ it('shows a rejected zone price against the row that carries it', async () => {
 
   const user = userEvent.setup()
   renderAs(<RateCardVersionDialog card={null} onClose={vi.fn()} onSaved={vi.fn()} />)
+  await chooseFirstCategory(user)
 
   await user.type(screen.getByLabelText(/Card name/), 'Corporate Standard')
   await user.click(await screen.findByRole('button', { name: /Add zone price/ }))
@@ -196,7 +248,7 @@ it('shows a rejected zone price against the row that carries it', async () => {
  * is submitted is an ordinary create.
  */
 it('opens a new version prefilled from the card’s current prices', async () => {
-  get.mockResolvedValue(apiOk([]))
+  getAnswers(() => Promise.resolve(apiOk([])))
 
   const card = {
     id: 3,
@@ -251,7 +303,7 @@ it('opens a new version prefilled from the card’s current prices', async () =>
 })
 
 it('prefills an uncapped maximum as blank, never as zero', async () => {
-  get.mockResolvedValue(apiOk([]))
+  getAnswers(() => Promise.resolve(apiOk([])))
 
   const card = {
     id: 3,
@@ -312,7 +364,7 @@ it('prefills an uncapped maximum as blank, never as zero', async () => {
 })
 
 it('opens blank for a card with no versions, rather than crashing', async () => {
-  get.mockResolvedValue(apiOk([]))
+  getAnswers(() => Promise.resolve(apiOk([])))
 
   const bare = { id: 9, name: 'Empty', description: null, status: 'active', is_default: false, versions: [] }
 
@@ -376,7 +428,7 @@ function tariff(overrides: Record<string, unknown> = {}) {
 }
 
 it('renames a card without adding a version', async () => {
-  get.mockResolvedValue(apiOk([]))
+  getAnswers(() => Promise.resolve(apiOk([])))
   patch.mockResolvedValue(apiOk(tariff()))
 
   const onSaved = vi.fn()
@@ -398,7 +450,7 @@ it('renames a card without adding a version', async () => {
 })
 
 it('adds a version when a price changes, and does not patch the card', async () => {
-  get.mockResolvedValue(apiOk([]))
+  getAnswers(() => Promise.resolve(apiOk([])))
   post.mockResolvedValue(apiOk({ id: 9, version: 3 }))
 
   const onSaved = vi.fn()
@@ -419,7 +471,7 @@ it('adds a version when a price changes, and does not patch the card', async () 
 })
 
 it('does both when both changed, and patches before it versions', async () => {
-  get.mockResolvedValue(apiOk([]))
+  getAnswers(() => Promise.resolve(apiOk([])))
   patch.mockResolvedValue(apiOk(tariff()))
   post.mockResolvedValue(apiOk({ id: 9, version: 3 }))
 
@@ -457,7 +509,7 @@ it('does both when both changed, and patches before it versions', async () => {
 })
 
 it('shows the card’s own name and description when editing, not a blank form', async () => {
-  get.mockResolvedValue(apiOk([]))
+  getAnswers(() => Promise.resolve(apiOk([])))
 
   renderAs(<RateCardVersionDialog card={tariff() as never} onClose={vi.fn()} onSaved={vi.fn()} />)
 

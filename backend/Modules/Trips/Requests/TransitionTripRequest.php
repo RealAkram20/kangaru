@@ -7,7 +7,10 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Modules\Administration\Services\SettingsService;
 use Modules\Trips\Enums\TripStatus;
+use Modules\Trips\Enums\TripStopStatus;
 use Modules\Trips\Models\Trip;
+use Modules\Trips\Models\TripStop;
+use Modules\Trips\Services\TripDistanceResolver;
 
 /**
  * One generic request for every transition — field-level (422) validation
@@ -49,13 +52,29 @@ class TransitionTripRequest extends FormRequest
             // answer and 403 would imply somebody could.
             'to' => ['required', Rule::enum(TripStatus::class)->except(TripStatus::INVOICE_GENERATED)],
             'notes' => [$reasonRequired ? 'required' : 'nullable', 'string', 'max:1000'],
+            // **Required only while the platform is reading odometers**
+            // (ADR-0047). With `tracking.odometer_enabled` off, the trace
+            // prices the trip and a driver never sees the field — a required
+            // rule would then 422 every Start Trip in the fleet, which is the
+            // whole app broken by one switch.
+            //
+            // Still `integer, min:0` when it *is* sent. A handset that has not
+            // picked up the new setting yet, or an operator who turned it off
+            // mid-shift, keeps working: the reading is accepted and stored,
+            // simply not demanded. Silently rejecting it would throw away the
+            // one number the Bank's acceptance criterion #4 asks for, from the
+            // drivers still recording it.
             'odometer_start' => [
-                Rule::requiredIf($to === TripStatus::TRIP_STARTED->value),
+                Rule::requiredIf(
+                    $to === TripStatus::TRIP_STARTED->value && $this->odometerEnabled(),
+                ),
                 'integer',
                 'min:0',
             ],
             'odometer_end' => [
-                Rule::requiredIf($to === TripStatus::TRIP_COMPLETED->value),
+                Rule::requiredIf(
+                    $to === TripStatus::TRIP_COMPLETED->value && $this->odometerEnabled(),
+                ),
                 'integer',
                 'min:0',
             ],
@@ -82,6 +101,12 @@ class TransitionTripRequest extends FormRequest
                 'mimes:jpeg,jpg,png,webp,heic',
                 'max:10240',
             ],
+            // ADR-0045 §2: which stop this pause is an arrival at. Only
+            // meaningful on `waiting` — the resume pairs itself with
+            // whichever stop is open, so it carries none. Existence and
+            // ownership are checked in withValidator against the route's
+            // trip, because the check must run past the tenant scope.
+            'stop_id' => ['nullable', 'integer'],
             'cancellation_charge_applicable' => ['nullable', 'boolean'],
             // Only consulted by the state machine on the Rejected ->
             // Assigned reassignment path.
@@ -175,6 +200,45 @@ class TransitionTripRequest extends FormRequest
                 && ! $this->filled('notes')) {
                 $validator->errors()->add('notes', 'Resolution notes are required to close a disputed trip.');
             }
+
+            /*
+             * ADR-0045 §2. Two refusals, both 422 rather than silence:
+             *
+             * - A stop on anything but a pause is a caller confused about
+             *   the model — the arrive is the pause, the departure is the
+             *   resume, and accepting the field elsewhere would let a
+             *   client believe it did something.
+             * - A stop that is not this trip's, or not pending, is refused
+             *   in one sentence that deliberately does not distinguish
+             *   "not yours" from "does not exist" — the same masking rule
+             *   the routes apply. Queried past the tenant scope because a
+             *   driver's request binds none and a walk-in's stops have none.
+             */
+            if ($this->filled('stop_id') && $trip !== null) {
+                if ($this->input('to') !== TripStatus::WAITING->value) {
+                    $validator->errors()->add('stop_id', 'A stop can only accompany a pause.');
+                } elseif (! TripStop::query()->forTrip($trip)
+                    ->whereKey($this->integer('stop_id'))
+                    ->where('status', TripStopStatus::PENDING)
+                    ->exists()) {
+                    $validator->errors()->add('stop_id', 'That stop is not waiting to be visited on this trip.');
+                }
+            }
         });
+    }
+
+    /**
+     * Whether the platform is reading odometers at all (ADR-0047).
+     *
+     * Asked through `TripDistanceResolver` rather than by reading the setting
+     * directly, because the state machine asks the same question when it
+     * decides where `distance_km` comes from — and a request that demanded a
+     * reading the state machine then ignored, or omitted one it then needed,
+     * is a pair of files disagreeing about the same switch. One answer, one
+     * owner.
+     */
+    private function odometerEnabled(): bool
+    {
+        return app(TripDistanceResolver::class)->odometerEnabled();
     }
 }

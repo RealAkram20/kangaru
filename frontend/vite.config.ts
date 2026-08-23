@@ -23,6 +23,35 @@ export default defineConfig({
     },
   },
 
+  build: {
+    rollupOptions: {
+      output: {
+        /*
+         * Split the framework out of the app chunk.
+         *
+         * Without this, React, the router and axios are bundled with our own
+         * code, so shipping a one-line page fix invalidates the whole
+         * download for every returning user. These dependencies change only
+         * when we deliberately upgrade them, so giving them their own chunk
+         * lets the browser keep them across deploys.
+         *
+         * Route chunks are handled separately, by the `lazy()` imports in
+         * routes/router.tsx — the bundler splits those automatically.
+         *
+         * Written as a function rather than the `{name: [...]}` object form
+         * because Vite 8 bundles with Rolldown, whose `manualChunks` accepts
+         * only a function.
+         */
+        manualChunks(id: string) {
+          if (/[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/.test(id)) {
+            return 'react-vendor'
+          }
+          return undefined
+        },
+      },
+    },
+  },
+
   /*
    * Vitest lives in this file rather than its own vitest.config.ts so tests
    * build through exactly the same pipeline as the app — the same React

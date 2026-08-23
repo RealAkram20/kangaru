@@ -2,6 +2,7 @@
 
 namespace Modules\Administration\Requests;
 
+use App\Enums\ClientCapability;
 use App\Models\User;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
@@ -40,8 +41,27 @@ class StoreUserRequest extends FormRequest
             // address would make authentication ambiguous. The database
             // already enforces it; this turns a 500 into a 422.
             'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')],
+            // Required here although the column is nullable: every account
+            // made from this screen onwards has a number, because a booking
+            // raised for this person is dispatched against it. The accounts
+            // that predate the column keep their null until somebody edits
+            // them — see the migration.
+            'phone' => ['required', 'string', 'max:32'],
             // Any role slug that exists, system or custom (ADR-0004).
             'role' => ['required', 'string', Rule::exists('roles', 'slug')],
+            // See UpdateUserRequest: a client's switches for a client's
+            // people, under the same escalation rule as the role.
+            'capabilities' => ['sometimes', 'array'],
+            'capabilities.*' => ['string', Rule::enum(ClientCapability::class)],
+            'books_without_approval' => ['sometimes', 'boolean'],
+            // The routes this colleague rides (ADR-0045 §8). A roster, not
+            // a permission — nothing authorises off it, so it needs no
+            // escalation check of its own. That the routes are the actor's
+            // own tenant's is enforced in `UserAdminService`, which is where
+            // the sync happens and where a missed `where` would let one
+            // client pin somebody to another's circuit.
+            'route_ids' => ['sometimes', 'array', 'max:50'],
+            'route_ids.*' => ['required', 'integer', Rule::exists('client_routes', 'id')],
             // Laravel's defaults plus a length floor. AGENTS.md leaves
             // hashing to the framework but says nothing about strength, so
             // this is the conservative reading rather than an invention.
@@ -78,6 +98,17 @@ class StoreUserRequest extends FormRequest
             // The escalation check, as a 422 rather than a 403: the request
             // is well-formed and the actor may create users — it is this
             // particular role they may not grant.
+            foreach ($this->input('capabilities', []) as $slug) {
+                $capability = is_string($slug) ? ClientCapability::tryFrom($slug) : null;
+                if ($capability !== null && ! $actor->holdsAll(array_map(fn ($p) => $p->value, $capability->permissions()))) {
+                    $validator->errors()->add(
+                        'capabilities',
+                        'You cannot grant "'.$capability->label().'": it carries permissions you do not hold yourself.',
+                    );
+                    break;
+                }
+            }
+
             if (! $policy->assignRole($actor, $role)) {
                 $validator->errors()->add(
                     'role',

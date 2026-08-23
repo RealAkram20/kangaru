@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../auth/useAuth'
 import { apiClient } from '../lib/apiClient'
+import { isCorporateRole } from '../lib/navigation'
 import { formatRelativeTime, formatTimestamp, formatUgx } from '../lib/format'
 import type { ApiSuccess } from '../types/api'
 import type { AuditAction, AuditLogEntry, CursorMeta } from '../types/auditLog'
@@ -10,6 +11,9 @@ import { Button } from '../components/core/Button'
 import { Card } from '../components/core/Card'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
 import { KPIStat } from '../components/data/KPIStat'
+import { StatGrid } from '../components/data/StatGrid'
+import { ClientDashboard } from './dashboard/ClientDashboard'
+import { KangaruDashboard } from './dashboard/KangaruDashboard'
 
 const ACTION_TONE: Record<AuditAction, 'success' | 'info' | 'error'> = {
   created: 'success',
@@ -42,7 +46,28 @@ function canViewAuditLog(role: string | undefined): boolean {
   return role === 'super_admin' || role === 'corporate_admin'
 }
 
+/**
+ * Two dashboards behind one route. A corporate client's user — a bank's
+ * transport officer, or the member of staff who requests a car — gets
+ * their own trips, bookings and invoicing (`ClientDashboard`); the operator's
+ * roles get the platform view below. Branched on role here rather than by
+ * two routes, because "the dashboard" is one place in everyone's head and
+ * the URL should not say which kind of person you are.
+ */
 export function DashboardPage() {
+  const { user } = useAuth()
+
+  if (isCorporateRole(user?.role)) return <ClientDashboard />
+
+  // ADR-0059: head office reads counts, not other people's operations. The
+  // dashboard below it was three company counters and the audit log — thin
+  // when it was written, and aimed at data this level no longer reads.
+  if (user?.access_level === 'kangaru') return <KangaruDashboard />
+
+  return <PlatformDashboard />
+}
+
+function PlatformDashboard() {
   const { user } = useAuth()
   const [companies, setCompanies] = useState<Company[] | null>(null)
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[] | null>(null)
@@ -94,7 +119,7 @@ export function DashboardPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-4)' }}>
+      <StatGrid aria-label="Companies at a glance">
         <KPIStat
           label="Companies"
           value={stats?.total ?? '—'}
@@ -105,16 +130,17 @@ export function DashboardPage() {
           label="Active companies"
           value={stats?.active ?? '—'}
           unit={stats ? `/ ${stats.total}` : undefined}
-          icon="check-circle"
+          icon="circle-check"
         />
         <KPIStat
+          wide
           tone="accent"
           label="Aggregate credit limit"
           value={stats ? formatUgx(stats.sumCreditLimitMinor) : '—'}
           icon="receipt"
           hint={stats ? `Across ${stats.total} companies` : undefined}
         />
-      </div>
+      </StatGrid>
 
       {showAuditLog && (
         <Card

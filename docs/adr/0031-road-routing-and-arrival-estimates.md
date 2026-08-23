@@ -71,6 +71,14 @@ have avoided the meter entirely; the owner chose Google for its traffic data
 and setup cost. Recorded because the trade was made deliberately, and because
 the provider seam is what makes it reversible.
 
+> **Amended 2026-08-19.** The seam was used: `osrm` is now the enum's second
+> member (`OsrmProvider`, keyless, `maps.osrm_base_url`), and it is what the
+> dev environment runs against the public demo server. Google remains the
+> choice for production traffic data; `routingConfigured()` asks OSRM for a
+> base URL instead of a key, so routing is never switched on but silently
+> dead. Nothing else in this ADR changes — off by default, server-side key,
+> cache-on-snapped-origin and deviation-driven recalculation all stand.
+
 ### 3. Every answer is optional, and absence is the normal case
 
 A route is `null` whenever the provider cannot answer: no key, switch off, no

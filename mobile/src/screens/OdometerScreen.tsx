@@ -1,19 +1,37 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import * as ImagePicker from 'expo-image-picker';
-import { useEffect, useState } from 'react';
-import { Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+} from 'react-native';
 
 import { disagreesWithBuffer } from '../location/bufferedDistance';
 import { useSync } from '../offline/SyncProvider';
+import { validateOdometerReading } from '../trips/odometer';
+import { OdometerCapture } from '../trips/OdometerCapture';
 import { useTrip } from '../trips/queries';
-import { Button, Card, Field, Notice, Screen } from '../ui/components';
-import { colors, spacing, typography } from '../ui/theme';
+import { Button, Field, Notice, Screen, ScreenHeader } from '../ui/components';
+import { SyncBanner } from '../ui/SyncBanner';
+import { colors, FIELD_HEIGHT, spacing, typography } from '../ui/theme';
 import type { TripsStackParams } from '../navigation/types';
 
 type Props = NativeStackScreenProps<TripsStackParams, 'Odometer'>;
 
 /**
- * Odometer capture.
+ * Odometer capture — the closing reading, and the opening one only for a trip
+ * found already at `passenger_onboard`.
+ *
+ * **The opening reading is ordinarily taken at the kerb now**, on
+ * `WaitingForPassengerScreen`, where "Passenger on board" starts the trip in
+ * the same press (the owner's ruling: fewer taps). This screen is what
+ * `activeTripRoute` still opens for a trip stranded at `passenger_onboard` —
+ * a queued boarding whose start never followed — because from that state the
+ * reading is the only way out. The capture itself is the shared
+ * `OdometerCapture`; the rules below are the same on both screens.
  *
  * PROJECT.md: the opening and closing readings are two of the six data points
  * Centenary Bank accepts this platform on, and "a trip that completes without
@@ -35,10 +53,44 @@ export function OdometerScreen({ route, navigation }: Props) {
   const { data: trip } = useTrip(tripId);
   const { queueTransition, bufferedDistanceKm } = useSync();
 
+  const inputRef = useRef<TextInput>(null);
+
+  /**
+   * Raise the keypad once the modal has finished arriving.
+   *
+   * **`autoFocus` was here and it did not work**, which is the whole of the
+   * owner's *"in the emulator i can not enter the Odometer"*. Reproduced on a
+   * device: navigate here and the screen settles with an empty field, no
+   * cursor and no keyboard, above a button disabled until something is typed.
+   * Nothing is broken and nothing says so — the driver has to work out that the
+   * box needs tapping first. On the one screen standing between them and
+   * starting a trip.
+   *
+   * `autoFocus` requests focus at mount, which on Android is *during* this
+   * modal's entry animation; the focus is taken and the keyboard never comes
+   * up. Deferring the focus past the animation is the fix, and it has to be a
+   * real `focus()` call, which is why `Field` now forwards its ref.
+   *
+   * **`requestIdleCallback`, not `InteractionManager`.** The first version used
+   * `runAfterInteractions` and worked — the caret appeared on the device — but
+   * it put a deprecation warning on the driver's screen: React Native has
+   * deprecated `InteractionManager` and its own message names this as the
+   * replacement. It carries the same meaning here, "once the thread has
+   * finished the work the transition queued".
+   *
+   * Cancelled on unmount so a driver who backs straight out does not leave a
+   * focus landing on a screen that has gone.
+   */
+  useEffect(() => {
+    const handle = requestIdleCallback(() => inputRef.current?.focus());
+
+    return () => cancelIdleCallback(handle);
+  }, []);
+
   const [reading, setReading] = useState('');
   const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
-  const [cameraProblem, setCameraProblem] = useState<string | null>(null);
   const [saveFailed, setSaveFailed] = useState(false);
   // What this phone measured of its own buffered pings (ADR-0045 §5). Read
   // once, when the closing form opens: the trip is over, so the buffer is not
@@ -46,8 +98,8 @@ export function OdometerScreen({ route, navigation }: Props) {
   // warning around while they type.
   const [measuredKm, setMeasuredKm] = useState<number | null>(null);
 
-  const opening = to === 'trip_completed' ? trip?.odometer_start ?? null : null;
-  const error = validate(reading, opening, trip?.odometer_max_km_per_trip ?? null);
+  const opening = to === 'trip_completed' ? (trip?.odometer_start ?? null) : null;
+  const error = validateOdometerReading(reading, opening, trip?.odometer_max_km_per_trip ?? null);
   const isOpening = to === 'trip_started';
 
   useEffect(() => {
@@ -77,31 +129,9 @@ export function OdometerScreen({ route, navigation }: Props) {
     typedKm !== null &&
     disagreesWithBuffer(typedKm, measuredKm, trip?.variance_threshold_percent ?? null);
 
-  const takePhoto = async () => {
-    setCameraProblem(null);
-
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-
-    if (!permission.granted) {
-      setCameraProblem('The camera is not available. You can still record the reading.');
-
-      return;
-    }
-
-    const result = await ImagePicker.launchCameraAsync({
-      quality: 0.6,
-      // The server accepts up to 10 MB, but that is an allowance for an
-      // unresized phone photo, not a target: this file may sit in a queue for
-      // hours and then upload over an upcountry connection. A legible
-      // dashboard needs far less.
-      allowsEditing: false,
-      exif: false,
-    });
-
-    if (!result.canceled && result.assets[0] !== undefined) {
-      setPhotoUri(result.assets[0].uri);
-    }
-  };
+  // main's inline ImagePicker flow ended here in the 2026-08-23 merge — the
+  // photo lives in the shared `OdometerCapture` on this branch, camera
+  // refusal handling included.
 
   const submit = async () => {
     if (error !== undefined) {
@@ -126,6 +156,13 @@ export function OdometerScreen({ route, navigation }: Props) {
         await queueTransition({ tripId, from, to: 'passenger_onboard' });
       }
 
+      // The driver's own words about the run (owner decision, 2026-08-22).
+      // Rides the completion transition into `trip_events.notes` — the same
+      // column a cancellation's reason already uses — so the office reads it
+      // on the trip record with no new plumbing. Empty means absent: the
+      // request layer treats notes as optional prose, not a required excuse.
+      const narration = notes.trim();
+
       await queueTransition({
         tripId,
         // The opening reading always departs from `passenger_onboard` — either
@@ -137,6 +174,7 @@ export function OdometerScreen({ route, navigation }: Props) {
         ...(isOpening
           ? { odometerStart: Number.parseInt(reading, 10) }
           : { odometerEnd: Number.parseInt(reading, 10) }),
+        ...(!isOpening && narration !== '' ? { notes: narration } : {}),
         // What this phone measured, sent with the completion so a cash
         // passenger has a fare to pay before the server has resolved the trip
         // (ADR-0045 §5). Omitted when there is nothing to say — never zero.
@@ -179,29 +217,51 @@ export function OdometerScreen({ route, navigation }: Props) {
 
   return (
     <Screen>
+      {/*
+        The same two pieces of chrome every other screen in this app opens
+        with, and this one had neither.
+
+        `SyncBanner` matters more here than almost anywhere: the footnote at the
+        bottom promises the reading is "sent when you have signal", and this was
+        the one screen making that promise without showing whether there *is*
+        signal or how much is waiting.
+      */}
+      <ScreenHeader
+        title={isOpening ? 'Opening odometer' : 'Closing odometer'}
+        // The stock header used to sit above this saying "Odometer", so the
+        // screen named itself twice in two different type styles. One title.
+        subtitle={null}
+        onBack={() => navigation.goBack()}
+      />
+
+      {/*
+        Below the header, which carries the status-bar inset: mounted first,
+        the banner's text paints under the clock and the battery — the owner's
+        screenshot, and the same bug HomeScreen's own comment records.
+      */}
+      <SyncBanner />
+
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.flex}
       >
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <Text style={styles.title}>
-            {isOpening ? 'Opening odometer' : 'Closing odometer'}
-          </Text>
-          <Text style={styles.subtitle}>From the dashboard, in whole kilometres.</Text>
-
           {saveFailed && (
-            <Notice
-              tone="danger"
-              message="Could not save. Try again, and write the number down."
-            />
+            <Notice tone="danger" message="Could not save. Try again, and write the number down." />
           )}
 
           {opening !== null && (
-            <Notice
-              tone="info"
-              message={`This trip opened at ${opening.toLocaleString()} km.`}
-            />
+            <Notice tone="info" message={`This trip opened at ${opening.toLocaleString()} km.`} />
           )}
+
+          <OdometerCapture
+            reading={reading}
+            onChangeReading={setReading}
+            error={error}
+            photoUri={photoUri}
+            onChangePhoto={setPhotoUri}
+            inputRef={inputRef}
+          />
 
           {/*
             ADR-0045 §5. A warning, not a refusal: the phone's figure is a
@@ -222,40 +282,24 @@ export function OdometerScreen({ route, navigation }: Props) {
             />
           )}
 
-          <Card>
+          {/*
+            Closing only. The opening moment is a passenger at the kerb; the
+            end of the run is when there is something to say — which stop
+            overran, what the site asked for, why the route changed. Optional
+            by design: most runs have nothing to report and the button must
+            not wait on prose.
+          */}
+          {!isOpening && (
             <Field
-              label="Kilometres"
-              value={reading}
-              onChangeText={(text) => setReading(text.replace(/[^0-9]/g, ''))}
-              keyboardType="number-pad"
-              placeholder="104320"
-              style={styles.readingInput}
-              error={reading === '' ? undefined : error}
-              autoFocus
+              label="Anything to report?"
+              value={notes}
+              onChangeText={setNotes}
+              multiline
+              maxLength={1000}
+              textAlignVertical="top"
+              style={styles.notes}
             />
-          </Card>
-
-          <Card>
-            <Text style={styles.photoTitle}>Dashboard photo</Text>
-            <Text style={styles.photoHint}>Optional — the number is what matters.</Text>
-
-            {cameraProblem !== null && <Notice message={cameraProblem} />}
-
-            {photoUri !== null && (
-              <Image source={{ uri: photoUri }} style={styles.preview} resizeMode="cover" />
-            )}
-
-            <View style={styles.photoActions}>
-              <Button
-                label={photoUri === null ? 'Take photo' : 'Retake photo'}
-                tone="neutral"
-                onPress={() => void takePhoto()}
-              />
-              {photoUri !== null && (
-                <Button label="Remove photo" tone="neutral" onPress={() => setPhotoUri(null)} />
-              )}
-            </View>
-          </Card>
+          )}
 
           <Button
             // **Not "Start trip", which is the button that opened this screen.**
@@ -284,58 +328,6 @@ export function OdometerScreen({ route, navigation }: Props) {
   );
 }
 
-/**
- * The two rules the server will apply, applied here first.
- *
- * `odometer_end` must be **≥ `odometer_start`** and must not put the journey
- * beyond the operator's ceiling, or the server 422s. Both are caught here so
- * the driver hears about it while they are still looking at the dashboard,
- * rather than as a parked queue item an hour later — this screen does not send
- * the transition, it queues it (ADR-0023), so the server's answer is genuinely
- * that far away.
- *
- * **`ceiling` is served on the trip, never hardcoded** (ADR-0035). The office
- * can change it in the console, and a handset holding its own copy would go on
- * enforcing the old number on devices nobody can reach — the exact defect this
- * codebase records under the audit agent's finding 5. It arrives cached with
- * the trip, so it is present in a dead zone too, which is where readings get
- * typed.
- *
- * A trip fetched before the field existed has no ceiling, and that is treated
- * as "no local opinion" rather than as zero: the server still enforces it, and
- * refusing a legitimate reading because the payload is old would be worse than
- * letting the 422 arrive late.
- */
-function validate(
-  reading: string,
-  opening: number | null,
-  ceiling: number | null,
-): string | undefined {
-  if (reading === '') {
-    return 'Enter the reading.';
-  }
-
-  const value = Number.parseInt(reading, 10);
-
-  if (Number.isNaN(value)) {
-    return 'Enter the reading in whole kilometres.';
-  }
-
-  if (opening !== null && value < opening) {
-    return `This cannot be less than the opening reading of ${opening.toLocaleString()} km.`;
-  }
-
-  if (opening !== null && ceiling !== null && value - opening > ceiling) {
-    const travelled = value - opening;
-
-    // Names the figure and the limit, like the server's own message: "too
-    // long" leaves a driver guessing which digit to change.
-    return `That makes this trip ${travelled.toLocaleString()} km, over the ${ceiling.toLocaleString()} km limit for one journey. Check the reading.`;
-  }
-
-  return undefined;
-}
-
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   content: {
@@ -350,34 +342,15 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textMuted,
   },
-  readingInput: {
-    ...typography.odometer,
-    color: colors.text,
-    minHeight: 68,
-  },
-  photoTitle: {
-    ...typography.label,
-    color: colors.text,
-  },
-  photoHint: {
-    ...typography.caption,
-    color: colors.textMuted,
-    marginTop: spacing.xs,
-    marginBottom: spacing.md,
-    lineHeight: 20,
-  },
-  photoActions: {
-    gap: spacing.sm,
-  },
-  preview: {
-    width: '100%',
-    height: 180,
-    borderRadius: 12,
-    marginBottom: spacing.md,
-  },
   footnote: {
     ...typography.caption,
     color: colors.textMuted,
     lineHeight: 20,
+  },
+  // Two field-heights: room for a sentence or three without the field
+  // pretending to be a document. `Field` merges caller styles, so only the
+  // height changes; the border, padding and type are the shared ones.
+  notes: {
+    minHeight: FIELD_HEIGHT * 2,
   },
 });

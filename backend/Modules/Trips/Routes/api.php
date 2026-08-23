@@ -8,7 +8,10 @@ use Modules\Trips\Controllers\TripController;
 use Modules\Trips\Controllers\TripDistanceController;
 use Modules\Trips\Controllers\TripEventController;
 use Modules\Trips\Controllers\TripLocationController;
+use Modules\Trips\Controllers\TripPlaceSuggestionController;
 use Modules\Trips\Controllers\TripRouteController;
+use Modules\Trips\Controllers\TripStopCandidateController;
+use Modules\Trips\Controllers\TripStopController;
 
 // ADR-0045: the distance review queue. **Before the resource**, or
 // `trips/{trip}` swallows it and the queue becomes a lookup for a trip whose
@@ -19,6 +22,15 @@ Route::apiResource('trips', TripController::class)->only(['index', 'show', 'stor
 Route::post('trips/{trip}/transitions', [TripController::class, 'transition'])->name('trips.transitions.store');
 Route::get('trips/{trip}/events', [TripEventController::class, 'index'])->name('trips.events.index');
 Route::get('trips/{trip}/route', [TripRouteController::class, 'show'])->name('trips.route.show');
+
+// ADR-0045: a driver extending a live run (§4), and the bounded search over
+// the client's own place register that feeds it (§10). Stops are read back
+// on the trip payload itself, so there is no index route to leak one.
+Route::post('trips/{trip}/stops', [TripStopController::class, 'store'])->name('trips.stops.store');
+Route::get('trips/{trip}/stop-candidates', [TripStopCandidateController::class, 'index'])->name('trips.stop-candidates.index');
+// The §10 follow-up the owner decided on 2026-08-22: when the register has
+// no answer, the server (never the handset) asks a public geocoder.
+Route::get('trips/{trip}/place-suggestions', [TripPlaceSuggestionController::class, 'index'])->name('trips.place-suggestions.index');
 
 // ADR-0045: the distance evidence behind a trip's billed figure, and the one
 // act the review queue performs — lifting a hold, with a reason.

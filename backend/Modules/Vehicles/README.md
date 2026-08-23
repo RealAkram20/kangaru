@@ -16,10 +16,17 @@ recorded on `vehicle_allocations` in `Modules/Fleet`, not ownership here.
 
 - `Vehicle` — registration number, make/model/year, category, seating
   capacity, colour, VIN, status. One record per physical vehicle.
-- `Vehicle::CATEGORIES` is the Phase-1 category list, held as a constant
-  rather than repeated per call site: `Modules/Billing` prices per
-  category, so a category that exists in one list and not another is a
-  vehicle nobody can invoice.
+- `VehicleCategory` — the fleet's category vocabulary, **a table since
+  ADR-0050**. `key` (immutable, and what every vehicle, rate card rate and
+  invoice line stores), `name` (editable, and what every screen renders),
+  `description`, `active`, `position`.
+- `Modules\Vehicles\Rules\ActiveVehicleCategory` — the one definition of
+  "a category the fleet currently offers", used by all four call sites that
+  validate one. Four hand-mirrored lists drifting apart is the failure
+  ADR-0050 exists to end, and it had already happened twice.
+- `Vehicle::CATEGORIES` survives as the **seed list only**: the migration
+  reads it, and `RideVehicleClass`'s class-to-category mapping names its
+  members. It is no longer the validation source.
 - `Auditable` — every create/update/delete is written to the append-only
   `audit_logs` table.
 - `allocations()` — the periods this vehicle is contracted to a corporate
@@ -46,6 +53,24 @@ Standard REST resource, all behind `auth:sanctum` + `tenant` middleware:
 | POST | `/api/v1/vehicles` | `create` — `vehicles.manage` |
 | PATCH | `/api/v1/vehicles/{id}` | `update` — `vehicles.manage` |
 | DELETE | `/api/v1/vehicles/{id}` | `delete` — `vehicles.manage` |
+| GET | `/api/v1/vehicle-categories` | `viewAny` — `vehicles.view` **or** `bookings.create` |
+| POST | `/api/v1/vehicle-categories` | `create` — `vehicles.manage` |
+| PATCH | `/api/v1/vehicle-categories/{id}` | `update` — `vehicles.manage` |
+| DELETE | `/api/v1/vehicle-categories/{id}` | `delete` — `vehicles.manage` |
+
+The category read is deliberately wider than the fleet read (ADR-0051 §3):
+a corporate client picks the kind of vehicle they want on the booking form,
+and the two corporate roles hold none of the fleet permissions. It exposes
+**names, not the roster** — `vehicles_count` is omitted for any actor
+without `vehicles.view`, because how many vans the platform owns is the
+fleet register in aggregate and `docs/security-gate.md` F2 withholds it.
+
+`DELETE` on a category answers **409 `VEHICLE_CATEGORY_IN_USE`** when a
+vehicle, a rate card price or an invoice line names the key. No foreign key
+enforces that — those columns are plain strings on purpose, so an issued
+invoice reproduces without joining a table somebody can rename — so the
+controller's refusal is the only thing standing between a delete and an
+immutable rate card rate naming nothing.
 
 There is no tenant filtering on these results, and that is the point: one
 pool, every dispatcher sees all of it.
@@ -70,8 +95,14 @@ isolation suite non-skippable; this records why one member changed meaning.
   which vehicles are contracted to which client, but **nothing consults
   it** — dispatch offers the whole pool regardless of contract. The table
   is currently a record, not a constraint.
-- **Vehicle categories are validated strings, not a reference table.** Adding
-  a category means editing `Vehicle::CATEGORIES` and shipping.
+- ~~**Vehicle categories are validated strings, not a reference table.**
+  Adding a category means editing `Vehicle::CATEGORIES` and shipping.~~
+  **Closed by ADR-0050 (21 August 2026).** `vehicle_categories` is a table
+  the office edits from the Vehicles screen; the key is immutable because
+  issued invoice lines store it, and "delete" becomes "retire" the moment
+  anything uses it. **The console had also never been able to create a
+  vehicle** — `store`, `update` and `destroy` existed since Phase 1 with no
+  screen calling them — and that is closed in the same change.
 - **No maintenance records.** PROJECT.md's Fleet Management scope lists
   maintenance and "Vehicle Maintenance Due" is a named notification type;
   neither exists.

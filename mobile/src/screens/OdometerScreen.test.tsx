@@ -44,6 +44,15 @@ jest.mock('../trips/queries', () => ({
   useTrip: (id: number) => mockUseTrip(id),
 }));
 
+// Stubbed like every sibling suite — it reads the whole outbox state — but
+// stubbed to something *findable*, so the chrome assertion below is a real
+// guard rather than a hole. This screen shipped without it.
+jest.mock('../ui/SyncBanner', () => {
+  const { Text } = jest.requireActual('react-native');
+
+  return { SyncBanner: () => <Text>sync-banner</Text> };
+});
+
 jest.mock('expo-image-picker', () => ({
   requestCameraPermissionsAsync: jest.fn(async () => ({ granted: false })),
   launchCameraAsync: jest.fn(async () => ({ canceled: true, assets: [] })),
@@ -98,12 +107,12 @@ it('sends what this phone measured with the completion, so a cash fare exists at
   // the passenger does not.
   mockBufferedDistanceKm.mockResolvedValue(11.7);
 
-  const { getByPlaceholderText, getByText } = await renderOdometer('trip_completed', 'trip_started');
+  const { getByLabelText, getByText } = await renderOdometer('trip_completed', 'trip_started');
 
   // The measurement is read in an effect; waiting for it is the difference
   // between asserting the behaviour and racing it.
   await waitFor(() => expect(mockBufferedDistanceKm).toHaveBeenCalledWith(42));
-  await fireEvent.changeText(getByPlaceholderText('104320'), '104332');
+  await fireEvent.changeText(getByLabelText('Kilometres'), '104332');
   void fireEvent.press(getByText('Complete trip'));
 
   await waitFor(() => expect(replace).toHaveBeenCalled());
@@ -116,10 +125,10 @@ it('sends what this phone measured with the completion, so a cash fare exists at
 it('sends no measurement at all rather than a zero when the phone has nothing', async () => {
   // A trip driven with location refused, or a handset that never got a fix.
   // Zero would be priced as a free ride.
-  const { getByPlaceholderText, getByText } = await renderOdometer('trip_completed', 'trip_started');
+  const { getByLabelText, getByText } = await renderOdometer('trip_completed', 'trip_started');
 
   await waitFor(() => expect(mockBufferedDistanceKm).toHaveBeenCalledWith(42));
-  await fireEvent.changeText(getByPlaceholderText('104320'), '104332');
+  await fireEvent.changeText(getByLabelText('Kilometres'), '104332');
   void fireEvent.press(getByText('Complete trip'));
 
   await waitFor(() => expect(replace).toHaveBeenCalled());
@@ -141,13 +150,13 @@ it('warns at the keypad when the typed reading disagrees with what the phone saw
   // whatever pings it holds, so it reads short on a winding road.
   mockBufferedDistanceKm.mockResolvedValue(6);
 
-  const { getByPlaceholderText, getByText, queryByText } = await renderOdometer(
+  const { getByLabelText, getByText, queryByText } = await renderOdometer(
     'trip_completed',
     'trip_started',
   );
 
   await waitFor(() => expect(mockBufferedDistanceKm).toHaveBeenCalledWith(42));
-  await fireEvent.changeText(getByPlaceholderText('104320'), '104333');
+  await fireEvent.changeText(getByLabelText('Kilometres'), '104333');
 
   expect(getByText(/measured about 6 km/i)).toBeTruthy();
   expect(queryByText(/makes it 13 km/i)).toBeTruthy();
@@ -162,10 +171,10 @@ it('stays quiet when the reading and the measurement agree', async () => {
   // inside the office's 10%.
   mockBufferedDistanceKm.mockResolvedValue(12);
 
-  const { getByPlaceholderText, queryByText } = await renderOdometer('trip_completed', 'trip_started');
+  const { getByLabelText, queryByText } = await renderOdometer('trip_completed', 'trip_started');
 
   await waitFor(() => expect(mockBufferedDistanceKm).toHaveBeenCalled());
-  await fireEvent.changeText(getByPlaceholderText('104320'), '104333');
+  await fireEvent.changeText(getByLabelText('Kilometres'), '104333');
 
   expect(queryByText(/measured about/i)).toBeNull();
 });
@@ -175,7 +184,7 @@ it('takes the warning threshold from the trip, and says nothing when the trip ha
   // go on asserting the old number on handsets nobody can reach.
   mockBufferedDistanceKm.mockResolvedValue(6);
 
-  const { getByPlaceholderText, queryByText } = await renderOdometer(
+  const { getByLabelText, queryByText } = await renderOdometer(
     'trip_completed',
     'trip_started',
     2_000,
@@ -183,19 +192,19 @@ it('takes the warning threshold from the trip, and says nothing when the trip ha
   );
 
   await waitFor(() => expect(mockBufferedDistanceKm).toHaveBeenCalled());
-  await fireEvent.changeText(getByPlaceholderText('104320'), '104333');
+  await fireEvent.changeText(getByLabelText('Kilometres'), '104333');
 
   expect(queryByText(/measured about/i)).toBeNull();
 });
 
 it('sends the driver to the completion screen once the closing reading is queued', async () => {
-  const { getByPlaceholderText, getByText } = await renderOdometer('trip_completed', 'trip_started');
+  const { getByLabelText, getByText } = await renderOdometer('trip_completed', 'trip_started');
 
   // Awaited, not `void`ed. `fireEvent` is asynchronous in this setup, and an
   // unawaited `changeText` leaves the button still disabled — so the press
   // below silently does nothing and the test fails on an empty mock rather
   // than on the behaviour it is about.
-  await fireEvent.changeText(getByPlaceholderText('104320'),'104332');
+  await fireEvent.changeText(getByLabelText('Kilometres'),'104332');
   void fireEvent.press(getByText('Complete trip'));
 
   // The queue accepts it first; only then does the screen move — so the
@@ -221,12 +230,12 @@ it('refuses an impossible reading before it ever reaches the queue', async () =>
   // transitions rather than sending them (ADR-0023), so the server's 422
   // arrives as a parked outbox item hours later. Catching it here is the
   // difference between correcting a digit and filing a support question.
-  const { getByPlaceholderText, getByText, queryByText } = await renderOdometer(
+  const { getByLabelText, getByText, queryByText } = await renderOdometer(
     'trip_completed',
     'trip_started',
   );
 
-  await fireEvent.changeText(getByPlaceholderText('104320'), '1043200');
+  await fireEvent.changeText(getByLabelText('Kilometres'), '1043200');
 
   expect(getByText(/over the 2,000 km limit/i)).toBeTruthy();
 
@@ -242,7 +251,7 @@ it('takes the limit from the trip rather than a number of its own', async () => 
   // The office can change the ceiling in the console. A copy compiled into the
   // app would go on enforcing the old one on handsets nobody can reach — the
   // defect this codebase already records once.
-  const { getByPlaceholderText, getByText } = await renderOdometer(
+  const { getByLabelText, getByText } = await renderOdometer(
     'trip_completed',
     'trip_started',
     50,
@@ -250,7 +259,7 @@ it('takes the limit from the trip rather than a number of its own', async () => 
 
   // 60 km clears the shipped default of 2,000 comfortably and is still
   // refused, because this trip says 50.
-  await fireEvent.changeText(getByPlaceholderText('104320'), '104380');
+  await fireEvent.changeText(getByLabelText('Kilometres'), '104380');
 
   expect(getByText(/over the 50 km limit/i)).toBeTruthy();
 });
@@ -259,13 +268,13 @@ it('does not invent a limit for a trip cached before the field existed', async (
   // No local opinion, rather than a limit of zero. The server still enforces
   // it; refusing a legitimate reading because the payload is old would be
   // worse than letting the 422 arrive late.
-  const { getByPlaceholderText, getByText, queryByText } = await renderOdometer(
+  const { getByLabelText, getByText, queryByText } = await renderOdometer(
     'trip_completed',
     'trip_started',
     null,
   );
 
-  await fireEvent.changeText(getByPlaceholderText('104320'), '1043200');
+  await fireEvent.changeText(getByLabelText('Kilometres'), '1043200');
 
   expect(queryByText(/km limit/i)).toBeNull();
 
@@ -279,7 +288,7 @@ it('sends the driver to the trip in progress once the opening reading is queued'
   // the waiting screen — which renders "Start Trip", knows nothing about the
   // queued transition, and offline is byte-identical to the view the driver
   // had just left. Landing on the screen that owns `trip_started` is the fix.
-  const { getByPlaceholderText, getByText } = await renderOdometer(
+  const { getByLabelText, getByText } = await renderOdometer(
     'trip_started',
     'driver_arrived',
   );
@@ -288,7 +297,7 @@ it('sends the driver to the trip in progress once the opening reading is queued'
   // unawaited `changeText` leaves the button still disabled — so the press
   // below silently does nothing and the test fails on an empty mock rather
   // than on the behaviour it is about.
-  await fireEvent.changeText(getByPlaceholderText('104320'), '104320');
+  await fireEvent.changeText(getByLabelText('Kilometres'), '104320');
   void fireEvent.press(getByText('Record and start trip'));
 
   await waitFor(() => expect(replace).toHaveBeenCalled());
@@ -302,12 +311,12 @@ it('queues boarding and the start together, so neither can be committed alone', 
   // has to go first. It used to be posted by the *previous* screen's press,
   // which committed boarding before the reading existed: a driver who backed
   // out left the trip at `passenger_onboard`, whose only screen is this form.
-  const { getByPlaceholderText, getByText } = await renderOdometer(
+  const { getByLabelText, getByText } = await renderOdometer(
     'trip_started',
     'driver_arrived',
   );
 
-  await fireEvent.changeText(getByPlaceholderText('104320'), '104320');
+  await fireEvent.changeText(getByLabelText('Kilometres'), '104320');
   void fireEvent.press(getByText('Record and start trip'));
 
   await waitFor(() => expect(replace).toHaveBeenCalled());
@@ -332,12 +341,12 @@ it('does not re-post boarding for a trip already on board', async () => {
   // parked. `activeTripRoute` sends `passenger_onboard` back here, and posting
   // boarding a second time is refused by the server and parked by the outbox —
   // which is the failure this whole change exists to stop producing.
-  const { getByPlaceholderText, getByText } = await renderOdometer(
+  const { getByLabelText, getByText } = await renderOdometer(
     'trip_started',
     'passenger_onboard',
   );
 
-  await fireEvent.changeText(getByPlaceholderText('104320'), '104320');
+  await fireEvent.changeText(getByLabelText('Kilometres'), '104320');
   void fireEvent.press(getByText('Record and start trip'));
 
   await waitFor(() => expect(replace).toHaveBeenCalled());
@@ -346,4 +355,87 @@ it('does not re-post boarding for a trip already on board', async () => {
   expect(mockQueueTransition).toHaveBeenCalledWith(
     expect.objectContaining({ from: 'passenger_onboard', to: 'trip_started' }),
   );
+});
+
+it('wears the app chrome, not React Navigation stock header', async () => {
+  // The owner's *"it looks nothing like our design"*. This was the only route
+  // in `RootNavigator` that left `headerShown` on, so the screen carried a
+  // system title bar reading "Odometer" above content headed "Opening
+  // odometer" — the app's own header nowhere, the same word twice, and a back
+  // arrow matching nothing else in the app.
+  const { getByText, getByLabelText } = await renderOdometer('trip_started', 'driver_arrived');
+
+  expect(getByText('Opening odometer')).toBeTruthy();
+  expect(getByLabelText('Back')).toBeTruthy();
+
+  // The footnote promises the reading is "sent when you have signal"; this was
+  // the one screen making that promise without showing whether there is any.
+  expect(getByText('sync-banner')).toBeTruthy();
+});
+
+it('shows an empty field rather than a placeholder that reads as a reading', async () => {
+  // It was `104320`, drawn in the same 34pt display face as a real value and
+  // separated from one only by being grey — above a button disabled until
+  // something is typed. A filled-looking field over a dead control is an app
+  // that looks broken, and it is a large part of what "hard to start the trip"
+  // felt like.
+  const { queryByPlaceholderText, getByText } = await renderOdometer(
+    'trip_started',
+    'driver_arrived',
+  );
+
+  // `queryByPlaceholderText`, not `queryByText`: a placeholder is an attribute
+  // on the input, not a text node, so the first version of this assertion
+  // passed against the placeholder still being there. Caught by mutation.
+  expect(queryByPlaceholderText('104320')).toBeNull();
+  // The guidance survives, on the field rather than floating under the header.
+  expect(getByText('From the dashboard, in whole kilometres.')).toBeTruthy();
+});
+
+/**
+ * The driver's own words about the run (owner decision, 2026-08-22). Optional,
+ * closing-side only, riding the completion transition into `trip_events.notes`
+ * — the column a cancellation's reason already uses.
+ */
+it('sends what the driver wrote with the completion, trimmed', async () => {
+  const { getByLabelText, getByText } = await renderOdometer('trip_completed', 'trip_started');
+
+  await fireEvent.changeText(getByLabelText('Kilometres'), '104332');
+  await fireEvent.changeText(
+    getByLabelText('Anything to report?'),
+    '  Ntinda ATM held us 40 minutes — site had no power.  ',
+  );
+  void fireEvent.press(getByText('Complete trip'));
+
+  await waitFor(() => expect(replace).toHaveBeenCalled());
+
+  expect(mockQueueTransition).toHaveBeenCalledWith(
+    expect.objectContaining({
+      to: 'trip_completed',
+      notes: 'Ntinda ATM held us 40 minutes — site had no power.',
+    }),
+  );
+});
+
+it('sends no notes key at all when nothing was written', async () => {
+  const { getByLabelText, getByText } = await renderOdometer('trip_completed', 'trip_started');
+
+  await fireEvent.changeText(getByLabelText('Kilometres'), '104332');
+  void fireEvent.press(getByText('Complete trip'));
+
+  await waitFor(() => expect(replace).toHaveBeenCalled());
+
+  const payload = (mockQueueTransition.mock.calls[0] as unknown[])[0] as Record<string, unknown>;
+
+  // Absent, not empty: `notes: ''` would put a blank line in the trip's own
+  // event record.
+  expect('notes' in payload).toBe(false);
+});
+
+it('does not ask for narration at the kerb', async () => {
+  // The opening moment is a passenger boarding; the end of the run is when
+  // there is something to say.
+  const { queryByLabelText } = await renderOdometer('trip_started', 'driver_arrived');
+
+  expect(queryByLabelText('Anything to report?')).toBeNull();
 });

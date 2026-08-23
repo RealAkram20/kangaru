@@ -1,5 +1,7 @@
 # Track A — parallel execution plan
 
+> **See also `docs/platform-plan.md`** — the `K0`–`K9` packages are briefed there, not here. This plan is unchanged by them.
+
 The plan to hand to agents. Each work package below is a self-contained brief:
 copy it, give it to one agent, and it has everything it needs.
 

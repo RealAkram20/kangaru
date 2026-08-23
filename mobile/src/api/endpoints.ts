@@ -1,4 +1,6 @@
+import { DUTY_REQUEST_TIMEOUT_MS } from '../config';
 import type { ApiClient } from './client';
+import { formFile } from './formFile';
 import type {
   AvailabilityBlock,
   AvailabilityKind,
@@ -7,10 +9,13 @@ import type {
   DispatchOffer,
   DriverLedgerEntry,
   DriverPresence,
+  PlaceSuggestion,
   Trip,
   TripEvent,
   TripRoute,
   TripStatus,
+  TripStop,
+  TripStopCandidate,
   User,
 } from './types';
 
@@ -119,21 +124,108 @@ export async function fetchTrip(api: ApiClient, tripId: number): Promise<Trip> {
  *
  * `from` is optional: without a fix the server routes from the pickup, which
  * is still the right line for a driver who has not moved yet.
+ *
+ * `to` picks the leg. `dropoff` is the fare and the default; `pickup` is the
+ * approach, the road between accepting and arriving — which is a route *from*
+ * the driver, so without a fix the server answers null rather than a dot.
  */
 export async function fetchTripRoute(
   api: ApiClient,
   tripId: number,
   from: Coordinates | null,
+  to: 'pickup' | 'dropoff' = 'dropoff',
 ): Promise<TripRoute | null> {
-  const query = from === null ? '' : `?from_latitude=${from.lat}&from_longitude=${from.lng}`;
-
-  const response = await api.request<{ route: TripRoute | null }>(`/trips/${tripId}/route${query}`);
+  const response = await api.request<{ route: TripRoute | null }>(`/trips/${tripId}/route`, {
+    query: {
+      from_latitude: from?.lat,
+      from_longitude: from?.lng,
+      // Only said when it differs from the default, so the cached answer
+      // for a plain drop-off request keeps its URL.
+      to: to === 'dropoff' ? undefined : to,
+    },
+  });
 
   return response.data.route;
 }
 
 export async function fetchTripEvents(api: ApiClient, tripId: number): Promise<TripEvent[]> {
   const response = await api.request<TripEvent[], CursorMeta>(`/trips/${tripId}/events`);
+
+  return response.data;
+}
+
+/**
+ * Extends a live run with the next drop-off (ADR-0045 §4).
+ *
+ * Two shapes, matching the server's: a saved-place pick sends the id alone —
+ * the label and pin are copied from the client's register server-side, so
+ * this handset cannot mislabel an ATM — or free text sends a label, with
+ * coordinates only if something trustworthy produced them.
+ *
+ * **A direct POST, not an outbox item, deliberately.** The search that feeds
+ * it needs connectivity anyway, so a dead zone closes the whole flow rather
+ * than half of it: nothing typed is lost because nothing gets typed. The
+ * arrive/continue taps — the billable, evidence-bearing acts — stay queued
+ * (ADR-0023); this is the one stop action that is not one.
+ */
+export async function addTripStop(
+  api: ApiClient,
+  tripId: number,
+  input:
+    | { clientPlaceId: number }
+    | { label: string; latitude?: number; longitude?: number },
+): Promise<TripStop> {
+  const response = await api.request<TripStop>(`/trips/${tripId}/stops`, {
+    method: 'POST',
+    body:
+      'clientPlaceId' in input
+        ? { client_place_id: input.clientPlaceId }
+        : {
+            label: input.label,
+            // Both or neither — `StoreTripStopRequest` refuses half a
+            // position, and a geocoder suggestion always carries both.
+            ...(input.latitude !== undefined && input.longitude !== undefined
+              ? { latitude: input.latitude, longitude: input.longitude }
+              : {}),
+          },
+  });
+
+  return response.data;
+}
+
+/**
+ * The add-a-drop-off search over the client's own place register (ADR-0045
+ * §10) — the ATM estate, served to this trip's driver while the run is live
+ * and to nobody else. A walk-in trip answers an empty list, which the screen
+ * covers with its free-text row.
+ */
+export async function fetchTripStopCandidates(
+  api: ApiClient,
+  tripId: number,
+  query: string,
+): Promise<TripStopCandidate[]> {
+  const response = await api.request<TripStopCandidate[]>(`/trips/${tripId}/stop-candidates`, {
+    query: { q: query === '' ? undefined : query },
+  });
+
+  return response.data;
+}
+
+/**
+ * Geocoder suggestions for a stop the register does not know (§10 follow-up,
+ * owner decision 2026-08-22). The server proxies a public geocoder and fails
+ * soft to an empty list; the free-text row is the floor either way. `q` is
+ * required at three characters — the server 422s below that, so callers gate
+ * before asking.
+ */
+export async function fetchPlaceSuggestions(
+  api: ApiClient,
+  tripId: number,
+  query: string,
+): Promise<PlaceSuggestion[]> {
+  const response = await api.request<PlaceSuggestion[]>(`/trips/${tripId}/place-suggestions`, {
+    query: { q: query },
+  });
 
   return response.data;
 }
@@ -198,6 +290,7 @@ export async function setDuty(
   const response = await api.request<DriverPresence>('/me/duty', {
     method: 'PUT',
     body: { on_duty: input.onDuty, vehicle_id: input.vehicleId ?? null },
+    timeoutMs: DUTY_REQUEST_TIMEOUT_MS,
   });
 
   return response.data;
@@ -214,6 +307,15 @@ export async function setDuty(
  *
  * 409 NOT_ON_DUTY when the shift has ended. The caller treats that as the
  * server correcting it, not as an error to retry.
+ *
+ * **Both duty writes carry `DUTY_REQUEST_TIMEOUT_MS` rather than the client's
+ * default fifteen seconds.** `config.ts` wrote that constant and argued for
+ * it — these are statements about *now*, and a presence ping that lands after
+ * thirty seconds of retrying describes somewhere the driver no longer is —
+ * but nothing ever passed it, so both ran on the default. It matters most on
+ * the path that has no screen: `PresenceTask` runs while the phone is asleep,
+ * where a request left hanging holds the wake lock the OS granted for a fix
+ * that has already gone stale.
  */
 export async function sendPresence(
   api: ApiClient,
@@ -234,6 +336,7 @@ export async function sendPresence(
       recorded_at: input.recordedAt,
       vehicle_id: input.vehicleId ?? null,
     },
+    timeoutMs: DUTY_REQUEST_TIMEOUT_MS,
   });
 
   return response.data;
@@ -362,10 +465,28 @@ export async function fetchLegalDocuments(api: ApiClient): Promise<LegalDocument
  * by nature: this is the one form a person reaches before they are anybody.
  *
  * A 202 means *received*, not *approved* — no account exists until the
- * office reviews the application, which is why nothing is returned and the
- * screen must not attempt a sign-in afterwards. The server deliberately
- * answers the same way whether or not the email is already known.
+ * office reviews the application, which is why the screen must not attempt a
+ * sign-in afterwards. The server deliberately answers the same way whether or
+ * not the email is already known.
+ *
+ * **What it does return is a claim ticket, not a session** (ADR-0048 §4).
+ * `upload_token` resolves to this one application row and authorises exactly
+ * three verbs on exactly one sub-resource: send a document, list what has been
+ * sent, withdraw one. It reaches no policy, no trip and no account, it cannot
+ * read a file back, and it dies the moment the office decides.
+ *
+ * **It is returned exactly once and there is no way to ask for it again** —
+ * an endpoint that re-issued it would take an email address and say whether an
+ * application existed for it, which is the enumeration oracle ADR-0027 §5
+ * refuses. Lose it and the applicant sends their papers after approval, from
+ * the profile screen, like every other driver.
  */
+export type DriverApplicationReceipt = {
+  upload_token: string;
+  /** ISO 8601. Twenty-four hours out, on the server's clock. */
+  upload_expires_at: string | null;
+};
+
 export async function submitDriverApplication(
   api: ApiClient,
   input: {
@@ -377,8 +498,8 @@ export async function submitDriverApplication(
     /** Consent to the /public/legal notices. The server refuses without it. */
     termsAccepted: boolean;
   },
-): Promise<void> {
-  await api.request('/driver-applications', {
+): Promise<DriverApplicationReceipt> {
+  const response = await api.request<DriverApplicationReceipt>('/driver-applications', {
     method: 'POST',
     body: {
       name: input.name,
@@ -389,6 +510,8 @@ export async function submitDriverApplication(
       terms_accepted: input.termsAccepted,
     },
   });
+
+  return response.data;
 }
 
 /** Which ways in the owner has switched on (ADR-0028 §1). */
@@ -414,6 +537,43 @@ export async function fetchAuthMethods(api: ApiClient): Promise<AuthMethods> {
   const response = await api.request<{ settings: { auth: AuthMethods } }>('/public/settings');
 
   return response.data.settings.auth;
+}
+
+/**
+ * Whether the office wants odometer readings at all (ADR-0047).
+ *
+ * The same `/public/settings` document `fetchAuthMethods` reads, for the one
+ * key that changes the shape of the trip flow: with the odometer off, Start
+ * Trip and Complete Trip become single taps and the reading forms leave the
+ * app entirely.
+ *
+ * **Fails to `true`, which is the opposite of `fetchAuthMethods`'s
+ * fail-closed rule and is deliberate.** There, an unreachable server must not
+ * resurrect a sign-in method the owner switched off — the safe answer is
+ * "off". Here the two failure directions are not symmetrical:
+ *
+ * - Wrongly *off*: the driver is never asked for a reading, the server (which
+ *   has the real setting) then refuses the transition with a 422 for a
+ *   missing `odometer_start`, and through the offline outbox that refusal
+ *   surfaces on the sync queue long after they left the vehicle. The trip is
+ *   stuck and the dashboard is gone.
+ * - Wrongly *on*: the driver is asked for a reading nobody needed. The server
+ *   accepts it anyway — `TransitionTripRequest` still stores a reading it no
+ *   longer demands — so the trip completes normally and the cost is one
+ *   screen and a few seconds.
+ *
+ * One of those strands a trip in the field; the other wastes a tap. The
+ * default follows the cheaper mistake.
+ */
+export async function fetchOdometerEnabled(api: ApiClient): Promise<boolean> {
+  const response = await api.request<{
+    settings: { tracking?: { odometer_enabled?: boolean } };
+  }>('/public/settings');
+
+  // Explicit `=== false`, not truthiness: a deployment whose server predates
+  // this key sends no `tracking` group at all, and that must read as "keep
+  // asking" rather than as "off".
+  return response.data.settings.tracking?.odometer_enabled !== false;
 }
 
 /**
@@ -1251,7 +1411,25 @@ export type DriverProfile = {
 
 /** The four papers this platform asks a driver for (ADR-0033 §1). */
 export type DriverDocumentType =
-  'driving_licence' | 'identity_document' | 'vehicle_insurance' | 'vehicle_registration';
+  | 'driving_licence'
+  | 'identity_document'
+  | 'vehicle_insurance'
+  | 'vehicle_registration'
+  /**
+   * The two ADR-0048 §1 added, and the naming rule that admitted them.
+   *
+   * ADR-0033 §1 closed the catalogue at four and said "a fifth type is one
+   * case here" — an invitation with a condition attached: **nothing in the
+   * catalogue may be named for one country.** *PSV badge*, *logbook* and
+   * *third-party sticker* were refused on it. A face is a face in Kampala and
+   * in Nairobi, and a photograph of a car is not a jurisdiction's paperwork.
+   *
+   * Neither carries an expiry, and that is not an oversight: expiry is
+   * required where the document *is* its date, and a selfie has no date to
+   * lapse.
+   */
+  | 'identity_selfie'
+  | 'vehicle_photo';
 
 /** The three **stored** states. `expired` is not one — see `compliance_state`. */
 export type DriverDocumentStatus = 'pending' | 'verified' | 'rejected';
@@ -1294,6 +1472,8 @@ export type DriverDocument = {
  * driver opening the screen is asking what they still owe the office; the
  * uploaded subset answers a different question.
  */
+export type DriverDocumentGroup = 'personal' | 'driver' | 'vehicle';
+
 export type DriverDocumentSlot = {
   type: DriverDocumentType;
   type_label: string;
@@ -1301,6 +1481,18 @@ export type DriverDocumentSlot = {
   hint: string;
   /** Served rather than hardcoded here, so the rule lives in one place. */
   requires_expiry: boolean;
+  /**
+   * Which headed section this slot belongs under (ADR-0048 §1).
+   *
+   * **Served, not inferred here.** The driver app and the console both draw
+   * these six rows, and two client-side copies of "which section is a selfie
+   * in" would disagree the first time a seventh type is added. A handset that
+   * has never heard of a new group still renders it, because
+   * `groupSlots` orders by `group_label` rather than by a list of names it
+   * holds.
+   */
+  group: DriverDocumentGroup | string;
+  group_label: string;
   document: DriverDocument | null;
 };
 
@@ -1361,15 +1553,10 @@ export async function uploadDriverDocument(
     form.append('expires_at', input.expiresAt);
   }
 
-  // React Native's FormData takes a file descriptor object rather than a Blob.
-  // The cast is the documented way to express that to TypeScript, whose
-  // FormData types describe the browser's — same as `httpTransport` does for
-  // the odometer photo.
-  form.append('file', {
-    uri: input.uri,
-    name: documentFileName(input.uri),
-    type: documentMimeType(input.uri),
-  } as unknown as Blob);
+  // `formFile` rather than a `{ uri, name, type }` descriptor — Expo's fetch
+  // refuses that shape outright, and did so here for as long as this endpoint
+  // has existed. The whole argument is in `api/formFile.ts`.
+  form.append('file', formFile(input.uri));
 
   const response = await api.request<DriverDocument>('/me/documents', {
     method: 'POST',
@@ -1382,32 +1569,6 @@ export async function uploadDriverDocument(
   });
 
   return response.data;
-}
-
-/**
- * Exported for a test, as `buildTransitionForm` is: React Native's `FormData`
- * polyfill does not hand a file part back intact, so the only way to assert
- * what a document is *labelled* as is to ask these directly.
- */
-export function documentFileName(uri: string): string {
-  const last = uri.split('/').pop();
-
-  return last === undefined || last === '' ? 'document.jpg' : last;
-}
-
-/**
- * The server accepts jpg, jpeg, png, webp and pdf. An iPhone hands back
- * `.heic` from the library, which `expo-image-picker` transcodes to jpeg —
- * so anything unrecognised is labelled jpeg, exactly as `httpTransport` does.
- */
-export function documentMimeType(uri: string): string {
-  const extension = uri.split('.').pop()?.toLowerCase();
-
-  if (extension === 'png') return 'image/png';
-  if (extension === 'webp') return 'image/webp';
-  if (extension === 'pdf') return 'application/pdf';
-
-  return 'image/jpeg';
 }
 
 /**
@@ -1616,11 +1777,10 @@ export async function updateDriverProfile(
  * is rendered at 64 points and never read, and the driver is paying for the
  * data.
  *
- * **The two file helpers are shared with the document upload rather than
- * copied.** `documentMimeType`'s PDF branch is unreachable from here — the
- * picker is image-only and the server's `mimes` rule refuses one anyway — but
- * a second spelling of "what is this file called" is a second place for an
- * iPhone's `.heic` to be labelled wrongly.
+ * **The file part is built by `formFile`, shared with the document upload and
+ * the odometer photo.** Naming and typing the file is the file's own job now
+ * rather than three guesses made from the end of a uri — see that module for
+ * why the guesses had to go.
  */
 export async function uploadDriverPhoto(
   api: ApiClient,
@@ -1628,11 +1788,7 @@ export async function uploadDriverPhoto(
 ): Promise<{ photo_url: string | null }> {
   const form = new FormData();
 
-  form.append('file', {
-    uri,
-    name: documentFileName(uri),
-    type: documentMimeType(uri),
-  } as unknown as Blob);
+  form.append('file', formFile(uri));
 
   const response = await api.request<{ photo_url: string | null }>('/me/photo', {
     method: 'POST',

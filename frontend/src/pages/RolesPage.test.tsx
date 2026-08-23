@@ -42,6 +42,7 @@ function role(overrides: Partial<Role> = {}): Role {
     name: 'Dispatcher',
     description: 'Assigns drivers and vehicles.',
     is_system: true,
+    requires_mfa: false,
     permissions: ['trips.view.all'],
     users_count: 3,
     created_at: '2026-07-01T08:00:00.000000Z',
@@ -55,6 +56,8 @@ function catalogue(roles: Role[], meta: Partial<RolesMeta> = {}) {
       catalogue: CATALOGUE,
       grantable: EVERYTHING,
       can_manage: true,
+      mfa_enforced: true,
+      can_manage_mfa: true,
       ...meta,
     }),
   )
@@ -82,6 +85,7 @@ describe('RolesPage', () => {
         slug: 'regional_auditor',
         name: 'Regional Auditor',
         is_system: false,
+    requires_mfa: false,
         users_count: 0,
       }),
     ])
@@ -203,12 +207,81 @@ describe('RolesPage', () => {
     await user.click(within(dialog).getByRole('button', { name: /save changes/i }))
 
     // No `name` in the payload: it cannot change, so it is not sent.
+    //
+    // `requires_mfa` is sent because this fixture's actor can manage it
+    // (ADR-0061 §5). An actor who cannot omits the key entirely rather than
+    // sending the role's current value back — see the test below, which is
+    // the half that matters: a payload echoing a value you may not change is
+    // one server-side bug away from changing it.
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith('/roles/dispatcher', {
         description: 'Assigns drivers and vehicles.',
         permissions: ['trips.view.all', 'invoices.view'],
+        requires_mfa: false,
       }),
     )
+  })
+
+  /**
+   * ADR-0061 §4. The count is the safety of this feature: without it the
+   * switch is a trap that fires later, on somebody else, at a moment nobody
+   * connects to this action. It appears only when it would actually affect
+   * people — a role with nobody unenrolled gets the plain sentence.
+   */
+  it('names how many people the switch would ask to enrol, before it is thrown', async () => {
+    const user = userEvent.setup()
+    catalogue([role({ requires_mfa: false, unenrolled_count: 3, users_count: 3 })])
+
+    renderAs(<RolesPage />)
+    await user.click((await screen.findAllByRole('button', { name: /edit|view/i }))[0])
+    const dialog = await screen.findByRole('dialog')
+
+    // Off: no warning, because switching it off asks nobody to do anything.
+    expect(within(dialog).queryByText(/have not set one up/i)).not.toBeInTheDocument()
+
+    await user.click(within(dialog).getByLabelText(/second factor/i))
+
+    expect(await within(dialog).findByText(/3 of these accounts have not set one up/i)).toBeInTheDocument()
+  })
+
+  /**
+   * A control that looks live and does nothing is worse than one that is
+   * absent. When the platform switch is off, the per-role toggle still saves
+   * — the role setting is real — but the hint says it changes nothing yet.
+   */
+  it('says the per-role switch is inert while the platform switch is off', async () => {
+    const user = userEvent.setup()
+    catalogue([role({ requires_mfa: true, unenrolled_count: 3 })], { mfa_enforced: false })
+
+    renderAs(<RolesPage />)
+    await user.click((await screen.findAllByRole('button', { name: /edit|view/i }))[0])
+    const dialog = await screen.findByRole('dialog')
+
+    expect(within(dialog).getByText(/inert/i)).toBeInTheDocument()
+  })
+
+  /**
+   * ADR-0061 §5. The console holds no copy of the rule — it reads
+   * `meta.can_manage_mfa` — and when it cannot manage the switch it omits the
+   * key rather than echoing the current value back. An echoed value is one
+   * server-side bug away from being a write.
+   */
+  it('omits the second-factor field entirely when this actor may not change it', async () => {
+    const user = userEvent.setup()
+    catalogue([role()], { can_manage_mfa: false })
+    patch.mockResolvedValue(apiOk({}))
+
+    renderAs(<RolesPage />)
+
+    await user.click((await screen.findAllByRole('button', { name: /edit|view/i }))[0])
+    const dialog = await screen.findByRole('dialog')
+
+    expect(within(dialog).queryByLabelText(/second factor/i)).not.toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: /save changes/i }))
+
+    await waitFor(() => expect(patch).toHaveBeenCalled())
+    expect(patch.mock.calls[0][1]).not.toHaveProperty('requires_mfa')
   })
 
   it('shows the server refusal against the permissions field, not as a bare failure', async () => {
@@ -279,7 +352,9 @@ describe('RolesPage', () => {
    */
   it('renders read-only for someone who may read the catalogue but not write it', async () => {
     const user = userEvent.setup()
-    catalogue([role()], { can_manage: false, grantable: ['staff.view', 'trips.view.all'] })
+    catalogue([role()], { can_manage: false,
+    mfa_enforced: true,
+    can_manage_mfa: true, grantable: ['staff.view', 'trips.view.all'] })
 
     renderAs(<RolesPage />, makeUser({ role: 'corporate_admin' }))
 

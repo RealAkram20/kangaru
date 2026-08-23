@@ -105,6 +105,7 @@ it('creates a colleague in the administrator\'s own tenant', function () {
         // permissions, and Dispatcher carries dispatch abilities a
         // Corporate Admin does not hold.
         'role' => 'corporate_employee',
+        'phone' => '+256700000001',
         'password' => 'a-long-enough-password',
         // A real, existing tenant that is not theirs — so the assertion
         // below proves the field is *ignored* rather than merely rejected
@@ -130,6 +131,7 @@ it('lets the new colleague sign in with the password they were given', function 
         'name' => 'Peter Ochieng',
         'email' => 'peter@centenary-bank.test',
         'role' => 'corporate_employee',
+        'phone' => '+256700000002',
         'password' => 'a-long-enough-password',
     ])->assertStatus(201);
 
@@ -151,6 +153,7 @@ it('stops a Corporate Admin minting a Super Admin', function () {
         'name' => 'Sneaky',
         'email' => 'sneaky@centenary-bank.test',
         'role' => 'super_admin',
+        'phone' => '+256700000004',
         'password' => 'a-long-enough-password',
     ])->assertStatus(422)->assertJsonValidationErrors('role');
 
@@ -179,6 +182,7 @@ it('lets a Super Admin appoint another Super Admin', function () {
         'name' => 'Second Owner',
         'email' => 'owner2@kangaruride.test',
         'role' => 'super_admin',
+        'phone' => '+256700000005',
         'password' => 'a-long-enough-password',
     ])->assertStatus(201);
 });
@@ -304,7 +308,7 @@ it('forbids everyone who is not an administrator', function () {
 
         $this->actingAs($user, 'sanctum')->getJson('/api/v1/users')->assertForbidden();
         $this->actingAs($user, 'sanctum')->postJson('/api/v1/users', [
-            'name' => 'X', 'email' => "x{$role->value}@t.test", 'role' => 'driver', 'password' => 'a-long-enough-password',
+            'name' => 'X', 'email' => "x{$role->value}@t.test", 'phone' => '+256700000000', 'role' => 'driver', 'password' => 'a-long-enough-password',
         ])->assertForbidden();
         $this->actingAs($user, 'sanctum')
             ->patchJson("/api/v1/users/{$staff->id}", ['name' => 'Renamed'])
@@ -365,6 +369,7 @@ it('refuses a duplicate email rather than a 500', function () {
         'name' => 'Clash',
         'email' => $staff->email,
         'role' => 'driver',
+        'phone' => '+256700000006',
         'password' => 'a-long-enough-password',
     ])->assertStatus(422)->assertJsonValidationErrors('email');
 });

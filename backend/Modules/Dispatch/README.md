@@ -84,7 +84,7 @@ bookings but never dispatch the fleet, so `dispatch` mirrors
 | POST | `/api/v1/me/offers/{id}/decline` | the same |
 
 `DispatchOfferResource` renders a decision, not a record, and everything on
-it earns its place against a fifteen-second clock: where the job starts, how
+it earns its place against a forty-five-second clock: where the job starts, how
 far away that is, how far the job itself runs, what is being sent, how it
 settles, and what it is estimated to fetch.
 

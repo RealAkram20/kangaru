@@ -3,6 +3,7 @@
 namespace Modules\Administration\Models;
 
 use App\Concerns\Auditable;
+use App\Concerns\InheritsKangaruDefaults;
 use Illuminate\Database\Eloquent\Model;
 
 /**
@@ -19,9 +20,9 @@ use Illuminate\Database\Eloquent\Model;
  */
 class Setting extends Model
 {
-    use Auditable;
+    use Auditable, InheritsKangaruDefaults;
 
-    protected $fillable = ['group', 'key', 'value', 'is_secret'];
+    protected $fillable = ['operator_id', 'group', 'key', 'value', 'is_secret'];
 
     protected function casts(): array
     {

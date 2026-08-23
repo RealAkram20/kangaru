@@ -54,13 +54,20 @@ class DocumentNumberSequenceRepository
      * (tenant_id, document_type, year) makes every call after the first a
      * no-op.
      */
-    public function ensureSeries(int $tenantId, DocumentType $type, int $year): void
+    public function ensureSeries(int $operatorId, int $tenantId, DocumentType $type, int $year): void
     {
         // Raw, tenant-scope-free query with tenant_id written explicitly —
         // the ADR-0001 repository exception. `document_number_sequences` is
         // not an Eloquent-modelled entity: it is a counter, and the only
         // things that ever touch it are the three statements in this class.
         DB::table('document_number_sequences')->insertOrIgnore([
+            // The counter belongs to the fleet issuing the document
+            // (ADR-0055 §6). One counter per client was right while one
+            // fleet billed them; with two, the client's own series would
+            // come back 1, 3, 4, 7 with the gaps sitting in a competitor's
+            // ledger — and an auditor asking about the gaps would be told,
+            // truthfully, that another company holds them.
+            'operator_id' => $operatorId,
             'tenant_id' => $tenantId,
             'document_type' => $type->value,
             'year' => $year,
@@ -91,7 +98,7 @@ class DocumentNumberSequenceRepository
      * released immediately and buys nothing — the same trap
      * TripAssignmentGuard guards against, and for the same reason.
      */
-    public function lockSeries(int $tenantId, DocumentType $type, int $year): int
+    public function lockSeries(int $operatorId, int $tenantId, DocumentType $type, int $year): int
     {
         if (DB::transactionLevel() === 0) {
             throw new \LogicException(
@@ -99,14 +106,15 @@ class DocumentNumberSequenceRepository
             );
         }
 
-        $row = $this->query($tenantId, $type, $year)->lockForUpdate()->first();
+        $row = $this->query($operatorId, $tenantId, $type, $year)->lockForUpdate()->first();
 
         // ensureSeries() guarantees the row. If it is gone, something
         // deleted a counter mid-flight and continuing would reissue numbers
         // that are already on issued invoices.
         if ($row === null) {
             throw new \RuntimeException(
-                "Document number sequence for tenant {$tenantId} ({$type->value}, {$year}) does not exist. ".
+                "Document number sequence for fleet {$operatorId}, client {$tenantId} ".
+                "({$type->value}, {$year}) does not exist. ".
                 'ensureSeries() must be called before the transaction opens.'
             );
         }
@@ -123,19 +131,20 @@ class DocumentNumberSequenceRepository
      *
      * MUST be called inside a transaction.
      */
-    public function allocate(int $tenantId, DocumentType $type, int $year): int
+    public function allocate(int $operatorId, int $tenantId, DocumentType $type, int $year): int
     {
-        $number = $this->lockSeries($tenantId, $type, $year);
+        $number = $this->lockSeries($operatorId, $tenantId, $type, $year);
 
-        $this->query($tenantId, $type, $year)
+        $this->query($operatorId, $tenantId, $type, $year)
             ->update(['next_number' => $number + 1, 'updated_at' => now()]);
 
         return $number;
     }
 
-    private function query(int $tenantId, DocumentType $type, int $year): Builder
+    private function query(int $operatorId, int $tenantId, DocumentType $type, int $year): Builder
     {
         return DB::table('document_number_sequences')
+            ->where('operator_id', $operatorId)
             ->where('tenant_id', $tenantId)
             ->where('document_type', $type->value)
             ->where('year', $year);
