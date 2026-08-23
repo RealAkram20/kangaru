@@ -29,16 +29,24 @@ use Modules\Clients\Models\ClientRoute;
 function colleagueFixture(): array
 {
     $bank = Tenant::factory()->create(['name' => 'Centenary Bank']);
+    // Emails are pinned, not left to `fake()->safeEmail()`. The picker
+    // searches name **or** email, and Faker builds addresses out of real first
+    // names — so roughly one run in n gave Sarah an address containing
+    // "joseph" and the search-by-name test failed on a row it was right to
+    // return. It went red on CI having passed locally, which reads exactly
+    // like an engine difference and is not one.
     $admin = User::factory()->create([
         'tenant_id' => $bank->id,
         'role' => UserRole::CORPORATE_ADMIN,
         'name' => 'Sarah Nabwire',
+        'email' => 'sarah.nabwire@centenary.test',
     ]);
     $employee = User::factory()->create([
         'tenant_id' => $bank->id,
         'role' => UserRole::CORPORATE_EMPLOYEE,
         'name' => 'Joseph Mukasa',
         'phone' => '+256700111222',
+        'email' => 'joseph.mukasa@centenary.test',
     ]);
 
     $rival = Tenant::factory()->create(['name' => 'Stanbic']);
@@ -46,6 +54,7 @@ function colleagueFixture(): array
         'tenant_id' => $rival->id,
         'role' => UserRole::CORPORATE_EMPLOYEE,
         'name' => 'Someone Else',
+        'email' => 'someone.else@stanbic.test',
     ]);
 
     return compact('bank', 'admin', 'employee', 'rival', 'outsider');
@@ -156,6 +165,7 @@ it('finds a colleague by name, and never anybody else', function () {
         'tenant_id' => $employee->tenant_id,
         'role' => UserRole::CORPORATE_EMPLOYEE,
         'name' => 'Joseph Otim',
+        'email' => 'joseph.otim@centenary.test',
     ]);
 
     $data = $this->actingAs($admin, 'sanctum')
