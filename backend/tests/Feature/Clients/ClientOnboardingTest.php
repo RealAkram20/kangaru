@@ -395,3 +395,89 @@ it('refuses head office the client s own list', function () {
         ->getJson('/api/v1/contracts')
         ->assertForbidden();
 });
+
+/*
+|--------------------------------------------------------------------------
+| Who reads which clients (ADR-0062 §1, and the leak it closed)
+|--------------------------------------------------------------------------
+*/
+
+/**
+ * Verified against the running database before this was written: a fleet's
+ * Super Admin was reading **every** corporate client on the platform.
+ *
+ * `companies` has no `operator_id`, so `narrowToFleet` cannot reach it — its
+ * own docblock says the fleet half applies only to models that record a
+ * fleet. Invisible with one fleet; the cross-fleet leak ADR-0055 §6 exists to
+ * prevent with two.
+ */
+it('shows a fleet only the clients it actually serves', function () {
+    $mine = existingClient();
+
+    $rival = Operator::create(['name' => 'Rival Transport', 'slug' => 'rival-k6j', 'status' => 'active']);
+    $theirs = onboardPayload();
+    $this->actingAs(onboarder('fleet', $rival->id), 'sanctum')
+        ->postJson('/api/v1/companies', $theirs)->assertCreated();
+
+    $names = collect($this->actingAs(onboarder('fleet'), 'sanctum')
+        ->getJson('/api/v1/companies')->assertOk()->json('data'))
+        ->pluck('registration_number');
+
+    expect($names)->toContain($mine->registration_number)
+        ->and($names)->not->toContain($theirs['registration_number']);
+});
+
+/**
+ * A request is not a contract. If merely asking widened the register, a fleet
+ * could read any client by typing a registration number it had guessed — which
+ * is the whole of what ADR-0060 §4 refuses, arriving through a different door.
+ */
+it('does not widen a fleet s register just because it asked', function () {
+    $client = existingClient();
+    $rival = Operator::create(['name' => 'Rival Transport', 'slug' => 'rival-k6k', 'status' => 'active']);
+
+    $this->actingAs(onboarder('fleet', $rival->id), 'sanctum')
+        ->postJson('/api/v1/contracts', ['registration_number' => $client->registration_number])
+        ->assertCreated();
+
+    $names = collect($this->actingAs(onboarder('fleet', $rival->id), 'sanctum')
+        ->getJson('/api/v1/companies')->assertOk()->json('data'))
+        ->pluck('registration_number');
+
+    expect($names)->not->toContain($client->registration_number);
+});
+
+/**
+ * And it widens once the client says yes — the other half, without which the
+ * test above would pass on a register that showed nobody anything.
+ */
+it('widens it once the client accepts', function () {
+    $client = existingClient();
+    $rival = Operator::create(['name' => 'Rival Transport', 'slug' => 'rival-k6l', 'status' => 'active']);
+    $contract = pendingRequest($client, $rival);
+
+    $this->actingAs(clientAdmin((int) $client->tenant_id), 'sanctum')
+        ->postJson("/api/v1/contracts/{$contract->id}/approval")->assertOk();
+
+    $names = collect($this->actingAs(onboarder('fleet', $rival->id), 'sanctum')
+        ->getJson('/api/v1/companies')->assertOk()->json('data'))
+        ->pluck('registration_number');
+
+    expect($names)->toContain($client->registration_number);
+});
+
+/** ADR-0062 §1: the directory is Kangaru's, whoever serves them. */
+it('shows head office every client, whichever fleet serves them', function () {
+    $mine = existingClient();
+    $rival = Operator::create(['name' => 'Rival Transport', 'slug' => 'rival-k6m', 'status' => 'active']);
+    $theirs = onboardPayload();
+    $this->actingAs(onboarder('fleet', $rival->id), 'sanctum')
+        ->postJson('/api/v1/companies', $theirs)->assertCreated();
+
+    $names = collect($this->actingAs(onboarder('kangaru'), 'sanctum')
+        ->getJson('/api/v1/companies')->assertOk()->json('data'))
+        ->pluck('registration_number');
+
+    expect($names)->toContain($mine->registration_number)
+        ->and($names)->toContain($theirs['registration_number']);
+});

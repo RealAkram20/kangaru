@@ -3,6 +3,7 @@ import { Badge } from '../../components/core/Badge'
 import { Card } from '../../components/core/Card'
 import { Identifier } from '../../components/core/Identifier'
 import { DataTable, type DataColumn } from '../../components/data/DataTable'
+import { OurFleets } from '../company/OurFleets'
 import { EmptyState } from '../../components/feedback/EmptyState'
 import { apiClient } from '../../lib/apiClient'
 import type { VehicleAllocation } from '../../types/allocation'
@@ -188,6 +189,14 @@ export function OrganisationView() {
           Invoices go to the billing email.
         </p>
       </Card>
+
+      {/*
+        ADR-0060 §5. The safety catch in the whole onboarding flow: a second
+        fleet may only *ask*, and without this screen there is nowhere for the
+        client to answer. Placed above the vehicles because a pending request
+        is a decision waiting on somebody, and the vehicles are a fact.
+      */}
+      <OurFleets />
 
       <Card
         title="Vehicles supplied to you"

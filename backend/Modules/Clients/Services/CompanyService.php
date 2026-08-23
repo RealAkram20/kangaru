@@ -2,8 +2,11 @@
 
 namespace Modules\Clients\Services;
 
+use App\Enums\AccessLevel;
+use App\Models\OperatorClient;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
+use App\Support\Tenancy\TenantScope;
 use Illuminate\Database\Eloquent\Collection;
 use Modules\Clients\Models\Company;
 use Modules\Clients\Requests\StoreCompanyRequest;
@@ -22,9 +25,55 @@ class CompanyService
      * named way past it (ADR-0006); everyone else stays correctly scoped to
      * their tenant, which is what that scope does for them.
      */
+    /**
+     * The clients this actor may read (ADR-0060, ADR-0062 §2).
+     *
+     * `forActor` drops the tenant scope for any platform-level account, which
+     * answers *"reads across clients"* — and that was the whole question while
+     * one fleet existed. It is now half of one, and `companies` has no
+     * `operator_id` for `narrowToFleet` to filter on, so the other half has to
+     * be asked through the join.
+     *
+     * Verified against the running database before it was written: a fleet's
+     * Super Admin was reading **every** corporate client on the platform.
+     * Invisible with one fleet; the cross-fleet leak ADR-0055 §6 exists to
+     * prevent with two.
+     *
+     * - a **fleet** sees the clients it actually serves — an `active`
+     *   contract, never a `requested` one, which is the rule ADR-0060 §4 turns
+     *   on;
+     * - **head office** sees the directory, which ADR-0062 §1 made Kangaru's;
+     * - a **client** is already narrowed to itself by the tenant scope, and
+     *   this leaves that alone.
+     */
     public function list(User $user): Collection
     {
-        return Company::forActor($user)->get();
+        // Head office reads the **directory** (ADR-0062 §1), and that has to be
+        // said here because everything else in this codebase is built to
+        // refuse it. `isPlatformLevel()` means *fleet* since ADR-0055, so a
+        // Kangaru actor falls straight through `forActor` to `TenantScope`,
+        // which fails closed with no client bound — the query is literally
+        // `where 1 = 0`, which is §2 working exactly as designed.
+        //
+        // ADR-0062 is the amendment that makes this read legitimate, so the
+        // scope is dropped **here, narrowly, and only for this level** rather
+        // than by weakening `TenantScope` for everybody. The resource is
+        // allow-listed (§2), so what a wider query returns is still a
+        // directory and not a client's operations.
+        if ($user->access_level === AccessLevel::KANGARU) {
+            return Company::withoutGlobalScope(TenantScope::class)->get();
+        }
+
+        $query = Company::forActor($user);
+
+        if ($user->access_level === AccessLevel::FLEET && $user->operator_id !== null) {
+            $query->whereIn(
+                'tenant_id',
+                OperatorClient::query()->servedBy($user->operator_id)->select('tenant_id'),
+            );
+        }
+
+        return $query->get();
     }
 
     /**

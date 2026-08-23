@@ -225,6 +225,12 @@ const OPENED_BY_CAPABILITY: Record<string, string[]> = {
  */
 const LEVEL_ONLY: Record<string, string[]> = {
   fleets: ['kangaru'],
+  // ADR-0062. Head office's directory of every corporate client. A fleet has
+  // its own clients register — the same `companies` endpoint, narrowed to the
+  // clients it actually serves — reached from its own menu, so this entry is
+  // head office's view of the whole platform rather than a second door onto
+  // the same page.
+  clients: ['kangaru'],
 }
 
 export function canUseNavLevel(level: string | undefined, id: string): boolean {

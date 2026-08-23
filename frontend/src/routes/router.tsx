@@ -22,6 +22,7 @@ const BookingsPage = page(() => import('../pages/BookingsPage'), 'BookingsPage')
 const CompaniesPage = page(() => import('../pages/CompaniesPage'), 'CompaniesPage')
 const CustomersPage = page(() => import('../pages/CustomersPage'), 'CustomersPage')
 const FleetCompaniesPage = page(() => import('../pages/FleetCompaniesPage'), 'FleetCompaniesPage')
+const CorporateClientsPage = page(() => import('../pages/CorporateClientsPage'), 'CorporateClientsPage')
 const FleetRecordPage = page(() => import('../pages/fleets/FleetRecordPage'), 'FleetRecordPage')
 const DashboardPage = page(() => import('../pages/DashboardPage'), 'DashboardPage')
 const DispatchPage = page(() => import('../pages/DispatchPage'), 'DispatchPage')
@@ -134,6 +135,18 @@ export const router = createBrowserRouter([
       // expected to carry — OperatorPolicy gates on the account's LEVEL, and
       // a level is not something a role can be given. The safer side to err
       // on, and the server refuses regardless.
+      // ADR-0062. Head office's client directory, behind the level gate for
+      // the same reason `fleets` is: `OperatorClientPolicy` and the company
+      // scope both key on `access_level`, and a level is not something a role
+      // can be given.
+      {
+        path: 'clients',
+        element: (
+          <RequireNavAccess id="clients">
+            <CorporateClientsPage />
+          </RequireNavAccess>
+        ),
+      },
       {
         path: 'fleets',
         element: (

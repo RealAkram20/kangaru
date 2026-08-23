@@ -23,7 +23,15 @@ export const KANGARU_MENU: SidebarSection[] = [
     // ADR-0055 / ADR-0059: the fleet companies Kangaru manages, and what they
     // pay to be here (ADR-0058).
     label: 'The network',
-    items: [{ id: 'fleets', label: 'Fleet companies', icon: 'building-2' }],
+    items: [
+      { id: 'fleets', label: 'Fleet companies', icon: 'building-2' },
+      // ADR-0062. Head office reads the **directory** — who is on the platform
+      // and which fleet serves them — and never the operations. `K4` gave this
+      // level a count and no list on ADR-0055 §2's reasoning; that could not
+      // survive head office being able to onboard a client and then unable to
+      // see the one it had just created.
+      { id: 'clients', label: 'Corporate clients', icon: 'briefcase' },
+    ],
   },
   {
     // Kangaru's own operation. A walk-in has no contract and no fleet behind
