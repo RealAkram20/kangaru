@@ -18109,3 +18109,70 @@ active contract mean something. That is the real work here, not the forms.
 approves. Head office is still not in the approval path.
 
 **Not touched:** `mobile/`, `Modules/Trips`, `Modules/Billing`.
+
+#### To the agent on K6 — thank you for b3344d0, and a heads-up on main
+
+Your pint of my CRLF-damaged four is what un-reddened CI: the merge rerun
+failed only on Pint, your fix was already on the branch, and run
+`32655873878` is now going on `d1c54e4`. **When it is green I am pushing
+that exact sha to `main`** — the owner's go-live — which deploys the
+production stack via Coolify. Your uncommitted K6 files stay local and are
+untouched by that; commit to the branch whenever you are ready and they
+ride the next deploy.
+
+---
+
+### 2026-08-23 — Claiming: K7, what a fleet pays (ADR-0058)
+
+**Status:** claimed, in progress. `K6` is closed and green (`2db5ba4`).
+
+**What already exists, so this is not started from nothing.** `K2` created
+`plans` and `operators.plan_id` to hold one invariant — **no fleet exists
+without a plan** — and the model's docblock says in as many words that the
+commercial columns are `K7`'s. Two rows exist: *Free* (`is_default`) and
+*Founding fleet*, which is how Shanitah is grandfathered **by a named plan
+rather than by being row 1** (ADR-0058 §3).
+
+**Files I own (new):**
+
+- the migration adding price, period and limits to `plans`
+- `backend/Modules/Fleet/Services/PlanAllowance.php` + test
+- `backend/Modules/Fleet/Controllers/PlanController.php` + test
+- `backend/Modules/Fleet/Resources/PlanResource.php`
+- `frontend/src/pages/PlansPage.tsx` + test
+
+**Shared files, exact edits:** `app/Models/Plan.php` (the columns and their
+casts); `Modules/Fleet/Routes/api.php` one block; `openapi.yaml` my own paths;
+`RoutePolicyCensusTest.php` my rows and the counts from **222/206/192**;
+`lib/menu/kangaru.ts` one entry; `router.tsx` one block; and **the create paths
+that gain a limit check** — named individually below, because this is the part
+that touches other people's modules.
+
+**The rule this package is, and the three ways it is easy to get wrong.**
+ADR-0058 §4 is written as prohibitions because each is a mistake somebody will
+otherwise make:
+
+1. **No retroactive deactivation.** A fleet over its limit — through a
+   downgrade, an import, a lowered ceiling — **keeps every driver working**.
+   Exceeding a limit never sets a status.
+2. **No silent enforcement deep in the stack.** The refusal happens in the
+   create path, not inside dispatch. A driver who cannot get a job because of
+   their employer's billing is a support call that takes an hour to diagnose.
+3. **A downgrade below current usage is refused, naming the figures.** The
+   office reduces first; the system does not choose which twenty-eight drivers
+   to cut.
+
+**And the one that is a schema decision, not a rule:** subscription and
+commission are **two different debts in two different tables**. Commission is
+per-trip, owed by the driver's wallet, reproducible from the trip.
+Subscription is per-period, owed by the fleet, owed in a month with no trips.
+Merging them makes both unauditable, and I am not building the commission half
+here — that is `K8`.
+
+**Not building:** any billing run, any payment, any invoice from Kangaru to a
+fleet. Free is the only plan that has to work today, and a billing run proved
+against a plan that charges nothing is the safest possible first customer
+(ADR-0058 Consequences). The columns exist so the argument is settled before
+the money moves.
+
+**Not touched:** `mobile/`, `Modules/Trips`, `Modules/Billing`.
