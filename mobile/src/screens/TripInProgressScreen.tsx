@@ -307,7 +307,19 @@ export function TripInProgressScreen({ route, navigation }: Props) {
     if (!odometerEnabled) {
       setBusy(true);
       void queueTransition({ tripId: trip.id, from: effective, to: 'trip_completed' })
-        .finally(() => setBusy(false));
+        .then(
+          // **The screen must leave, and it did not.** The odometer-on path
+          // ends on `OdometerScreen`, which `replace`s to `RideComplete`; this
+          // branch queued the completion and stayed put — so the owner's
+          // production fleet (odometer off, ADR-0047) watched the subtitle
+          // flip to "Completed" over a screen still offering Pause and End.
+          // Found on a handset on go-live day, 2026-08-23.
+          //
+          // `replace`, not `navigate`, for `OdometerScreen`'s own reason: the
+          // back gesture must not reopen a trip that has already ended.
+          () => navigation.replace('RideComplete', { tripId: trip.id }),
+          () => setBusy(false),
+        );
 
       return;
     }

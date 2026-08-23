@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import type { ReactElement } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -149,6 +149,7 @@ function trip(overrides: Partial<Trip> = {}): Trip {
 }
 
 const navigate = jest.fn();
+const replace = jest.fn();
 
 async function renderProgress(
   value: Trip = trip(),
@@ -164,7 +165,7 @@ async function renderProgress(
   const node: ReactElement = (
     <TripInProgressScreen
       route={{ key: 't', name: 'TripInProgress', params: { tripId: value.id } }}
-      navigation={{ navigate, goBack: jest.fn() } as never}
+      navigation={{ navigate, replace, goBack: jest.fn() } as never}
     />
   );
 
@@ -176,6 +177,7 @@ beforeEach(() => {
   // and must not leak that into the next one (ADR-0047).
   mockOdometerEnabled.mockReturnValue(true);
   navigate.mockClear();
+  replace.mockClear();
   mockQueueTransition.mockClear();
   // Nothing in flight is the ordinary case; the tests about an unconfirmed
   // pause set it themselves.
@@ -294,6 +296,45 @@ it('sends End trip to the odometer, because completing needs the closing reading
     to: 'trip_completed',
     from: 'trip_started',
   });
+});
+
+it('leaves for the completion screen when the odometer is off, rather than sitting on a finished trip', async () => {
+  // Found on a handset on go-live day: the owner's fleet runs with the
+  // odometer off (ADR-0047), End trip queued the completion and stayed put —
+  // the subtitle flipped to "Completed" over a screen still offering Pause
+  // and End. The odometer-on path always left via `OdometerScreen`;
+  // this branch never left at all.
+  //
+  // Flushed inside `act` rather than `waitFor`: this file runs fake timers,
+  // and `waitFor` under them is the trap `jest.setup.ts` documents.
+  mockOdometerEnabled.mockReturnValue(false);
+
+  const { getByLabelText } = await renderProgress();
+
+  await act(async () => {
+    void fireEvent.press(getByLabelText('End trip'));
+  });
+
+  expect(mockQueueTransition).toHaveBeenCalledWith(
+    expect.objectContaining({ tripId: 42, from: 'trip_started', to: 'trip_completed' }),
+  );
+  expect(replace).toHaveBeenCalledWith('RideComplete', { tripId: 42 });
+  // `replace`, not `navigate`: the back gesture must not reopen an ended trip.
+  expect(navigate).not.toHaveBeenCalled();
+});
+
+it('stays put, button usable again, when the completion could not even be queued', async () => {
+  mockOdometerEnabled.mockReturnValue(false);
+  mockQueueTransition.mockRejectedValueOnce(new Error('outbox closed'));
+
+  const { getByLabelText } = await renderProgress();
+
+  await act(async () => {
+    void fireEvent.press(getByLabelText('End trip'));
+  });
+
+  expect(mockQueueTransition).toHaveBeenCalled();
+  expect(replace).not.toHaveBeenCalled();
 });
 
 it('completes from whichever of the three statuses the trip is actually in', async () => {
@@ -766,7 +807,7 @@ async function renderWithWarmCache(value: Trip = trip()) {
     <SafeAreaProvider initialMetrics={METRICS}>
       <TripInProgressScreen
         route={{ key: 't', name: 'TripInProgress', params: { tripId: value.id } }}
-        navigation={{ navigate, goBack: jest.fn() } as never}
+        navigation={{ navigate, replace, goBack: jest.fn() } as never}
       />
     </SafeAreaProvider>,
   );

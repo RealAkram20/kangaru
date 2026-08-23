@@ -17341,3 +17341,21 @@ test red; relaxing exact match to a prefix → the walk test red.
 **Not done:** the onboarding flow itself is `K6` and unclaimed — both paths,
 the `requested` contract status that must grant **no read whatsoever**, and the
 client's approval screen. Until it exists, nothing actually calls this lookup.
+
+#### Go-live day, from the owner's handset: two reports, one bug, one deploy gap
+
+The owner ran v1.0.3 on a real phone against the live server and reported:
+
+1. **"Stuck after End trip."** Real bug, fixed in this commit: with the
+   odometer off (ADR-0047 — the production setting), `TripInProgressScreen.end()`
+   queued `trip_completed` and never navigated; the subtitle flipped to
+   "Completed" over a screen still offering Pause and End. It now `replace`s
+   to `RideComplete` on a queued completion, exactly as the odometer-on path
+   always did via `OdometerScreen`. Two tests added (flushed inside `act` —
+   this suite runs fake timers, and `waitFor` under them is the documented
+   trap); the fix is mutation-proved (navigation removed → 1 fails).
+2. **"No suggestions in Add a drop-off."** Not a bug in the app: the live
+   backend predates `trips/{trip}/place-suggestions`, the app asked and
+   failed soft to the free-text row as designed. Deploying the branch's
+   backend is what turns it on — same deploy the offer push's server half
+   is waiting for.
