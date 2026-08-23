@@ -89,7 +89,19 @@ class DriverPayoutAccountController extends Controller
          * detail it is warning about hands that detail straight to them.
          */
         if ($existed) {
-            $request->user()?->notify(new SecurityEventNotification(
+            /*
+             * The driver's own account, resolved through `$driver`, not
+             * `$request->user()`.
+             *
+             * `$request->user()` is typed `Customer|User` across this
+             * application's two guards, and `Customer` has no `notify()`.
+             * Larastan caught it; at runtime it would have been a fatal on the
+             * one path where a customer somehow reached here. Going through
+             * the driver is also simply more correct: the warning belongs to
+             * whoever owns the payout account, which is the driver, not
+             * whoever happens to be holding the request.
+             */
+            $driver->user?->notify(new SecurityEventNotification(
                 NotificationType::DRIVER_PAYOUT_ACCOUNT_CHANGED,
                 [__('mail.security.fact_when') => now()->isoFormat('D MMMM YYYY, HH:mm')],
             ));

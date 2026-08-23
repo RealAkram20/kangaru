@@ -5,6 +5,8 @@ namespace Modules\Drivers\Services;
 use Illuminate\Validation\ValidationException;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverWalkInContract;
+use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Notifications\DriverEventNotification;
 
 /**
  * The three answers a walk-in contract needs (ADR-0055 §5, `K8`).
@@ -104,6 +106,13 @@ class WalkInContractService
             'kangaru_answered_at' => now(),
         ]);
 
+        // The driver asked for this, so they are the one who has to hear the
+        // answer. Three parties touch this chain and only one of them is
+        // waiting on it.
+        $contract->driver?->user?->notify(
+            new DriverEventNotification(NotificationType::DRIVER_WALK_IN_CONTRACT_APPROVED),
+        );
+
         return $contract;
     }
 
@@ -130,6 +139,14 @@ class WalkInContractService
                 ? ['fleet_answered_at' => now()]
                 : ['kangaru_answered_at' => now()]),
         ]);
+
+        // Carrying the refusing party's words where they gave any. A refusal
+        // with nothing after it reads as arbitrary, and this one can come from
+        // either the fleet or head office.
+        $contract->driver?->user?->notify(new DriverEventNotification(
+            NotificationType::DRIVER_WALK_IN_CONTRACT_REFUSED,
+            reason: $reason,
+        ));
 
         return $contract;
     }

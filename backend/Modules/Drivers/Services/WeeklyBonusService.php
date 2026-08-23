@@ -8,6 +8,9 @@ use Illuminate\Support\Facades\DB;
 use Modules\Administration\Services\SettingsService;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverWeeklyBonus;
+use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Mail\MailMoney;
+use Modules\Notifications\Notifications\DriverEventNotification;
 use Modules\Trips\Enums\TripStatus;
 
 /**
@@ -276,6 +279,26 @@ class WeeklyBonusService
                     'currency' => $currency,
                     'ledger_entry_id' => $entry->getKey(),
                 ]);
+
+                /*
+                 * Money arriving unannounced (mail plan D12).
+                 *
+                 * This is the one driver email that carries good news, and it
+                 * is worth sending for a reason beyond courtesy: a bonus that
+                 * lands on a balance with nothing said is a bonus the driver
+                 * does not know the target is reachable. The figures are in
+                 * the fact block because the target is admin-settable, and an
+                 * award explained only by "you hit the target" is one nobody
+                 * can check.
+                 */
+                $driver->user?->notify(new DriverEventNotification(
+                    NotificationType::DRIVER_WEEKLY_BONUS_AWARDED,
+                    [
+                        __('mail.driver.fact_amount') => MailMoney::format($amount, $currency),
+                        __('mail.driver.fact_week') => $weekStart->isoFormat('D MMMM YYYY'),
+                        __('mail.driver.fact_trips') => $trips.' / '.$target,
+                    ],
+                ));
 
                 return true;
             });

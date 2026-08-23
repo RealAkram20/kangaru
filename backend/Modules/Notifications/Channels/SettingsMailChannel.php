@@ -3,6 +3,7 @@
 namespace Modules\Notifications\Channels;
 
 use App\Models\User;
+use Illuminate\Notifications\AnonymousNotifiable;
 use Illuminate\Notifications\Notification as LaravelNotification;
 use Illuminate\Support\Facades\Log;
 use Modules\Administration\Services\SettingsService;
@@ -71,7 +72,33 @@ class SettingsMailChannel
 
     public function send(object $notifiable, LaravelNotification $notification): void
     {
-        if (! $notifiable instanceof User || ! $notification instanceof KangaruNotification) {
+        if (! $notification instanceof KangaruNotification) {
+            return;
+        }
+
+        /*
+         * Two kinds of recipient, and the second one nearly got lost.
+         *
+         * Most notifications go to a `User`. But an **applicant** has no
+         * account until they are approved, so `ApplicationDocumentReviewController`
+         * reaches them with `Notification::route('mail', $email)`, which
+         * produces an `AnonymousNotifiable` and not a `User`.
+         *
+         * The first version of this channel returned early for anything that
+         * was not a `User`. That silently dropped every email to somebody who
+         * had applied and not yet been approved — the exact population that
+         * has no other way of hearing anything, because they have no inbox to
+         * check and no app to open. It passed every test in the suite, because
+         * the tests covered notifications to accounts.
+         */
+        $user = $notifiable instanceof User ? $notifiable : null;
+
+        // Narrowed rather than duck-typed. `send()` takes `object` because
+        // that is Laravel's channel contract, but only two shapes ever reach
+        // it: a `User`, or the `AnonymousNotifiable` that
+        // `Notification::route()` produces. Anything else is a caller mistake
+        // and is dropped rather than guessed at.
+        if ($user === null && ! $notifiable instanceof AnonymousNotifiable) {
             return;
         }
 
@@ -80,7 +107,10 @@ class SettingsMailChannel
         // `ACCOUNT_EMAIL_CHANGED` is sent a second time to the address the
         // account used to have, so somebody who has taken an account cannot
         // silence the warning by redirecting it to themselves.
-        $address = trim($notification->mailTo($notifiable));
+        /** @var AnonymousNotifiable $notifiable */
+        $address = trim($user !== null
+            ? $notification->mailTo($user)
+            : (string) ($notifiable->routeNotificationFor('mail') ?? ''));
 
         if ($address === '') {
             return;
@@ -94,7 +124,9 @@ class SettingsMailChannel
             return;
         }
 
-        if (! MailPreference::allows($notifiable, $notification->type())) {
+        // Only an account can hold a preference. An applicant has nowhere to
+        // have set one and no way to have set it, so there is nothing to ask.
+        if ($user !== null && ! MailPreference::allows($user, $notification->type())) {
             return;
         }
 
@@ -114,9 +146,12 @@ class SettingsMailChannel
          * supposed to catch exactly that mistake.
          */
         $delivery = MailDelivery::create([
-            'user_id' => $notifiable->id,
-            'tenant_id' => $notifiable->tenant_id,
-            'operator_id' => $audience->operatorIdFor($notifiable),
+            // All three null for an applicant, and correctly so: they belong
+            // to no tenant and no fleet yet, and stamping one on the row would
+            // make the cross-fleet audit query in mail plan §6 answer wrongly.
+            'user_id' => $user?->id,
+            'tenant_id' => $user?->tenant_id,
+            'operator_id' => $user === null ? null : $audience->operatorIdFor($user),
             'recipient' => $address,
             'type' => $notification->type()->value,
             'subject' => $content->subject,
@@ -130,8 +165,13 @@ class SettingsMailChannel
 
             ['html' => $html, 'text' => $text] = $this->renderer->render(
                 $content,
-                $audience->reasonFor($notifiable),
-                $this->preferencesUrl($notification),
+                $user !== null
+                    ? $audience->reasonFor($user)
+                    : __('mail.reason.applicant', ['app' => $this->renderer->appName()]),
+                // No preferences link for somebody with no account to hold
+                // one. A link to a screen they cannot sign into is worse than
+                // no link.
+                $user === null ? null : $this->preferencesUrl($notification),
             );
 
             $mailer->html($html, function ($message) use ($address, $from, $fromName, $content, $text) {
@@ -206,7 +246,11 @@ class SettingsMailChannel
     {
         $job = $notification->job ?? null;
 
-        if ($job !== null && method_exists($job, 'attempts')) {
+        // `$job` is typed loosely on the framework's `Queueable` trait and is
+        // a string on a synchronous send, so both checks are load-bearing:
+        // `is_object` for the string case, `method_exists` for a queue driver
+        // whose job class does not carry attempt counts.
+        if (is_object($job) && method_exists($job, 'attempts')) {
             return (int) $job->attempts();
         }
 

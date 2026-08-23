@@ -35,7 +35,10 @@ class PreviewMail extends Command
 
     public function handle(MailRenderer $renderer): int
     {
-        $dir = $this->option('out') ?: storage_path('app/mail-preview');
+        // Cast, because `option()` is typed array|bool|string on the
+        // framework's contract even for a value option like this one.
+        $out = $this->option('out');
+        $dir = is_string($out) && $out !== '' ? $out : storage_path('app/mail-preview');
 
         if (! is_dir($dir) && ! mkdir($dir, 0777, true) && ! is_dir($dir)) {
             $this->error("Could not create {$dir}.");

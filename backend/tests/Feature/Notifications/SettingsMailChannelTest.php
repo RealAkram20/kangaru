@@ -5,6 +5,8 @@ use App\Models\Tenant;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Notification;
+use Modules\Administration\Models\Invitation;
 use Modules\Administration\Services\SettingsService;
 use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Services\BookingService;
@@ -12,6 +14,7 @@ use Modules\Notifications\Enums\NotificationType;
 use Modules\Notifications\Models\MailDelivery;
 use Modules\Notifications\Models\MailDeliveryImmutableException;
 use Modules\Notifications\Models\MailPreference;
+use Modules\Notifications\Notifications\AccountInvitedNotification;
 
 /**
  * M0, the one mail path.
@@ -168,6 +171,47 @@ it('records the transport error rather than losing it', function () {
 
     expect($delivery->status)->toBe(MailDelivery::FAILED)
         ->and($delivery->error)->toContain('535 Authentication failed');
+});
+
+it('reaches somebody who has no account, which is how an applicant is told anything', function () {
+    configureMail();
+    Mail::fake();
+
+    /*
+     * The regression this pins, and it shipped for a while before anybody
+     * noticed.
+     *
+     * An applicant has no `User` until they are approved, so
+     * `ApplicationDocumentReviewController` reaches them with
+     * `Notification::route('mail', $email)`, which produces an
+     * `AnonymousNotifiable`. The first version of `SettingsMailChannel`
+     * returned early for anything that was not a `User`, which silently
+     * dropped every email to the one population that has **no other way of
+     * hearing anything**: no inbox to check, no app to open, only the address
+     * they typed on the form.
+     *
+     * Every test in the suite passed, because they all notified accounts.
+     */
+    Notification::route('mail', 'applicant@example.test')->notify(
+        new AccountInvitedNotification(
+            Invitation::query()->create([
+                'user_id' => User::factory()->create()->id,
+                'token_hash' => hash('sha256', 'anonymous-recipient-token'),
+                'expires_at' => now()->addDays(7),
+            ]),
+            'anonymous-recipient-token',
+        ),
+    );
+
+    $delivery = MailDelivery::query()->where('recipient', 'applicant@example.test')->firstOrFail();
+
+    expect($delivery->status)->toBe(MailDelivery::SENT)
+        // Null all three, and correctly: somebody with no account belongs to
+        // no tenant and no fleet, and stamping one would make the cross-fleet
+        // audit query answer wrongly.
+        ->and($delivery->user_id)->toBeNull()
+        ->and($delivery->tenant_id)->toBeNull()
+        ->and($delivery->operator_id)->toBeNull();
 });
 
 it('refuses to rewrite a closed delivery row', function () {

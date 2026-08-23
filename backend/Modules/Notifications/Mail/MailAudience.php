@@ -63,8 +63,10 @@ class MailAudience
                 'app' => $this->appName,
                 'company' => $this->fleetNameFor($user),
             ]),
+            // No `default`. Every case is named, so adding a fifth access
+            // level makes this a compile-time question rather than one that
+            // silently falls through to the generic wording.
             AccessLevel::KANGARU => __('mail.reason.platform', ['app' => $this->appName]),
-            default => __('mail.reason.account', ['app' => $this->appName]),
         };
     }
 
@@ -85,11 +87,11 @@ class MailAudience
         // The tenant's name, not the company profile's. A client onboarded
         // under a trading name is known by it, and the tenant row is where
         // ClientOnboardingService put whichever name they gave.
-        return (string) ($user->tenant?->name ?? $this->appName);
+        return (string) ($user->tenant->name ?? $this->appName);
     }
 
     private function fleetNameFor(User $user): string
     {
-        return (string) ($user->operator?->name ?? $this->appName);
+        return (string) ($user->operator->name ?? $this->appName);
     }
 }

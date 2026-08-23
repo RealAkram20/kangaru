@@ -7,11 +7,14 @@ use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
 use Modules\Drivers\Enums\DriverApplicationStatus;
 use Modules\Drivers\Enums\DriverDocumentStatus;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverApplication;
+use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Notifications\DriverEventNotification;
 use Modules\Vehicles\Models\Vehicle;
 
 /**
@@ -263,6 +266,25 @@ class DriverApplicationService
         // never constructed with a half-set ticket.
         $application->setAttribute('upload_token', $this->mintUploadToken($application));
 
+        /*
+         * "We have it" (mail plan D1).
+         *
+         * Routed to the address rather than to an account, because at this
+         * moment there is no account: `ensureAccount()` runs later in the
+         * flow. `Notification::route('mail', ...)` is the same shape
+         * `ApplicationDocumentReviewController` already uses to reach an
+         * applicant, and `SettingsMailChannel` handles both kinds of
+         * recipient.
+         *
+         * Worth sending at all because the alternative is silence. Somebody
+         * has just handed over photographs of their national ID and driving
+         * licence to a company they have never dealt with, and heard nothing
+         * back. An acknowledgement is the cheapest possible answer to that.
+         */
+        Notification::route('mail', $application->email)->notify(
+            new DriverEventNotification(NotificationType::DRIVER_APPLICATION_RECEIVED),
+        );
+
         return $application;
     }
 
@@ -495,6 +517,23 @@ class DriverApplicationService
                 'upload_token_expires_at' => null,
             ])->save();
 
+            /*
+             * "You are approved" (mail plan D3).
+             *
+             * To the account, not the address: `ensureAccount()` has run, so
+             * this person has a `User` and the email can say "sign in with the
+             * password you used to apply", which is the one instruction that
+             * actually gets them working.
+             *
+             * Inside the transaction with the rest of it, because an approval
+             * nobody is told about is the same failure as an account nobody
+             * can sign into. The send itself is queued, so nothing here waits
+             * on a network.
+             */
+            $driver->user?->notify(
+                new DriverEventNotification(NotificationType::DRIVER_APPLICATION_APPROVED),
+            );
+
             return $driver;
         });
     }
@@ -540,6 +579,27 @@ class DriverApplicationService
                 'upload_token_hash' => null,
                 'upload_token_expires_at' => null,
             ])->save();
+
+            /*
+             * "Not this time" (mail plan D4), carrying the office's own words.
+             *
+             * Routed to the address rather than the account: `reject()` has
+             * just cleared this person's password and their upload ticket, and
+             * an applicant who was never approved may have no `User` at all.
+             * The address on the application is the only thing left that
+             * reaches them.
+             *
+             * The reason is passed through and printed verbatim. A refusal
+             * with nothing after it is how somebody concludes the process is
+             * arbitrary, and this is a person who handed over their identity
+             * documents.
+             */
+            Notification::route('mail', $locked->email)->notify(
+                new DriverEventNotification(
+                    NotificationType::DRIVER_APPLICATION_REJECTED,
+                    reason: $reason,
+                ),
+            );
 
             return $locked;
         });

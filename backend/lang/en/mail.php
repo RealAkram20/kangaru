@@ -108,6 +108,109 @@ return [
     ],
 
     /*
+     | M4, the driver family. One class, `DriverEventNotification`, keyed by
+     | notification type.
+     |
+     | Written to be read standing beside a car, in the sun, mid-shift. The
+     | subject says the whole thing so it survives a phone's inbox list, the
+     | body says what to do about it, and every date and amount goes in the
+     | fact block rather than into a sentence where it can be misread.
+     |
+     | `next` is optional. A key that is absent is skipped rather than printed,
+     | because not every event has a next step and "mail.driver.x.next" in
+     | somebody's inbox is worse than saying nothing.
+     */
+    'driver' => [
+
+        'fact_document' => 'Document',
+        'fact_expires' => 'Expires',
+        'fact_expired_on' => 'Expired',
+        'fact_fleet' => 'Fleet',
+        'fact_amount' => 'Amount',
+        'fact_when' => 'When',
+        'fact_week' => 'Week',
+        'fact_trips' => 'Trips',
+
+        'driver_application_received' => [
+            'subject' => 'We have your application',
+            'heading' => 'We have your application',
+            'body' => 'The office will check your documents and come back to you.',
+            'next' => 'You do not need to do anything yet.',
+        ],
+
+        'driver_application_approved' => [
+            'subject' => 'You are approved to drive',
+            'heading' => 'You are approved to drive',
+            'body' => 'Sign in to the KangaruRide driver app with the email and password you used to apply.',
+        ],
+
+        'driver_application_rejected' => [
+            'subject' => 'Your application was not approved',
+            'heading' => 'Your application was not approved',
+            'body' => 'The office has decided not to take your application further.',
+        ],
+
+        /*
+         | The one AGENTS.md asked for by name and nothing ever built.
+         | `driver_documents.expires_at` has been a column since ADR-0052 and
+         | nothing read it on a schedule, so a licence could lapse with the
+         | driver and the office both finding out when a traffic officer did.
+         */
+        'driver_document_expiring' => [
+            'subject' => 'Your document is about to expire',
+            'heading' => 'Your document is about to expire',
+            /*
+             | Was "Upload the renewed one before then", which read fine in the
+             | plan and badly in the rendered email: "then" pointed at a date
+             | that had since moved into the fact block, so the sentence
+             | referred backwards to nothing. Found by rendering it, not by
+             | reading it.
+             */
+            'body' => 'Upload the renewed one so you can keep working. The date is below.',
+            'next' => 'Open the driver app and go to your documents.',
+        ],
+
+        'driver_document_expired' => [
+            'subject' => 'Your document has expired',
+            'heading' => 'Your document has expired',
+            'body' => 'Upload the renewed one to go back on duty.',
+            'next' => 'Open the driver app and go to your documents.',
+        ],
+
+        'driver_settlement_confirmed' => [
+            'subject' => 'Your settlement is confirmed',
+            'heading' => 'Your settlement is confirmed',
+            'body' => 'The office has recorded it against your balance.',
+        ],
+
+        'driver_settlement_declined' => [
+            'subject' => 'Your settlement was declined',
+            'heading' => 'Your settlement was declined',
+            'body' => 'Your balance has not changed.',
+            'next' => 'Talk to your office if this is not what you expected.',
+        ],
+
+        'driver_walk_in_contract_approved' => [
+            'subject' => 'Your walk in contract is approved',
+            'heading' => 'Your walk in contract is approved',
+            'body' => 'You can now be offered walk in trips as well as your fleet work.',
+        ],
+
+        'driver_walk_in_contract_refused' => [
+            'subject' => 'Your walk in contract was refused',
+            'heading' => 'Your walk in contract was refused',
+            'body' => 'Your fleet work is not affected.',
+        ],
+
+        'driver_weekly_bonus_awarded' => [
+            'subject' => 'You earned the weekly bonus',
+            'heading' => 'You earned the weekly bonus',
+            'body' => 'It is on your balance.',
+        ],
+
+    ],
+
+    /*
      | M3, the security family. One class, `SecurityEventNotification`, and a
      | key per event.
      |

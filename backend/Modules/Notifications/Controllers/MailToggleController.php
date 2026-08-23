@@ -3,7 +3,9 @@
 namespace Modules\Notifications\Controllers;
 
 use App\Enums\AccessLevel;
+use App\Enums\ErrorCode;
 use App\Http\Controllers\Controller;
+use App\Models\User;
 use App\Support\Api\ApiResponse;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
@@ -102,7 +104,7 @@ class MailToggleController extends Controller
         // it back as an answer.
         if ($type->mailIsRequired() && $validated['enabled'] === false) {
             return ApiResponse::error(
-                \App\Enums\ErrorCode::VALIDATION_FAILED,
+                ErrorCode::VALIDATION_FAILED,
                 'That email cannot be switched off. It is the only warning an account holder gets that '
                 .'something changed about how their account is reached, or the only notice of money owed.',
                 ['type' => ['This email is required and cannot be disabled.']],
@@ -112,7 +114,9 @@ class MailToggleController extends Controller
 
         $validated['enabled']
             ? MailToggle::enable($type)
-            : MailToggle::disable($type, $request->user());
+            // The narrowed actor, for the same reason: `disable()` records who
+            // threw the switch and only a `User` can be that person.
+            : MailToggle::disable($type, $this->headOffice($request));
 
         return ApiResponse::success(null, $validated['enabled'] ? 'Email switched on.' : 'Email switched off.');
     }
@@ -127,7 +131,11 @@ class MailToggleController extends Controller
      */
     private function refuseAnyoneButHeadOffice(Request $request): void
     {
-        if ($request->user()?->access_level === AccessLevel::KANGARU) {
+        // `$request->user()` is `Customer|User` across this application's two
+        // guards, and `Customer` has no `access_level` at all. Narrowed rather
+        // than assumed: a customer reaching this route is refused, which is
+        // both correct and what the type says.
+        if ($this->headOffice($request) !== null) {
             return;
         }
 
@@ -136,6 +144,16 @@ class MailToggleController extends Controller
         // does; a bare abort produces a body with no `success` key and the
         // OpenAPI gate catches it, which is how this was found.
         throw new AuthorizationException;
+    }
+
+    /**
+     * The caller, if they are head office, and null otherwise.
+     */
+    private function headOffice(Request $request): ?User
+    {
+        $user = $request->user();
+
+        return $user instanceof User && $user->access_level === AccessLevel::KANGARU ? $user : null;
     }
 
     /**

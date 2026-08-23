@@ -148,6 +148,35 @@ enum NotificationType: string
      * **without** you signing in to the thing they were using.
      */
     /*
+     | The driver family (mail plan M4). One class,
+     | `DriverEventNotification`, and a case each.
+     |
+     | AGENTS.md names "Document Expiring" on its own short list of
+     | notifications worth having, and it was the one item on that list with
+     | nothing behind it: `driver_documents.expires_at` has been a column since
+     | ADR-0052 and **nothing has ever read it on a schedule**, so a licence
+     | could lapse with the office and the driver both finding out when a
+     | traffic officer did.
+     */
+    case DRIVER_APPLICATION_RECEIVED = 'driver_application.received';
+    case DRIVER_APPLICATION_APPROVED = 'driver_application.approved';
+    case DRIVER_APPLICATION_REJECTED = 'driver_application.rejected';
+
+    /** Warned at 30 days and again at 7. See `SendExpiringDocumentReminders`. */
+    case DRIVER_DOCUMENT_EXPIRING = 'driver.document.expiring';
+
+    /** The day it lapses, because that is the day they stop being compliant. */
+    case DRIVER_DOCUMENT_EXPIRED = 'driver.document.expired';
+
+    case DRIVER_SETTLEMENT_CONFIRMED = 'driver.settlement.confirmed';
+    case DRIVER_SETTLEMENT_DECLINED = 'driver.settlement.declined';
+
+    case DRIVER_WALK_IN_CONTRACT_APPROVED = 'driver.walk_in_contract.approved';
+    case DRIVER_WALK_IN_CONTRACT_REFUSED = 'driver.walk_in_contract.refused';
+
+    case DRIVER_WEEKLY_BONUS_AWARDED = 'driver.weekly_bonus.awarded';
+
+    /*
      | The security family (mail plan M3). One notification class,
      | `SecurityEventNotification`, and a case each.
      |
@@ -233,6 +262,16 @@ enum NotificationType: string
             self::DRIVER_SUPPORT_ANSWERED => 'Report answered',
             self::DRIVER_DOCUMENT_REVIEWED => 'Document checked',
             self::DRIVER_APPLICATION_DOCUMENT_REJECTED => 'Document needs resending',
+            self::DRIVER_APPLICATION_RECEIVED => 'Application received',
+            self::DRIVER_APPLICATION_APPROVED => 'Application approved',
+            self::DRIVER_APPLICATION_REJECTED => 'Application not approved',
+            self::DRIVER_DOCUMENT_EXPIRING => 'Document expiring',
+            self::DRIVER_DOCUMENT_EXPIRED => 'Document expired',
+            self::DRIVER_SETTLEMENT_CONFIRMED => 'Settlement confirmed',
+            self::DRIVER_SETTLEMENT_DECLINED => 'Settlement declined',
+            self::DRIVER_WALK_IN_CONTRACT_APPROVED => 'Walk-in contract approved',
+            self::DRIVER_WALK_IN_CONTRACT_REFUSED => 'Walk-in contract refused',
+            self::DRIVER_WEEKLY_BONUS_AWARDED => 'Weekly bonus',
             self::ACCOUNT_PASSWORD_CHANGED => 'Password changed',
             self::ACCOUNT_SIGNED_IN_NEW_DEVICE => 'New sign in',
             self::ACCOUNT_MFA_ENABLED => 'Two factor on',
@@ -355,6 +394,51 @@ enum NotificationType: string
             // to notify and no device to push to.
             self::DRIVER_APPLICATION_DOCUMENT_REJECTED => [NotificationChannel::MAIL],
             /*
+             * An applicant has no account yet and no handset, so mail is the
+             * only channel that reaches them. Same shape as
+             * `DRIVER_APPLICATION_DOCUMENT_REJECTED` beside it, for the same
+             * reason.
+             */
+            self::DRIVER_APPLICATION_RECEIVED,
+            self::DRIVER_APPLICATION_REJECTED => [NotificationChannel::MAIL],
+            /*
+             * Approval is the one that earns a push as well: the applicant
+             * has an account from this moment and the app is what they do next.
+             */
+            self::DRIVER_APPLICATION_APPROVED => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::MAIL,
+                NotificationChannel::PUSH,
+            ],
+            /*
+             * All three for an expiry, and this is the one type on the list
+             * where the *email* is the load-bearing channel rather than the
+             * courtesy. A driver whose licence lapses stops being able to work
+             * legally, and the app they would see the row in is the app they
+             * may have uninstalled. The push is what makes the seven-day
+             * warning reach somebody the same day.
+             */
+            self::DRIVER_DOCUMENT_EXPIRING,
+            self::DRIVER_DOCUMENT_EXPIRED => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::PUSH,
+                NotificationChannel::MAIL,
+            ],
+            /*
+             * Money the driver asked about, so the in-app row is where they go
+             * looking and the mail is what reaches them off-shift. No push:
+             * ADR-0032 §3 already argues that a settlement answer is not an
+             * interruption, it is an answer.
+             */
+            self::DRIVER_SETTLEMENT_CONFIRMED,
+            self::DRIVER_SETTLEMENT_DECLINED,
+            self::DRIVER_WALK_IN_CONTRACT_APPROVED,
+            self::DRIVER_WALK_IN_CONTRACT_REFUSED,
+            self::DRIVER_WEEKLY_BONUS_AWARDED => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::MAIL,
+            ],
+            /*
              * Mail and the in-app row, for the whole security family except
              * the two below.
              *
@@ -407,6 +491,7 @@ enum NotificationType: string
             ],
         };
     }
+
     /**
      * Whether a recipient may switch this email off.
      *
@@ -459,6 +544,22 @@ enum NotificationType: string
              * invisible, which is the thing the notification exists to
              * prevent.
              */
+            /*
+             * An expiring or expired document is the one driver email that is
+             * not a courtesy: it decides whether somebody may legally work.
+             * A driver who switched it off and then drove on a lapsed licence
+             * would have been failed by the switch, not served by it.
+             *
+             * The settlement answers are money the driver is owed or has been
+             * refused, which is the other half of the required test.
+             */
+            self::DRIVER_DOCUMENT_EXPIRING,
+            self::DRIVER_DOCUMENT_EXPIRED,
+            self::DRIVER_SETTLEMENT_CONFIRMED,
+            self::DRIVER_SETTLEMENT_DECLINED,
+            self::DRIVER_APPLICATION_APPROVED,
+            self::DRIVER_APPLICATION_REJECTED => true,
+
             /*
              * The whole security family, and this is the clearest case on the
              * list. A person who has silenced these has silenced the only

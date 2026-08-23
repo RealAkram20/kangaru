@@ -3,11 +3,12 @@
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
+use Modules\Administration\Console\SendInvitationReminders;
 use Modules\Dispatch\Console\AdvanceDispatchOffers;
 use Modules\Drivers\Console\AwardWeeklyBonuses;
 use Modules\Drivers\Console\PruneAbandonedApplicationDocuments;
+use Modules\Drivers\Console\SendExpiringDocumentReminders;
 use Modules\Fleet\Console\CloseStaleDutySessions;
-use Modules\Administration\Console\SendInvitationReminders;
 use Modules\Reports\Console\PruneReportExports;
 use Modules\Trips\Console\MaintainTripLocationPartitions;
 
@@ -191,4 +192,22 @@ Schedule::command(MaintainTripLocationPartitions::class)
  */
 Schedule::command(SendInvitationReminders::class)
     ->dailyAt('09:00')
+    ->withoutOverlapping();
+
+/*
+ | Document expiry warnings: 30 days out, 7 days out, and the day itself
+ | (mail plan M4, AGENTS.md's "Document Expiring").
+ |
+ | 06:30 in the platform's own timezone, which is early enough that a driver
+ | reads it before a shift and late enough that it is not sitting under
+ | overnight noise. The command resolves "today" in Africa/Kampala itself, so
+ | this schedule time only decides when it runs, never which documents match.
+ |
+ | The offsets are exact date matches, which is what makes a daily run
+ | idempotent with no `reminded_at` column. It also means a skipped day is not
+ | sent late: a "30 days left" email arriving on day 26 is wrong in a way the
+ | reader cannot detect, and the 7-day warning catches them anyway.
+ */
+Schedule::command(SendExpiringDocumentReminders::class)
+    ->dailyAt('06:30')
     ->withoutOverlapping();

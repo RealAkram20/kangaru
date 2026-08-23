@@ -85,7 +85,7 @@ class AccountInvitedNotification extends KangaruNotification
             ])),
             facts: array_filter([
                 __('mail.invited.fact_company') => $this->organisationName(),
-                __('mail.invited.fact_email') => $user?->email ?? '',
+                __('mail.invited.fact_email') => (string) ($user->email ?? ''),
                 __('mail.invited.fact_expires') => $this->invitation->expires_at->isoFormat('D MMMM YYYY'),
             ]),
             actionLabel: __('mail.invited.action'),
@@ -136,8 +136,8 @@ class AccountInvitedNotification extends KangaruNotification
         }
 
         return match ($user->access_level) {
-            AccessLevel::CLIENT => (string) ($user->tenant?->name ?? $this->appName()),
-            AccessLevel::FLEET => (string) ($user->operator?->name ?? $this->appName()),
+            AccessLevel::CLIENT => (string) ($user->tenant->name ?? $this->appName()),
+            AccessLevel::FLEET => (string) ($user->operator->name ?? $this->appName()),
             default => $this->appName(),
         };
     }

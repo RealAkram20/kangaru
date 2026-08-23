@@ -18940,3 +18940,91 @@ codebase to *look* scoped while being nothing of the kind.
 Corollary worth grepping for: `Modules/Vehicles` and `Modules/Drivers` were the
 only two `BelongsToOperator` models, and both were wrong. Any future model that
 takes the trait starts with zero call sites too.
+
+### 2026-08-24 — M4 done: the driver family, and the sweep AGENTS.md asked for
+
+Ten emails, one class (`DriverEventNotification`), wired into the services that
+perform the act rather than dispatched by hand.
+
+**`drivers:remind-expiring-documents` is the point of this package.** AGENTS.md
+names *"Document Expiring"* on its short list of notifications worth having,
+and it was the one item on that list with nothing behind it:
+`driver_documents.expires_at` has been a column since ADR-0052 and **nothing
+has ever read it on a schedule.** A licence could lapse with the driver and the
+office both finding out when a traffic officer did.
+
+30 days, 7 days, and the day itself, as **exact date matches**. That is what
+makes a daily run idempotent with no `reminded_at` column, and the trade is
+stated in the class: a skipped day is not sent late, it is not sent at all. A
+"30 days left" email arriving on day 26 is wrong in a way the reader cannot
+detect.
+
+"Today" is resolved in **Africa/Kampala**, not on the server clock, and there
+is a test pinned to 22:30 UTC — already tomorrow in Kampala — that fails if
+anybody changes it. That is kangaru-c0's Monday bug generalised: anything
+anchored on `startOfWeek()`, `startOfDay()` or `today()` has a systematic
+six-hour window where the fixture lands on the wrong side of midnight.
+
+## The regression I shipped in M0 and did not notice until M4
+
+`SettingsMailChannel` returned early for anything that was not a `User`. An
+**applicant has no `User` until they are approved**, so
+`ApplicationDocumentReviewController` reaches them with
+`Notification::route('mail', $email)`, which is an `AnonymousNotifiable`.
+
+Every email to an applicant had been silently dropped since M0 — the one
+population with no other way of hearing anything: no inbox to check, no app to
+open, only the address they typed on the form. **Every test in the suite
+passed**, because they all notified accounts. Now pinned by a test that fails
+under exactly that mutation.
+
+## What kangaru-c0 caught in my files, and what it was
+
+Both real, and I would have found them from CI rather than from a colleague:
+
+- **`DriverPayoutAccountController`** called `$request->user()?->notify()`.
+  `$request->user()` is `Customer|User` across the two guards and `Customer`
+  has no `notify()`. Now goes through `$driver->user`, which is also simply
+  more correct: the warning belongs to whoever owns the payout account.
+- **One Pint failure** and 19 more Larastan errors across my in-flight files.
+  All fixed; `pint --test --dirty` and `phpstan` are clean on
+  `Modules/Notifications`, `Modules/Administration` and `Modules/Drivers`.
+
+Two of the Larastan findings were correctness rather than style:
+`MailToggleController` read `access_level` off a `Customer|User`, and passed
+the same union to `MailToggle::disable()` which wants a `User`.
+
+## MailMoney, and why it is not `number_format($minor / 100)`
+
+`Money::ofMinor()` asks the currency for its scale. UGX is zero-decimal, so
+45000 minor units is UGX 45,000 and not 450. Dividing by a hundred is correct
+in exactly the countries this platform has not launched in.
+
+It also strips the non-breaking space ICU puts between the code and the number.
+Good typography on a web page, a liability in email: U+00A0 is among the most
+common characters to arrive mangled through a client or a spam-filter rewrite,
+and it breaks copy-paste into a spreadsheet.
+
+## Deliberately not built, with reasons
+
+Four of the twenty-one driver emails in the plan have **no honest wiring point
+yet**, so they are not built rather than half-built:
+
+| | Why |
+|---|---|
+| D10 trip cancelled after acceptance | Cancellation raises no driver-facing event. `trip.offer_withdrawn` covers the offer stage only, and post-acceptance is a different message that wants a push, not an email. |
+| D11 weekly earnings summary | `DriverEarningsService::forDriver()` exists, but a money digest is a screen-rules §1 question and I have not verified every figure is producible. It is not going out with a number I have not checked. |
+| D20 time off answered | `AvailabilityStatus` has `REQUESTED`/`APPROVED`/`DECLINED` and **`AvailabilityService` has no method that moves between them.** There is nothing to hook. |
+| D21 referral reward | `ReferralService` reads `rewardMinor()` from config and has `attach()`, but **nothing pays a reward anywhere.** An email about money that is never credited would be the worst kind of dishonest screen. |
+
+D20 and D21 are the more interesting two: both are enums and config with no
+service behind them, which is the same shape as `recoveryCodesAreLow()` before
+M3. Somebody should decide whether they are features or leftovers.
+
+## Verified
+
+1748 backend tests. Three guards proved by mutation and restored (the server
+clock, the unverified-document filter, the anonymous recipient). Pint and
+Larastan clean. Two real emails rendered and read, which is how the dangling
+"before then" in the expiry copy was found: the date it referred to had moved
+into the fact block, so the sentence pointed backwards at nothing.

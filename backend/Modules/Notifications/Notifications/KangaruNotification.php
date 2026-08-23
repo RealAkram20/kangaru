@@ -236,12 +236,16 @@ abstract class KangaruNotification extends LaravelNotification implements Should
             // deployment that renamed itself in the settings screen renamed
             // itself everywhere, and a button that still says KangaruRide
             // would be the one place it did not take.
-            actionLabel: $url === null ? null : __('mail.layout.open', ['app' => $this->appName()]),
+            // Cast: `__()` is declared to return `array|string|null`, because
+            // a translation key can resolve to a nested array. This one cannot,
+            // and saying so keeps the value object's contract honest.
+            actionLabel: $url === null ? null : (string) __('mail.layout.open', ['app' => $this->appName()]),
             // Absolute for mail: a relative path in an email client goes
             // nowhere. The SPA's own base URL, not the API's.
             actionUrl: $url === null ? null : rtrim((string) config('app.frontend_url'), '/').$url,
         );
     }
+
     /**
      * The address this notification goes to.
      *
