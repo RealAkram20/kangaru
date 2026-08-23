@@ -29,14 +29,15 @@ namespace Modules\Notifications\Mail;
 final class MailContent
 {
     /**
-     * @param  string  $subject   The inbox line. Under 45 characters, says what happened.
-     * @param  string  $heading   The first line in the body. Usually not the subject again.
+     * @param  string  $subject  The inbox line. Under 45 characters, says what happened.
+     * @param  string  $heading  The first line in the body. Usually not the subject again.
      * @param  array<int, string>  $paragraphs  Sentences. Two is plenty, three is a document.
      * @param  array<string, string>  $facts  Label to value. Rendered as rows, never as prose.
      * @param  string|null  $actionLabel  The button. Null means there is nothing to do.
      * @param  string|null  $actionUrl  Absolute. The renderer refuses a relative one.
      * @param  string|null  $preheader  The grey line the inbox shows after the subject.
      * @param  string|null  $footnote  One line under the action. Not a place for reasoning.
+     * @param  array<int, array{name: string, base64: string, mime: string}>  $attachments  See below.
      */
     public function __construct(
         public readonly string $subject,
@@ -47,6 +48,7 @@ final class MailContent
         public readonly ?string $actionUrl = null,
         public readonly ?string $preheader = null,
         public readonly ?string $footnote = null,
+        public readonly array $attachments = [],
     ) {}
 
     /**
@@ -65,5 +67,40 @@ final class MailContent
     public function hasAction(): bool
     {
         return $this->actionLabel !== null && $this->actionUrl !== null;
+    }
+
+    /**
+     * Base64, in memory, not raw bytes and not a path.
+     *
+     * ## Not a path
+     *
+     * A path would be the smaller change and the wrong one. These are queued
+     * jobs: the worker that sends the email is a different process from the
+     * one that built it, possibly minutes later, and a temporary file is
+     * exactly the thing that is gone by then.
+     *
+     * ## Not raw bytes either, and this was found by running it
+     *
+     * A queued notification is serialised with `json_encode`, which refuses
+     * anything that is not valid UTF-8. A PDF is not, so the first version of
+     * this threw `InvalidPayloadException: Malformed UTF-8 characters` the
+     * moment a real invoice was attached — **and it threw inside
+     * `InvoiceService`, which would have taken the invoice down with it.**
+     *
+     * Base64 makes the payload JSON-safe by construction rather than by
+     * everybody remembering. The channel decodes at send time.
+     *
+     * ## The cost, which is the reason to attach almost nothing
+     *
+     * Base64 is a third larger than the bytes it carries, and all of it counts
+     * against the job payload and against whatever the recipient's mail server
+     * will accept. A link is smaller, revocable and auditable. The invoice PDF
+     * is here because the owner asked for both and because finance staff
+     * forward the file rather than the link; nothing else should follow it
+     * without the same argument.
+     */
+    public function hasAttachments(): bool
+    {
+        return $this->attachments !== [];
     }
 }

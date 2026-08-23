@@ -179,6 +179,18 @@ class SettingsMailChannel
                     ->from($from, $fromName)
                     ->subject($content->subject)
                     ->text($text);
+
+                foreach ($content->attachments as $attachment) {
+                    // Decoded here, at the last possible moment. See
+                    // `MailContent::hasAttachments()`: the bytes travel as
+                    // base64 because a queued notification is serialised with
+                    // `json_encode`, which refuses a PDF outright.
+                    $message->attachData(
+                        base64_decode($attachment['base64'], true) ?: '',
+                        $attachment['name'],
+                        ['mime' => $attachment['mime']],
+                    );
+                }
             });
 
             $delivery->update([

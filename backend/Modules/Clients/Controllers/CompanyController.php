@@ -51,13 +51,21 @@ class CompanyController extends Controller
     {
         $this->authorize('create', Company::class);
 
+        $actor = $request->user();
+
         $company = $this->onboarding->onboard(
             $request->safe()->except('operator_id'),
             $request->contractingOperator(),
             // Named in the invitation email. A stranger asking you to set a
             // password is a phishing email; a colleague's name is something
             // the reader can check.
-            $request->user(),
+            //
+            // Narrowed rather than passed through. `$request->user()` is
+            // `Customer|User|null` across this application's two guards, and
+            // only a `User` can be an inviter — a customer reaching this route
+            // is refused by the policy above, so the null branch here is the
+            // type being honest rather than a case that happens.
+            $actor instanceof User ? $actor : null,
         );
 
         return ApiResponse::success(

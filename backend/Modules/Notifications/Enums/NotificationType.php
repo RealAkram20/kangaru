@@ -148,6 +148,24 @@ enum NotificationType: string
      * **without** you signing in to the thing they were using.
      */
     /*
+     | The client family (mail plan M5). One class,
+     | `ClientEventNotification`, and a case each.
+     |
+     | Two audiences inside one client, and the split is the point. Operations
+     | mail goes to the account that raised the booking; **finance mail goes to
+     | `operator_clients.billing_email`**, because a transport officer who
+     | books cars and the person who pays the bill are different people, and
+     | sending invoices to the first is how they go unpaid.
+     */
+    case CLIENT_INVOICE_ISSUED = 'client.invoice.issued';
+    case CLIENT_CREDIT_NOTE_ISSUED = 'client.credit_note.issued';
+
+    /** ADR-0060 §4: a fleet has asked to serve this client, and only the client may answer. */
+    case CLIENT_CONTRACT_REQUESTED = 'client.contract.requested';
+    case CLIENT_CONTRACT_APPROVED = 'client.contract.approved';
+    case CLIENT_CONTRACT_ENDED = 'client.contract.ended';
+
+    /*
      | The driver family (mail plan M4). One class,
      | `DriverEventNotification`, and a case each.
      |
@@ -262,6 +280,11 @@ enum NotificationType: string
             self::DRIVER_SUPPORT_ANSWERED => 'Report answered',
             self::DRIVER_DOCUMENT_REVIEWED => 'Document checked',
             self::DRIVER_APPLICATION_DOCUMENT_REJECTED => 'Document needs resending',
+            self::CLIENT_INVOICE_ISSUED => 'Invoice issued',
+            self::CLIENT_CREDIT_NOTE_ISSUED => 'Credit note issued',
+            self::CLIENT_CONTRACT_REQUESTED => 'A fleet asked to serve you',
+            self::CLIENT_CONTRACT_APPROVED => 'Fleet approved',
+            self::CLIENT_CONTRACT_ENDED => 'Contract ended',
             self::DRIVER_APPLICATION_RECEIVED => 'Application received',
             self::DRIVER_APPLICATION_APPROVED => 'Application approved',
             self::DRIVER_APPLICATION_REJECTED => 'Application not approved',
@@ -393,6 +416,23 @@ enum NotificationType: string
             // Mail alone. See the case's own note: an applicant has no account
             // to notify and no device to push to.
             self::DRIVER_APPLICATION_DOCUMENT_REJECTED => [NotificationChannel::MAIL],
+            /*
+             * Mail and the in-app row for the whole client family. No push:
+             * a corporate administrator works at a desk, and none of this is
+             * urgent in the interrupting sense.
+             *
+             * The two finance ones are the only emails on the platform that
+             * may go to an address with no account behind it at all — see
+             * `ClientEventNotification`.
+             */
+            self::CLIENT_INVOICE_ISSUED,
+            self::CLIENT_CREDIT_NOTE_ISSUED,
+            self::CLIENT_CONTRACT_REQUESTED,
+            self::CLIENT_CONTRACT_APPROVED,
+            self::CLIENT_CONTRACT_ENDED => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::MAIL,
+            ],
             /*
              * An applicant has no account yet and no handset, so mail is the
              * only channel that reaches them. Same shape as
@@ -544,6 +584,19 @@ enum NotificationType: string
              * invisible, which is the thing the notification exists to
              * prevent.
              */
+            /*
+             * Money owed, and a decision only this client may take.
+             *
+             * An invoice switched off is a bill nobody was told about, and a
+             * credit note switched off is money returned that nobody knows
+             * arrived. ADR-0060 §5 makes the contract request the client's own
+             * to answer and nobody else's, so silencing it would leave a fleet
+             * waiting on an answer the client never knew was wanted.
+             */
+            self::CLIENT_INVOICE_ISSUED,
+            self::CLIENT_CREDIT_NOTE_ISSUED,
+            self::CLIENT_CONTRACT_REQUESTED => true,
+
             /*
              * An expiring or expired document is the one driver email that is
              * not a courtesy: it decides whether somebody may legally work.

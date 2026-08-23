@@ -2,6 +2,7 @@
 
 namespace Modules\Billing\Services;
 
+use App\Models\OperatorClient;
 use App\Models\User;
 use App\Support\Money\Shillings;
 use Brick\Money\Money;
@@ -12,6 +13,10 @@ use Modules\Billing\Models\CreditNote;
 use Modules\Billing\Models\CreditNoteLine;
 use Modules\Billing\Models\Invoice;
 use Modules\Billing\Repositories\InvoiceRepository;
+use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Mail\ClientRecipient;
+use Modules\Notifications\Mail\MailMoney;
+use Modules\Notifications\Notifications\ClientEventNotification;
 
 /**
  * Issues credit notes — the only correction mechanism in the module.
@@ -201,6 +206,37 @@ class CreditNoteService
             ]);
         }
 
-        return $note->load('lines');
+        $note->load('lines');
+
+        /*
+         * To the billing address (mail plan C8), same routing as the invoice.
+         *
+         * No PDF. A credit note is read for its number and its amount, both of
+         * which are in the email, and the record it refers to is one click
+         * away. The invoice carries a file because finance staff forward it
+         * with a payment request; nothing does that with a credit note.
+         */
+        $contract = OperatorClient::query()
+            ->where('tenant_id', $note->tenant_id)
+            ->where('operator_id', $note->operator_id)
+            ->first();
+
+        if ($contract !== null) {
+            app(ClientRecipient::class)->finance($contract, fn (?string $to) => new ClientEventNotification(
+                NotificationType::CLIENT_CREDIT_NOTE_ISSUED,
+                facts: [
+                    __('mail.client.fact_number') => (string) $note->credit_note_number,
+                    __('mail.client.fact_total') => MailMoney::format(
+                        (int) $note->total_minor->getMinorAmount()->toInt(),
+                        (string) $note->currency,
+                    ),
+                ],
+                url: '/credit-notes/'.$note->getKey(),
+                sendTo: $to,
+                replacements: ['number' => (string) $note->credit_note_number],
+            ));
+        }
+
+        return $note;
     }
 }

@@ -6,6 +6,7 @@ import { Logo } from '../components/brand/Logo'
 import { Button } from '../components/core/Button'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { MIN_PASSWORD_LENGTH } from '../auth/passwordStrength'
 import { apiClient } from '../lib/apiClient'
 import { useIsCompact } from '../lib/useMediaQuery'
 
@@ -262,14 +263,28 @@ export function AcceptInvitePage() {
                     {error}
                   </p>
                 )}
-                <FormField label="Password" htmlFor="invite-password" required hint="At least 8 characters.">
+                {/*
+                  The hint reads the shared constant rather than restating the
+                  number. `PasswordPolicy` exists on the backend because the
+                  floor used to live in eight places and disagreed with itself
+                  in three, and its docblock names the exact failure this
+                  avoids: `ProfilePage` telling staff "At least 12 characters"
+                  for a door that accepted eight. A hardcoded hint here would
+                  be the ninth place, and it would go stale silently.
+                */}
+                <FormField
+                  label="Password"
+                  htmlFor="invite-password"
+                  required
+                  hint={`At least ${MIN_PASSWORD_LENGTH} characters.`}
+                >
                   <Input
                     id="invite-password"
                     type="password"
                     iconLeft="lock"
                     size="lg"
                     autoComplete="new-password"
-                    minLength={8}
+                    minLength={MIN_PASSWORD_LENGTH}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     revealable
@@ -283,7 +298,7 @@ export function AcceptInvitePage() {
                     iconLeft="lock"
                     size="lg"
                     autoComplete="new-password"
-                    minLength={8}
+                    minLength={MIN_PASSWORD_LENGTH}
                     value={confirmation}
                     onChange={(e) => setConfirmation(e.target.value)}
                     revealable

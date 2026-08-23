@@ -108,6 +108,69 @@ return [
     ],
 
     /*
+     | M5, the client family.
+     |
+     | Two audiences inside one client. Operations mail goes to the account
+     | that raised the booking; finance mail goes to the contract's billing
+     | address, which may belong to somebody with no account here at all. A
+     | transport officer who books cars and the person who pays the bill are
+     | different people at a bank.
+     |
+     | The invoice email carries the PDF *and* the link, which is the owner's
+     | decision: finance staff forward the file, auditors follow the link to
+     | the reproducible record.
+     */
+    'client' => [
+
+        'fact_number' => 'Number',
+        'fact_total' => 'Total',
+        'fact_issued' => 'Issued',
+        'fact_fleet' => 'Fleet',
+        'fact_since' => 'Serving you since',
+        'fact_until' => 'Ended',
+
+        'client_invoice_issued' => [
+            'subject' => 'Invoice :number',
+            'heading' => 'Your invoice is ready',
+            'body' => 'The PDF is attached. The link opens the full record, with every trip it covers.',
+            'action' => 'Open the invoice',
+        ],
+
+        'client_credit_note_issued' => [
+            'subject' => 'Credit note :number',
+            'heading' => 'A credit note has been issued',
+            'body' => 'It reduces what you owe on the invoice it refers to. The link opens the record.',
+            'action' => 'Open the credit note',
+        ],
+
+        /*
+         | ADR-0060 §5. Until this email existed, the `requested` row sat in a
+         | table waiting for a client who had no way of knowing it was there.
+         */
+        'client_contract_requested' => [
+            'subject' => ':fleet asked to serve your company',
+            'heading' => ':fleet asked to serve your company',
+            'body' => 'Nothing changes until you answer. They cannot see your trips, your invoices or your staff unless you approve them.',
+            'action' => 'Answer the request',
+        ],
+
+        'client_contract_approved' => [
+            'subject' => 'You approved :fleet',
+            'heading' => 'You approved :fleet',
+            'body' => 'They can now run trips for your company.',
+            'action' => 'Open your fleets',
+        ],
+
+        'client_contract_ended' => [
+            'subject' => 'Your contract with :fleet has ended',
+            'heading' => 'Your contract with :fleet has ended',
+            'body' => 'They will not be offered new trips for you. Your past trips and invoices are unchanged.',
+            'action' => 'Open your fleets',
+        ],
+
+    ],
+
+    /*
      | M4, the driver family. One class, `DriverEventNotification`, keyed by
      | notification type.
      |
