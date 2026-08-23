@@ -25,7 +25,9 @@ or §2 completeness gate. Those still outrank it.
 
 **ADRs this plan rests on:** 0055 (fleets above the client), 0056 (acting as
 someone else), **0058** (what a fleet pays), **0059** (three consoles),
-**0060** (one client, many fleets). The last three are written by `K0`.
+**0060** (one client, many fleets), **0062** (head office reads the
+directory, not the operations). 0058–0060 are written by `K0`; 0062 followed
+from the owner's question on 23 August.
 
 ---
 
@@ -35,11 +37,11 @@ Kangaru owns nothing that moves.
 
 | Kangaru owns | A fleet company owns |
 |---|---|
-| The fleet companies — register, onboarding, suspension | Its drivers: applications, documents, duty, wallets |
+| The fleet companies, **and the corporate-client directory** (ADR-0062) | Its drivers: applications, documents, duty, wallets |
 | **Plans, and what a fleet pays** | Its employees: dispatchers, depot and branch managers |
 | The walk-in economy: public tariff, walk-in clients, the order queue | Its vehicles: allocation, categories, documents |
 | Driver walk-in contracts, site-wide across every fleet | **Its inventory: fuel, tyres, parts, consumables** |
-| Commission on walk-in work | Its corporate clients — **onboarded by the fleet itself** |
+| Commission on walk-in work | Its corporate clients' **work** — their bookings, trips and invoices |
 | Its own staff, roles and settings | Bookings, dispatch, trips, live map, routes |
 | The audit trail, including every acting-as session | Its rate cards and zones |
 | Platform reports — counts and money, not other people's trips | Its invoices to its clients, on its own number series |
@@ -50,17 +52,24 @@ menu is wrong.
 
 **Three consoles, one codebase.** The app branches first on
 `users.access_level` — `kangaru`, `fleet`, `client` — and only then on role.
-Kangaru's menu is fourteen entries; a fleet's is nineteen; a client's is ten.
+Kangaru's menu is ten entries today, reaching fifteen as `K6`, `K7` and `K8` land; a fleet's is nineteen; a client's is ten.
 
-**Kangaru reaches a fleet's data by logging in as, never by reading across.**
-That is ADR-0055 §2 and it is already built (`S1`). A register would be a
-permanent, silent, unlimited read; an acting-as session is temporary, announced
-to the subject, time-boxed and in `audit_logs` with an `impersonator_id`. The
-smaller menu is the stronger position, not the weaker one.
+**Kangaru reads the directory, never the operations** (ADR-0062, amending
+ADR-0055 §2). The line moved from *how much* to *what kind*: head office reads
+the fleets, the clients and the contracts between them — the shape of the
+network it sells — and reaches a single trip, invoice, driver or booking only
+by **logging in as** somebody (`S1`), which is announced, time-boxed and in
+`audit_logs` with an `impersonator_id`.
 
-**One client, many fleets.** A fleet signs its own corporate clients. A second
-fleet serving the same client must **ask**, and **the client approves** — the
-contract is theirs to grant. `operator_client` already carries a per-fleet
+The half of §2 that was load-bearing is untouched: no account reads another
+party's *operations* in a query. What changed is that a platform managing fleet
+companies cannot be unable to say which clients are on it.
+
+**One client, many fleets.** A fleet signs its own corporate clients, **and so
+does head office** — naming the fleet that will serve them, because a client
+with no fleet has nobody to run its trips (ADR-0062 §3). A second fleet
+serving an existing client must **ask**, and **the client approves** — the
+contract is theirs to grant, and head office is not in that path. `operator_client` already carries a per-fleet
 credit limit and billing email, which is what makes two fleets on one client
 work without two client rows.
 
@@ -413,7 +422,7 @@ Still open, and each blocks only what is named:
 |---|---|---|---|
 | 2 | Who wins when a fleet's own booking and a walk-in want the same on-duty driver? | The fleet's own work, overridable per contract | `K8` commission half |
 | 3 | Does the fleet get a share of a walk-in run on its vehicle? | A fleet share on the contract, defaulting to zero — so the column exists before the argument does | `K8` commission half |
-| 4 | **Does Kangaru see a corporate-client count, a list, or nothing?** | **The count only.** A count is a business metric and a billing input; a list of rows breaches ADR-0055 §2. To look at a client, log in as a fleet that serves them. | `K4` dashboard |
+| 4 | **Does Kangaru see a corporate-client count, a list, or nothing?** | ~~The count only~~ — **answered the other way, 23 Aug: a register.** Head office onboards clients, so it cannot be unable to see the one it just created. **ADR-0062** moves the line from *how much* to *what kind*: Kangaru reads the **directory** (fleets, clients, the contracts between them) and never the **operations** (trips, invoices, drivers). | closed |
 | 5 | What happens to existing `companies` rows with no registration number? | Require it on the next edit rather than inventing one; block new onboarding without it | `K5` migration |
 
 ---

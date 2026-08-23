@@ -11,6 +11,8 @@ use Modules\Billing\Models\RateCardVersion;
 use Modules\Fleet\Enums\ZoneKind;
 use Modules\Fleet\Models\Zone;
 use Modules\Vehicles\Rules\ActiveVehicleCategory;
+use Modules\Trips\Distance\DistancePolicy;
+use Modules\Vehicles\Models\Vehicle;
 
 /**
  * Validates one immutable rate card version and its per-category rates.
@@ -60,6 +62,10 @@ class StoreRateCardVersionRequest extends FormRequest
             // than smuggled in through this field. Ceiling of 5.0x stops a
             // fat-fingered 125000 from billing a client 12.5x.
             $prefix.'night_multiplier_bp' => ['nullable', 'integer', 'min:10000', 'max:50000'],
+            // Which witness this version bills on (ADR-0045 §3). Optional
+            // and defaulting to `odometer` — today's behaviour — so a client
+            // that predates the field issues versions exactly as before.
+            $prefix.'distance_policy' => ['nullable', Rule::enum(DistancePolicy::class)],
 
             $prefix.'notes' => ['nullable', 'string', 'max:1000'],
 
@@ -264,6 +270,7 @@ class StoreRateCardVersionRequest extends FormRequest
             'night_ends_at' => $this->validated('night_ends_at'),
             'night_multiplier_bp' => $this->validated('night_multiplier_bp')
                 ?? RateCardVersion::NO_MULTIPLIER_BP,
+            'distance_policy' => $this->validated('distance_policy'),
             'notes' => $this->validated('notes'),
             'rates' => $this->validated('rates'),
         ];

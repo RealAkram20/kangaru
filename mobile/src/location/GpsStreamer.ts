@@ -123,6 +123,11 @@ export class GpsStreamer {
       speedKph: reading.coords.speed === null ? null : round(reading.coords.speed * 3.6, 1),
       headingDegrees: normaliseHeading(reading.coords.heading),
       accuracyMetres: reading.coords.accuracy === null ? null : round(reading.coords.accuracy, 1),
+      // The OS's own verdict, passed through (ADR-0045). Android marks a fix
+      // produced by a mock-location app; iOS does not report the field at
+      // all, and `undefined` is stored as false — "the device did not say
+      // so", which is the honest reading of silence.
+      isMock: reading.mocked === true,
     };
 
     if (__DEV__ && !looksLikeServiceArea(ping.position)) {

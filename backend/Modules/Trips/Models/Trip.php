@@ -22,6 +22,7 @@ use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Models\OrderRequest;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverLedgerEntry;
+use Modules\Trips\Distance\DistanceGrade;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Vehicles\Models\Vehicle;
 
@@ -52,6 +53,15 @@ use Modules\Vehicles\Models\Vehicle;
  * @property bool $distance_variance_flagged
  * @property int $unplanned_stop_count How many stops were added mid-run rather
  *                                     than planned (ADR-0045 §4) — surfaced, never billed.
+ * @property string|null $billed_distance_km The resolver's figure (ADR-0045). Nothing
+ *                                           prices from it yet — Phase 1 of `docs/measured-distance-plan.md` runs in shadow.
+ * @property DistanceGrade|null $distance_grade
+ * @property CarbonInterface|null $distance_resolved_at
+ * @property string|null $provisional_distance_km The handset's own measurement of its buffered pings, sent with the completion (ADR-0045 §5).
+ * @property int|null $fare_provisional_minor What the driver showed and took at the kerb; never overwritten.
+ * @property CarbonInterface|null $distance_cleared_at
+ * @property int|null $distance_cleared_by_user_id
+ * @property string|null $distance_cleared_reason
  * @property bool|null $cancellation_charge_applicable
  * @property int|null $fare_minor Whole shillings — UGX is zero-decimal. Null
  *                                until `WalkInFareService::settle()` prices the completed trip, and null
@@ -138,6 +148,14 @@ class Trip extends Model
         'distance_km',
         'gps_distance_km',
         'distance_variance_flagged',
+        'billed_distance_km',
+        'distance_grade',
+        'distance_resolved_at',
+        'provisional_distance_km',
+        'fare_provisional_minor',
+        'distance_cleared_at',
+        'distance_cleared_by_user_id',
+        'distance_cleared_reason',
         'cancellation_charge_applicable',
         'started_at',
         'completed_at',
@@ -160,6 +178,12 @@ class Trip extends Model
             'gps_distance_km' => 'decimal:2',
             'distance_variance_flagged' => 'boolean',
             'unplanned_stop_count' => 'integer',
+            'billed_distance_km' => 'decimal:2',
+            'distance_grade' => DistanceGrade::class,
+            'distance_resolved_at' => 'datetime',
+            'provisional_distance_km' => 'decimal:2',
+            'fare_provisional_minor' => 'integer',
+            'distance_cleared_at' => 'datetime',
             'cancellation_charge_applicable' => 'boolean',
             'started_at' => 'datetime',
             'completed_at' => 'datetime',
@@ -250,6 +274,20 @@ class Trip extends Model
     public function isWalkIn(): bool
     {
         return $this->tenant_id === null;
+    }
+
+    /**
+     * The current resolution of this trip's distance, or null when the
+     * resolver has not run (ADR-0045).
+     *
+     * A query through `DistanceEvidence::scopeForTrip` rather than a
+     * `HasOne`, because the evidence table's tenant is nullable and a
+     * relation through `TenantScope` would return nothing for a walk-in —
+     * the trap `TripEvent::scopeForTrip` documents.
+     */
+    public function latestDistanceEvidence(): ?DistanceEvidence
+    {
+        return DistanceEvidence::query()->forTrip($this)->first();
     }
 
     /**

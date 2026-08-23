@@ -11,7 +11,21 @@ type Row = {
   speed_kph: number | null;
   heading_degrees: number | null;
   accuracy_metres: number | null;
+  is_mock: number | null;
 };
+
+function toPing(row: Row): Ping {
+  return {
+    position: { lat: row.lat, lng: row.lng },
+    recordedAt: row.recorded_at,
+    speedKph: row.speed_kph,
+    headingDegrees: row.heading_degrees,
+    accuracyMetres: row.accuracy_metres,
+    // Null on a row written before the column existed — "the device did not
+    // say so", which is not-mock.
+    isMock: row.is_mock === 1,
+  };
+}
 
 export type BufferedBatch = {
   tripId: number;
@@ -41,8 +55,8 @@ export class GpsPingBuffer {
 
   async record(tripId: number, ping: Ping): Promise<void> {
     await this.db.runAsync(
-      `INSERT INTO gps_pings (trip_id, lat, lng, recorded_at, speed_kph, heading_degrees, accuracy_metres)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO gps_pings (trip_id, lat, lng, recorded_at, speed_kph, heading_degrees, accuracy_metres, is_mock)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       tripId,
       ping.position.lat,
       ping.position.lng,
@@ -50,6 +64,7 @@ export class GpsPingBuffer {
       ping.speedKph,
       ping.headingDegrees,
       ping.accuracyMetres,
+      ping.isMock ? 1 : 0,
     );
 
     await this.enforceCap();
@@ -80,13 +95,7 @@ export class GpsPingBuffer {
     return {
       tripId: oldest.trip_id,
       rowIds: rows.map((row) => row.id),
-      pings: rows.map((row) => ({
-        position: { lat: row.lat, lng: row.lng },
-        recordedAt: row.recorded_at,
-        speedKph: row.speed_kph,
-        headingDegrees: row.heading_degrees,
-        accuracyMetres: row.accuracy_metres,
-      })),
+      pings: rows.map(toPing),
     };
   }
 
@@ -100,6 +109,23 @@ export class GpsPingBuffer {
       `DELETE FROM gps_pings WHERE id IN (${rowIds.map(() => '?').join(',')})`,
       ...rowIds,
     );
+  }
+
+  /**
+   * Every ping still buffered for one trip, oldest first (ADR-0045 §5).
+   *
+   * What the handset measures its own provisional distance from at
+   * completion. Reads rather than drains: these pings are still owed to the
+   * server, and the server's measurement of them is what settles the fare —
+   * this is only the figure shown at the kerb while that happens.
+   */
+  async pingsFor(tripId: number): Promise<Ping[]> {
+    const rows = await this.db.getAllAsync<Row>(
+      `SELECT * FROM gps_pings WHERE trip_id = ? ORDER BY id ASC`,
+      tripId,
+    );
+
+    return rows.map(toPing);
   }
 
   async count(): Promise<number> {

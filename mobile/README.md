@@ -910,3 +910,24 @@ than backing off on its own schedule.
 - ADR-0016 — driver sign-in accounts
 - ADR-0008 — 24-hour tokens, and why 401 pauses rather than fails
 - ADR-0003 — GPS ingestion, and why `POST /locations` answers 202
+
+## Measured distance (ADR-0045)
+
+Three things this app does for the distance the office bills on:
+
+- **Every ping carries `is_mock`** — the OS's own verdict on whether the fix
+  came from a mock-location app (`GpsStreamer`, `pings.ts`). Passed through as
+  reported, never inferred. iOS does not report it and `undefined` is stored
+  as false: "the device did not say so".
+- **The handset measures its own buffer** (`location/bufferedDistance.ts`) —
+  crow-flight over kept pings, mock fixes dropped entirely, jitter under the
+  noise floor dropped. Deliberately the simplest honest measurement, and it
+  under-reads: real roads are longer than the crow's flight. The server
+  measures the same trace properly and that is what settles the fare.
+- It is used at exactly two moments the server cannot reach: the **warning at
+  the keypad** when a typed closing reading disagrees with what the phone saw
+  by more than the trip's `variance_threshold_percent` (a warning, never a
+  refusal), and the **provisional fare** — `provisional_distance_km` goes with
+  the completion, and `RideCompleteScreen` shows "Collect now" while the
+  settled figure waits for the office. When the two differ afterwards, the
+  screen says which way and why.

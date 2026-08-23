@@ -160,3 +160,85 @@ export interface ReportExport {
   created_at: string
   finished_at: string | null
 }
+
+/**
+ * Mirrors Modules/Trips/Distance/DistanceGrade (ADR-0045).
+ *
+ * `A` verified, `B` bounded, `C` held — the evidence speaks against the
+ * figure — and `U` unverified: no usable trace and no reference route, so
+ * nothing vouches for the odometer and nothing contradicts it. U bills under
+ * an odometer contract and is held under a trace-priced one.
+ */
+export type DistanceGrade = 'A' | 'B' | 'C' | 'U'
+
+/**
+ * One completed trip's latest distance resolution — a row of the
+ * measured-distance shadow report (ADR-0045).
+ *
+ * `billed_km` is the figure the trip *would* be billed on. Nothing prices
+ * from it yet; the report exists so that decision is taken on evidence.
+ */
+export interface DistanceReportRow {
+  trip_id: number
+  tenant_id: number | null
+  origin: string
+  destination: string
+  completed_at: string | null
+  driver_name: string | null
+  vehicle_registration: string | null
+  resolved_at: string | null
+  policy: 'gps_primary' | 'route_capped' | 'odometer'
+  grade: DistanceGrade
+  billed_km: number
+  reason: string
+  odometer_km: number | null
+  /** Null — not zero — when there was no usable trace. */
+  gps_km: number | null
+  matched_km: number | null
+  inferred_km: number | null
+  route_km: number | null
+  reference_source: 'pins' | 'trace' | null
+  coverage_percent: number | null
+  inferred_share_percent: number | null
+  pings_total: number
+  pings_kept: number
+  provider: 'osrm' | 'haversine' | null
+  variance_flagged: boolean
+}
+
+/** How far the trace sits from another witness, as a share of that witness. */
+export interface DistanceDeviationBuckets {
+  within_5: number
+  '5_to_15': number
+  '15_to_30': number
+  over_30: number
+  unknown: number
+}
+
+export interface DistanceReportSummary {
+  resolved: number
+  /** Completed trips with no resolution — non-zero and growing means the queue is not running. */
+  unresolved: number
+  grades: Record<DistanceGrade, number>
+  providers: { osrm: number; haversine: number }
+  no_trace: number
+  no_reference: number
+  variance_flagged: number
+  with_mock_pings: number
+  mean_coverage_percent: number | null
+  mean_inferred_share_percent: number | null
+  coverage: {
+    under_50: number
+    '50_to_80': number
+    '80_to_95': number
+    '95_up': number
+    unknown: number
+  }
+  trace_vs_odometer: DistanceDeviationBuckets
+  trace_vs_route: DistanceDeviationBuckets
+}
+
+export interface DistanceReportMeta extends ReportScopeMeta {
+  cursor: { next: string | null }
+  summary: DistanceReportSummary
+}

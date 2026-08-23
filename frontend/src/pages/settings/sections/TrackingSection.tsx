@@ -24,6 +24,12 @@ export function TrackingSection({ settings, onSaved, section }: SectionProps) {
     trace_route_ceiling_percent: String(settings.tracking.trace_route_ceiling_percent),
     variance_threshold_percent: String(settings.tracking.variance_threshold_percent),
     odometer_max_km_per_trip: String(settings.tracking.odometer_max_km_per_trip),
+    route_tolerance_percent: String(settings.tracking.route_tolerance_percent),
+    corridor_floor_percent: String(settings.tracking.corridor_floor_percent),
+    corridor_ceiling_percent: String(settings.tracking.corridor_ceiling_percent),
+    detour_cap_percent: String(settings.tracking.detour_cap_percent),
+    resolution_grace_seconds: String(settings.tracking.resolution_grace_seconds),
+    held_blocks_billing: settings.tracking.held_blocks_billing,
   })
   const { value, set } = state
 
@@ -37,6 +43,12 @@ export function TrackingSection({ settings, onSaved, section }: SectionProps) {
         trace_route_ceiling_percent: Number(value.trace_route_ceiling_percent),
         variance_threshold_percent: Number(value.variance_threshold_percent),
         odometer_max_km_per_trip: Number(value.odometer_max_km_per_trip),
+        route_tolerance_percent: Number(value.route_tolerance_percent),
+        corridor_floor_percent: Number(value.corridor_floor_percent),
+        corridor_ceiling_percent: Number(value.corridor_ceiling_percent),
+        detour_cap_percent: Number(value.detour_cap_percent),
+        resolution_grace_seconds: Number(value.resolution_grace_seconds),
+        held_blocks_billing: value.held_blocks_billing,
       })}
     >
       {(errors) => (
@@ -146,6 +158,124 @@ export function TrackingSection({ settings, onSaved, section }: SectionProps) {
               them is a manual job today.
             </Alert>
           </Note>
+
+          {/*
+            ADR-0045 §2, merged from main on 2026-08-23: the resolver's
+            corridor and the review queue's one switch. Same section as the
+            odometer numbers because they answer the same question — what
+            distance is believed — from the trace's side of it.
+          */}
+          <Row
+            label="Trust a trace within"
+            htmlFor="settings-route-tolerance"
+            hint="Of the routed reference. Inside is grade A; further out is grade B."
+            error={errors.route_tolerance_percent}
+            required
+            control={140}
+          >
+            <Input
+              id="settings-route-tolerance"
+              type="number"
+              min={0}
+              max={100}
+              suffix="%"
+              value={value.route_tolerance_percent}
+              onChange={(event) => set('route_tolerance_percent', event.target.value)}
+              required
+            />
+          </Row>
+
+          <Row
+            label="Odometer corridor, floor"
+            htmlFor="settings-corridor-floor"
+            hint="A reading below this share of the reference is clamped and held."
+            error={errors.corridor_floor_percent}
+            required
+            control={140}
+          >
+            <Input
+              id="settings-corridor-floor"
+              type="number"
+              min={1}
+              max={100}
+              suffix="%"
+              value={value.corridor_floor_percent}
+              onChange={(event) => set('corridor_floor_percent', event.target.value)}
+              required
+            />
+          </Row>
+
+          <Row
+            label="Odometer corridor, ceiling"
+            htmlFor="settings-corridor-ceiling"
+            hint="A reading above this share of the reference is clamped and held."
+            error={errors.corridor_ceiling_percent}
+            required
+            control={140}
+          >
+            <Input
+              id="settings-corridor-ceiling"
+              type="number"
+              min={100}
+              max={300}
+              suffix="%"
+              value={value.corridor_ceiling_percent}
+              onChange={(event) => set('corridor_ceiling_percent', event.target.value)}
+              required
+            />
+          </Row>
+
+          <Row
+            label="Detour cap"
+            htmlFor="settings-detour-cap"
+            hint="Under a route-capped rate card, billed distance never exceeds the reference by more."
+            error={errors.detour_cap_percent}
+            required
+            control={140}
+          >
+            <Input
+              id="settings-detour-cap"
+              type="number"
+              min={0}
+              max={100}
+              suffix="%"
+              value={value.detour_cap_percent}
+              onChange={(event) => set('detour_cap_percent', event.target.value)}
+              required
+            />
+          </Row>
+
+          <Row
+            label="Wait before measuring"
+            htmlFor="settings-resolution-grace"
+            hint="After Trip Completed, so the last pings land first."
+            error={errors.resolution_grace_seconds}
+            required
+            control={140}
+          >
+            <Input
+              id="settings-resolution-grace"
+              type="number"
+              min={0}
+              max={3600}
+              suffix="s"
+              value={value.resolution_grace_seconds}
+              onChange={(event) => set('resolution_grace_seconds', event.target.value)}
+              required
+            />
+          </Row>
+
+          <Row
+            label="A held trip cannot bill"
+            htmlFor="settings-held-blocks"
+            hint="Until finance clears it with a reason. Off records the grade and bills anyway."
+          >
+            <Switch
+              id="settings-held-blocks"
+              checked={value.held_blocks_billing}
+              onChange={(event) => set('held_blocks_billing', event.target.checked)}
+            />
+          </Row>
         </>
       )}
     </SectionForm>

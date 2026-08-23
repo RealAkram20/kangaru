@@ -5924,6 +5924,105 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/trips/distance-review:
+    get:
+      summary: The distance review queue — trips whose distance is holding money up (ADR-0045 §2).
+      description: >
+        Oldest first, because a queue with a two-business-day metric against it
+        is worked from the end about to breach it. A trip is here when its
+        latest resolution is grade `C` (held under every policy), or grade `U`
+        under a trace-priced policy, and nobody has cleared it.
+
+
+        Scoped like the trips listing (ADR-0006): a client's user sees their
+        own, platform staff see every client's, and a walk-in — which belongs
+        to no client — appears for platform staff only.
+
+
+        The evidence behind a row is `GET /trips/{trip}/distance`; the act is
+        `POST /trips/{trip}/distance/clearance`.
+      parameters:
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          description: The held trips, and the size of the whole backlog.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/HeldTrip' }
+                  meta:
+                    type: object
+                    required: [cursor, total]
+                    additionalProperties: false
+                    properties:
+                      cursor: { $ref: '#/components/schemas/Cursor' }
+                      total:
+                        type: integer
+                        description: The whole backlog in scope, not the page.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}/distance:
+    get:
+      summary: Every resolution of this trip's distance, newest first (ADR-0045).
+      description: >
+        The console's evidence panel and the review queue's reading matter.
+        Empty, with a 200, for a trip the resolver has not answered for.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: The evidence rows.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DistanceEvidence' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}/distance/clearance:
+    post:
+      summary: Lift a held distance, with a reason (ADR-0045 §2).
+      description: >
+        Finance's act — `trips.transition.finance`, the same permission that
+        closes and disputes a trip. Does not change the figure; lifts the
+        hold, records who, when and why on the trip (audited), and lets the
+        walk-in fare settle or the invoice issue. Idempotent on a trip already
+        cleared. `409 TRIP_DISTANCE_NOT_HELD` when there is nothing to clear.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: { type: string, minLength: 10, maxLength: 500 }
+      responses:
+        '200':
+          $ref: '#/components/responses/TripResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/trips/{trip}/route:
     get:
       summary: The road between the driver and where they are going (ADR-0031).
@@ -6200,6 +6299,16 @@ paths:
                       speed_kph: { type: ['number', 'null'], minimum: 0, maximum: 400 }
                       heading_degrees: { type: ['integer', 'null'], minimum: 0, maximum: 359 }
                       accuracy_metres: { type: ['number', 'null'], minimum: 0, maximum: 10000 }
+                      is_mock:
+                        description: >
+                          Whether the OS marked the fix as coming from a
+                          mock-location provider (ADR-0045). Optional; a
+                          handset that predates the field still posts, and
+                          absent is stored as false. Stored and counted by
+                          the distance resolver — a trace with any mock ping
+                          in it is never billed as measured — but not yet
+                          refused at ingestion.
+                        type: ['boolean', 'null']
       responses:
         '202':
           description: Accepted for asynchronous ingestion.
@@ -6594,6 +6703,58 @@ paths:
                           duration_minutes: { type: integer }
                           records_incomplete: { type: integer }
                           completeness_percent: { type: ['number', 'null'] }
+                      scope: { $ref: '#/components/schemas/Scope' }
+                      covers: { type: string }
+                      filters: { $ref: '#/components/schemas/ClientsFilter' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/reports/distance:
+    get:
+      summary: The measured-distance shadow report — every completed trip's latest resolution, and the distributions the flip is judged on (ADR-0045).
+      description: >
+        Phase 1 of `docs/measured-distance-plan.md` runs the distance resolver
+        on every completed trip and prices nothing from it. This report is
+        how an operator reads what it found: one row per trip (its **latest**
+        resolution), and over the whole filtered set the grade counts, the
+        engine used, how the trace compares with the odometer and with the
+        road, how much of each trip the handset covered, and how many
+        completed trips have no resolution at all — the "is the queue
+        running" figure.
+
+
+        Tenant filter as the trip report: optional for platform staff,
+        refused for a client's user (ADR-0007). A walk-in trip has no tenant
+        and appears in the all-clients scope only. Not exportable.
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date }, description: 'Against the trip''s completion time.' }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: grade, in: query, schema: { $ref: '#/components/schemas/DistanceGrade' } }
+        - { name: provider, in: query, schema: { type: string, enum: [osrm, haversine] } }
+        - { name: tenant_id, in: query, schema: { type: integer }, description: 'Platform staff only; omitted, the report spans all clients.' }
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          description: Report rows plus a whole-set summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, meta]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DistanceReportRow' }
+                  meta:
+                    type: object
+                    required: [cursor, summary, scope, covers, filters]
+                    additionalProperties: false
+                    properties:
+                      cursor: { $ref: '#/components/schemas/Cursor' }
+                      summary: { $ref: '#/components/schemas/DistanceReportSummary' }
                       scope: { $ref: '#/components/schemas/Scope' }
                       covers: { type: string }
                       filters: { $ref: '#/components/schemas/ClientsFilter' }
@@ -7490,6 +7651,9 @@ components:
         - RATE_CARD_NOT_CONFIGURED
         - TRIP_NOT_INVOICEABLE
         - TRIP_NOT_INVOICEABLE_WALK_IN
+        - TRIP_DISTANCE_UNRESOLVED
+        - TRIP_DISTANCE_HELD
+        - TRIP_DISTANCE_NOT_HELD
         - TRIP_ALREADY_INVOICED
         - IDEMPOTENCY_KEY_REUSED
         - CREDIT_NOTE_EXCEEDS_INVOICE
@@ -9150,12 +9314,23 @@ components:
             than business rules.
           type: object
           required:
-            [
-              odometer_enabled,
-              trace_route_ceiling_percent,
-              variance_threshold_percent,
-              odometer_max_km_per_trip,
-            ]
+            - odometer_enabled
+            - trace_route_ceiling_percent
+            - variance_threshold_percent
+            - odometer_max_km_per_trip
+            - trace_matching_enabled
+            - min_coverage_percent
+            - max_inferred_share_percent
+            - max_ping_accuracy_metres
+            - max_plausible_speed_kph
+            - max_teleports
+            - gap_seconds
+            - route_tolerance_percent
+            - corridor_floor_percent
+            - corridor_ceiling_percent
+            - detour_cap_percent
+            - resolution_grace_seconds
+            - held_blocks_billing
           additionalProperties: false
           properties:
             odometer_enabled:
@@ -9228,6 +9403,87 @@ components:
 
                 This is the ceiling to the floor that already refuses a closing
                 reading below the opening one.
+            trace_matching_enabled:
+              type: boolean
+              description: >
+                Measured distance (ADR-0045, `docs/measured-distance-plan.md`).
+                Whether the distance resolver may snap traces to roads and
+                route across gaps against the OSRM server at
+                `maps.osrm_base_url`. Defaults to false because that URL
+                defaults to the project's public demo, which is not for
+                production; switch on once it points at your own box. Off,
+                the resolver still runs — by haversine, all of it inferred —
+                and grades accordingly.
+
+
+                Every key below is a bar the resolver holds a trace to or a
+                bound it holds the odometer inside; each evidence row records
+                them as they stood, so changing one restates nothing already
+                decided. Nothing prices from the resolver's figure yet.
+            min_coverage_percent:
+              type: number
+              minimum: 1
+              maximum: 100
+              description: A trace is trusted only when pings cover at least this share of the trip's duration.
+            max_inferred_share_percent:
+              type: number
+              minimum: 0
+              maximum: 100
+              description: …and at most this share of its distance was routed across gaps rather than matched from pings.
+            max_ping_accuracy_metres:
+              type: number
+              minimum: 1
+              maximum: 1000
+              description: A ping the device rated less accurate than this is dropped before measuring.
+            max_plausible_speed_kph:
+              type: number
+              minimum: 10
+              maximum: 400
+              description: A ping implying a faster move than this from the previous kept one is a teleport and dropped.
+            max_teleports:
+              type: integer
+              minimum: 0
+              maximum: 100
+              description: More teleports than this and the trace is not trusted at all.
+            gap_seconds:
+              type: integer
+              minimum: 10
+              maximum: 3600
+              description: Two kept pings further apart in time than this open a gap, which is routed rather than assumed straight.
+            route_tolerance_percent:
+              type: number
+              minimum: 0
+              maximum: 100
+              description: A trusted trace within this share of the routed reference (plus 0.5 km) is grade A; beyond it grade B, still billed.
+            corridor_floor_percent:
+              type: number
+              minimum: 1
+              maximum: 100
+              description: When the trace is not trusted, the odometer stands in, held between this share of the reference…
+            corridor_ceiling_percent:
+              type: number
+              minimum: 100
+              maximum: 300
+              description: …and this share. Inside untouched is grade B; clamped is grade C, held for review.
+            detour_cap_percent:
+              type: number
+              minimum: 0
+              maximum: 100
+              description: Under the `route_capped` policy only, the billed figure may not exceed the reference by more than this unless a stop was declared.
+            resolution_grace_seconds:
+              type: integer
+              minimum: 0
+              maximum: 3600
+              description: How long after Trip Completed the resolver waits before measuring, so the last ping batches can land. Late pings re-run it.
+            held_blocks_billing:
+              type: boolean
+              description: >
+                Whether a trip whose distance is held (grade C, or grade U on
+                a trace-priced contract) is stopped from billing (ADR-0045
+                §2). On, it cannot be invoiced and its walk-in fare is not
+                settled until a person with `trips.transition.finance` clears
+                it with a reason. Off, the grade is recorded and shown and the
+                trip bills anyway. Defaults on — controls default on.
         maps:
           description: >
             Road routing for the driver app's maps (ADR-0031 pending). The
@@ -10751,7 +11007,10 @@ components:
         - allowed_transitions
         - pickup_wait_target_seconds
         - odometer_max_km_per_trip
+        - variance_threshold_percent
         - fare
+        - provisional_fare
+        - distance
         - estimated_fare
         - payment
         - earnings
@@ -10911,6 +11170,22 @@ components:
             **The server remains the control.** A client that ignores this
             still cannot save an impossible reading.
           example: 2000
+        variance_threshold_percent:
+          type: number
+          description: >
+            Its sibling (ADR-0045 §5): how far the typed closing reading may
+            sit from the handset's own measurement of the trip before the app
+            warns at the keypad. Same reasoning, same courtesy, same caveat —
+            the server still measures and decides.
+          example: 10
+        provisional_fare:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/ProvisionalFare'
+        distance:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/TripDistanceResolution'
         payment:
           description: >
             How this job settles, for the driver carrying it — the same fact
@@ -11131,6 +11406,16 @@ components:
           type: integer
           minimum: 0
           description: Required for trip_completed.
+        provisional_distance_km:
+          type: ['number', 'null']
+          minimum: 0
+          maximum: 100000
+          description: >
+            trip_completed only, optional: the handset's own measurement of
+            the trip from its buffered pings, in kilometres (ADR-0045 §5). A
+            claim, not evidence — the resolver measures the trace itself. It
+            is what the provisional fare is priced from under a trace-priced
+            tariff, so the driver has an honest figure to show at the kerb.
         odometer_photo:
           description: Dashboard photo (multipart only). Optional — the reading is an acceptance criterion, the photo is not.
         stop_id:
@@ -11309,6 +11594,7 @@ components:
         - night_starts_at
         - night_ends_at
         - night_multiplier_bp
+        - distance_policy
         - is_locked
         - locked_at
         - notes
@@ -11325,6 +11611,7 @@ components:
         night_starts_at: { type: ['string', 'null'] }
         night_ends_at: { type: ['string', 'null'] }
         night_multiplier_bp: { type: ['integer', 'null'] }
+        distance_policy: { $ref: '#/components/schemas/DistancePolicy' }
         is_locked:
           type: boolean
           description: A locked version has priced a real invoice and can never change.
@@ -11400,6 +11687,16 @@ components:
           minimum: 10000
           maximum: 50000
           description: Basis points; 10000 = 1.0x. A "night rate" below 1.0x is a discount, and discounts are deferred.
+        distance_policy:
+          description: >
+            Which witness this version bills on (ADR-0045 §3). Optional and
+            defaulting to `odometer` — today's behaviour — so a client that
+            predates the field issues versions exactly as before. Issuing a
+            version that says `gps_primary` is the flip to trace-priced fares:
+            dated, immutable once used, reversible by issuing another.
+          oneOf:
+            - $ref: '#/components/schemas/DistancePolicy'
+            - { enum: [null] }
         notes: { type: ['string', 'null'], maxLength: 1000 }
         rates:
           type: array
@@ -11494,6 +11791,307 @@ components:
         expires_at: { $ref: '#/components/schemas/NullableTimestamp' }
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
         finished_at: { $ref: '#/components/schemas/NullableTimestamp' }
+
+    DistanceGrade:
+      description: >
+        How far a trip's billed distance can be trusted (ADR-0045). `A` —
+        measured, and the road agrees ("GPS-verified"). `B` — bounded: a
+        measured trace that strayed from the reference, or an odometer held
+        inside the road's corridor; billed. `C` — held: the evidence speaks
+        against the figure; nothing bills from it until a person clears it.
+        `U` — unverified: no usable trace and no reference route, so nothing
+        vouches for the odometer and nothing contradicts it; bills under the
+        odometer policy, held under a trace-priced one.
+      type: string
+      enum: [A, B, C, U]
+
+    HeldTrip:
+      description: >
+        One row of the distance review queue (ADR-0045 §2). Deliberately not a
+        `Trip`: a queue row is which trip, whose, who drove it, what the
+        resolver said and how long it has waited — not a fare, a payment
+        method or a passenger's phone number.
+      type: object
+      required:
+        - trip_id
+        - tenant_id
+        - origin
+        - destination
+        - completed_at
+        - driver_name
+        - vehicle_registration
+        - grade
+        - grade_label
+        - billed_km
+        - odometer_km
+        - resolved_at
+        - waiting_days
+        - is_walk_in
+        - fare_settled
+      additionalProperties: false
+      properties:
+        trip_id: { type: integer }
+        tenant_id: { type: ['integer', 'null'] }
+        client:
+          type: ['string', 'null']
+          description: The client's name, for a cross-client reader. Absent for a client's own user, who has exactly one; null on a walk-in.
+        origin: { type: string }
+        destination: { type: string }
+        completed_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        driver_name: { type: ['string', 'null'] }
+        vehicle_registration: { type: ['string', 'null'] }
+        grade: { $ref: '#/components/schemas/DistanceGrade' }
+        grade_label: { type: string }
+        billed_km: { type: ['number', 'null'] }
+        odometer_km: { type: ['number', 'null'] }
+        resolved_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        waiting_days:
+          type: ['integer', 'null']
+          description: Whole days since the resolution — what PROJECT.md's two-business-day metric is read against.
+        is_walk_in:
+          type: boolean
+          description: A held walk-in has an unsettled fare and an unpaid driver behind it; a held corporate trip has an invoice nobody can raise.
+        fare_settled: { type: boolean }
+
+    DistancePolicy:
+      description: >
+        Which witness a rate card version bills on (ADR-0045 §3).
+        `gps_primary` — the measured trace, with the odometer as backup inside
+        the road's corridor. `route_capped` — the same, then never more than
+        the reference route plus the detour allowance unless the driver
+        declared a stop. `odometer` — the reading, as today, still graded and
+        still held when a trusted trace contradicts it.
+      type: string
+      enum: [gps_primary, route_capped, odometer]
+
+    ProvisionalFare:
+      description: >
+        What the driver showed and took at the kerb, while the settled fare
+        waits for the distance resolver (ADR-0045 §5). Priced at completion
+        through the ordinary engine — from the odometer under the odometer
+        policy, from the handset's own measurement of its buffered pings
+        (`provisional_distance_km` on the completion) under a trace-priced
+        one. Null once settled unless it differs from the settled fare, in
+        which case it stays: a difference is a fact both the driver and the
+        office need to see.
+      type: object
+      required: [total_minor, currency, distance_km, is_estimate, is_provisional, basis]
+      additionalProperties: false
+      properties:
+        total_minor: { type: integer }
+        currency: { type: string }
+        distance_km: { type: ['number', 'null'] }
+        is_estimate: { enum: [true] }
+        is_provisional: { enum: [true] }
+        basis: { type: string }
+
+    TripDistanceResolution:
+      description: >
+        What the resolver said about this trip's distance (ADR-0045). `held`
+        is the one field a screen must act on: a held trip has no settled
+        fare and no invoice until a person clears it.
+      type: object
+      required: [billed_km, grade, grade_label, resolved_at, held, cleared_at, cleared_reason]
+      additionalProperties: false
+      properties:
+        billed_km: { type: ['number', 'null'] }
+        grade: { $ref: '#/components/schemas/DistanceGrade' }
+        grade_label: { type: string }
+        resolved_at: { type: string, format: date-time }
+        held: { type: boolean }
+        cleared_at: { type: ['string', 'null'], format: date-time }
+        cleared_reason: { type: ['string', 'null'] }
+
+    DistanceEvidence:
+      description: One resolution of a trip's distance — every witness, every threshold as applied, and the decision (ADR-0045).
+      type: object
+      required:
+        - id
+        - resolved_at
+        - policy
+        - grade
+        - grade_label
+        - billed_km
+        - reason
+        - odometer_km
+        - gps_km
+        - matched_km
+        - inferred_km
+        - haversine_km
+        - route_km
+        - reference_source
+        - coverage_percent
+        - inferred_share_percent
+        - pings_total
+        - pings_kept
+        - gaps_routed
+        - dropped
+        - provider
+        - matched_polylines
+        - thresholds
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        resolved_at: { type: string, format: date-time }
+        policy: { $ref: '#/components/schemas/DistancePolicy' }
+        grade: { $ref: '#/components/schemas/DistanceGrade' }
+        grade_label: { type: string }
+        billed_km: { type: number }
+        reason: { type: string }
+        odometer_km: { type: ['number', 'null'] }
+        gps_km: { type: ['number', 'null'] }
+        matched_km: { type: ['number', 'null'] }
+        inferred_km: { type: ['number', 'null'] }
+        haversine_km: { type: ['number', 'null'] }
+        route_km: { type: ['number', 'null'] }
+        reference_source: { type: ['string', 'null'], enum: [pins, trace, null] }
+        coverage_percent: { type: ['number', 'null'] }
+        inferred_share_percent: { type: ['number', 'null'] }
+        pings_total: { type: integer }
+        pings_kept: { type: integer }
+        gaps_routed: { type: integer }
+        dropped:
+          type: object
+          description: Pings dropped before measuring, by reason.
+          additionalProperties: { type: integer }
+        provider: { type: ['string', 'null'], enum: [osrm, haversine, null] }
+        matched_polylines:
+          type: array
+          items: { type: string }
+          description: The engine's snapped geometries, one encoded polyline per matching.
+        thresholds:
+          type: object
+          description: The tracking thresholds as they stood when this resolution was made.
+          additionalProperties: true
+
+    DistanceReportRow:
+      description: One completed trip's latest distance resolution (ADR-0045).
+      type: object
+      required:
+        - trip_id
+        - tenant_id
+        - origin
+        - destination
+        - completed_at
+        - driver_name
+        - vehicle_registration
+        - resolved_at
+        - policy
+        - grade
+        - billed_km
+        - reason
+        - odometer_km
+        - gps_km
+        - matched_km
+        - inferred_km
+        - route_km
+        - reference_source
+        - coverage_percent
+        - inferred_share_percent
+        - pings_total
+        - pings_kept
+        - provider
+        - variance_flagged
+      additionalProperties: false
+      properties:
+        trip_id: { type: integer }
+        tenant_id: { type: ['integer', 'null'], description: 'Null for a walk-in — the platform''s own trip.' }
+        origin: { type: string }
+        destination: { type: string }
+        completed_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        driver_name: { type: ['string', 'null'] }
+        vehicle_registration: { type: ['string', 'null'] }
+        resolved_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        policy: { type: string, enum: [gps_primary, route_capped, odometer] }
+        grade: { $ref: '#/components/schemas/DistanceGrade' }
+        billed_km: { type: number, description: 'The figure the trip *would* be billed on. Nothing prices from it yet.' }
+        reason: { type: string, description: 'One sentence — which branch decided, and on what.' }
+        odometer_km: { type: ['number', 'null'] }
+        gps_km: { type: ['number', 'null'], description: 'Null — not zero — when there was no usable trace.' }
+        matched_km: { type: ['number', 'null'], description: 'Road the engine snapped pings to.' }
+        inferred_km: { type: ['number', 'null'], description: 'Routed across gaps, or the whole haversine figure when the engine was off.' }
+        route_km: { type: ['number', 'null'], description: 'The road through the order pins, or between the trace''s ends.' }
+        reference_source: { type: ['string', 'null'], enum: [pins, trace, null] }
+        coverage_percent: { type: ['number', 'null'] }
+        inferred_share_percent: { type: ['number', 'null'] }
+        pings_total: { type: integer }
+        pings_kept: { type: integer }
+        provider: { type: ['string', 'null'], enum: [osrm, haversine, null] }
+        variance_flagged: { type: boolean, description: 'The old odometer-vs-GPS watchdog, unchanged.' }
+
+    DistanceReportSummary:
+      description: >
+        The whole filtered set's distribution (ADR-0045). Every bucket is a
+        count of trips. `unresolved` is completed trips in the same period
+        and scope with no resolution — non-zero and growing means the queue
+        worker is not running.
+      type: object
+      required:
+        - resolved
+        - unresolved
+        - grades
+        - providers
+        - no_trace
+        - no_reference
+        - variance_flagged
+        - with_mock_pings
+        - mean_coverage_percent
+        - mean_inferred_share_percent
+        - coverage
+        - trace_vs_odometer
+        - trace_vs_route
+      additionalProperties: false
+      properties:
+        resolved: { type: integer }
+        unresolved: { type: integer }
+        grades:
+          type: object
+          required: [A, B, C, U]
+          additionalProperties: false
+          properties:
+            A: { type: integer }
+            B: { type: integer }
+            C: { type: integer }
+            U: { type: integer }
+        providers:
+          type: object
+          required: [osrm, haversine]
+          additionalProperties: false
+          properties:
+            osrm: { type: integer }
+            haversine: { type: integer }
+        no_trace: { type: integer }
+        no_reference: { type: integer }
+        variance_flagged: { type: integer }
+        with_mock_pings: { type: integer }
+        mean_coverage_percent: { type: ['number', 'null'] }
+        mean_inferred_share_percent: { type: ['number', 'null'] }
+        coverage:
+          type: object
+          required: [under_50, 50_to_80, 80_to_95, 95_up, unknown]
+          additionalProperties: false
+          properties:
+            under_50: { type: integer }
+            50_to_80: { type: integer }
+            80_to_95: { type: integer }
+            95_up: { type: integer }
+            unknown: { type: integer }
+        trace_vs_odometer:
+          $ref: '#/components/schemas/DistanceDeviationBuckets'
+        trace_vs_route:
+          $ref: '#/components/schemas/DistanceDeviationBuckets'
+
+    DistanceDeviationBuckets:
+      description: 'How far the trace''s figure sits from another witness, as a share of that witness. `unknown` when either is missing or zero.'
+      type: object
+      required: [within_5, 5_to_15, 15_to_30, over_30, unknown]
+      additionalProperties: false
+      properties:
+        within_5: { type: integer }
+        5_to_15: { type: integer }
+        15_to_30: { type: integer }
+        over_30: { type: integer }
+        unknown: { type: integer }
 
     TripReportRow:
       description: One row of the trip report — the Bank's six criteria plus identifiers.

@@ -306,6 +306,11 @@ function routeCensus(): array
         'GET api/v1/trips' => 'A/C',
         'POST api/v1/trips' => 'A',
         'GET api/v1/trips/{trip}' => 'A',
+        // ADR-0045 measured distance, arrived with the origin/main merge. All three
+        // authorize on the policy: viewAny for the queue, view and clearDistance for one.
+        'GET api/v1/trips/distance-review' => 'A',
+        'GET api/v1/trips/{trip}/distance' => 'A',
+        'POST api/v1/trips/{trip}/distance/clearance' => 'A',
         'GET api/v1/trips/{trip}/events' => 'A',
         'POST api/v1/trips/{trip}/locations' => 'A',
         'GET api/v1/trips/{trip}/locations' => 'A',
@@ -337,6 +342,8 @@ function routeCensus(): array
         'POST api/v1/trips/{trip}/invoice' => 'A',
 
         // ── Reports ─────────────────────────────────────────────────────
+        // ADR-0045, arrived with the origin/main merge. authorize('viewReports').
+        'GET api/v1/reports/distance' => 'A',
         'GET api/v1/reports/drivers' => 'A',
         'GET api/v1/reports/exports' => 'A',
         'POST api/v1/reports/exports' => 'A',
@@ -437,7 +444,7 @@ it('has a census row for every API route and a route for every census row', func
     // 211: the fleet-company register (K2, ADR-0059) — index, store, show,
     // update. No destroy: a fleet that leaves is suspended, because six
     // operational tables carry `operator_id`.
-    expect(count($router))->toBe(214);
+    expect(count($router))->toBe(218);
 });
 
 it('uses only the four idioms, and files sixteen routes as public', function () {
@@ -494,7 +501,7 @@ it('authenticates every route that is not filed as public, and throttles every o
     // register search beside it.
     // 195: the four fleet-company routes, all authenticated. Head office's
     // register is the least public surface on the platform.
-    expect($guarded)->toBe(198);
+    expect($guarded)->toBe(202);
 });
 
 it('binds the actor\'s tenant on every staff route, so TenantScope has something to scope by', function () {
@@ -540,5 +547,5 @@ it('binds the actor\'s tenant on every staff route, so TenantScope has something
     // they bind the actor's tenant like the rest even though a Kangaru
     // account has none - IdentifyTenant binding a null is the fail-closed
     // state, and exempting them would be a second way to be unscoped.
-    expect($staff)->toBe(184);
+    expect($staff)->toBe(188);
 });

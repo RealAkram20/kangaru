@@ -104,6 +104,14 @@ export function buildTransitionForm(payload: TransitionPayload, photoUri: string
     form.append('stop_id', String(payload.stop_id));
   }
 
+  // Live on this path, unlike stop_id: a completion routinely carries both
+  // the photo and the phone's own measurement (ADR-0045 §5), and main's
+  // form builder dropping this line is why a photographed completion lost
+  // its provisional fare there.
+  if (payload.provisional_distance_km !== undefined) {
+    form.append('provisional_distance_km', String(payload.provisional_distance_km));
+  }
+
   // `formFile`, not a `{ uri, name, type }` descriptor — Expo's fetch throws on
   // that shape, and this is the path where the throw costs most: it happens
   // inside the outbox, long after the driver has left the vehicle. The whole

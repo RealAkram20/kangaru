@@ -66,6 +66,14 @@ export interface Settings {
     trace_route_ceiling_percent: number
     variance_threshold_percent: number
     odometer_max_km_per_trip: number
+    // ADR-0045 §2 (merged from main, 2026-08-23): the resolver's corridor
+    // and the review queue's billing switch.
+    route_tolerance_percent: number
+    corridor_floor_percent: number
+    corridor_ceiling_percent: number
+    detour_cap_percent: number
+    resolution_grace_seconds: number
+    held_blocks_billing: boolean
   }
   mail: {
     enabled: boolean

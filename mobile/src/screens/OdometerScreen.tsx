@@ -9,6 +9,7 @@ import {
   TextInput,
 } from 'react-native';
 
+import { disagreesWithBuffer } from '../location/bufferedDistance';
 import { useSync } from '../offline/SyncProvider';
 import { validateOdometerReading } from '../trips/odometer';
 import { OdometerCapture } from '../trips/OdometerCapture';
@@ -50,7 +51,7 @@ type Props = NativeStackScreenProps<TripsStackParams, 'Odometer'>;
 export function OdometerScreen({ route, navigation }: Props) {
   const { tripId, to, from } = route.params;
   const { data: trip } = useTrip(tripId);
-  const { queueTransition } = useSync();
+  const { queueTransition, bufferedDistanceKm } = useSync();
 
   const inputRef = useRef<TextInput>(null);
 
@@ -91,10 +92,46 @@ export function OdometerScreen({ route, navigation }: Props) {
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
+  // What this phone measured of its own buffered pings (ADR-0045 §5). Read
+  // once, when the closing form opens: the trip is over, so the buffer is not
+  // growing, and re-reading it under the driver's fingers would move the
+  // warning around while they type.
+  const [measuredKm, setMeasuredKm] = useState<number | null>(null);
 
   const opening = to === 'trip_completed' ? (trip?.odometer_start ?? null) : null;
   const error = validateOdometerReading(reading, opening, trip?.odometer_max_km_per_trip ?? null);
   const isOpening = to === 'trip_started';
+
+  useEffect(() => {
+    if (isOpening) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void bufferedDistanceKm(tripId).then((km) => {
+      if (!cancelled) {
+        setMeasuredKm(km);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bufferedDistanceKm, isOpening, tripId]);
+
+  // The typed journey, once it is a number worth comparing.
+  const typedKm = opening !== null && error === undefined && reading !== ''
+    ? Number.parseInt(reading, 10) - opening
+    : null;
+
+  const disagrees =
+    typedKm !== null &&
+    disagreesWithBuffer(typedKm, measuredKm, trip?.variance_threshold_percent ?? null);
+
+  // main's inline ImagePicker flow ended here in the 2026-08-23 merge — the
+  // photo lives in the shared `OdometerCapture` on this branch, camera
+  // refusal handling included.
 
   const submit = async () => {
     if (error !== undefined) {
@@ -138,6 +175,10 @@ export function OdometerScreen({ route, navigation }: Props) {
           ? { odometerStart: Number.parseInt(reading, 10) }
           : { odometerEnd: Number.parseInt(reading, 10) }),
         ...(!isOpening && narration !== '' ? { notes: narration } : {}),
+        // What this phone measured, sent with the completion so a cash
+        // passenger has a fare to pay before the server has resolved the trip
+        // (ADR-0045 §5). Omitted when there is nothing to say — never zero.
+        ...(isOpening || measuredKm === null ? {} : { provisionalDistanceKm: measuredKm }),
       });
     } catch {
       // The queue could not accept it — the database is not open yet, or the
@@ -221,6 +262,25 @@ export function OdometerScreen({ route, navigation }: Props) {
             onChangePhoto={setPhotoUri}
             inputRef={inputRef}
           />
+
+          {/*
+            ADR-0045 §5. A warning, not a refusal: the phone's figure is a
+            crow's-flight sum over the pings it happens to hold, so it reads
+            short on a winding road and short again after a dead zone — it is
+            not good enough to refuse a reading on. It is good enough to catch
+            the extra digit while the dashboard is still in front of the
+            driver, which is the only moment that mistake is free to fix.
+          */}
+          {disagrees && typedKm !== null && measuredKm !== null && (
+            <Notice
+              tone="warning"
+              message={
+                `This phone measured about ${measuredKm.toLocaleString()} km on this trip, ` +
+                `and your reading makes it ${typedKm.toLocaleString()} km. ` +
+                'Check the number on the dashboard. If it is right, send it — the office measures the trip too.'
+              }
+            />
+          )}
 
           {/*
             Closing only. The opening moment is a passenger at the kerb; the

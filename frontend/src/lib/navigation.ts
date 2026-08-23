@@ -155,10 +155,19 @@ const VISIBLE_TO: Record<string, Role[]> = {
   // DriverApplicationPolicy::viewAny — `drivers.view`, the same read the
   // fleet list needs. Deciding one takes more (ADR-0027), and the dialog's
   // buttons answer 403 for anybody who lacks it.
+  // The fleet-model narrowing is the newer decision and wins the merge:
+  // both lists carry a driver's phone and licence.
   'driver-applications': FLEET_OPERATORS,
   // ADR-0044. SupportRequestPolicy — `drivers.manage`; the queue is about
   // the people who drive, and a client has no business in it.
   'support-requests': FLEET_OPERATORS,
+  // ADR-0045 §2. The endpoint is `viewAny` on Trip, which every role holds —
+  // so this is about *usefulness*, not permission: a Corporate Employee who
+  // requests rides and a Driver who does them have no part in reviewing the
+  // evidence behind a fare, and the server would serve them an empty queue
+  // anyway. Still reachable by URL, and still answering 200, because that is
+  // what the policy actually says.
+  'distance-review': ALL.filter((r) => r !== 'corporate_employee' && r !== 'driver'),
 }
 
 /**

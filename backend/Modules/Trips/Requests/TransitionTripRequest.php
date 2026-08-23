@@ -78,6 +78,12 @@ class TransitionTripRequest extends FormRequest
                 'integer',
                 'min:0',
             ],
+            // The handset's own measurement of the trip from its buffered
+            // pings, in kilometres (ADR-0045 §5). Optional: a console user
+            // and a handset that predates the field send none, and the
+            // provisional fare is priced from the odometer instead. It is a
+            // claim, not evidence — the resolver measures the trace itself.
+            'provisional_distance_km' => ['nullable', 'numeric', 'min:0', 'max:100000'],
             // PROJECT.md: "Driver-entered value plus a dashboard photo."
             //
             // Optional, not required. A camera that will not focus in the

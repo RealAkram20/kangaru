@@ -1,15 +1,22 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Trips\Controllers\HeldTripController;
 use Modules\Trips\Controllers\LivePositionController;
 use Modules\Trips\Controllers\OdometerPhotoController;
 use Modules\Trips\Controllers\TripController;
+use Modules\Trips\Controllers\TripDistanceController;
 use Modules\Trips\Controllers\TripEventController;
 use Modules\Trips\Controllers\TripLocationController;
 use Modules\Trips\Controllers\TripPlaceSuggestionController;
 use Modules\Trips\Controllers\TripRouteController;
 use Modules\Trips\Controllers\TripStopCandidateController;
 use Modules\Trips\Controllers\TripStopController;
+
+// ADR-0045: the distance review queue. **Before the resource**, or
+// `trips/{trip}` swallows it and the queue becomes a lookup for a trip whose
+// id is the string "distance-review".
+Route::get('trips/distance-review', [HeldTripController::class, 'index'])->name('trips.distance-review.index');
 
 Route::apiResource('trips', TripController::class)->only(['index', 'show', 'store']);
 Route::post('trips/{trip}/transitions', [TripController::class, 'transition'])->name('trips.transitions.store');
@@ -24,6 +31,11 @@ Route::get('trips/{trip}/stop-candidates', [TripStopCandidateController::class, 
 // The §10 follow-up the owner decided on 2026-08-22: when the register has
 // no answer, the server (never the handset) asks a public geocoder.
 Route::get('trips/{trip}/place-suggestions', [TripPlaceSuggestionController::class, 'index'])->name('trips.place-suggestions.index');
+
+// ADR-0045: the distance evidence behind a trip's billed figure, and the one
+// act the review queue performs — lifting a hold, with a reason.
+Route::get('trips/{trip}/distance', [TripDistanceController::class, 'index'])->name('trips.distance.index');
+Route::post('trips/{trip}/distance/clearance', [TripDistanceController::class, 'clear'])->name('trips.distance.clear');
 
 // The dashboard photo captured with each odometer reading (PROJECT.md's
 // anchor-client requirement). Streamed behind auth rather than served from

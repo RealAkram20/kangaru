@@ -5,10 +5,12 @@ import { AccessibilityInfo, Animated, ScrollView, StyleSheet, Text, View } from 
 import { useDuty, useSetDuty } from '../duty/queries';
 import type { TripsStackParams } from '../navigation/types';
 import {
+  collectNow,
   confirmationNote,
   earningsAnnouncement,
   earningsRows,
   primaryAction,
+  settlementDifferenceNote,
   type EarningsRow,
 } from '../trips/completion';
 import { useDriverStats, useTrip } from '../trips/queries';
@@ -84,6 +86,11 @@ export function RideCompleteScreen({ route, navigation }: Props) {
 
   const rows = earningsRows(trip);
   const pending = confirmationNote(trip);
+  // What the passenger owes at the kerb while the office measures the trip,
+  // and — once it has — why what was taken may differ from what settled
+  // (ADR-0045 §5).
+  const collect = collectNow(trip);
+  const difference = settlementDifferenceNote(trip);
 
   const onDuty = duty?.on_duty ?? false;
   const primary = primaryAction(onDuty);
@@ -128,6 +135,20 @@ export function RideCompleteScreen({ route, navigation }: Props) {
 
       <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
         <Celebration />
+
+        {collect !== null && (
+          <View
+            style={styles.collect}
+            accessible
+            accessibilityLabel={`Collect ${collect.amount}. ${collect.note}`}
+          >
+            <Text style={styles.collectLabel}>Collect now</Text>
+            <Text style={styles.collectAmount}>{collect.amount}</Text>
+            <Text style={styles.collectNote}>{collect.note}</Text>
+          </View>
+        )}
+
+        {difference !== null && <Notice tone="info" message={difference} />}
 
         {rows === null ? (
           <Notice tone="info" message={pending ?? ''} />
@@ -331,6 +352,25 @@ function WalletCard({ value, note, pending }: { value: string; note: string; pen
 }
 
 const styles = StyleSheet.create({
+  collect: {
+    backgroundColor: colors.infoTint,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    gap: spacing.xs,
+  },
+  collectLabel: {
+    ...typography.label,
+    color: colors.info,
+  },
+  collectAmount: {
+    ...typography.title,
+    color: colors.text,
+  },
+  collectNote: {
+    ...typography.caption,
+    color: colors.textMuted,
+    lineHeight: 20,
+  },
   body: {
     padding: spacing.md,
     paddingTop: spacing.sm,

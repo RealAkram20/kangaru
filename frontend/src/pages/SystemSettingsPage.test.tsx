@@ -55,6 +55,17 @@ const SETTINGS = {
     trace_route_ceiling_percent: 30,
     variance_threshold_percent: 10,
     odometer_max_km_per_trip: 2000,
+    // The measured-distance keys (ADR-0045), which arrived on this branch with
+    // the origin/main merge. `TrackingSection` reads all ten, and a fixture
+    // carrying only the original four rendered six inputs as the string
+    // "undefined" — which fails validation, so Save never fired and the test
+    // read as though the button were broken.
+    route_tolerance_percent: 20,
+    corridor_floor_percent: 80,
+    corridor_ceiling_percent: 130,
+    detour_cap_percent: 40,
+    resolution_grace_seconds: 900,
+    held_blocks_billing: true,
   },
   mail: {
     enabled: false,
@@ -431,12 +442,19 @@ describe('SystemSettingsPage', () => {
 
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith('/settings/tracking', {
-        // The whole group travels, so the two keys this section does not edit
-        // are still sent at their current values rather than being dropped.
+        // The whole group travels, so every key this section holds is sent at
+        // its current value rather than being dropped — including the six the
+        // measured-distance work added, which this test does not edit.
         odometer_enabled: true,
         trace_route_ceiling_percent: 30,
         variance_threshold_percent: 10,
         odometer_max_km_per_trip: 300,
+        route_tolerance_percent: 20,
+        corridor_floor_percent: 80,
+        corridor_ceiling_percent: 130,
+        detour_cap_percent: 40,
+        resolution_grace_seconds: 900,
+        held_blocks_billing: true,
       }),
     )
   })

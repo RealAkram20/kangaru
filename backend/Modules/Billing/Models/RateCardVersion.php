@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Modules\Billing\Enums\RoundingMode;
 use Modules\Fleet\Models\Zone;
+use Modules\Trips\Distance\DistancePolicy;
 
 /**
  * One immutable priced revision of a rate card.
@@ -44,6 +45,7 @@ use Modules\Fleet\Models\Zone;
  * @property string|null $night_starts_at
  * @property string|null $night_ends_at
  * @property int $night_multiplier_bp
+ * @property DistancePolicy $distance_policy Which witness this version bills on (ADR-0045 §3).
  * @property CarbonInterface|null $locked_at
  * @property-read RateCard $rateCard
  * @property-read Collection<int, RateCardRate> $rates
@@ -71,6 +73,7 @@ class RateCardVersion extends Model
         'night_starts_at',
         'night_ends_at',
         'night_multiplier_bp',
+        'distance_policy',
         'created_by_user_id',
         'notes',
     ];
@@ -83,6 +86,7 @@ class RateCardVersion extends Model
             'rounding_mode' => RoundingMode::class,
             'free_waiting_minutes' => 'integer',
             'night_multiplier_bp' => 'integer',
+            'distance_policy' => DistancePolicy::class,
             'locked_at' => 'datetime',
         ];
     }

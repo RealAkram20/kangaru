@@ -9,6 +9,7 @@ use Modules\Billing\Enums\DocumentType;
 use Modules\Billing\Models\Invoice;
 use Modules\Billing\Models\InvoiceLine;
 use Modules\Billing\Models\RateCard;
+use Modules\Billing\Pricing\DistanceGate;
 use Modules\Billing\Pricing\PricedLine;
 use Modules\Billing\Pricing\RateCardNotConfiguredException;
 use Modules\Billing\Pricing\RateCardResolver;
@@ -47,6 +48,7 @@ class InvoiceService
         private readonly DocumentNumberGenerator $numbers,
         private readonly InvoiceRepository $invoices,
         private readonly TripStateMachine $trips,
+        private readonly DistanceGate $distances,
     ) {}
 
     /**
@@ -202,6 +204,13 @@ class InvoiceService
         CarbonInterface $issuedAt,
     ): Invoice {
         $version = $this->rateCards->resolveFor($trip, $rateCard);
+
+        // ADR-0045 §2: a trace-priced contract does not invoice an unresolved
+        // trip, and no contract invoices a held one. Refused here, inside the
+        // lock and before a number is drawn, so a refusal costs no sequence
+        // gap.
+        $this->distances->assertBillable($trip, $version);
+
         $price = $this->pricing->price($trip, $version);
 
         $invoice = Invoice::create([

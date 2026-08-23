@@ -8,6 +8,14 @@ limit and billing email).
 
 **Companion to:** ADR-0058, ADR-0059.
 
+**Amended by ADR-0062 (23 August 2026)** in one respect: §5's *"Not Kangaru"*
+and the Consequences' *"Kangaru does not approve client onboarding"* are about
+**approving a second fleet joining an existing client**, and they stand. They
+were written as though head office had no onboarding role at all, and that is
+now false — **head office may create a corporate client, naming the fleet that
+will serve them.** Path B, the `requested` status and the client's approval are
+unchanged.
+
 ## Context
 
 ADR-0055 settled that a corporate client may be served by several fleets, and

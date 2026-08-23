@@ -13,6 +13,7 @@ use Modules\Billing\Models\RateCard;
 use Modules\Billing\Models\RateCardRate;
 use Modules\Billing\Models\RateCardVersion;
 use Modules\Billing\Models\RateCardZoneRate;
+use Modules\Trips\Distance\DistancePolicy;
 
 /**
  * Creates rate cards and adds versions to them.
@@ -148,6 +149,8 @@ class RateCardService
                 'night_starts_at' => $data['night_starts_at'] ?? null,
                 'night_ends_at' => $data['night_ends_at'] ?? null,
                 'night_multiplier_bp' => $data['night_multiplier_bp'] ?? RateCardVersion::NO_MULTIPLIER_BP,
+                'distance_policy' => DistancePolicy::tryFrom((string) ($data['distance_policy'] ?? ''))
+                    ?? DistancePolicy::ODOMETER,
                 'created_by_user_id' => $actor->id,
                 'notes' => $data['notes'] ?? null,
             ]);

@@ -45,6 +45,10 @@ const SupportRequestsPage = page(() => import('../pages/SupportRequestsPage'), '
 const LiveMapPage = page(() => import('../pages/LiveMapPage'), 'LiveMapPage')
 const TripsPage = page(() => import('../pages/TripsPage'), 'TripsPage')
 const TripRecordPage = page(() => import('../pages/trips/TripRecordPage'), 'TripRecordPage')
+const DistanceReviewPage = page(
+  () => import('../pages/DistanceReviewPage'),
+  'DistanceReviewPage',
+)
 const VehiclesPage = page(() => import('../pages/VehiclesPage'), 'VehiclesPage')
 const LandingPage = page(() => import('../pages/public/LandingPage'), 'LandingPage')
 const OrderPage = page(() => import('../pages/public/OrderPage'), 'OrderPage')
@@ -164,6 +168,10 @@ export const router = createBrowserRouter([
       // timeline, the invoice. Unguarded like /trips: `TripPolicy::view`
       // decides, and a client's user reads their own trips here.
       { path: 'trips/:id', element: <TripRecordPage /> },
+      // ADR-0045 §2: the distance review queue. Not behind `RequireNavAccess`
+      // for the reason Roles is not — the queue is `viewAny` on Trip, which a
+      // custom role can hold, and the page shows whatever the API serves.
+      { path: 'distance-review', element: <DistanceReviewPage /> },
       // Not behind RequireNavAccess, deliberately: /live-positions is scoped
       // server-side through the trips the caller may see, so every role gets
       // a correct answer here — a corporate employee sees their own ride,

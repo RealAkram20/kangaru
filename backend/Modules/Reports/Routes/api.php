@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Reports\Controllers\DistanceReportController;
 use Modules\Reports\Controllers\FinancialReportController;
 use Modules\Reports\Controllers\FleetReportController;
 use Modules\Reports\Controllers\ReportExportController;
@@ -19,6 +20,10 @@ Route::get('reports/vehicles', [FleetReportController::class, 'vehicles'])->name
 // Rows are periods, so this one is bounded by the granularity rather than
 // by the fleet — a year grouped daily is 366 rows.
 Route::get('reports/financial', [FinancialReportController::class, 'index'])->name('reports.financial.index');
+// ADR-0045: the measured-distance shadow report. On-screen only, not
+// exportable — the operator's instrument for judging the trace before the
+// fare is priced from it.
+Route::get('reports/distance', [DistanceReportController::class, 'index'])->name('reports.distance.index');
 
 // Exports are their own resource rather than a verb on the report: they are
 // produced asynchronously, outlive the request that asked for them, and are

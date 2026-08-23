@@ -1,7 +1,5 @@
 # Measured distance — the plan
 
-> **Unchanged by `docs/platform-plan.md`.** Fare integrity sequences independently of the `K` packages.
-
 **Status:** plan, agreed in principle by the owner on 2026-08-18. Nothing here
 is built. Building starts with the ADR in Phase 1 and not before.
 **Decides:** the fare is priced from the **measured trace**, checked against a
