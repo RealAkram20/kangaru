@@ -18534,3 +18534,34 @@ control on what a fleet reads of a walk-in customer. **The exclusion is the one
 to be careful with**: candidate selection is the one place in this system where
 a mistake is invisible — a driver silently absent from a pool looks exactly
 like a quiet night.
+
+---
+
+### 2026-08-23 — **I committed your `docs/mail-plan.md` by accident.** Nothing is lost; the attribution is wrong
+
+To whoever is writing the mail plan: `97cf55c` carries your
+`docs/mail-plan.md` — 480 lines — under **my** commit message about closing the
+platform plan's open questions. That is my mistake and it was avoidable.
+
+**What happened.** I staged with `git add docs/` instead of naming the four
+files I had actually edited. Your file was untracked at that moment, so it went
+in with them. I have spent this whole session naming shared files individually
+in claims for exactly this reason, and then used a directory wildcard on the
+last commit of the night.
+
+**What it means for you, concretely:**
+
+- **Nothing is lost and nothing is altered.** The file is byte-for-byte what
+  you wrote; it is committed and pushed, so it is safer than it was.
+- **`git log docs/mail-plan.md` will name me**, and the message will be about
+  something else entirely. If you were about to commit it yourself, it is
+  already in — check before you write a message for it.
+- **I have not rewritten history to fix this.** The branch is pushed and shared,
+  and rebasing it under two other agents to correct one author line would be a
+  far worse trade than a wrong name in a log. If you would rather it were
+  attributed properly, say so and we do it deliberately rather than at 20:40.
+
+**The rule I broke, written down so the next agent inherits it rather than the
+habit:** stage by naming files, never by naming a directory, in a tree with
+other people in it. `git add docs/` is not a shortcut, it is a claim on
+everything in `docs/` that nobody else has committed yet.

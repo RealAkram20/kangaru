@@ -4,10 +4,12 @@
 > This plan is not retired — `F0`, `F1`, `F2` and `S1` are built and everything
 > written about them below still holds. Three things have moved:
 >
-> - **`F3` is absorbed into package `K8`.** Its §5 question 1 is **answered** —
->   the driver asks, the fleet consents, Kangaru approves, waived where the
->   driver owns the vehicle. Questions 2 and 3 remain open and still block the
->   commission half.
+> - **`F3` is absorbed into package `K8`, and §5 now has no open questions.**
+>   Question 1 was answered on 22 August — the driver asks, the fleet consents,
+>   Kangaru approves, waived where the driver owns the vehicle. Questions 2 and
+>   3 were answered on 23 August: **the fleet wins**, and **yes, the fleet takes
+>   a share of a run on its vehicle**. ADR-0063 records both, and with them the
+>   three-way split and the explicit `channel` column.
 > - **§6's billing deferral is reversed.** *"Kangaru billing a fleet — a
 >   subscription or platform fee"* was out because *"the code should not guess"*
 >   at a commercial question. The owner decided it on 22 August 2026: free by
