@@ -7,6 +7,7 @@ use Modules\Dispatch\Console\AdvanceDispatchOffers;
 use Modules\Drivers\Console\AwardWeeklyBonuses;
 use Modules\Drivers\Console\PruneAbandonedApplicationDocuments;
 use Modules\Fleet\Console\CloseStaleDutySessions;
+use Modules\Administration\Console\SendInvitationReminders;
 use Modules\Reports\Console\PruneReportExports;
 use Modules\Trips\Console\MaintainTripLocationPartitions;
 
@@ -173,3 +174,21 @@ Schedule::command(MaintainTripLocationPartitions::class)
     // on the same table is not a race this needs to find out about.
     ->withoutOverlapping()
     ->onOneServer();
+
+/*
+ | One reminder a day, for invitations lapsing inside the next 24 hours
+ | (mail plan A2).
+ |
+ | 09:00 rather than overnight, deliberately. The reader's remedy is to open a
+ | link and choose a password, and something that arrives at 03:00 is at the
+ | bottom of the inbox by the time anybody is at a desk. Nothing here is
+ | time-critical enough to justify waking a queue at an odd hour.
+ |
+ | `withoutOverlapping` because the send is per invitation and a slow mail
+ | server on a bad morning could otherwise have two runs reminding the same
+ | people twice. There is no `reminded_at` column to stop it: the window is the
+ | idempotence, and the window only works if the command runs once.
+ */
+Schedule::command(SendInvitationReminders::class)
+    ->dailyAt('09:00')
+    ->withoutOverlapping();

@@ -64,14 +64,16 @@ class OperatorController extends Controller
         /** @var array{name: string, slug?: string|null, owner_name: string, owner_email: string} $input */
         $input = $request->validated();
 
-        $operator = $this->operators->onboard($input);
+        $operator = $this->operators->onboard($input, $request->user());
 
         $operator->load('plan')
             ->loadCount(['users', 'drivers', 'vehicles', 'contracts as clients_count']);
 
         return ApiResponse::success(
             new OperatorResource($operator),
-            'Fleet onboarded. Its owner can be invited to sign in.',
+            // Was "can be invited", which was aspirational: nothing sent an
+            // invitation and the owner could not sign in at all.
+            'Fleet onboarded. Its owner has been emailed an invitation.',
             201,
         );
     }

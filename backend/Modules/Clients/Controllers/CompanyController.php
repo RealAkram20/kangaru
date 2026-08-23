@@ -54,9 +54,17 @@ class CompanyController extends Controller
         $company = $this->onboarding->onboard(
             $request->safe()->except('operator_id'),
             $request->contractingOperator(),
+            // Named in the invitation email. A stranger asking you to set a
+            // password is a phishing email; a colleague's name is something
+            // the reader can check.
+            $request->user(),
         );
 
-        return ApiResponse::success(new CompanyResource($company), 'Client onboarded.', 201);
+        return ApiResponse::success(
+            new CompanyResource($company),
+            'Client onboarded. Their administrator has been emailed an invitation.',
+            201,
+        );
     }
 
     public function update(UpdateCompanyRequest $request, Company $company): JsonResponse

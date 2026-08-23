@@ -235,12 +235,22 @@ abstract class KangaruNotification extends LaravelNotification implements Should
             // deployment that renamed itself in the settings screen renamed
             // itself everywhere, and a button that still says KangaruRide
             // would be the one place it did not take.
-            actionLabel: $url === null ? null : __('mail.layout.open', [
-                'app' => app(SettingsService::class)->get('branding', 'app_name'),
-            ]),
+            actionLabel: $url === null ? null : __('mail.layout.open', ['app' => $this->appName()]),
             // Absolute for mail: a relative path in an email client goes
             // nowhere. The SPA's own base URL, not the API's.
             actionUrl: $url === null ? null : rtrim((string) config('app.frontend_url'), '/').$url,
         );
+    }
+    /**
+     * The platform's name, from settings rather than from a constant.
+     *
+     * A deployment that renamed itself in the settings screen renamed itself
+     * everywhere, and an email still saying KangaruRide would be the one place
+     * it did not take. Resolved at send time, which is safe because these are
+     * queued and the container is available.
+     */
+    protected function appName(): string
+    {
+        return (string) app(SettingsService::class)->get('branding', 'app_name');
     }
 }

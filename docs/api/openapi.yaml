@@ -274,6 +274,88 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/invitations/{token}:
+    get:
+      summary: >
+        Whose account an invitation link opens (mail plan M2). Unauthenticated:
+        the caller has an account and no way into it, which is the whole
+        subject of the request. The 48-character token is the only credential
+        and it is single use. Throttled 20/min/IP: an idempotent read that
+        reveals nothing new to the holder of the token does not need the
+        accept route's budget, and at 5/min it tripped while somebody was
+        simply looking at the page.
+      description: >
+        200 with the name, address and expiry so the accept page can say whose
+        account is being opened rather than presenting a bare password form.
+        404 NOT_FOUND for an unknown or truncated token, 409
+        INVITATION_ALREADY_USED for one that has been accepted (go and sign
+        in), 410 INVITATION_EXPIRED for one that lapsed (ask for a new one).
+        The three are distinct because they send the reader to three different
+        places, and nothing is revealed that the holder of a valid token did
+        not already have.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 64 }
+      responses:
+        '200':
+          description: The account this link opens.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string, nullable: true }
+                  data:
+                    type: object
+                    required: [name, email, expires_at]
+                    additionalProperties: false
+                    properties:
+                      name: { type: string }
+                      email: { type: string, format: email }
+                      expires_at: { type: string, format: date-time }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/invitations/{token}/accept:
+    post:
+      summary: >
+        Sets the password and burns the link (mail plan M2). Unauthenticated,
+        throttled 5/min/IP, single use. The password floor is the same 8 a
+        reset sets, because an invitation that accepted a weaker one would be
+        the weakest door into a brand new account.
+      description: >
+        Answers a message rather than a session. Signing the caller in here
+        would skip the second factor ADR-0008 requires of a Super Admin or a
+        Finance officer, and those are exactly the roles most likely to be
+        invited. A suspended account answers 410 like an expired link, so the
+        response does not confirm the suspension to whoever holds the token.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password, password_confirmation]
+              additionalProperties: false
+              properties:
+                password: { type: string, minLength: 8 }
+                password_confirmation: { type: string }
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOnly'
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/auth/social:
     post:
       summary: >
@@ -7950,6 +8032,8 @@ components:
         # worth losing safely, because a second confirm would move the retention
         # clock the closure is measured from.
         - CLOSURE_REQUEST_ALREADY_DECIDED
+        - INVITATION_ALREADY_USED
+        - INVITATION_EXPIRED
 
     TripStatus:
       enum:

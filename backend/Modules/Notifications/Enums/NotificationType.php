@@ -147,6 +147,24 @@ enum NotificationType: string
      * notice about somebody else using your account has to reach you
      * **without** you signing in to the thing they were using.
      */
+    /**
+     * Somebody has an account and no way into it yet (mail plan M2).
+     *
+     * The first email this platform ever sends a new corporate client admin
+     * or a new fleet owner, and until it existed those two were **accounts
+     * nobody could sign into**: onboarding minted `Str::password(32)` and
+     * discarded it, and both call sites carried a comment promising an
+     * invitation that was never built.
+     *
+     * Because it is somebody's first contact, it is also the email most
+     * likely to be read as a phishing attempt. That is why the footer names
+     * the account and the reason, and why the body names who created it.
+     */
+    case ACCOUNT_INVITED = 'account.invited';
+
+    /** The link lapses tomorrow and nobody has used it (mail plan A2). */
+    case ACCOUNT_INVITATION_EXPIRING = 'account.invitation_expiring';
+
     case ACCOUNT_ACCESSED_BY_SUPPORT = 'account.accessed_by_support';
 
     public function label(): string
@@ -165,6 +183,8 @@ enum NotificationType: string
             self::DRIVER_SUPPORT_ANSWERED => 'Report answered',
             self::DRIVER_DOCUMENT_REVIEWED => 'Document checked',
             self::DRIVER_APPLICATION_DOCUMENT_REJECTED => 'Document needs resending',
+            self::ACCOUNT_INVITED => 'Invitation to sign in',
+            self::ACCOUNT_INVITATION_EXPIRING => 'Invitation expiring',
             self::ACCOUNT_ACCESSED_BY_SUPPORT => 'Support opened your account',
         };
     }
@@ -275,6 +295,17 @@ enum NotificationType: string
             // Mail alone. See the case's own note: an applicant has no account
             // to notify and no device to push to.
             self::DRIVER_APPLICATION_DOCUMENT_REJECTED => [NotificationChannel::MAIL],
+            /*
+             * **Mail alone**, and for the plainest reason on this list: the
+             * recipient cannot sign in. That is the entire subject of the
+             * message. An in-app row would be filed in an inbox they have no
+             * way to open, and there is no handset to push to because the
+             * account has never been used.
+             *
+             * Same shape as `DRIVER_CLOSURE_ANSWERED`, arrived at from the
+             * other end of an account's life.
+             */
+            self::ACCOUNT_INVITED, self::ACCOUNT_INVITATION_EXPIRING => [NotificationChannel::MAIL],
             // Both, deliberately. The in-app row is the record they can go
             // back to; the mail is what reaches them without signing in to the
             // account somebody else was just holding.
@@ -341,6 +372,15 @@ enum NotificationType: string
              * invisible, which is the thing the notification exists to
              * prevent.
              */
+            /*
+             * There is no other way in. A preference that switched this off
+             * would leave somebody holding an account they can never open,
+             * and they would have had to be signed in to set the preference,
+             * which they cannot be.
+             */
+            self::ACCOUNT_INVITED,
+            self::ACCOUNT_INVITATION_EXPIRING => true,
+
             self::ACCOUNT_ACCESSED_BY_SUPPORT => true,
 
             default => false,

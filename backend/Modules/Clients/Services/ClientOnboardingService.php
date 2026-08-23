@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Support\Access\AccessContext;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Modules\Administration\Services\InvitationService;
 use Modules\Clients\Models\Company;
 
 /**
@@ -53,9 +54,9 @@ class ClientOnboardingService
      *
      * @param  array<string, mixed>  $attributes
      */
-    public function onboard(array $attributes, int $operatorId): Company
+    public function onboard(array $attributes, int $operatorId, ?User $invitedBy = null): Company
     {
-        return DB::transaction(function () use ($attributes, $operatorId) {
+        return DB::transaction(function () use ($attributes, $operatorId, $invitedBy) {
             $tenant = Tenant::create([
                 'name' => $attributes['trading_name'] ?? $attributes['legal_name'],
                 'slug' => $this->slugFor($attributes['legal_name']),
@@ -78,7 +79,24 @@ class ClientOnboardingService
                 'credit_limit_minor' => $attributes['credit_limit_minor'] ?? null,
             ]);
 
-            $this->firstAdministrator($tenant, $attributes);
+            $admin = $this->firstAdministrator($tenant, $attributes);
+
+            /*
+             * The invitation this method's own docblock has been promising.
+             *
+             * *"invited rather than given a password ... the invitation is how
+             * they get in"* was true of the intent and false of the code: no
+             * invitation existed anywhere in the repo, and the onboarding
+             * dialog told the operator "They are invited to set their own
+             * password" while nothing was sent. A corporate client admin was
+             * an active account nobody could open.
+             *
+             * Inside the transaction with the other four rows, on the same
+             * argument the class already makes about them: a client whose
+             * administrator can never sign in is the same shape as ADR-0059
+             * §5's fleet with nobody to act as.
+             */
+            app(InvitationService::class)->invite($admin, $invitedBy);
 
             return $company;
         });

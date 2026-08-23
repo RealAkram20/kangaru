@@ -68,6 +68,46 @@ return [
     ],
 
     /*
+     | A1. The first email most users of this platform ever receive, and the
+     | one most likely to be mistaken for a phishing attempt.
+     |
+     | Every line here is doing work against that. It names who created the
+     | account, it names the company, it shows the address the account signs
+     | in as, and it says plainly what happens if the reader was not expecting
+     | it. Remove any one of those and it reads like a stranger asking for a
+     | password.
+     |
+     | What it deliberately does not say: anything about what KangaruRide is.
+     | The reader either works at a company that just signed up, or the email
+     | is not for them, and a paragraph of product copy helps neither.
+     */
+    'invited' => [
+        'subject' => 'Set your :app password',
+        'heading' => 'Your account is ready',
+        'opening' => 'An account was created for you on :app for :company.',
+        'opening_by' => ':inviter created a :app account for you at :company.',
+        'body' => 'Choose a password and you are in.',
+        'action' => 'Set your password',
+        'fact_company' => 'Company',
+        'fact_email' => 'Signs in as',
+        'fact_expires' => 'Link expires',
+        'footnote' => 'If you were not expecting this, ignore it and nothing happens.',
+    ],
+
+    /*
+     | A2. One reminder, and never a second. It carries no link because it
+     | genuinely cannot: the token is a digest in the database and the
+     | plaintext was destroyed when the first email was built.
+     */
+    'invitation_expiring' => [
+        'subject' => 'Your invitation expires tomorrow',
+        'heading' => 'Your invitation expires tomorrow',
+        'body' => 'The link in your invitation email stops working tomorrow.',
+        'lost' => 'If you no longer have that email, ask the person who set up your account to send it again.',
+        'fact_expires' => 'Expires',
+    ],
+
+    /*
      | The settings screen test send. Not a notification, so it has no type
      | and nobody can switch it off.
      */

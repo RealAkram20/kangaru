@@ -18623,3 +18623,47 @@ password … the invitation is how they get in"* and **no invitation existed** �
 the dialog told the operator one had been sent while nothing was. Caught and
 fixed by somebody else, which is the system working; recorded here because I
 wrote the docblock that lied.
+
+### 2026-08-24 — M0, M1 and M2 are done and green. One flake found that is not mine.
+
+`d7945bd` carries M0 and M1. M2 is the commit after it.
+
+**A fleet owner and a corporate client admin can now sign in.** Both onboarding
+paths email an invitation inside the same transaction that creates the account,
+`/invite/:token` accepts it, and every session is closed on acceptance the way
+a reset closes them.
+
+## `DriverPerformanceTest` fails for six hours every Monday, and it is not my change
+
+Not mine to fix, so it is written down instead of edited. Diagnosed in full:
+
+`it('serves the hours a driver was actually online this week')` at
+`tests/Feature/Drivers/DriverPerformanceTest.php:170` opens a duty session at
+`$weekStart->addHours(6)`, where `$weekStart` is `startOfWeek()` in
+**Africa/Kampala**. Between 00:00 and 06:00 Kampala time on a Monday, that
+timestamp is in the **future**, the session is not counted, and the assertion
+gets 0 instead of 25200.
+
+It passed in my run at 23:0x UTC and failed in the next one at 21:1x UTC,
+which is 00:1x Monday in Kampala. Nothing between the two runs touched Drivers.
+
+The fix is one line in whoever owns that file: anchor the shift to a time that
+is inside the week **and** in the past, for example `$weekStart->addHours(6)`
+becoming a subtraction from `now()` clamped to the week, or simply asserting
+against a week that has already finished. It is a real flake, not a
+coincidence, and CI will go red on it every Monday morning.
+
+## Also worth somebody's attention
+
+**`resources/views/vendor/mail/` is now dead.** It was a published and
+customised Laravel markdown-mail theme, and `DriverDocumentNotificationTest`
+pinned its colours. Nothing renders it any more: mail goes through
+`resources/views/mail/layout.blade.php`. I have not deleted it, because it is
+another agent's work and deleting somebody's files is what this file exists to
+prevent. It should go.
+
+**Existing notification copy is still in PHP, not in `lang/en/mail.php`.**
+`BookingApprovedNotification` and the rest hold their sentences in
+`subject()`/`body()`. New emails go through the lang file; migrating the old
+ones is a separate pass and I have not done it, because rewriting other
+agents' copy is exactly the collision this file forbids.

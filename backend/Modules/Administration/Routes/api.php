@@ -5,6 +5,7 @@ use Modules\Administration\Controllers\AuditLogController;
 use Modules\Administration\Controllers\AuthController;
 use Modules\Administration\Controllers\ColleagueController;
 use Modules\Administration\Controllers\ImpersonationController;
+use Modules\Administration\Controllers\InvitationController;
 use Modules\Administration\Controllers\PasswordResetController;
 use Modules\Administration\Controllers\PublicLegalController;
 use Modules\Administration\Controllers\PublicSettingsController;
@@ -42,6 +43,31 @@ Route::post('/auth/password/forgot', [PasswordResetController::class, 'forgot'])
 Route::post('/auth/password/reset', [PasswordResetController::class, 'reset'])
     ->middleware('throttle:5,1')
     ->name('auth.password.reset');
+
+// The invitation link (mail plan M2). Unauthenticated for the same reason the
+// two routes above are: the caller has an account and no way into it, which is
+// the entire subject of the request. The 48-character token in the URL is the
+// only credential, and it is single use.
+//
+// Neither route sends an email, so the resource being defended is guessing
+// attempts rather than outbound mail, and guessing is already hopeless against
+// 48 random characters. The throttles are here because
+// `docs/security-gate.md` requires one on every public route and a route that
+// is safe today should not be the one nobody notices when it changes.
+//
+// The read is 20/min and the write is 5/min, and the asymmetry was measured
+// rather than reasoned. At 5/min the read tripped while a person was simply
+// looking at the page: React's StrictMode fires the effect twice in
+// development, so two reloads exhausted it and the invitee was told to wait a
+// minute before they could see whose account it was. An idempotent read that
+// reveals nothing new to the holder of the token does not need the write's
+// budget.
+Route::get('/invitations/{token}', [InvitationController::class, 'show'])
+    ->middleware('throttle:20,1')
+    ->name('invitations.show');
+Route::post('/invitations/{token}/accept', [InvitationController::class, 'accept'])
+    ->middleware('throttle:5,1')
+    ->name('invitations.accept');
 
 // "Continue with Google / Facebook" (ADR-0028 §3). Unauthenticated — it IS
 // authentication — and throttled at the login rate, because that is what it

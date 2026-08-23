@@ -35,6 +35,7 @@ const DriverApplicationsPage = page(
 const DriversPage = page(() => import('../pages/DriversPage'), 'DriversPage')
 const InvoicesPage = page(() => import('../pages/InvoicesPage'), 'InvoicesPage')
 const LoginPage = page(() => import('../pages/LoginPage'), 'LoginPage')
+const AcceptInvitePage = page(() => import('../pages/AcceptInvitePage'), 'AcceptInvitePage')
 const MfaEnrolmentPage = page(() => import('../pages/MfaEnrolmentPage'), 'MfaEnrolmentPage')
 const NotificationsPage = page(() => import('../pages/NotificationsPage'), 'NotificationsPage')
 const OrderRequestsPage = page(() => import('../pages/OrderRequestsPage'), 'OrderRequestsPage')
@@ -100,6 +101,17 @@ export const router = createBrowserRouter([
     element: (
       <Standalone>
         <LoginPage />
+      </Standalone>
+    ),
+  },
+  // Public, and standalone like /login: the reader has an account and no way
+  // into it, so the shell's navigation would be a wall of links that all
+  // answer 403. Mail plan M2.
+  {
+    path: '/invite/:token',
+    element: (
+      <Standalone>
+        <AcceptInvitePage />
       </Standalone>
     ),
   },

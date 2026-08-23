@@ -90,6 +90,13 @@ function routeCensus(): array
         'PATCH api/v1/auth/password' => 'C',
         'POST api/v1/auth/password/forgot' => 'D',
         'POST api/v1/auth/password/reset' => 'D',
+        // The invitation link (mail plan M2). Public for the same reason the
+        // two above are: the caller has an account and no way into it, which
+        // is the entire subject of the request. The 48-character token is the
+        // credential, it is single use, and neither route sends an email, so
+        // there is no outbound-mail cost to defend the way the forgot leg has.
+        'GET api/v1/invitations/{token}' => 'D',
+        'POST api/v1/invitations/{token}/accept' => 'D',
         'POST api/v1/auth/social' => 'D',
         'GET api/v1/public/legal' => 'D',
         'GET api/v1/public/settings' => 'D',
@@ -460,7 +467,11 @@ it('has a census row for every API route and a route for every census row', func
     // 211: the fleet-company register (K2, ADR-0059) — index, store, show,
     // update. No destroy: a fleet that leaves is suspended, because six
     // operational tables carry `operator_id`.
-    expect(count($router))->toBe(228);
+    // 230: mail plan M2's two invitation routes, 2026-08-24. Public, and the
+    // reason they are worth the tripwire firing: until they existed, a fleet
+    // owner and a corporate client admin were active accounts nobody could
+    // sign into, because onboarding minted a random password and discarded it.
+    expect(count($router))->toBe(230);
 });
 
 it('uses only the four idioms, and files sixteen routes as public', function () {
@@ -479,7 +490,8 @@ it('uses only the four idioms, and files sixteen routes as public', function () 
      * id in the URL — the row is whichever one the claim ticket resolves to,
      * so there is nothing to enumerate by changing a path segment.
      */
-    expect($idioms['D'])->toBe(16);
+    // 16 -> 18: mail plan M2's two invitation routes.
+    expect($idioms['D'])->toBe(18);
     expect($idioms['B'])->toBe(3);
 });
 
@@ -507,7 +519,8 @@ it('authenticates every route that is not filed as public, and throttles every o
     // 13 -> 16: ADR-0048 §4's three applicant KYC verbs, all throttled at
     // ADR-0027 §5's 5/min/IP. `$guarded` is unchanged because all three are
     // public by design, not by omission.
-    expect($public)->toBe(16);
+    // 16 -> 18: the two invitation routes, both throttled at 5/min/IP.
+    expect($public)->toBe(18);
     // 181: the two ADR-0045 stop routes, both authenticated.
     // 183: the two application-document reads, both authenticated. They serve
     // somebody's identity document, so being counted here is the point.
