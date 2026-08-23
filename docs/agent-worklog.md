@@ -18048,3 +18048,64 @@ Say so here and I will start `K6`. It is unclaimed and unstarted, and it grew
 this afternoon: **ADR-0062** now has head office onboarding clients too, with
 a required fleet picker, and a corporate-client register at Kangaru level with
 an allow-listed resource. The entry above this one has the detail.
+
+---
+
+### 2026-08-23 — Claiming: K6, onboarding a corporate client (ADR-0060, ADR-0062)
+
+**Status:** claimed, in progress. The merge is committed (`bc30ffd`) and green,
+so the tree is mine to write in again. `K2` and `K5` are done, which is what
+this depends on.
+
+**What today's code actually does, so the size of this is honest.**
+`CompanyService::create()` takes a `tenant_id` the caller must already have,
+writes **no `operator_client` row**, and creates **no login for the client**.
+The result is a company profile attached to a tenant, served by no fleet, that
+nobody at the client can sign into — and it never asks for a registration
+number, so `K5`'s duplicate defence is bypassed entirely. This package
+replaces that call, it does not extend it.
+
+**Files I own (new):**
+
+- `backend/Modules/Clients/Services/ClientOnboardingService.php` + test
+- `backend/Modules/Clients/Controllers/ContractController.php` + test
+- `backend/Modules/Clients/Requests/OnboardClientRequest.php`
+- `backend/Modules/Clients/Requests/RequestContractRequest.php`
+- `backend/Modules/Clients/Resources/ContractResource.php`
+- `backend/Modules/Clients/Policies/OperatorClientPolicy.php`
+- `frontend/src/pages/clients/OnboardClientDialog.tsx`
+- `frontend/src/pages/company/OurFleets.tsx` + test
+- `frontend/src/pages/CorporateClientsPage.tsx` + test
+
+**Shared files, exact edits:**
+
+| File | Edit |
+|---|---|
+| `app/Models/OperatorClient.php` | two constants, `REQUESTED` and `ENDED`, and a scope |
+| `Clients/Services/CompanyService.php` | `create()` delegates to the onboarding service |
+| `Clients/Routes/api.php` | one block |
+| `Clients/Policies/CompanyPolicy.php` | the level dimension ADR-0062 §2 needs |
+| `Clients/Resources/CompanyResource.php` | **allow-list** what the Kangaru register serves |
+| `docs/api/openapi.yaml` | my own paths only |
+| `RoutePolicyCensusTest.php` | my rows, and the counts from **218/202/188** |
+| `lib/menu/kangaru.ts` | one entry, Corporate clients |
+| `lib/menu/menu.test.ts` | `FLEETS_OWN` loses `companies` — it is both levels' now, differently |
+| `routes/router.tsx` | one route block |
+
+**The rule this is built around, and the one I will be judged on:**
+
+> **A `requested` contract grants no read whatsoever.**
+
+If it grants any read at all, any fleet holding any TIN can read any client and
+the isolation model is defeated by a form. **And I have to be careful how I
+test it**, because `operator_client` scopes no read *today* — an active
+contract grants nothing either, so a naive "requested sees nothing" test would
+pass for the wrong reason. The test has to prove `requested` sees nothing **in
+whatever way `active` sees something**, which means `K6` must first make an
+active contract mean something. That is the real work here, not the forms.
+
+**Two things I am not doing:** no fleet switcher for a client on two contracts
+(deferred on purpose — a control with one option), and no change to who
+approves. Head office is still not in the approval path.
+
+**Not touched:** `mobile/`, `Modules/Trips`, `Modules/Billing`.
