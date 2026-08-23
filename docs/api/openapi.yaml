@@ -5262,6 +5262,45 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/clients/lookup:
+    get:
+      summary: Is this company already on Kangaru?
+      description: >
+        ADR-0060 §3. Answers a boolean and nothing else — no name, no address,
+        no contact, no status, no count, and no indication of which fleet or
+        how many fleets serve them. A fleet onboarding a client asks this
+        first, before any other field is enabled, because finding out at save
+        time is the moment when the pressure to work around the check is
+        highest and the easiest workaround is a slightly different spelling of
+        the name. But "is Centenary on Kangaru?" is not a question one fleet
+        may ask about another fleet's client, so the body carries one key.
+        Exact match only: no search, no prefix, no listing.
+      parameters:
+        - name: registration_number
+          in: query
+          required: true
+          schema: { type: string, maxLength: 100 }
+      responses:
+        '200':
+          description: Whether a client already holds that registration number.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [exists]
+                    additionalProperties: false
+                    properties:
+                      exists: { type: boolean }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/kangaru/overview:
     get:
       summary: What head office sees when it signs in.

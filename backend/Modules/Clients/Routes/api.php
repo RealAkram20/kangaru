@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Clients\Controllers\ClientLookupController;
 use Modules\Clients\Controllers\ClientPlaceController;
 use Modules\Clients\Controllers\ClientRouteController;
 use Modules\Clients\Controllers\ClientRoutePreviewController;
@@ -11,6 +12,14 @@ use Modules\Clients\Controllers\CompanyController;
 // ADR-0011's route census holds the spec and the route table to the same
 // list. Nothing external consumes the API yet, so removing the verb now is
 // free; once the driver app ships it would be a breaking change.
+// Is this company already on Kangaru? (ADR-0060 §3.) A boolean and nothing
+// else — no name, no address, no hint of who serves them. Throttled not
+// because a registration number is guessable, but because an endpoint that
+// answers yes/no about other people's rows should never be free to hammer.
+Route::get('clients/lookup', [ClientLookupController::class, 'show'])
+    ->middleware('throttle:30,1')
+    ->name('clients.lookup');
+
 Route::apiResource('companies', CompanyController::class)->except(['update']);
 Route::patch('companies/{company}', [CompanyController::class, 'update'])->name('companies.update');
 
