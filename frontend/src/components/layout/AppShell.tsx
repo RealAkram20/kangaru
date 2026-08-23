@@ -1,6 +1,7 @@
 import { Suspense } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../auth/useAuth'
+import type { User } from '../../types/auth'
 import { IconButton } from '../core/IconButton'
 import { RouteFallback } from '../feedback/RouteFallback'
 import { filterSections, navLabel, navPath } from '../../lib/navigation'
@@ -11,6 +12,23 @@ import { SidebarNav } from '../navigation/SidebarNav'
 import { useSidebarState } from '../navigation/useSidebarState'
 import { Topbar } from '../navigation/Topbar'
 import { useTheme } from '../../theme/useTheme'
+
+/**
+ * The name in the topbar chip: whose console this is.
+ *
+ * Ordered by how specific the answer is. A client's own name beats anything
+ * derived; a fleet's name is next; and only an account belonging to neither
+ * is Kangaru itself. The `tenant_id` fallback at the end is for a response
+ * from an API older than `tenant_name`, which would otherwise show nothing.
+ */
+function whoseConsole(user: User): string {
+  if (user.tenant_name != null) return user.tenant_name
+  if (user.operator_name != null) return user.operator_name
+  if (user.access_level === 'kangaru') return 'Kangaru'
+  if (user.tenant_id !== null) return `Client ${user.tenant_id}`
+
+  return 'Platform'
+}
 
 /** Sidebar item ids mapped to their route. Every item now has one. */
 const NAV_PATHS: Partial<Record<string, string>> = {
@@ -174,10 +192,17 @@ export function AppShell() {
           title={page.title}
           onOpenProfile={() => navigate('/profile')}
           onSignOut={() => void logout()}
-          // Whose console this is. A client's user sees their tenant's
-          // name; platform staff, who have no tenant (ADR-0006), see the
-          // platform. An API older than `tenant_name` still gets a chip.
-          tenant={user ? (user.tenant_name ?? (user.tenant_id === null ? 'Platform' : `Tenant ${user.tenant_id}`)) : undefined}
+          // Whose console this is — and it has to answer for all three
+          // levels, not two. `tenant_id` is null for a **fleet** account and
+          // null for a **Kangaru** account alike, so keying off it alone said
+          // "Platform" to both: a Super Admin at Shanitah and a Super Admin at
+          // head office got an identical topbar and two different menus, which
+          // is the worst way round.
+          //
+          // A client sees their own organisation, a fleet sees theirs, and
+          // head office sees Kangaru. An API older than these fields still
+          // gets a chip rather than none.
+          tenant={user ? whoseConsole(user) : undefined}
           user={
             user
               ? { name: user.name, role: user.role_label ?? user.role, email: user.email }

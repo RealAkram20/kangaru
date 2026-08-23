@@ -32,6 +32,20 @@ class UserResource extends JsonResource
             // exists to catch. `/auth/*` and `/users*` load it; a nested
             // actor does not carry it and does not need to.
             'tenant_name' => $this->whenLoaded('tenant', fn () => $this->tenant?->name),
+            // The fleet's display name — "Shanitah General Enterprises Ltd".
+            //
+            // The companion to `tenant_name`, and it exists because the chrome
+            // could not tell two of the three levels apart: `tenant_id` is
+            // null for a **fleet** account and null for a **Kangaru** account
+            // alike, so both rendered the same "Platform" chip. A Super Admin
+            // at Shanitah and a Super Admin at head office saw an identical
+            // topbar and two different menus, which is the worst way round.
+            //
+            // `whenLoaded` for the same reason as `tenant_name`: this resource
+            // is nested on every booking, trip event and audit row, and a lazy
+            // load per row is the N+1 `CrossClientQueueLabellingTest` exists
+            // to catch.
+            'operator_name' => $this->whenLoaded('operator', fn () => $this->operator?->name),
             // Which level this account belongs to (ADR-0055 §4). The console
             // chooses **which menu exists** from this before role narrows it
             // (ADR-0059 §1) — a fleet's dispatch board is not a thing in

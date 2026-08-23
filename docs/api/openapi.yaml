@@ -7662,6 +7662,17 @@ components:
         tenant_name:
           type: ['string', 'null']
           description: The client's display name ("Centenary Bank"); null for platform staff, who have none (ADR-0006). Present on /auth/* and /users* responses; a nested actor (a booking's requester, an audit row's user) omits it.
+        operator_name:
+          type: ['string', 'null']
+          description: >
+            The fleet's display name ("Shanitah General Enterprises Ltd"); null
+            for a client's people and for Kangaru's own staff, who belong to no
+            fleet (ADR-0055). The chrome needs it because tenant_id is null for
+            a fleet account and null for a Kangaru account alike - without it
+            the topbar said "Platform" to both, so a Super Admin at Shanitah
+            and a Super Admin at head office got an identical chip and two
+            different menus. Present on /auth/* and /users*; a nested actor
+            omits it.
         name: { type: string }
         email: { type: string }
         phone:

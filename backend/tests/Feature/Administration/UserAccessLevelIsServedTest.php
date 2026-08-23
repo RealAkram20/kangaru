@@ -65,6 +65,48 @@ it('distinguishes the levels rather than sending one word for all of them', func
 });
 
 /**
+ * The chrome has to tell all three levels apart, and `tenant_id` cannot do it:
+ * it is null for a fleet account and null for a Kangaru account alike, so the
+ * topbar said "Platform" to both. A Super Admin at Shanitah and a Super Admin
+ * at head office got an identical chip and two different menus.
+ */
+it('names the fleet a person works for, so the chrome can say whose console this is', function () {
+    $operator = Operator::query()->firstOrFail();
+
+    $user = User::factory()->create([
+        'role' => UserRole::SUPER_ADMIN,
+        'tenant_id' => null,
+        'operator_id' => $operator->id,
+        'access_level' => AccessLevel::FLEET,
+    ]);
+
+    $this->actingAs($user, 'sanctum')
+        ->getJson('/api/v1/auth/me')
+        ->assertOk()
+        ->assertJsonPath('data.operator_name', $operator->name)
+        ->assertJsonPath('data.tenant_name', null);
+});
+
+/**
+ * Head office belongs to no fleet, so the field is null rather than absent —
+ * and the console reads that as "this is Kangaru" rather than as missing data.
+ */
+it('names no fleet for head office, which belongs to none', function () {
+    $user = User::factory()->create([
+        'role' => UserRole::SUPER_ADMIN,
+        'tenant_id' => null,
+        'operator_id' => null,
+        'access_level' => AccessLevel::KANGARU,
+    ]);
+
+    $this->actingAs($user, 'sanctum')
+        ->getJson('/api/v1/auth/me')
+        ->assertOk()
+        ->assertJsonPath('data.operator_name', null)
+        ->assertJsonPath('data.access_level', 'kangaru');
+});
+
+/**
  * `UserResource` is nested on bookings, trip events and audit rows as the
  * actor. `access_level` is a column rather than a relation, so it costs no
  * query there — but a resource that only sent it on `/auth/me` would leave

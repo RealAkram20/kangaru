@@ -9,6 +9,16 @@ export interface User {
    */
   tenant_name?: string | null
   /**
+   * The fleet's display name (ADR-0055). Null for a client's people and for
+   * Kangaru's own staff, who belong to no fleet.
+   *
+   * The chrome needs it because `tenant_id` is null for a fleet account and
+   * null for a Kangaru account alike — without this the topbar said
+   * "Platform" to both, and the only thing distinguishing Shanitah's Super
+   * Admin from head office's was a menu they had to already understand.
+   */
+  operator_name?: string | null
+  /**
    * Which of the levels this account belongs to (App\Enums\AccessLevel,
    * ADR-0055 §4) — `kangaru`, `fleet`, `client` or `applicant`.
    *
