@@ -2,8 +2,8 @@
 
 namespace Modules\Notifications\Notifications;
 
-use Illuminate\Notifications\Messages\MailMessage;
 use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Mail\MailContent;
 
 /**
  * Asks an applicant to send one document again (ADR-0057 §3).
@@ -96,7 +96,7 @@ class ApplicationDocumentRejectedNotification extends KangaruNotification
     /**
      * Null, and overridden below.
      *
-     * `KangaruNotification::toMail()` builds an action button by joining this
+     * `KangaruNotification::mailContent()` builds an action button by joining this
      * to the SPA's base URL, and the applicant is not going to the console.
      * Returning the resend link here would point them at a staff application.
      */
@@ -127,21 +127,29 @@ class ApplicationDocumentRejectedNotification extends KangaruNotification
      * The ticket branch remains for the applicants who have no account, and
      * only they see a link.
      */
-    public function toMail(object $notifiable): MailMessage
+    public function mailContent(): MailContent
     {
-        $mail = (new MailMessage)
-            ->subject($this->subject())
-            ->line($this->body());
+        $content = parent::mailContent();
 
         if ($this->resendUrl === null) {
-            return $mail->line(
-                'Open the KangaruRide driver app and sign in with the email and password you '
-                .'used to apply. Your documents are on the first screen.'
+            return new MailContent(
+                subject: $content->subject,
+                heading: $content->heading,
+                paragraphs: [
+                    ...$content->paragraphs,
+                    'Open the KangaruRide driver app and sign in with the email and password you '
+                    .'used to apply. Your documents are on the first screen.',
+                ],
             );
         }
 
-        return $mail
-            ->action('Send it again', $this->resendUrl)
-            ->line('This link works for the next 24 hours. If it expires, the office will call you.');
+        return new MailContent(
+            subject: $content->subject,
+            heading: $content->heading,
+            paragraphs: $content->paragraphs,
+            actionLabel: 'Send it again',
+            actionUrl: $this->resendUrl,
+            footnote: 'This link works for the next 24 hours. If it expires, the office will call you.',
+        );
     }
 }

@@ -289,4 +289,61 @@ enum NotificationType: string
             ],
         };
     }
+    /**
+     * Whether a recipient may switch this email off.
+     *
+     * Required means **security or money**: something that changes how an
+     * account is reached, or something somebody owes or is owed. A person who
+     * has silenced their password reset has silenced their only way back in,
+     * and a client who has silenced their invoices has not stopped owing the
+     * money.
+     *
+     * Everything else is optional, and the default is optional on purpose.
+     * AGENTS.md asks for an argument before a notification type exists at
+     * all; a type that additionally claims nobody may decline it needs a
+     * second one. Adding a case here is that argument being made.
+     *
+     * `MailPreference::allows()` reads this at send time rather than trusting
+     * a stored row, so a type that *becomes* required cannot stay silenced by
+     * a preference somebody set while it was optional.
+     */
+    public function mailIsRequired(): bool
+    {
+        return match ($this) {
+            /*
+             * A refusal is required and an approval is not, which looks
+             * asymmetric and is not. An approved booking is confirmed again
+             * by the car arriving. A rejected one is confirmed by nothing:
+             * the only signal is the absence of transport at 8am, by which
+             * time the meeting is missed.
+             */
+            self::BOOKING_REJECTED => true,
+
+            /*
+             * A closure answer reaches an account that has just stopped
+             * working, so there is no in-app row to fall back on. Switching
+             * off the only channel would mean nobody is told their account
+             * closed.
+             */
+            self::DRIVER_CLOSURE_ANSWERED => true,
+
+            /*
+             * Both document decisions gate whether somebody may drive, and a
+             * rejected document that goes unread is a driver who turns up to
+             * a shift they cannot work.
+             */
+            self::DRIVER_DOCUMENT_REVIEWED,
+            self::DRIVER_APPLICATION_DOCUMENT_REJECTED => true,
+
+            /*
+             * Somebody else held this account. ADR-0056 makes that legitimate
+             * and visible; a switch that hid it would make it legitimate and
+             * invisible, which is the thing the notification exists to
+             * prevent.
+             */
+            self::ACCOUNT_ACCESSED_BY_SUPPORT => true,
+
+            default => false,
+        };
+    }
 }

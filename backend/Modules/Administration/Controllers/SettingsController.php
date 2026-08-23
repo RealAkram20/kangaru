@@ -12,6 +12,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Modules\Administration\Models\Setting;
 use Modules\Administration\Services\SettingsService;
+use Modules\Notifications\Mail\MailContent;
+use Modules\Notifications\Mail\MailRenderer;
 use Throwable;
 
 /**
@@ -120,14 +122,42 @@ class SettingsController extends Controller
             ['mailer' => $mailer, 'from_address' => $from, 'from_name' => $fromName] =
                 $this->settings->smtpMailer();
 
-            $mailer->raw(
-                'This is a test email from your KangaruRide platform settings. If you are reading it, SMTP is configured correctly.',
-                function ($message) use ($from, $fromName, $to) {
-                    $message->to($to)
-                        ->from($from, $fromName)
-                        ->subject('KangaruRide test email');
-                },
+            $renderer = app(MailRenderer::class);
+            $appName = $renderer->appName();
+
+            /*
+             * The real template, not a line of raw text.
+             *
+             * The point of a test send is to answer "will the emails this
+             * platform sends arrive and look right", and a plain-text probe
+             * answers only the first half. A branded template can fail on its
+             * own terms — a logo path that 404s, a client that mangles the
+             * layout, a dark-mode inversion that hides the button — and none
+             * of that shows up in a message that has none of those things in
+             * it.
+             */
+            $content = new MailContent(
+                subject: __('mail.test.subject', ['app' => $appName]),
+                heading: __('mail.test.heading'),
+                paragraphs: [__('mail.test.body')],
+                facts: [
+                    __('mail.test.fact_host') => (string) $this->settings->get('mail', 'host'),
+                    __('mail.test.fact_from') => $from,
+                ],
+                footnote: __('mail.test.footnote'),
             );
+
+            ['html' => $html, 'text' => $text] = $renderer->render(
+                $content,
+                __('mail.test.reason', ['app' => $appName]),
+            );
+
+            $mailer->html($html, function ($message) use ($from, $fromName, $to, $content, $text) {
+                $message->to($to)
+                    ->from($from, $fromName)
+                    ->subject($content->subject)
+                    ->text($text);
+            });
         } catch (Throwable $e) {
             return ApiResponse::error(
                 ErrorCode::MAIL_DELIVERY_FAILED,

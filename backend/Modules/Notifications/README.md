@@ -238,6 +238,59 @@ point. Distinct from `APP_URL`, which is this API — a relative path is
 useless in an email client and `APP_URL` would send the recipient to a JSON
 endpoint.
 
+## Email
+
+One path, and the reason it is worth stating is that there used to be two.
+
+`NotificationChannel::MAIL` resolved to the string `mail`, which is Laravel's
+default mailer, which is `MAIL_MAILER`, which is `log`. Every email on this
+channel was written to `storage/logs/laravel.log` and delivered to nobody, for
+the whole life of the feature, while `PasswordResetService` sent real mail
+built from the settings the owner saved. A green test send in the settings
+screen vouched for none of it.
+
+`SettingsMailChannel` is now the only path. It builds from
+`SettingsService::smtpMailer()`, which is the same code the settings screen's
+test send uses, so a green test there proves the path that matters.
+
+### The three gates, each silent
+
+A notification is raised by something else finishing. None of those may fail
+because email is off, so each gate returns and the in-app row is what the
+recipient still gets.
+
+1. no address on the account;
+2. `mailConfigured()` is false, which is the platform's default state;
+3. `MailPreference::allows()` is false, which required types ignore.
+
+### What a template may be
+
+`MailContent` is the shape: one heading, a few sentences, an optional block of
+facts, at most one action. A notification that cannot fit is trying to be two
+emails. `KangaruNotification::mailContent()` derives a sensible default from
+`subject()`, `body()` and `url()`, so a new notification gets a branded email
+for free; override it when the email genuinely differs from the in-app row,
+which it usually does by wanting facts rather than more prose.
+
+The shell is `resources/views/mail/layout.blade.php` and its plain text
+partner. Both are rendered by `MailRenderer`, which is separate from the
+channel so a template can be rendered without sending anything.
+
+**Run `php artisan mail:preview` and open the files.** The first version of the
+shell passed its tests while rendering an invisible header band and links at
+2.08:1. Tests could not see either; a browser saw both at once.
+
+### mail_deliveries
+
+Append only, one row per attempted send, written *before* the transport is
+touched so a killed worker leaves a visible gap rather than nothing. It is how
+support answers "did the client get the invoice", and it is the only place the
+SMTP account's daily cap becomes visible when a digest sweep runs into it.
+
+`operator_id` is on the row so the mail plan §6 rule is a query rather than an
+incident report: **an email about a fleet's operations goes to that fleet and
+to nobody else.**
+
 ## Dependencies
 
 - `Modules\Bookings` — `Booking` and its two decision events.

@@ -12,6 +12,7 @@ use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverDocument;
 use Modules\Drivers\Services\DriverDocumentService;
 use Modules\Notifications\Enums\NotificationChannel;
+use Modules\Notifications\Mail\MailRenderer;
 use Modules\Notifications\Notifications\DriverDocumentReviewedNotification;
 
 /**
@@ -154,7 +155,12 @@ it('keeps the rejection reason out of the push body, the in-app row and the push
 
     // The email is the one channel allowed to carry it, and it must —
     // "Rejected" with nothing after it is how somebody stops using a feature.
-    $mail = $notification->toMail($user)->render()->toHtml();
+    //
+    // Rendered through MailRenderer rather than Laravel's MailMessage: the
+    // mail channel now builds from the SMTP settings the owner saved, because
+    // the framework's default mailer here was `log` and every one of these
+    // emails went to a file. Same property under test, new renderer.
+    $mail = app(MailRenderer::class)->render($notification->mailContent(), 'reason')['html'];
 
     expect($mail)->toContain('too dark');
 });
@@ -173,12 +179,21 @@ it('sends a branded email with none of the framework filler', function (): void 
     $document = app(DriverDocumentService::class)
         ->verify(fileDocument($driver), reviewStaff());
 
-    $html = DriverDocumentReviewedNotification::for($document)->toMail($user)->render()->toHtml();
+    $rendered = app(MailRenderer::class)->render(
+        DriverDocumentReviewedNotification::for($document)->mailContent(),
+        'reason',
+    );
 
-    // Colours only the KangaruRide theme produces, inlined by the CSS
-    // inliner onto elements this email actually has. Laravel's stock theme
-    // uses #18181b and #a1a1aa here, so these are the assertion that the
-    // theme resolved at all rather than silently falling back to it.
+    $html = $rendered['html'];
+
+    // Colours only the KangaruRide layout produces. Laravel's stock theme
+    // uses #18181b and #a1a1aa here, so these assert that our shell rendered
+    // at all rather than the framework's silently taking over.
+    //
+    // #1a2233 is DESIGN.md §3's "Text on light surfaces, primary". This
+    // assertion is why the shell has it: the first version used #293348,
+    // which that same table assigns to borders and disabled elements on navy,
+    // and nothing but this test would have noticed.
     $lower = strtolower($html);
 
     expect($lower)->toContain('#001028');   // brand navy, the header
@@ -192,6 +207,12 @@ it('sends a branded email with none of the framework filler', function (): void 
     expect($html)->not->toContain('Hello!');
     expect($html)->not->toContain('Regards');
     expect($html)->not->toContain('Whoops');
+
+    // The plain text half carries the same words. Spam filters score a
+    // multipart message with an auto-generated text part lower than one
+    // written on purpose, and a driver upcountry on a text-only mail app is a
+    // real population here rather than a hypothetical one.
+    expect($rendered['text'])->toContain('verified');
     expect($html)->not->toContain('All rights reserved');
 
     // And the message itself survived the trimming.

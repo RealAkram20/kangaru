@@ -4,11 +4,12 @@ namespace Modules\Notifications\Notifications;
 
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification as LaravelNotification;
+use Modules\Administration\Services\SettingsService;
 use Modules\Notifications\Channels\TenantDatabaseChannel;
 use Modules\Notifications\Enums\NotificationChannel;
 use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Mail\MailContent;
 
 /**
  * What every KangaruRide notification has to answer.
@@ -198,20 +199,48 @@ abstract class KangaruNotification extends LaravelNotification implements Should
         return array_map(fn (NotificationChannel $channel) => $channel->driver(), $channels);
     }
 
-    public function toMail(object $notifiable): MailMessage
+    /**
+     * What this notification's email says.
+     *
+     * The default is derived from the four things every notification already
+     * answers, so a subclass that has nothing special to say gets a properly
+     * branded email for free and adding a notification stays one small class.
+     * That is the same argument the rest of this base makes: keep the cost of
+     * a new type low so the decision stays about AGENTS.md's list rather than
+     * about the effort.
+     *
+     * Override it when the email genuinely differs from the in-app row. The
+     * two are not the same surface and pretending otherwise produces bad
+     * versions of both. An in-app row is read *inside* the product, next to
+     * the thing it describes, so it can be a fragment. An email arrives with
+     * no context at all, days later, in a list of forty other messages, and
+     * often on a phone. It usually needs a fact block; it never needs more
+     * prose.
+     *
+     * The action label is deliberately generic here. A subclass that knows
+     * what the reader is going to do should say so instead: "Upload it now"
+     * beats "Open in KangaruRide" every time, and a button whose label
+     * describes the destination rather than the task is a button people do not
+     * press.
+     */
+    public function mailContent(): MailContent
     {
-        $mail = (new MailMessage)
-            ->subject($this->subject())
-            ->line($this->body());
-
         $url = $this->url();
 
-        if ($url !== null) {
+        return new MailContent(
+            subject: $this->subject(),
+            heading: $this->subject(),
+            paragraphs: [$this->body()],
+            // The brand name comes from settings, not from a constant. A
+            // deployment that renamed itself in the settings screen renamed
+            // itself everywhere, and a button that still says KangaruRide
+            // would be the one place it did not take.
+            actionLabel: $url === null ? null : __('mail.layout.open', [
+                'app' => app(SettingsService::class)->get('branding', 'app_name'),
+            ]),
             // Absolute for mail: a relative path in an email client goes
             // nowhere. The SPA's own base URL, not the API's.
-            $mail->action('Open in KangaruRide', rtrim((string) config('app.frontend_url'), '/').$url);
-        }
-
-        return $mail;
+            actionUrl: $url === null ? null : rtrim((string) config('app.frontend_url'), '/').$url,
+        );
     }
 }

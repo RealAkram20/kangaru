@@ -24,6 +24,7 @@ use Modules\Dispatch\Console\AdvanceDispatchOffers;
 use Modules\Drivers\Console\AwardWeeklyBonuses;
 use Modules\Drivers\Console\PruneAbandonedApplicationDocuments;
 use Modules\Fleet\Console\CloseStaleDutySessions;
+use Modules\Notifications\Console\PreviewMail;
 use Modules\Reports\Console\PruneReportExports;
 use Modules\Trips\Console\MaintainTripLocationPartitions;
 use Modules\Trips\Console\ReplayTripDistance;
@@ -51,6 +52,7 @@ return Application::configure(basePath: dirname(__DIR__))
         CloseStaleDutySessions::class,
         PruneAbandonedApplicationDocuments::class,
         CreateKangaruStaff::class,
+        PreviewMail::class,
     ])
     ->withMiddleware(function (Middleware $middleware): void {
         // ---------------------------------------------------------------------

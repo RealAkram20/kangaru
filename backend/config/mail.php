@@ -18,6 +18,25 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Transport for the settings-built mailer
+    |--------------------------------------------------------------------------
+    |
+    | `SettingsService::smtpMailer()` builds its own mailer at send time from
+    | the SMTP details the owner saved, rather than from anything in this file.
+    | That is deliberate (ADR-0014): a boot-time read would make `migrate` on a
+    | fresh database depend on the table it is about to create.
+    |
+    | This key exists only so a test can reach that method without a mail
+    | server. `Mail::fake()` does not intercept `Mail::build()`, so the path
+    | was previously uncoverable. phpunit.xml sets it to `array`; leave it
+    | alone everywhere else.
+    |
+    */
+
+    'settings_transport' => env('MAIL_SETTINGS_TRANSPORT', 'smtp'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Mailer Configurations
     |--------------------------------------------------------------------------
     |
