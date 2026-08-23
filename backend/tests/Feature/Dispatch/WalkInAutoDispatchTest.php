@@ -11,7 +11,9 @@ use Modules\Bookings\Services\OrderRequestService;
 use Modules\Dispatch\Enums\DispatchOfferStatus;
 use Modules\Dispatch\Models\DispatchOffer;
 use Modules\Dispatch\Services\DispatchOfferService;
+use Modules\Dispatch\Services\WalkInRecommender;
 use Modules\Drivers\Models\Driver;
+use Modules\Drivers\Models\DriverWalkInContract;
 use Modules\Fleet\Support\DriverPresence;
 use Modules\Fleet\Support\DriverPresenceStore;
 use Modules\Trips\Enums\TripStatus;
@@ -33,6 +35,17 @@ function onDutyDriverAt(float $latitude, float $longitude, int $seats = 4): arra
     $user = User::factory()->create(['tenant_id' => null, 'role' => UserRole::DRIVER]);
     $driver = Driver::factory()->create(['user_id' => $user->id]);
     $vehicle = Vehicle::factory()->create(['seating_capacity' => $seats, 'status' => 'active']);
+
+    // ADR-0055 §5: the walk-in pool is on-duty drivers **holding an active
+    // contract**. Every driver in this file is here to test dispatch rather
+    // than contracts, so they arrive with one — the alternative is a helper
+    // named `onDutyDriverAt` that quietly produces a driver nobody may offer
+    // anything to, and eight tests failing for a reason none of them is about.
+    DriverWalkInContract::create([
+        'driver_id' => $driver->id,
+        'operator_id' => $driver->operator_id,
+        'status' => DriverWalkInContract::ACTIVE,
+    ]);
 
     $store = app(DriverPresenceStore::class);
     $store->setDuty($driver->id, true, $vehicle->id);
@@ -524,4 +537,57 @@ it('does not show a captain search over a self-drive rental', function () {
         ->getJson('/api/v1/customer/rides/active')
         ->assertOk()
         ->assertJsonPath('data', null);
+});
+
+/*
+|--------------------------------------------------------------------------
+| Who is in the pool at all (ADR-0055 §5)
+|--------------------------------------------------------------------------
+*/
+
+/**
+ * **Asserted in both directions on purpose.**
+ *
+ * "The uncontracted driver is absent" passes on an empty pool, a broken
+ * presence store, or a recommender that returns nothing at all — and candidate
+ * selection is the one place in this system where a mistake is invisible: a
+ * driver silently missing from a pool looks exactly like a quiet night, and
+ * nothing anywhere errors. So the same driver is shown **present with a
+ * contract and absent without one**, which no amount of general breakage can
+ * fake.
+ */
+it('offers walk-in work only to a driver who holds a live contract', function () {
+    [, $driver] = onDutyDriverAt(0.3486, 32.5825);
+    $order = walkInOrder();
+
+    $inPool = fn () => app(WalkInRecommender::class)
+        ->forOrderRequest($order->refresh())
+        ->contains(fn ($candidate) => $candidate->driver->id === $driver->id);
+
+    // With the contract the helper gave them.
+    expect($inPool())->toBeTrue();
+
+    // Withdraw it, and only it.
+    DriverWalkInContract::query()->where('driver_id', $driver->id)
+        ->update(['status' => DriverWalkInContract::REFUSED]);
+
+    expect($inPool())->toBeFalse();
+});
+
+/**
+ * A fleet that refuses consent must not be overruled by silence — which is
+ * what "no contract check" amounted to: a driver whose fleet said no was
+ * offered walk-in work exactly as if it had said yes.
+ */
+it('leaves out a driver whose request is still waiting on somebody', function () {
+    [, $driver] = onDutyDriverAt(0.3486, 32.5825);
+    $order = walkInOrder();
+
+    foreach ([DriverWalkInContract::REQUESTED, DriverWalkInContract::AWAITING_KANGARU] as $pending) {
+        DriverWalkInContract::query()->where('driver_id', $driver->id)->update(['status' => $pending]);
+
+        expect(app(WalkInRecommender::class)->forOrderRequest($order->refresh())
+            ->contains(fn ($candidate) => $candidate->driver->id === $driver->id))
+            ->toBeFalse("a {$pending} contract should not put a driver in the pool");
+    }
 });
