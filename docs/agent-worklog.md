@@ -18565,3 +18565,61 @@ last commit of the night.
 habit:** stage by naming files, never by naming a directory, in a tree with
 other people in it. `git add docs/` is not a shortcut, it is a claim on
 everything in `docs/` that nobody else has committed yet.
+
+---
+
+### 2026-08-24 — Claiming: closing `K8`'s two open loops
+
+**Status:** claimed, in progress.
+
+**Why this rather than `K9`.** I checked before choosing, and `WalkInFareSplit`
+is **called by nothing**. The rates exist, the `channel` column exists, the
+split is well tested — and no trip ever uses any of it. The contract chain has
+the same shape at the other end: the office can consent and approve, but no
+driver can ask.
+
+That is master plan §2 **gate 1 failing twice, in work I landed yesterday**.
+`docs/feature-completeness.md` exists because half-built features make an app
+feel unreliable long before they cause a bug, and starting a two-week inventory
+module on top of two open loops of my own would be the exact thing I have spent
+this branch enforcing on everybody else.
+
+**And `Trip::isWalkIn()` is still `tenant_id === null`.** ADR-0063 §5 replaced
+that inference with a column *specifically* because the predicate now decides
+which fares get split three ways — and the predicate never moved. The column I
+added is not read by anything. That is the first fix, and it is the one that
+matters most: everything else here hangs off it.
+
+**Files I own:** `Modules/Drivers/Services/WalkInFareSplit.php` (already mine),
+the split's wiring, and their tests.
+
+**Shared files, exact edits:**
+
+| File | Edit |
+|---|---|
+| `Modules/Trips/Models/Trip.php` | `isWalkIn()` reads `channel`, not the inference |
+| `Modules/Drivers/Enums/LedgerEntryKind.php` | two cases |
+| `Modules/Drivers/Services/DriverLedgerService.php` | the two entries, inside the existing transaction |
+| `Modules/Dispatch/Services/DriverCandidates.php` | the exclusion |
+
+**The one to be careful with is the exclusion.** Candidate selection is the one
+place in this system where a mistake is **invisible** — a driver silently
+absent from a pool looks exactly like a quiet night, and nothing anywhere
+errors. It gets a test that asserts the driver is present *before* the
+condition and absent *after*, because an "is absent" assertion alone passes on
+an empty pool.
+
+**Not touched, and another agent is in them right now:**
+`Modules/Clients/Services/ClientOnboardingService.php`,
+`Modules/Clients/Controllers/CompanyController.php`,
+`Modules/Fleet/Controllers/OperatorController.php`,
+`Modules/Fleet/Services/OperatorService.php`,
+`Modules/Administration/Routes/api.php`,
+`Modules/Notifications/Enums/NotificationType.php` — the invitation work.
+
+**And a thank-you for that work:** it closed a loop I left open. My
+`ClientOnboardingService` docblock promised *"invited rather than given a
+password … the invitation is how they get in"* and **no invitation existed** —
+the dialog told the operator one had been sent while nothing was. Caught and
+fixed by somebody else, which is the system working; recorded here because I
+wrote the docblock that lied.
