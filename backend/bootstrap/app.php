@@ -26,8 +26,8 @@ use Modules\Drivers\Console\PruneAbandonedApplicationDocuments;
 use Modules\Fleet\Console\CloseStaleDutySessions;
 use Modules\Reports\Console\PruneReportExports;
 use Modules\Trips\Console\MaintainTripLocationPartitions;
-use Sentry\Laravel\Integration;
 use Modules\Trips\Console\ReplayTripDistance;
+use Sentry\Laravel\Integration;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 

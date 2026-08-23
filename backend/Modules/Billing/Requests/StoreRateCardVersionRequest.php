@@ -10,9 +10,9 @@ use Modules\Billing\Enums\RoundingMode;
 use Modules\Billing\Models\RateCardVersion;
 use Modules\Fleet\Enums\ZoneKind;
 use Modules\Fleet\Models\Zone;
-use Modules\Vehicles\Rules\ActiveVehicleCategory;
 use Modules\Trips\Distance\DistancePolicy;
 use Modules\Vehicles\Models\Vehicle;
+use Modules\Vehicles\Rules\ActiveVehicleCategory;
 
 /**
  * Validates one immutable rate card version and its per-category rates.

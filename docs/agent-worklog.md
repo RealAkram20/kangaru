@@ -17975,3 +17975,76 @@ both `tsc` clean.** Three flakes surfaced across sweeps
 every-format export, and the colleague email one already pinned) — each
 passes in isolation and on rerun; they are order-dependent and somebody
 should give them a claim of their own.
+
+---
+
+### 2026-08-23 — **The merge is green. It is staged and uncommitted, and it is yours to commit.**
+
+You cleared the last markers. I verified the result rather than assume it, and
+fixed four things it had broken. **I have committed nothing** — `MERGE_HEAD` is
+still present, so any commit I made would land your entire merge under my
+message. That is yours to do.
+
+## Where it stands
+
+| | |
+|---|---|
+| Backend | **1639 passed**, 0 failed |
+| Frontend | **625 passed**, 0 failed |
+| `tsc -b --force` | clean |
+| Pint | clean |
+| Larastan level 8 | clean |
+| ESLint | clean |
+
+## Four things the merge broke, and what I did
+
+**1. Four routes from `main` had no census row.** `GET reports/distance`,
+`GET trips/distance-review`, `GET trips/{trip}/distance`,
+`POST trips/{trip}/distance/clearance`. I read each controller rather than
+guess the idiom — all four use `$this->authorize()`, so all four are **A** —
+and bumped the counts **214/198/184 → 218/202/188**. This is the arithmetic I
+warned about two entries up.
+
+**2. The real semantic collision, which git could not see.**
+`MeasuredDistanceBillingTest` builds a trip with `Trip::factory()` under a
+**client** context. `RecordsActingFleet` fills `operator_id` from the
+`AccessContext`, which for a client binding is null — so the trip carried no
+fleet, and `InvoiceService` refused it with *"names no fleet"* (ADR-0055 §6)
+**before** reaching the 409 the test is actually about.
+
+Your feature and the fleet model are both correct; the fixture predates one of
+them. Fixed by naming the fleet whose driver ran it,
+`$ctx['driver']->operator_id`, with the reason in a comment so nobody deletes
+it as noise.
+
+**3. `SystemSettingsPage.test.tsx`'s tracking fixture had four keys; your
+`TrackingSection` reads ten.** The six missing ones rendered as the string
+`"undefined"`, which fails validation, so **Save never fired** and the test
+read as though the button were broken. My file, your shape change — I added
+the six measured-distance keys to the fixture and to the assertion.
+
+**4. `docs/api/openapi.yaml`'s `tracking` required-list.** Reported already:
+neither side had all seventeen keys. I took the list from your resolved
+`SettingsService::catalogue()` rather than either side of the conflict.
+
+**5. Pint, on four files the resolution left with CRLF** —
+`AppServiceProvider.php`, `bootstrap/app.php`,
+`StoreRateCardVersionRequest.php`, `Trip.php`, plus the pre-existing
+`CrossTenantAnswers404Test.php`. Formatting only: line endings, import order,
+and operator spacing. Three files show a one-line diff each. **Check it is
+what you meant before you commit** — I reformatted your resolutions and I
+would rather you glanced at it than trusted me.
+
+## One thing I could not verify
+
+Three tests failed on one run and passed on the next with no change in
+between — two document-encryption cases and an export-pruning one. **Order- or
+time-dependent, not merge damage**, but I am naming it rather than reporting a
+clean sweep I only saw once. Worth a second run before you commit.
+
+## When you have committed
+
+Say so here and I will start `K6`. It is unclaimed and unstarted, and it grew
+this afternoon: **ADR-0062** now has head office onboarding clients too, with
+a required fleet picker, and a corporate-client register at Kangaru level with
+an allow-listed resource. The entry above this one has the detail.
