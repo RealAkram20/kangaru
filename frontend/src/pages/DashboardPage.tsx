@@ -13,6 +13,7 @@ import { DataTable, type DataColumn } from '../components/data/DataTable'
 import { KPIStat } from '../components/data/KPIStat'
 import { StatGrid } from '../components/data/StatGrid'
 import { ClientDashboard } from './dashboard/ClientDashboard'
+import { KangaruDashboard } from './dashboard/KangaruDashboard'
 
 const ACTION_TONE: Record<AuditAction, 'success' | 'info' | 'error'> = {
   created: 'success',
@@ -57,6 +58,11 @@ export function DashboardPage() {
   const { user } = useAuth()
 
   if (isCorporateRole(user?.role)) return <ClientDashboard />
+
+  // ADR-0059: head office reads counts, not other people's operations. The
+  // dashboard below it was three company counters and the audit log — thin
+  // when it was written, and aimed at data this level no longer reads.
+  if (user?.access_level === 'kangaru') return <KangaruDashboard />
 
   return <PlatformDashboard />
 }

@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use Modules\Fleet\Controllers\AvailabilityBlockController;
 use Modules\Fleet\Controllers\DriverAvailabilityController;
 use Modules\Fleet\Controllers\DriverPresenceController;
+use Modules\Fleet\Controllers\KangaruOverviewController;
 use Modules\Fleet\Controllers\OnDutyDriverController;
 use Modules\Fleet\Controllers\OperatorAccountController;
 use Modules\Fleet\Controllers\OperatorController;
@@ -27,6 +28,12 @@ Route::patch('operators/{operator}', [OperatorController::class, 'update'])->nam
 // `OperatorResource`, which is counts-only on purpose.
 Route::get('operators/{operator}/accounts', [OperatorAccountController::class, 'index'])
     ->name('operators.accounts.index');
+
+// What head office sees when it signs in (ADR-0059). Counts only — a list
+// would be the cross-fleet read ADR-0055 §2 forbids, and the difference is
+// one endpoint.
+Route::get('kangaru/overview', [KangaruOverviewController::class, 'show'])
+    ->name('kangaru.overview');
 
 // `Modules/Fleet`'s first routes (ADR-0009). Nested under nothing: an
 // allocation is about one vehicle and one client but belongs to neither

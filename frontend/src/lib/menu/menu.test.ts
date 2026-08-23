@@ -46,28 +46,42 @@ describe('the menu a level gets', () => {
   })
 })
 
-describe('K1 changes nothing anybody can see', () => {
+describe('what each level is offered', () => {
   /**
-   * The three lists agree **except** where a level genuinely owns something.
+   * The twelve entries `K4` took off head office's menu, and why each is
+   * gone: every one of them is a fleet's operation or a fleet's register, and
+   * ADR-0055 §2 leaves Kangaru reading none of it. They are **not hidden** —
+   * they do not exist at this level, which is the difference between a locked
+   * door and no door.
    *
-   * `K1` asserted they were identical, full stop. `K3` broke that on purpose
-   * by giving Kangaru the fleet-company register — a fleet has no register of
-   * its competitors, and a client has no view of the operators at all — so
-   * the guard narrows rather than dies.
-   *
-   * The point it keeps: a divergence has to be **declared here**, in the
-   * commit that creates it. `K4` removes twelve entries from `KANGARU_MENU`
-   * and this turns red until they are named, which is the conversation that
-   * should happen.
+   * Head office reaches all of it by acting as somebody at the fleet
+   * (ADR-0056), which is announced, time-boxed and in `audit_logs`.
    */
-  const LEVEL_ONLY = ['fleets']
+  const FLEETS_OWN = [
+    'bookings',
+    'dispatch',
+    'trips',
+    'live-map',
+    'routes',
+    'companies',
+    'vehicles',
+    'drivers',
+    'driver-applications',
+    'support-requests',
+    'invoices',
+    'rate-cards',
+  ]
 
-  const shared = (sections: { items: { id: string }[] }[]) =>
-    ids(sections).filter((id) => !LEVEL_ONLY.includes(id))
+  it('takes a fleet’s operations and registers off head office’s menu', () => {
+    for (const id of FLEETS_OWN) expect(ids(KANGARU_MENU)).not.toContain(id)
+  })
 
-  it('offers the same destinations at every level, bar the ones a level owns', () => {
-    expect(shared(FLEET_MENU)).toEqual(shared(KANGARU_MENU))
-    expect(shared(CLIENT_MENU)).toEqual(shared(KANGARU_MENU))
+  /**
+   * The other half, and the one that makes the first half safe: `K4` must not
+   * quietly remove these from the level that actually runs them.
+   */
+  it('leaves every one of them where a fleet can still reach it', () => {
+    for (const id of FLEETS_OWN) expect(ids(FLEET_MENU)).toContain(id)
   })
 
   it('gives the fleet register to head office and to nobody else', () => {
@@ -77,9 +91,19 @@ describe('K1 changes nothing anybody can see', () => {
   })
 
   /**
-   * The menu and the route must agree. A level that is offered the entry and
-   * refused the page — or worse, hidden from the entry and served the page —
-   * is the drift `canUseNavLevel` exists to prevent.
+   * Kangaru runs the walk-in economy directly — a walk-in has no contract and
+   * no fleet behind it, so the queue and the customers are head office's own
+   * work rather than somebody else's data.
+   */
+  it('keeps the walk-in economy with head office', () => {
+    expect(ids(KANGARU_MENU)).toContain('walk-ins')
+    expect(ids(KANGARU_MENU)).toContain('customers')
+  })
+
+  /**
+   * The menu and the route must agree. A level offered the entry and refused
+   * the page — or worse, hidden from the entry and served the page — is the
+   * drift `canUseNavLevel` exists to prevent.
    */
   it('refuses the register to every level but head office, by URL as well', () => {
     expect(canUseNavLevel('kangaru', 'fleets')).toBe(true)
@@ -88,14 +112,34 @@ describe('K1 changes nothing anybody can see', () => {
     expect(canUseNavLevel(undefined, 'fleets')).toBe(false)
   })
 
-  it('leaves role filtering exactly where it was', () => {
-    const admin = makeUser({ role: 'super_admin', access_level: 'kangaru' })
+  /**
+   * Both filters, in order (ADR-0059 §1). The **level** chooses the list and
+   * the **role** narrows it, and this pins that the second still bites after
+   * the first — a Dispatcher at a fleet gets the board, a Corporate Employee
+   * whose level also lists it does not.
+   */
+  it('still narrows by role after the level has chosen the list', () => {
+    const dispatcher = makeUser({ role: 'dispatcher', access_level: 'fleet', tenant_id: null })
     const employee = makeUser({ role: 'corporate_employee', access_level: 'client' })
 
-    // The role rules still bite through the level lookup: a Corporate
-    // Employee is not offered the dispatch board their level's list contains.
-    expect(ids(filterSections(menuFor(admin.access_level), admin))).toContain('dispatch')
+    expect(ids(filterSections(menuFor(dispatcher.access_level), dispatcher))).toContain('dispatch')
     expect(ids(filterSections(menuFor(employee.access_level), employee))).not.toContain('dispatch')
+  })
+
+  /**
+   * The whole point of `K4`, stated as one assertion: head office is offered
+   * a short menu of what it owns, and a fleet keeps the long one.
+   */
+  it('offers head office far less than a fleet, which is the point', () => {
+    const head = makeUser({ role: 'super_admin', access_level: 'kangaru', tenant_id: null })
+    const owner = makeUser({ role: 'fleet_owner', access_level: 'fleet', tenant_id: null })
+
+    const forHead = ids(filterSections(menuFor(head.access_level), head))
+    const forFleet = ids(filterSections(menuFor(owner.access_level), owner))
+
+    expect(forHead.length).toBeLessThan(forFleet.length)
+    expect(forHead).toContain('fleets')
+    expect(forFleet).not.toContain('fleets')
   })
 
   it('drops a section whose every item the role filtered away', () => {

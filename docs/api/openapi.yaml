@@ -5262,6 +5262,76 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/kangaru/overview:
+    get:
+      summary: What head office sees when it signs in.
+      description: >
+        Counts, and deliberately nothing else — every figure is a scalar.
+        ADR-0055 §2 leaves no account able to read every fleet's data in one
+        query, Super Admin included, so there is no list, no row and no name
+        here. A count is Kangaru's own business metric and a billing input
+        (ADR-0058); a list would be the cross-fleet read §2 forbids, and the
+        difference between the two is one endpoint. To look at any of it, act
+        as somebody in the fleet it belongs to.
+      responses:
+        '200':
+          description: Network counts, the queues only head office can clear, and governance.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: object
+                    required: [network, queues, governance]
+                    additionalProperties: false
+                    properties:
+                      network:
+                        type: object
+                        required: [fleets, fleets_active, clients, walk_in_clients, drivers, vehicles]
+                        additionalProperties: false
+                        properties:
+                          fleets: { type: integer }
+                          fleets_active: { type: integer }
+                          clients:
+                            type: integer
+                            description: >
+                              A count, never a list. The whole of what Kangaru
+                              may know about the corporate clients on the
+                              platform without acting as a fleet.
+                          walk_in_clients: { type: integer }
+                          drivers: { type: integer }
+                          vehicles: { type: integer }
+                      queues:
+                        type: object
+                        required: [driver_applications, driver_reports, settlement_requests, fleets_without_an_account]
+                        additionalProperties: false
+                        properties:
+                          driver_applications: { type: integer }
+                          driver_reports: { type: integer }
+                          settlement_requests: { type: integer }
+                          fleets_without_an_account:
+                            type: integer
+                            description: >
+                              Should always be nought, which is why it is
+                              shown. A fleet with no account is unreachable to
+                              support for ever (ADR-0059 §5), and onboarding
+                              creates one in the same transaction — a number
+                              here means that invariant has been broken.
+                      governance:
+                        type: object
+                        required: [acting_as_now, kangaru_staff]
+                        additionalProperties: false
+                        properties:
+                          acting_as_now: { type: integer }
+                          kangaru_staff: { type: integer }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/operators/{operator}/accounts:
     parameters:
       - { name: operator, in: path, required: true, schema: { type: integer } }

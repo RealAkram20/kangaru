@@ -17060,3 +17060,111 @@ and should gain a §10-follow-up note. The census test files, `ClientScope`,
 `openapi.yaml` and the mobile shared files carried other sessions'
 uncommitted edits before mine — a commit of this work must either ride with
 theirs or be separated by hand; nothing here is committed.
+
+#### Addendum — the wave is committed, pushed, and building
+
+On the owner's word ("push to github… the apk on my desktop v1.0.3… working
+with the live website… connected to sentry"), after the full gate ran green
+in one sitting — backend 1576, mobile 1156, frontend 605, both `tsc` gates —
+the remaining 94-file driver-app wave was landed as **`dba8f42`** and pushed
+to `feat/driver-app-screens-and-earnings`. Two backend tests failed once in
+an earlier sweep and passed in isolation and on the full rerun —
+order-dependent, recorded here so a future red is recognised.
+
+- CI: run 32642813702, dispatched.
+- APK: EAS preview build `fe1283d9` — version 1.0.3, fleet keystore,
+  `EXPO_PUBLIC_API_BASE_URL=https://api.kangaruride.com/api/v1` and the
+  Sentry DSN from the preview environment (events default to
+  `environment: production`), `SENTRY_DISABLE_AUTO_UPLOAD=true` so the
+  build cannot fail on sourcemaps. Destination: the owner's Desktop.
+
+The worklog note two entries up — "a commit of this work must either ride
+with theirs or be separated by hand" — resolved itself before it applied:
+the other sessions landed their own waves first, and what remained was one
+coherent driver-app slice.
+
+---
+
+#### Closed — the second factor is a setting (ADR-0061). Green on
+[32643546912](https://github.com/RealAkram20/kangaru/actions/runs/32643546912)
+
+`ebc963a`. Two switches, one resolved answer: `auth.mfa_enforced` platform-wide
+(default true, **not public** — the login screen must not advertise that the
+second factor is off) and `roles.requires_mfa` per role, now editable through
+the API for the first time since ADR-0004. `User::requiresMfa()` combines them
+and nothing else may read either. `AGENTS.md`'s Security line is amended
+rather than contradicted.
+
+Head office only, refused on the **field** rather than the whole role edit — a
+fleet may still rename its own custom roles. The console reads
+`meta.can_manage_mfa` and **omits the key entirely** when it may not change it;
+a payload echoing a value you may not change is one server-side bug away from
+being a write.
+
+## Two corrections to my own reasoning, both found by mutation
+
+Worth recording because in both cases the code was right and the **stated
+reason was wrong**, which is the kind of error review does not catch.
+
+- I wrote that `has()` was needed because `filled()` treats `false` as absent.
+  It does not — `filled()` only treats an empty *string* as absent, so a JSON
+  `false` passes it. Checked against a real request rather than assumed.
+- The null-coalesce in `mfaEnforced()` is **unreachable**: `all()` fills every
+  key from the catalogue, so `get()` never returns null. Mutating it changes
+  nothing; flipping the **catalogue default** is what turns the test red. Both
+  the service comment and the test docblock now name which one is
+  load-bearing, because an unreachable guard that looks load-bearing is worse
+  than none.
+
+## The CI failure that looked like the engine difference and was not
+
+`ColleagueBookingTest > it finds a colleague by name` went red on CI having
+passed locally — the exact signature `docs/platform-plan.md` §2 gate 7 warns
+about. It is a **flaky fixture**, not MariaDB vs MySQL.
+
+The passenger picker searches name **or** email; the fixture left emails to
+`fake()->safeEmail()`, and Faker builds addresses from real first names, so
+some runs hand Sarah Nabwire an address containing "joseph" and a search for
+"Joseph" correctly returns three rows against an exact-set assertion.
+Reproduced deliberately before fixing — `joseph.hartmann@example.org` on Sarah
+fails locally with the identical diff CI printed. Four emails pinned,
+`43ff6bd`. **Another agent's file; the diff is four lines and a comment.**
+
+## Verified
+
+Browser as a `kangaru` account: the master switch in System settings, the
+Second factor column on Roles, and the editor naming the **3 drivers** it would
+ask to enrol. Backend 1576, frontend 605, CI green on every job.
+
+## Not done
+
+- **No audit row is written** when the switch moves (ADR-0061 §5 asks for one).
+  `SettingsService` has no audit hook today and adding one is wider than this
+  package — named here so it is not assumed.
+- **No time-boxed relaxation.** ADR-0061's Alternatives explains the deferral:
+  a scheduled re-arm that locks administrators out unattended is worse than a
+  switch somebody forgot.
+
+---
+
+### 2026-08-23 — Claiming: K4, Kangaru's dashboard and the cut to fourteen
+
+**Status:** claimed, in progress. `K1` and `K3` are both done, which
+ADR-0059's Consequences makes the precondition: **removing the twelve entries
+before Log in as exists would lock support out of production.**
+
+**Files I own (new):** `frontend/src/pages/dashboard/KangaruDashboard.tsx` and
+its test; `backend/Modules/Fleet/Controllers/KangaruOverviewController.php`
+and its test.
+
+**Shared files, exact edits:** `lib/menu/kangaru.ts` — the twelve removals;
+`lib/menu/menu.test.ts` — `LEVEL_ONLY` grows to name them; `DashboardPage.tsx`
+— one level branch; `Fleet/Routes/api.php` one route; `openapi.yaml`
+`/kangaru/overview` only; `RoutePolicyCensusTest.php` one row and three counts.
+
+**One question I am not deciding.** `docs/platform-plan.md` §6 q4: does Kangaru
+see a corporate-client **count**, a list, or nothing? The plan recommends the
+count only — a count is a business metric and a billing input; a list of rows
+is a cross-fleet read ADR-0055 §2 forbids. **Building the count**, and it is
+one endpoint's difference from the wrong thing, so it is flagged here rather
+than buried.
