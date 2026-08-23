@@ -17168,3 +17168,68 @@ count only — a count is a business metric and a billing input; a list of rows
 is a cross-fleet read ADR-0055 §2 forbids. **Building the count**, and it is
 one endpoint's difference from the wrong thing, so it is flagged here rather
 than buried.
+
+---
+
+#### K4 closed — green on
+[32644780291](https://github.com/RealAkram20/kangaru/actions/runs/32644780291)
+
+`942e067`. **Kangaru's menu is 21 entries down to 10**, and the dashboard is
+head office's own rather than three company counters and an audit table.
+
+The twelve that left — Bookings, Dispatch, Trips, Live map, Routes, Companies,
+Vehicles, Drivers, Applications, Driver reports, Invoices, Rate cards — are a
+fleet's operations and a fleet's registers. **Not hidden: they do not exist at
+this level**, which is the difference between a locked door and no door.
+
+**Done after `K3`, not before.** Removing the door before Log in as exists is
+how support gets locked out of production.
+
+## The count-versus-list line, and the test that holds it
+
+`/kangaru/overview` answers with scalars at every depth, and a test walks the
+payload asserting it. `'clients' => Tenant::all()` would still look like a
+working dashboard and would be a cross-fleet read of every client on the
+platform — `docs/platform-plan.md` §6 q4 called it one endpoint's difference,
+so the guard is a loop over the response rather than four assertions somebody
+can forget to extend. **Question 4 is answered: the count only.**
+
+One figure shows at nought on purpose — *Fleets with nobody to act as*. Nought
+means ADR-0059 §5's invariant holds; a number means it has been broken.
+
+## The parity guard changed shape rather than dying, again
+
+`K1` asserted the three menus were identical. `K3` narrowed it to "identical
+bar what a level owns". `K4` replaces it with the real split: it names the
+twelve as a fleet's, asserts head office is not offered them, **and asserts a
+fleet still is** — the half that makes the removal safe rather than just
+quiet.
+
+## Corrected, mid-package
+
+The menu is **10 entries today, not the 14** the plan and ADR-0059 §3 quote.
+The other four — Plans, Driver contracts, Public tariff, Commission — arrive
+with `K7` and `K8`. The figure in those documents describes the finished
+state; nothing is missing that was built.
+
+## Mutations, restored
+
+| Mutation | Result |
+|---|---|
+| `clients` returned as a list of names | the scalar guard red |
+| Drivers put back on the Kangaru menu | the removal guard red |
+
+## Verified
+
+Browser as a `kangaru` account: **none of the twelve on the sidebar**, network
+counts, queues and governance rendering, no console errors, no 4xx. Backend
+1581, frontend 608, CI green on every job.
+
+## Not done
+
+- **`K5` is still open** under my earlier claim — `registration_number` unique
+  and the lookup that answers a boolean.
+- **No commission, no plans surface.** `K7`/`K8`, both unclaimed.
+- **`fleets_without_an_account` has no alert anywhere** — it is a number on a
+  dashboard, not a notification. If the invariant breaks, somebody has to be
+  looking.
