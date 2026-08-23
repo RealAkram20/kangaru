@@ -18394,3 +18394,143 @@ anywhere in the backend. The largest single item left, and it writes
 
 **`fleets_without_an_account` is a number on a dashboard, not an alert.** If
 ADR-0059 §5's invariant breaks, somebody has to be looking.
+
+---
+
+### 2026-08-23 — Claiming: M0 to M6, the mail system (`docs/mail-plan.md`)
+
+**Status:** claimed, in progress. Plan written and the four forks answered by
+the owner (mail plan §10).
+
+**Why now.** `ClientOnboardingService::firstAdministrator()` and
+`OperatorService::onboard()` both mint a random 32 character password nobody is
+told, and both carry a comment saying an invitation gets the account holder in.
+**No invitation exists anywhere in the repo.** A corporate client admin and a
+fleet owner are today accounts nobody can sign into, and password reset is
+closed twice over (`auth.password_reset_enabled` false, `mailConfigured()`
+false). That is a go-live blocker, not a polish item.
+
+**The other half of the same finding:** `NotificationChannel::MAIL` returns the
+framework's default mailer, which is `MAIL_MAILER=log`. Booking approved,
+booking rejected and driver document reviewed have been mailing to
+`storage/logs/laravel.log` since they shipped, while `SettingsService::smtpMailer()`
+sends the reset code down a completely different path. A green test send in the
+settings screen vouches for neither.
+
+**Packages, in order.** M0 the one path, M1 the shell, M2 the invitation, M3
+security mail, M4 drivers, M5 clients, M6 admins and digests. Catalogue and
+exit criteria in `docs/mail-plan.md` §7 and §9.
+
+**Files I own (new):**
+
+- `Modules/Notifications/Channels/SettingsMailChannel.php`
+- `Modules/Notifications/Models/MailDelivery.php`, `MailPreference.php`
+- `Modules/Notifications/Mail/*` the renderer and the template contract
+- `Modules/Administration/Models/Invitation.php` + service + controller
+- `Modules/Drivers/Console/SendExpiringDocumentReminders.php`
+- `backend/resources/views/mail/**` the layout and every content view
+- `backend/lang/en/mail.php`
+- the `mail_deliveries`, `mail_preferences` and `invitations` migrations
+- `frontend/src/pages/AcceptInvitePage.tsx`, `NotificationPreferencesPage.tsx`
+
+**Shared files, exact edits:** `config/notifications.php` new type rows;
+`NotificationType.php` new cases only, no existing case touched;
+`NotificationChannel.php` the one line that maps `MAIL` to the new channel;
+`routes/console.php` two `Schedule::command` blocks; `openapi.yaml` my own
+paths; `RoutePolicyCensusTest.php` my rows and the counts; `router.tsx` two
+blocks; `AppServiceProvider.php` `Gate::policy` for the new policies.
+
+**I do not touch any existing notification's `subject()` or `body()`.** Those
+are other agents' copy. New emails are new files.
+
+**The rule this is built around, and the one that would collapse it:**
+recipient resolution is in one place, and **an email about a fleet's
+operations goes to that fleet and to nobody else.** Not head office, never a
+second fleet. ADR-0062 already draws that line for reads; a recipient list is
+the easiest place in the codebase to cross it, because a leak there looks like
+a helpful CC. The cross-fleet case gets a test per notification type and is
+proved by mutation.
+
+**Deliberately blocked, and it ships as blocked:** C9 and C10, the credit limit
+emails. `OperatorClient::credit_limit_minor` exists but there is no invoice
+status column and no payment record, so *outstanding balance* has no honest
+source. Screen rules §1 applies to an email exactly as it does to a screen, so
+these two do not ship with an invented figure.
+
+---
+
+#### ADR-0063 — the last two questions are answered, and `fleet-model-plan.md` §5 is empty
+
+The owner, 23 August: **"1. the Fleet wins" / "2. yes"**. `a0959b5`, plus
+`7b2e416` fixing what CI caught.
+
+Separately those are scheduling and pricing. Together they settle something
+larger, and it is the framing the rest should be built against: **a fleet is
+not a bystander to its driver's walk-in work.** It gets first call on the
+driver's time and a share of what the driver earns on its vehicle. Kangaru
+rents demand to a fleet's spare capacity rather than competing with the fleet
+for its own drivers.
+
+So the failure to design against is not *"the fleet loses a driver to
+Kangaru"*. It is **"the fleet's own work must never be displaced, and its asset
+must never be used for free."**
+
+## Three readings I did not take, and why
+
+- **The fleet wins by pre-empting.** A stronger reading of the answer, and it
+  strands a passenger already waiting for a car. The fleet wins the
+  *allocation*, not the right to interrupt work in progress.
+- **The fleet share comes out of Kangaru's commission.** Tidier for the driver,
+  whose take would not depend on whose vehicle it is — and it makes the fleet's
+  share invisible on the trip, turning a three-party split into a private
+  arrangement the driver cannot audit. The driver collected the cash; they
+  should be able to see where it went.
+- **The per-contract override on q2.** The recommendation offered it; the owner
+  answered the plain question. A fleet wanting Kangaru's work prioritised over
+  its own is not a case anybody has asked for, and the column can arrive with
+  the fleet that asks.
+
+## The `channel` column, finally
+
+ADR-0055 §2 asked for it months ago and it kept not being urgent. ADR-0063
+makes it urgent: the predicate that decides what head office reads now also
+decides **which fares get split three ways**, so a mis-channelled trip is no
+longer a display bug — it is money reaching the wrong parties, silently.
+
+The migration backfills from the inference it replaces, **once**, because today
+is the last moment that inference is known to be true. On this database: **34
+of 93 trips**, and **zero disagreements** between column and inference
+afterwards. `corporate` is the default, so a row nobody set is not swept into
+commission — the failure that costs money is the one to design against.
+
+## The one property the split has to hold
+
+> **The three shares sum to the fare. Always, on every rounding boundary.**
+
+The driver takes the **remainder**, never a third percentage — which makes the
+sum exact by construction rather than by three roundings happening to agree.
+They do not, at a third of a shilling. Rounding goes to the driver because they
+cannot re-invoice a rounding error and they are holding the cash.
+
+Mutation: the remainder replaced with a third percentage → red at a fare of
+**1 shilling**, which is exactly the boundary it exists for.
+
+## Two CI findings, and neither was the engine difference
+
+- **Migration reversibility caught a real bug**: `$table` used inside a
+  `Schema::table` closure without being captured. Two bugs in one line, and the
+  second was silent — `dropIndex(['a_name'])` treats the array as **columns**,
+  so even with `$table` captured it would have looked for
+  `trips_trips_channel_created_at_index_index` and missed. **Reversibility is
+  the gate that only ever fails in CI, because nobody rolls back by habit.**
+- **Deploy stack failed on a GitHub 504** while Composer fetched
+  `DASPRiD/Enum`. Infrastructure, confirmed by a clean re-run of the same job —
+  named here so the next person does not go looking in the Dockerfile.
+
+## Still not built, and now unblocked rather than blocked
+
+The dispatch-pool exclusion, the three ledger entries themselves, and the depth
+control on what a fleet reads of a walk-in customer. **The exclusion is the one
+to be careful with**: candidate selection is the one place in this system where
+a mistake is invisible — a driver silently absent from a pool looks exactly
+like a quiet night.

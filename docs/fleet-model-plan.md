@@ -404,7 +404,17 @@ every migration added on top of it.
 
 ---
 
-## 5 · Open, and the owner's call
+## 5 · Open, and the owner's call — **all three now answered**
+
+> **Closed 23 August 2026.** Question 1 (does the fleet consent) was answered
+> on 22 August and built as `K8`'s contract half. Questions 2 and 3 were
+> answered on 23 August — **the fleet wins**, and **yes, the fleet takes a
+> share** — and are recorded in **ADR-0063**, which also settles the three-way
+> split and the explicit `channel` column ADR-0055 §2 had been waiting for.
+>
+> The table below is kept as written, because the recommendations it carried
+> are what the answers were given against.
+
 
 These block **F3 only.** Each carries the recommendation given when it was
 raised, so silence has a safe default rather than none.
