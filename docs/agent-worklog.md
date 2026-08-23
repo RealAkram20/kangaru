@@ -17233,3 +17233,25 @@ counts, queues and governance rendering, no console errors, no 4xx. Backend
 - **`fleets_without_an_account` has no alert anywhere** — it is a number on a
   dashboard, not a notification. If the invariant breaks, somebody has to be
   looking.
+
+#### The APK, delivered — and the trap that ate two cloud builds
+
+**v1.0.3 (versionCode 11), EAS build `77851e81`, fleet keystore, is on the
+owner's Desktop** (`OneDrive\Desktop\kangaruride-driver-v1.0.3.apk`,
+121.7 MB). Verified by unzipping the artifact itself: live API base
+`api.kangaruride.com/api/v1` baked, Sentry DSN baked (environment defaults
+to `production`), no LAN address, no `10.0.2.2`, no
+`ALLOW_EMULATOR_PUSH`; `USE_FULL_SCREEN_INTENT` and
+`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` in the manifest; the offer ring wav
+in resources. Same keystore as vc6, so it installs over the handsets that
+have it.
+
+**The trap, for whoever builds next:** two EAS builds died with
+*"projectDirectory .../mobile/android/D:/xampp/... does not exist"*. The
+locally generated `mobile/android/` (gitignored, from `expo prebuild`) was
+being packed into the 438 MB upload, and its autolinking config carries
+absolute Windows paths that detonate on the Linux builder. The root
+`.easignore` added in this commit is the fix — upload fell to a 2-minute
+push and the third build went green. A local `assembleRelease` of the same
+tree succeeded throughout, which is what separated "our code is broken"
+from "our upload is poisoned".
