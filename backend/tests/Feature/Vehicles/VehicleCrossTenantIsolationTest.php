@@ -44,14 +44,19 @@ function seedTwoTenantsSharingTheFleet(): array
     $userA = User::factory()->create(['tenant_id' => $tenantA->id, 'role' => UserRole::FLEET_OWNER]);
     $userB = User::factory()->create(['tenant_id' => $tenantB->id, 'role' => UserRole::FLEET_OWNER]);
 
-    return compact('tenantA', 'tenantB', 'vehicleA', 'vehicleB', 'userA', 'userB');
+    // The fleet that owns the pool. `VehicleFactory` puts both vehicles on
+    // Shanitah; since ADR-0055 the register is Shanitah's, and reading it is
+    // a fleet act rather than a client's.
+    $fleetUser = User::factory()->create(['role' => UserRole::FLEET_OWNER]);
+
+    return compact('tenantA', 'tenantB', 'vehicleA', 'vehicleB', 'userA', 'userB', 'fleetUser');
 }
 
-it('shows every tenant the whole platform fleet', function () {
-    ['vehicleA' => $vehicleA, 'vehicleB' => $vehicleB, 'userA' => $userA] = seedTwoTenantsSharingTheFleet();
+it('shows a fleet its whole pool, undivided by which client it is serving', function () {
+    ['vehicleA' => $vehicleA, 'vehicleB' => $vehicleB, 'fleetUser' => $fleetUser] = seedTwoTenantsSharingTheFleet();
 
     $ids = collect(
-        $this->actingAs($userA, 'sanctum')->getJson('/api/v1/vehicles')->assertOk()->json('data')
+        $this->actingAs($fleetUser, 'sanctum')->getJson('/api/v1/vehicles')->assertOk()->json('data')
     )->pluck('id');
 
     // Both, deliberately (ADR-0005). If this ever fails it means the fleet
@@ -59,6 +64,24 @@ it('shows every tenant the whole platform fleet', function () {
     // being able to reach most of the pool.
     expect($ids)->toContain($vehicleA->id);
     expect($ids)->toContain($vehicleB->id);
+});
+
+/*
+ * The same repointing as `DriverCrossTenantIsolationTest`, for the same
+ * reason and with the same history — see the long note there.
+ *
+ * In short: this acted as `$userA`, whose `tenant_id` makes it an
+ * `access_level: client` account, so the assertion had silently become *"a
+ * corporate client reads the operator's whole vehicle register"*. ADR-0005
+ * said the pool is not divided per client. It never said a client may read it.
+ */
+it('shows a client none of the pool, which owns no vehicle to begin with', function () {
+    ['vehicleA' => $vehicleA, 'userA' => $userA] = seedTwoTenantsSharingTheFleet();
+
+    $body = $this->actingAs($userA, 'sanctum')->getJson('/api/v1/vehicles')->assertOk()->json('data');
+
+    expect($body)->toHaveCount(0)
+        ->and(collect($body)->pluck('id'))->not->toContain($vehicleA->id);
 });
 
 it('lets any tenant open any vehicle in the pool', function () {

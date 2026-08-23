@@ -161,6 +161,16 @@ const VISIBLE_TO: Record<string, Role[]> = {
   // ADR-0044. SupportRequestPolicy — `drivers.manage`; the queue is about
   // the people who drive, and a client has no business in it.
   'support-requests': FLEET_OPERATORS,
+  // ADR-0055 §5. DriverWalkInContractPolicy::viewAny — `drivers.view`, the
+  // same read the two entries above it need, and the queue names drivers.
+  //
+  // It was absent from this map, which is not a neutral omission: an id with
+  // no entry is shown to *everyone* (see `canUseNavItem`), so a Driver and a
+  // Corporate Employee both carried a door onto a fleet's consent queue. The
+  // server refused them, so nothing leaked — but the default here fails
+  // toward exposure, and it is worth saying that the only thing standing
+  // between this omission and a real leak was a policy somebody else wrote.
+  'driver-contracts': FLEET_OPERATORS,
   // ADR-0045 §2. The endpoint is `viewAny` on Trip, which every role holds —
   // so this is about *usefulness*, not permission: a Corporate Employee who
   // requests rides and a Driver who does them have no part in reviewing the

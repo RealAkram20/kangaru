@@ -30,7 +30,14 @@ class DriverService
         // Eager loaded because DriverResource reports whether each driver can
         // sign in, and — since ADR-0048 — what they drive; without this the
         // list is two queries per row (AGENTS.md — prevent N+1).
-        return Driver::query()->with(['user', 'vehicle'])->get();
+        //
+        // **Scoped to the actor's fleet**, which it was not: this returned
+        // every driver on the platform, complete with the phone and licence
+        // number `docs/security-gate.md` F2 withholds from a client. The same
+        // omission as `VehicleService::list()`, and worse — a driver register
+        // is personal data about people who never agreed to be in a rival's
+        // console.
+        return Driver::forActor($user)->with(['user', 'vehicle'])->orderBy('name')->get();
     }
 
     /**

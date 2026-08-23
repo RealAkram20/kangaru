@@ -18859,3 +18859,84 @@ switchable list, locked list, and the throwaway account removed afterwards.
 `kangaruride_testing`, because we collided mid-run and my suite met a dropped
 `migrations` table. `.env.testing` is untouched; it is a `DB_DATABASE=` prefix
 on my own command only. Worth doing whenever two of us are running at once.
+
+### The account: two listings, two policies, and a suite that agreed with itself
+
+**What the owner saw.** A fleet created minutes earlier, with nothing in it,
+opened its console and read **Shanitah's 20 vehicles and 19 drivers** — every
+registration number, and every driver's name, phone and licence number.
+
+**What it was not.** Not the staff-assignment bug I was mid-diagnosis on. The
+row was right: user 15 is `operator_id = 2`, and all 39 rows are operator 1.
+
+**What it was.** Two listings that took the actor and threw it away:
+
+```php
+public function list(User $user): Collection { return Vehicle::all(); }
+public function list(User $user): Collection { return Driver::query()->with([...])->get(); }
+```
+
+`BelongsToOperator` carries no global scope — deliberately, and it argues the
+case at length — which puts the whole burden on call sites opting in. Neither
+listing opted in. **`forActor()` had zero call sites on the two models that
+define it.**
+
+**Why nothing caught it, which is the part worth keeping.**
+`CrossFleetIsolationTest` proved the scope four different ways and passed
+throughout, because every assertion called `Driver::forActor($actor)` directly.
+Its docblock claimed it proved *"the opt-in scope every listing goes through"*.
+The listings did not go through it. A correct scope that nothing calls is not a
+defence — it is a defence that was never deployed.
+
+**And the contradiction that had been sitting there for a fortnight.**
+`DriverCrossTenantIsolationTest` — AGENTS.md-mandated, non-skippable — acted as
+a user with a `tenant_id`, which `UserFactory` turns into `operator_id => null`,
+which `User::saving` turns into `access_level: client`. So since ADR-0055 that
+test had been asserting **a corporate client may read Shanitah's entire driver
+roster**, phone numbers and licences included. `CrossFleetIsolationTest`
+asserted the exact opposite on the same day. *Both were green.* One called the
+scope, the other called the endpoint, and only the endpoint was wrong. Both
+files are repointed, with the history written into them.
+
+**The worse half, found while fixing the first.** `VehiclePolicy::view()`
+deferred to `viewAny()`; `update()` and `delete()` both deferred to `create()`,
+which takes no model. Same in `DriverPolicy`. So a fleet owner — who holds
+`vehicles.manage` and `drivers.manage` by seed — could **edit or delete a
+competitor's vehicle, or suspend a competitor's driver**, by putting the id in
+a URL. Hiding the rows while leaving that open would not have been a fix. Both
+policies now compare fleets, on the fleet axis only, so head office acting as
+somebody is untouched.
+
+Suspending another fleet's driver is the one that would never have looked like
+a breach from the inside: it looks like an account that stopped working for a
+reason nobody at their own employer can find.
+
+**Proved by mutation, twice, restored both times.** Listings unscoped again →
+the 3 new HTTP tests red, the 10 original scope tests still green, which is the
+gap stated as an experiment. Ownership comparison neutered → the 4 refusals
+red, and *"still lets a fleet manage its own"* green, so the guard is not
+merely refusing everybody.
+
+**Full backend suite: 1738 passed.** Frontend `tsc -b --force` clean, 649
+vitest. Pint and Larastan clean on my files; the tree's other Pint/Larastan
+failures are kangaru-45's in-flight M4.
+
+**Two frontend fixes on the same report.** `driver-contracts` was absent from
+`VISIBLE_TO`, and an id with no entry is shown to *everyone* — so a Driver and
+a Corporate Employee both carried a door onto a fleet's consent queue. The
+server refused them, so nothing leaked, but that default fails toward exposure
+and only somebody else's policy stood in the way. Now `FLEET_OPERATORS`. And
+`file-signature` was never registered in `iconRegistry`, which is why the entry
+rendered as a blank square.
+
+### For whoever reads this next
+
+The generalisation, which is the third sighting of this shape on this branch:
+**a guard is only as deployed as its call sites.** Test the endpoint, not the
+scope. When a suite and a leak coexist, the suite is usually asserting against
+the wrong layer — and a method that takes an actor is the easiest place in a
+codebase to *look* scoped while being nothing of the kind.
+
+Corollary worth grepping for: `Modules/Vehicles` and `Modules/Drivers` were the
+only two `BelongsToOperator` models, and both were wrong. Any future model that
+takes the trait starts with zero call sites too.

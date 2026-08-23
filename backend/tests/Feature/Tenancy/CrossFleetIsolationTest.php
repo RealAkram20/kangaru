@@ -216,3 +216,157 @@ it('refuses to resolve another fleet s trip by id, not only to list it', functio
         // identifiers by watching status codes.
         ->assertNotFound();
 });
+
+/* ------------------------------------------------ and now the listings --- */
+
+/*
+ * The four above prove `forActor()`. These prove the console *calls* it.
+ *
+ * That gap was not hypothetical. `VehicleService::list()` was
+ * `return Vehicle::all()` and `DriverService::list()` was an unscoped
+ * `Driver::query()`, both taking a `User $user` they never used — so the first
+ * fleet onboarded after Shanitah opened its console and read Shanitah's twenty
+ * vehicles and nineteen drivers. Every scope test in this file passed
+ * throughout, because every one of them called the scope directly.
+ *
+ * `docs/agent-worklog.md` has caught this exact shape three times now: a guard
+ * that is correct, tested, and reached by nothing. The only assertion that
+ * catches it is one that goes through the router.
+ */
+it('serves a fleet only its own vehicles over HTTP, not only in the scope', function () {
+    Vehicle::factory()->count(3)->create(['operator_id' => $this->shanitah->id]);
+    $theirs = Vehicle::factory()->create(['operator_id' => $this->rival->id]);
+
+    $body = $this->actingAs($this->rivalStaff, 'sanctum')
+        ->getJson('/api/v1/vehicles')
+        ->assertOk()
+        ->json('data');
+
+    // A count first, and the id second. `toContain` on a four-row response
+    // passes exactly as happily as on a one-row one — which is how the leak
+    // survived a suite that already knew to say this.
+    expect($body)->toHaveCount(1)
+        ->and($body[0]['id'])->toBe($theirs->id);
+});
+
+it('serves a fleet only its own drivers over HTTP', function () {
+    Driver::factory()->count(3)->create(['operator_id' => $this->shanitah->id]);
+    $theirs = Driver::factory()->create(['operator_id' => $this->rival->id]);
+
+    $body = $this->actingAs($this->rivalStaff, 'sanctum')
+        ->getJson('/api/v1/drivers')
+        ->assertOk()
+        ->json('data');
+
+    expect($body)->toHaveCount(1)
+        ->and($body[0]['id'])->toBe($theirs->id);
+});
+
+it('serves a brand new fleet an empty register rather than somebody else s', function () {
+    // The owner's report, as a test. A fleet created minutes ago has added
+    // nothing, so both registers must be empty — and "empty" is the assertion
+    // that a leak breaks loudest, because there is no threshold to argue with.
+    $fresh = Operator::create([
+        'name' => 'Najjemba Transporters', 'slug' => 'najjemba', 'status' => 'active',
+    ]);
+    $owner = User::factory()->create([
+        'operator_id' => $fresh->id, 'role' => UserRole::FLEET_OWNER,
+    ]);
+
+    Vehicle::factory()->count(4)->create(['operator_id' => $this->shanitah->id]);
+    Driver::factory()->count(4)->create(['operator_id' => $this->shanitah->id]);
+
+    $this->actingAs($owner, 'sanctum')->getJson('/api/v1/vehicles')
+        ->assertOk()->assertJsonCount(0, 'data');
+    $this->actingAs($owner, 'sanctum')->getJson('/api/v1/drivers')
+        ->assertOk()->assertJsonCount(0, 'data');
+});
+
+/* ------------------------------------------- and the single-resource URL --- */
+
+/*
+ * Hiding a row from a list while leaving its id writable is not isolation.
+ *
+ * `VehiclePolicy` and `DriverPolicy` each took the model and discarded it —
+ * `view()` deferred to `viewAny()`, `update()` and `delete()` both deferred to
+ * `create()`, which takes no model at all. So a fleet owner, who holds
+ * `vehicles.manage` and `drivers.manage` by seed, could edit or delete a
+ * competitor's row by putting its id in the URL. That is worse than the
+ * listing leak these tests were written for: one discloses a register, this
+ * one writes to somebody else's.
+ *
+ * ADR-0006's implementation note called single-resource URLs *"half the bug"*
+ * on the client axis. The fleet axis had to learn it again.
+ */
+it('refuses a rival fleet the sight of a vehicle it does not own', function () {
+    $theirs = Vehicle::factory()->create(['operator_id' => $this->shanitah->id]);
+
+    $this->actingAs($this->rivalStaff, 'sanctum')
+        ->getJson("/api/v1/vehicles/{$theirs->id}")
+        ->assertForbidden();
+});
+
+it('refuses a rival fleet the sight of a driver it does not employ', function () {
+    $theirs = Driver::factory()->create(['operator_id' => $this->shanitah->id]);
+
+    $this->actingAs($this->rivalStaff, 'sanctum')
+        ->getJson("/api/v1/drivers/{$theirs->id}")
+        ->assertForbidden();
+});
+
+it('refuses a rival fleet owner the right to edit or delete a competitor s vehicle', function () {
+    $theirs = Vehicle::factory()->create(['operator_id' => $this->shanitah->id]);
+    $owner = User::factory()->create([
+        'operator_id' => $this->rival->id, 'role' => UserRole::FLEET_OWNER,
+    ]);
+
+    $this->actingAs($owner, 'sanctum')
+        ->patchJson("/api/v1/vehicles/{$theirs->id}", ['status' => 'inactive'])
+        ->assertForbidden();
+
+    $this->actingAs($owner, 'sanctum')
+        ->deleteJson("/api/v1/vehicles/{$theirs->id}")
+        ->assertForbidden();
+
+    // The refusal has to have *held*, not merely been reported. A 403 that
+    // arrives after the write is the failure this test exists to catch.
+    expect($theirs->fresh())->not->toBeNull()
+        ->and($theirs->fresh()->status)->toBe($theirs->status);
+});
+
+it('refuses a rival fleet owner the right to edit or delete a competitor s driver', function () {
+    $theirs = Driver::factory()->create(['operator_id' => $this->shanitah->id, 'status' => 'active']);
+    $owner = User::factory()->create([
+        'operator_id' => $this->rival->id, 'role' => UserRole::FLEET_OWNER,
+    ]);
+
+    $this->actingAs($owner, 'sanctum')
+        ->patchJson("/api/v1/drivers/{$theirs->id}", ['status' => 'suspended'])
+        ->assertForbidden();
+
+    $this->actingAs($owner, 'sanctum')
+        ->deleteJson("/api/v1/drivers/{$theirs->id}")
+        ->assertForbidden();
+
+    // Suspending somebody else's employee is the one that would not look like
+    // a security failure from the inside — it would look like a driver whose
+    // account stopped working for no reason anyone at their own fleet did.
+    expect($theirs->fresh())->not->toBeNull()
+        ->and($theirs->fresh()->status)->toBe('active');
+});
+
+it('still lets a fleet manage its own vehicle and its own driver', function () {
+    // The other direction, and the reason it is here: every assertion above
+    // passes just as well against a policy that refuses everybody. Four
+    // refusals prove nothing on their own.
+    $owner = User::factory()->create([
+        'operator_id' => $this->rival->id, 'role' => UserRole::FLEET_OWNER,
+    ]);
+    $mine = Vehicle::factory()->create(['operator_id' => $this->rival->id]);
+    $myDriver = Driver::factory()->create(['operator_id' => $this->rival->id]);
+
+    $this->actingAs($owner, 'sanctum')
+        ->getJson("/api/v1/vehicles/{$mine->id}")->assertOk();
+    $this->actingAs($owner, 'sanctum')
+        ->getJson("/api/v1/drivers/{$myDriver->id}")->assertOk();
+});
