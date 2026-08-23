@@ -55,6 +55,10 @@ export const FLEET_MENU: SidebarSection[] = [
       // `drivers.manage` the two entries above it use, and a clerk who
       // handles one handles all three.
       { id: 'support-requests', label: 'Driver reports', icon: 'message-square-warning' },
+      // The other side of ADR-0055 §5: a fleet's own drivers asking to take
+      // Kangaru's walk-in work, waiting on this fleet's consent. Beside the
+      // drivers because it is a decision about an employee.
+      { id: 'driver-contracts', label: 'Walk-in requests', icon: 'file-signature' },
     ],
   },
   {

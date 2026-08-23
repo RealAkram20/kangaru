@@ -44,6 +44,10 @@ export const KANGARU_MENU: SidebarSection[] = [
     items: [
       { id: 'walk-ins', label: 'Walk-in orders', icon: 'phone-call' },
       { id: 'customers', label: 'Walk-in clients', icon: 'contact' },
+      // ADR-0055 §5. Drivers asking to take walk-in work, from any fleet.
+      // Here rather than under the network because it is Kangaru's own
+      // economy the driver is joining, not a fact about their employer.
+      { id: 'driver-contracts', label: 'Driver contracts', icon: 'file-signature' },
     ],
   },
   {

@@ -22,6 +22,7 @@ use Modules\Drivers\Controllers\DriverTripHistoryController;
 use Modules\Drivers\Controllers\MyApplicationController;
 use Modules\Drivers\Controllers\PayoutAccountController;
 use Modules\Drivers\Controllers\SettlementRequestController;
+use Modules\Drivers\Controllers\WalkInContractController;
 
 // PATCH only, not PUT|PATCH — see Modules/Clients/Routes/api.php.
 Route::apiResource('drivers', DriverController::class)->except(['update']);
@@ -273,3 +274,12 @@ Route::post('driver-applications/{driverApplication}/documents/{document}/verify
     ->name('driver-applications.documents.verify');
 Route::post('driver-applications/{driverApplication}/documents/{document}/reject', [ApplicationDocumentReviewController::class, 'reject'])
     ->name('driver-applications.documents.reject');
+
+// A driver's contract with Kangaru for walk-in work (ADR-0055 §5). Two queues
+// behind one route: a fleet sees its drivers waiting on its consent, head
+// office sees everything consented and waiting on them. One question — what is
+// waiting on me — so two URLs would let a fleet ask head office's.
+Route::get('walk-in-contracts', [WalkInContractController::class, 'index'])->name('walk-in-contracts.index');
+Route::post('walk-in-contracts/{contract}/consent', [WalkInContractController::class, 'consent'])->name('walk-in-contracts.consent');
+Route::post('walk-in-contracts/{contract}/approval', [WalkInContractController::class, 'approve'])->name('walk-in-contracts.approve');
+Route::post('walk-in-contracts/{contract}/refusal', [WalkInContractController::class, 'refuse'])->name('walk-in-contracts.refuse');

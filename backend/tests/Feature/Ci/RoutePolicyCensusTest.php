@@ -270,6 +270,12 @@ function routeCensus(): array
         // Head office's own dashboard: counts only, never a row (ADR-0055 §2).
         // ADR-0058. The catalogue is open to any signed-in account; moving a
         // fleet between plans is head office's.
+        // ADR-0055 §5. Three parties, three answers, and no party may perform
+        // another's step — `approve` is keyed on the level, not a permission.
+        'GET api/v1/walk-in-contracts' => 'A',
+        'POST api/v1/walk-in-contracts/{contract}/consent' => 'A',
+        'POST api/v1/walk-in-contracts/{contract}/approval' => 'A',
+        'POST api/v1/walk-in-contracts/{contract}/refusal' => 'A',
         'GET api/v1/plans' => 'C',
         'PUT api/v1/operators/{operator}/plan' => 'A',
         'GET api/v1/kangaru/overview' => 'A',
@@ -454,7 +460,7 @@ it('has a census row for every API route and a route for every census row', func
     // 211: the fleet-company register (K2, ADR-0059) — index, store, show,
     // update. No destroy: a fleet that leaves is suspended, because six
     // operational tables carry `operator_id`.
-    expect(count($router))->toBe(224);
+    expect(count($router))->toBe(228);
 });
 
 it('uses only the four idioms, and files sixteen routes as public', function () {
@@ -511,7 +517,7 @@ it('authenticates every route that is not filed as public, and throttles every o
     // register search beside it.
     // 195: the four fleet-company routes, all authenticated. Head office's
     // register is the least public surface on the platform.
-    expect($guarded)->toBe(208);
+    expect($guarded)->toBe(212);
 });
 
 it('binds the actor\'s tenant on every staff route, so TenantScope has something to scope by', function () {
@@ -557,5 +563,5 @@ it('binds the actor\'s tenant on every staff route, so TenantScope has something
     // they bind the actor's tenant like the rest even though a Kangaru
     // account has none - IdentifyTenant binding a null is the fail-closed
     // state, and exempting them would be a second way to be unscoped.
-    expect($staff)->toBe(194);
+    expect($staff)->toBe(198);
 });

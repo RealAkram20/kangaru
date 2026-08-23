@@ -5400,6 +5400,91 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/walk-in-contracts:
+    get:
+      summary: What is waiting on me — a driver's contract with Kangaru.
+      description: >
+        ADR-0055 §5. Two queues behind one route, because it is one question
+        asked by different parties: a **fleet** sees its own drivers waiting on
+        its consent; **head office** sees everything already consented and
+        waiting on them, oldest first. Two URLs would let a fleet ask head
+        office's.
+      responses:
+        '200':
+          description: The contracts waiting on this actor.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/WalkInContract' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/walk-in-contracts/{contract}/consent:
+    parameters:
+      - { name: contract, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: The fleet agrees to let its driver take walk-in work.
+      description: >
+        The fleet named **on the contract**, not the driver's current employer —
+        a driver who moves must not hand this decision to whoever they work for
+        now. Head office cannot consent on a fleet's behalf, or "the fleet
+        consents" is a sentence in an ADR and nothing in the code.
+      responses:
+        '200':
+          $ref: '#/components/responses/WalkInContractResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/walk-in-contracts/{contract}/approval:
+    parameters:
+      - { name: contract, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: Kangaru accepts the driver into walk-in work.
+      description: >
+        Head office only, and **refused unless the fleet has already
+        consented** — a 422 even for the party entitled to call it. If this
+        could be reached early, every driver on the platform is contracted the
+        moment they ask and the consent step is decorative.
+      responses:
+        '200':
+          $ref: '#/components/responses/WalkInContractResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/walk-in-contracts/{contract}/refusal:
+    parameters:
+      - { name: contract, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: Whoever's turn it is says no.
+      description: >
+        One route for both answers. **Which timestamp it stamps is decided by
+        the contract's state, not by the caller**, so a fleet cannot record
+        Kangaru's answer by calling the wrong verb. The reason is optional — a
+        fleet declining its own driver may have nothing to say publicly — and
+        the driver is told the outcome either way (ADR-0052).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason: { type: ['string', 'null'], maxLength: 500 }
+      responses:
+        '200':
+          $ref: '#/components/responses/WalkInContractResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/plans:
     get:
       summary: What a fleet can pay to be on Kangaru.
@@ -7183,6 +7268,18 @@ components:
               reason: { type: string, maxLength: 1000 }
 
   responses:
+    WalkInContractResponse:
+      description: One driver's walk-in contract.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/WalkInContract' }
     ContractResponse:
       description: One contract between a fleet and a client.
       content:
@@ -8080,6 +8177,42 @@ components:
       type: string
       description: A named bundle of permissions a corporate client's administrator may switch on for one of their own people (App\Enums\ClientCapability).
       enum: [approves_bookings, sees_finance, manages_staff, manages_routes]
+
+    WalkInContract:
+      type: object
+      required: [id, status, fleet_answered_at, kangaru_answered_at, refused_reason]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        status:
+          enum: [requested, awaiting_kangaru, active, refused]
+          description: >
+            Four states rather than a boolean, because each step belongs to a
+            different party and the queue is built on the gap between the
+            second and the third — consented, waiting on head office.
+        fleet_answered_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        kangaru_answered_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        refused_reason: { type: ['string', 'null'] }
+        driver:
+          type: object
+          required: [id, name, owns_vehicle]
+          additionalProperties: false
+          properties:
+            id: { type: ['integer', 'null'] }
+            name: { type: ['string', 'null'] }
+            owns_vehicle:
+              type: boolean
+              description: >
+                Whether fleet consent was waived (ADR-0048 §7, ADR-0055 §5).
+                Without it the office sees a contract naming no fleet and
+                cannot tell a driver-partner from a data error.
+        fleet:
+          type: ['object', 'null']
+          required: [id, name]
+          additionalProperties: false
+          properties:
+            id: { type: integer }
+            name: { type: string }
 
     Plan:
       type: object

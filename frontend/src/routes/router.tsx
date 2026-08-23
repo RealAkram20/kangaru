@@ -24,6 +24,7 @@ const CustomersPage = page(() => import('../pages/CustomersPage'), 'CustomersPag
 const FleetCompaniesPage = page(() => import('../pages/FleetCompaniesPage'), 'FleetCompaniesPage')
 const CorporateClientsPage = page(() => import('../pages/CorporateClientsPage'), 'CorporateClientsPage')
 const PlansPage = page(() => import('../pages/PlansPage'), 'PlansPage')
+const DriverContractsPage = page(() => import('../pages/DriverContractsPage'), 'DriverContractsPage')
 const FleetRecordPage = page(() => import('../pages/fleets/FleetRecordPage'), 'FleetRecordPage')
 const DashboardPage = page(() => import('../pages/DashboardPage'), 'DashboardPage')
 const DispatchPage = page(() => import('../pages/DispatchPage'), 'DispatchPage')
@@ -140,6 +141,11 @@ export const router = createBrowserRouter([
       // the same reason `fleets` is: `OperatorClientPolicy` and the company
       // scope both key on `access_level`, and a level is not something a role
       // can be given.
+      // ADR-0055 §5. Deliberately NOT behind RequireNavAccess: both a fleet
+      // and head office reach it, and the **server** decides which queue
+      // arrives. A level gate here would have to know that, which is the
+      // rule living in two places.
+      { path: 'driver-contracts', element: <DriverContractsPage /> },
       {
         path: 'plans',
         element: (
