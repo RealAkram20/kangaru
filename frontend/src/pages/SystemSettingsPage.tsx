@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
+import { useAuth } from '../auth/useAuth'
 import { Card } from '../components/core/Card'
 import { Icon } from '../components/core/Icon'
 import { Alert } from '../components/feedback/Alert'
@@ -66,6 +67,18 @@ interface Section {
  * and the fields below it do not already say. Where none of them could, the
  * field simply has no description.
  */
+/**
+ * Groups that are Kangaru's copy of itself (ADR-0059), mirroring
+ * `SettingsService::KANGARU_ONLY_GROUPS`.
+ *
+ * A fleet's settings write is already scoped to that fleet, so nothing here
+ * prevents a leak — the server does. What it prevents is a fleet being handed
+ * a form for the platform's own name, legal notices, public order page and
+ * sign-in methods, submitting it, and getting a 404 from a tab the console
+ * offered them. An offered door that refuses is worse than no door.
+ */
+const KANGARU_ONLY_GROUPS = ['branding', 'legal', 'ordering', 'auth']
+
 const SECTIONS: Section[] = [
   {
     meta: {
@@ -222,7 +235,20 @@ export function SystemSettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [refused, setRefused] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [active, setActive] = useState(SECTIONS[0].meta.id)
+  const { user } = useAuth()
+
+  // The tabs this account may actually use. Filtered before `active` is
+  // chosen, so the first tab is one that exists for them rather than a
+  // Branding tab a fleet cannot open.
+  const sections = useMemo(
+    () =>
+      user?.access_level === 'kangaru'
+        ? SECTIONS
+        : SECTIONS.filter((section) => !KANGARU_ONLY_GROUPS.includes(section.meta.group)),
+    [user?.access_level],
+  )
+
+  const [active, setActive] = useState(sections[0].meta.id)
   const [dirty, setDirty] = useState<Record<string, boolean>>({})
   const panes = useRef<HTMLDivElement>(null)
 
@@ -303,7 +329,7 @@ export function SystemSettingsPage() {
             <div className="kr-settings-rail-group" key={group.heading}>
               <span className="kr-settings-rail-heading">{group.heading}</span>
               {group.ids.map((id) => {
-                const section = SECTIONS.find((candidate) => candidate.meta.id === id)
+                const section = sections.find((candidate) => candidate.meta.id === id)
                 if (!section) return null
                 return (
                   <button
@@ -347,7 +373,7 @@ export function SystemSettingsPage() {
         </nav>
 
         <div ref={panes} style={{ minWidth: 0 }}>
-          {SECTIONS.map(({ meta, Component }) => (
+          {sections.map(({ meta, Component }) => (
             <div key={meta.id} style={{ display: meta.id === active ? 'block' : 'none' }}>
               <Component settings={settings} section={meta} onSaved={setSettings} />
             </div>

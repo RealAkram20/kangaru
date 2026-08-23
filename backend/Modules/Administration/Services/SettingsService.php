@@ -566,6 +566,40 @@ This is a short-form notice. Ask the office for the full safety policy.",
         ];
     }
 
+    /**
+     * Settings groups that belong to Kangaru and to no fleet (ADR-0059).
+     *
+     * A fleet's settings write is already scoped to that fleet — `setGroup`
+     * resolves `operator_id` from the `AccessContext`, so nobody can change
+     * Kangaru's own defaults by accident. That makes this an **information
+     * architecture** rule rather than a security one, and it is worth being
+     * precise about which: the danger is not a leak, it is a fleet being
+     * offered controls that make no sense for it and quietly overriding the
+     * platform's identity for its own console.
+     *
+     * The four below are Kangaru's copy of itself:
+     *
+     * - `branding` — the app's name, tagline and marks. "One app, one brand,
+     *   for now" is settled (`docs/platform-plan.md` §7), so a fleet
+     *   rebranding KangaruRide is a feature nobody decided to build.
+     * - `legal` — the terms, privacy notice and safety page a member of the
+     *   public reads before handing over their data. Kangaru is the
+     *   controller of that relationship, not the fleet that drove the car.
+     * - `ordering` — the public order page, which is Kangaru's walk-in
+     *   economy end to end.
+     * - `auth` — how people sign in, and since ADR-0061 whether a second
+     *   factor is asked for at all. §5 of that decision already refuses a
+     *   fleet the per-role switch; leaving them the group it lives in would
+     *   have been the same control by another door.
+     *
+     * Everything else — regional formats, booking rules, distance checks, the
+     * driver app, maps, mail, SMS, payments — is genuinely a fleet's to set,
+     * and a fleet overriding those is the whole point of `F1`.
+     *
+     * @var list<string>
+     */
+    public const KANGARU_ONLY_GROUPS = ['branding', 'legal', 'ordering', 'auth'];
+
     public function get(string $group, string $key): mixed
     {
         return $this->all()[$group][$key] ?? null;

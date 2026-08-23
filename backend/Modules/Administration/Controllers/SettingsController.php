@@ -2,8 +2,10 @@
 
 namespace Modules\Administration\Controllers;
 
+use App\Enums\AccessLevel;
 use App\Enums\ErrorCode;
 use App\Http\Controllers\Controller;
+use App\Models\User;
 use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -39,6 +41,28 @@ class SettingsController extends Controller
         $catalogue = SettingsService::catalogue()[$group] ?? null;
 
         if ($catalogue === null) {
+            return ApiResponse::error(
+                ErrorCode::NOT_FOUND,
+                'The requested resource could not be found.',
+                [],
+                404,
+            );
+        }
+
+        // ADR-0059. Four groups are Kangaru's copy of itself — its name, its
+        // legal notices, its public order page, and how people sign in — and
+        // a fleet has no business in any of them.
+        //
+        // A 404 rather than a 403, matching the unknown-group branch above and
+        // the menu's own stance: at this level the group **does not exist**,
+        // which is the difference between a locked door and no door. Telling a
+        // fleet "forbidden" would confirm there is a platform-branding surface
+        // to go looking for.
+        /** @var User $actor */
+        $actor = $request->user();
+
+        if (in_array($group, SettingsService::KANGARU_ONLY_GROUPS, true)
+            && $actor->access_level !== AccessLevel::KANGARU) {
             return ApiResponse::error(
                 ErrorCode::NOT_FOUND,
                 'The requested resource could not be found.',
@@ -126,6 +150,24 @@ class SettingsController extends Controller
         $this->authorize('update', Setting::class);
 
         if (! in_array($asset, ['logo', 'favicon'], true)) {
+            return ApiResponse::error(
+                ErrorCode::NOT_FOUND,
+                'The requested resource could not be found.',
+                [],
+                404,
+            );
+        }
+
+        // The same gate as the `branding` group itself, and it needs saying
+        // here separately because this route writes that group by another
+        // door. Gating the PATCH and leaving the upload open would have let a
+        // fleet replace the platform's logo while being refused its name —
+        // the kind of half-closed rule that reads as a bug in whichever
+        // direction somebody finds it from.
+        /** @var User $actor */
+        $actor = $request->user();
+
+        if ($actor->access_level !== AccessLevel::KANGARU) {
             return ApiResponse::error(
                 ErrorCode::NOT_FOUND,
                 'The requested resource could not be found.',

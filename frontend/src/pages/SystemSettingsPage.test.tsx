@@ -1,8 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { UserEvent } from '@testing-library/user-event'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { apiFailure } from '../test/harness'
+import { apiFailure, makeUser, renderAs } from '../test/harness'
 
 vi.mock('../lib/apiClient', () => ({
   apiClient: { get: vi.fn(), patch: vi.fn(), post: vi.fn() },
@@ -109,11 +109,24 @@ beforeEach(() => {
   patch.mockReset()
 })
 
+/**
+ * Head office, because four of these groups are Kangaru's own since ADR-0059
+ * — Branding, Legal, Public ordering and Sign-in — and a fleet-level account
+ * is not offered their tabs at all. These tests exercise Branding and the
+ * Google key, so the level has to be stated rather than left to the harness
+ * default.
+ */
+const HEAD_OFFICE = makeUser({
+  role: 'super_admin',
+  access_level: 'kangaru',
+  tenant_id: null,
+})
+
 describe('SystemSettingsPage', () => {
   it('renders the stored settings for an allowed role', async () => {
     get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
 
-    render(<SystemSettingsPage />)
+    renderAs(<SystemSettingsPage />, HEAD_OFFICE)
 
     expect(await screen.findByLabelText(/app name/i)).toHaveValue('KangaruRide')
     expect(screen.getByLabelText(/^currency/i)).toHaveValue('UGX')
@@ -127,7 +140,7 @@ describe('SystemSettingsPage', () => {
     const user = userEvent.setup()
     get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
 
-    render(<SystemSettingsPage />)
+    renderAs(<SystemSettingsPage />, HEAD_OFFICE)
 
     // `getByRole` skips what is hidden from the accessibility tree, which is
     // the point being proved — so the hidden pane is found by its text and
@@ -148,7 +161,7 @@ describe('SystemSettingsPage', () => {
     const user = userEvent.setup()
     get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
 
-    render(<SystemSettingsPage />)
+    renderAs(<SystemSettingsPage />, HEAD_OFFICE)
 
     await open(user, /^email/i)
     await user.type(screen.getByLabelText(/smtp host/i), 'smtp.example.com')
@@ -163,7 +176,7 @@ describe('SystemSettingsPage', () => {
     const user = userEvent.setup()
     get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
 
-    render(<SystemSettingsPage />)
+    renderAs(<SystemSettingsPage />, HEAD_OFFICE)
 
     const name = await screen.findByLabelText(/app name/i)
     expect(screen.queryByText(/unsaved changes/i)).toBeNull()
@@ -203,7 +216,7 @@ describe('SystemSettingsPage', () => {
       },
     })
 
-    render(<SystemSettingsPage />)
+    renderAs(<SystemSettingsPage />, HEAD_OFFICE)
 
     const field = await screen.findByLabelText(/google directions api key/i)
 
@@ -221,7 +234,7 @@ describe('SystemSettingsPage', () => {
       },
     })
 
-    render(<SystemSettingsPage />)
+    renderAs(<SystemSettingsPage />, HEAD_OFFICE)
 
     expect(await screen.findByText(/costs money per trip/i)).toBeInTheDocument()
   })
@@ -232,7 +245,7 @@ describe('SystemSettingsPage', () => {
     // are exactly the thing somebody must know before a fleet leans on it.
     get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
 
-    render(<SystemSettingsPage />)
+    renderAs(<SystemSettingsPage />, HEAD_OFFICE)
 
     expect(await screen.findByLabelText(/osrm server address/i)).toBeInTheDocument()
     expect(screen.queryByLabelText(/google directions api key/i)).not.toBeInTheDocument()
@@ -244,7 +257,7 @@ describe('SystemSettingsPage', () => {
       apiFailure(403, 'FORBIDDEN', 'You do not have permission to perform this action.'),
     )
 
-    render(<SystemSettingsPage />)
+    renderAs(<SystemSettingsPage />, HEAD_OFFICE)
 
     expect(await screen.findByText(/not available to your role/i)).toBeInTheDocument()
     expect(screen.queryByLabelText(/app name/i)).not.toBeInTheDocument()
@@ -264,7 +277,7 @@ describe('SystemSettingsPage', () => {
       },
     })
 
-    render(<SystemSettingsPage />)
+    renderAs(<SystemSettingsPage />, HEAD_OFFICE)
 
     const name = await screen.findByLabelText(/app name/i)
     await user.clear(name)
@@ -298,7 +311,7 @@ describe('SystemSettingsPage', () => {
       }),
     )
 
-    render(<SystemSettingsPage />)
+    renderAs(<SystemSettingsPage />, HEAD_OFFICE)
 
     await user.type(await screen.findByLabelText(/app name/i), '!')
     await user.click(saveButton())
@@ -319,7 +332,7 @@ describe('SystemSettingsPage', () => {
       }),
     )
 
-    render(<SystemSettingsPage />)
+    renderAs(<SystemSettingsPage />, HEAD_OFFICE)
 
     await user.type(await screen.findByLabelText(/app name/i), '!')
     await user.click(saveButton())
@@ -338,7 +351,7 @@ describe('SystemSettingsPage', () => {
     get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
     patch.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
 
-    render(<SystemSettingsPage />)
+    renderAs(<SystemSettingsPage />, HEAD_OFFICE)
     await open(user, /payment gateways/i)
 
     // A stored credential shows only that it exists.
@@ -366,7 +379,7 @@ describe('SystemSettingsPage', () => {
     get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
     patch.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
 
-    render(<SystemSettingsPage />)
+    renderAs(<SystemSettingsPage />, HEAD_OFFICE)
     await open(user, /driver pay/i)
 
     const commission = screen.getByLabelText(/commission the platform keeps/i)
@@ -406,7 +419,7 @@ describe('SystemSettingsPage', () => {
     get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
     patch.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
 
-    render(<SystemSettingsPage />)
+    renderAs(<SystemSettingsPage />, HEAD_OFFICE)
     await open(user, /distance checks/i)
 
     const ceiling = screen.getByLabelText(/longest single trip/i)
@@ -433,7 +446,7 @@ describe('SystemSettingsPage', () => {
     // review signal: the invoice still goes out and the driver is still paid.
     get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
 
-    render(<SystemSettingsPage />)
+    renderAs(<SystemSettingsPage />, HEAD_OFFICE)
 
     expect(await screen.findByText(/only flags — it does not stop anything/i)).toBeInTheDocument()
   })
@@ -449,7 +462,7 @@ describe('SystemSettingsPage', () => {
     const user = userEvent.setup()
     get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
 
-    render(<SystemSettingsPage />)
+    renderAs(<SystemSettingsPage />, HEAD_OFFICE)
     await open(user, /distance checks/i)
 
     const toggle = screen.getByLabelText(/drivers record odometer readings/i)
@@ -464,5 +477,54 @@ describe('SystemSettingsPage', () => {
     // And it says the part that is easiest to assume otherwise: this is not
     // walk-in only.
     expect(screen.getByText(/including trips for corporate clients/)).toBeTruthy()
+  })
+})
+
+/**
+ * ADR-0059. Four groups are Kangaru's copy of itself, and the server answers
+ * 404 on them to a fleet — so the console must not offer the tab. An offered
+ * door that refuses is worse than no door, and it is the shape the owner ran
+ * into: signed in at fleet level, editing the platform's branding form.
+ */
+describe('the tabs a fleet is offered', () => {
+  const FLEET = makeUser({ role: 'super_admin', access_level: 'fleet', tenant_id: null })
+
+  beforeEach(() => {
+    get.mockResolvedValue({ data: { data: { settings: SETTINGS } } })
+  })
+
+  it("hides the four groups that are Kangaru's own", async () => {
+    renderAs(<SystemSettingsPage />, FLEET)
+
+    await screen.findByText('Regional')
+
+    for (const tab of ['Branding', 'Public ordering', 'Sign-in']) {
+      expect(screen.queryByText(tab)).not.toBeInTheDocument()
+    }
+  })
+
+  /**
+   * The other half. Gating too widely would be a regression dressed as
+   * caution — regional formats, booking rules and the rest are a fleet's to
+   * set, and `F1` exists to let them.
+   */
+  it('leaves the groups that are genuinely a fleet’s', async () => {
+    renderAs(<SystemSettingsPage />, FLEET)
+
+    expect(await screen.findByText('Regional')).toBeInTheDocument()
+    expect(screen.getAllByText('Booking rules').length).toBeGreaterThan(0)
+  })
+
+  /**
+   * The first tab must be one that exists for this account. Filtering after
+   * choosing would open on a Branding tab a fleet cannot use.
+   */
+  it('opens on a tab the account can actually use', async () => {
+    renderAs(<SystemSettingsPage />, FLEET)
+
+    // Regional is first in the filtered list, so its fields are the ones
+    // mounted — not Branding's, which this account has no tab for.
+    expect(await screen.findByLabelText(/^currency/i)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/app name/i)).not.toBeInTheDocument()
   })
 })

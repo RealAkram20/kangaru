@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Enums\AccessLevel;
 use App\Enums\UserRole;
 use App\Models\Tenant;
 use App\Models\User;
@@ -115,12 +116,38 @@ class DatabaseSeeder extends Seeder
 
     private function seedPlatformStaff(): void
     {
+        // Head office, and the only account here that is (ADR-0055, ADR-0059).
+        //
+        // Declared, never left to the factory. `UserFactory` files any
+        // client-less account under Shanitah, which is the right default for
+        // the rest of this method — a dispatcher dispatches a fleet's trips
+        // and a finance officer bills a fleet's clients — and precisely wrong
+        // for the one account named "Platform". Before this was explicit, the
+        // account called Platform Super Admin was the one account that was
+        // not: it got Shanitah's console, and the owner found it by signing in
+        // and not recognising the menu.
+        //
+        // ADR-0055 §4's rule, applied where it bites: the level is stated on
+        // the row and never inferred from two nulls.
         $this->enrolDemoMfa(User::factory()->create([
             'tenant_id' => null,
-            'name' => 'Platform Super Admin',
+            'operator_id' => null,
+            'access_level' => AccessLevel::KANGARU,
+            'name' => 'Kangaru Super Admin',
             'email' => 'superadmin@kangaruride.test',
             'role' => UserRole::SUPER_ADMIN,
         ]));
+
+        // Shanitah's own, because promoting the account above took its only
+        // Super Admin away — and ADR-0059 §5 is explicit that a fleet with
+        // nobody to act as is unreachable to support for ever. The dashboard
+        // counts fleets in that state precisely so it cannot happen quietly.
+        User::factory()->create([
+            'tenant_id' => null,
+            'name' => 'Shanitah Super Admin',
+            'email' => 'admin@shanitah.test',
+            'role' => UserRole::SUPER_ADMIN,
+        ]);
 
         User::factory()->create([
             'tenant_id' => null,

@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\AccessLevel;
 use App\Enums\UserRole;
 use App\Models\User;
 
@@ -33,7 +34,12 @@ it('ships a real short-form notice rather than an empty box', function () {
 });
 
 it('lets the owner correct a notice without a deploy', function () {
-    $admin = User::factory()->create(['role' => UserRole::SUPER_ADMIN]);
+    $admin = User::factory()->create([
+        'tenant_id' => null,
+        'operator_id' => null,
+        'access_level' => AccessLevel::KANGARU,
+        'role' => UserRole::SUPER_ADMIN,
+    ]);
 
     $this->actingAs($admin, 'sanctum')
         ->patchJson('/api/v1/settings/legal', ['terms' => 'Ride safely. Record your odometer.'])
