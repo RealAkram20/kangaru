@@ -18250,3 +18250,60 @@ not per-period against the fleet — merging them makes both unauditable
 `blockers()` uses it, but no create path calls `require()` for it yet — the
 staff controller is a shared file and the driver and vehicle paths were enough
 to prove the rule. Named so it is not assumed.
+
+---
+
+### 2026-08-23 — Claiming: K8, a driver's contract with Kangaru (ADR-0055 §5, F3)
+
+**Status:** claimed, in progress. `K7` is closed and green (`78f5ca2`).
+
+**The contract half only. The commission half stays blocked**, and the split is
+the owner's from `docs/platform-plan.md` §6:
+
+| # | Question | Blocks |
+|---|---|---|
+| 2 | Who wins when a fleet's own booking and a walk-in want the same on-duty driver? | commission |
+| 3 | Does the fleet get a share of a walk-in run on its vehicle? | commission |
+
+Question 1 — *does the driver's fleet have to consent* — **is answered**: the
+driver asks, the fleet consents, Kangaru approves, and consent is **waived
+where `drivers.owns_vehicle` is true, because there is no fleet to ask**. That
+is enough to build the whole approval chain, which is what this package is.
+
+**Nothing exists yet.** No table, no model, no endpoint — `F3` was never
+started. `drivers.owns_vehicle` is the one piece already there (ADR-0048 §7),
+and it is what makes the waiver expressible without a new column.
+
+**Files I own (new):**
+
+- the `driver_walk_in_contracts` migration
+- `backend/Modules/Drivers/Models/DriverWalkInContract.php`
+- `backend/Modules/Drivers/Services/WalkInContractService.php` + test
+- `backend/Modules/Drivers/Controllers/WalkInContractController.php`
+- `backend/Modules/Drivers/Policies/DriverWalkInContractPolicy.php`
+- `backend/Modules/Drivers/Resources/WalkInContractResource.php`
+- `frontend/src/pages/DriverContractsPage.tsx` + test
+
+**Shared files, exact edits:** `Modules/Drivers/Routes/api.php` one block;
+`openapi.yaml` my own paths; `RoutePolicyCensusTest.php` my rows and the counts
+from **224/208/194**; `lib/menu/kangaru.ts` one entry; `router.tsx` one block;
+`AppServiceProvider.php` one `Gate::policy`.
+
+**Three parties, three answers — the shape this is built around.** A driver
+asks and may withdraw; their fleet consents or refuses and can do neither once
+Kangaru has answered; Kangaru approves or refuses and cannot consent on a
+fleet's behalf. **No party may perform another's step**, and the test for that
+is the deliverable rather than the happy path.
+
+**The one that would collapse it:** if a driver could reach the approval, every
+driver on the platform is contracted the moment they ask.
+
+**Not building:** the commission ledger, the walk-in dispatch pool, the depth
+control on what a fleet reads of a walk-in customer, or the explicit channel
+column. All of those are the blocked half, and each is named in
+`fleet-model-plan.md` §F3 rather than left to be rediscovered.
+
+**Not touched:** `mobile/` — the driver's own surface for asking is a driver-app
+screen and is **deliberately not in this package**; the console half is what
+lets the office see and answer, and the driver app can follow once the loop
+above it exists.
