@@ -31,6 +31,9 @@ export const KANGARU_MENU: SidebarSection[] = [
       // survive head office being able to onboard a client and then unable to
       // see the one it had just created.
       { id: 'clients', label: 'Corporate clients', icon: 'briefcase' },
+      // ADR-0058. What a fleet pays to be here — Kangaru's own commercial
+      // relationship with each of them, and nobody else's business.
+      { id: 'plans', label: 'Plans', icon: 'tags' },
     ],
   },
   {

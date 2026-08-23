@@ -231,6 +231,11 @@ const LEVEL_ONLY: Record<string, string[]> = {
   // head office's view of the whole platform rather than a second door onto
   // the same page.
   clients: ['kangaru'],
+  // ADR-0058. Reading the catalogue is open server-side — a fleet is
+  // entitled to know what it could move to — but the *register*, with how
+  // many fleets sit on each tier, is Kangaru's. A fleet sees its own plan on
+  // its own bill, not the shape of everybody else's.
+  plans: ['kangaru'],
 }
 
 export function canUseNavLevel(level: string | undefined, id: string): boolean {

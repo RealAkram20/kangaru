@@ -23,6 +23,7 @@ const CompaniesPage = page(() => import('../pages/CompaniesPage'), 'CompaniesPag
 const CustomersPage = page(() => import('../pages/CustomersPage'), 'CustomersPage')
 const FleetCompaniesPage = page(() => import('../pages/FleetCompaniesPage'), 'FleetCompaniesPage')
 const CorporateClientsPage = page(() => import('../pages/CorporateClientsPage'), 'CorporateClientsPage')
+const PlansPage = page(() => import('../pages/PlansPage'), 'PlansPage')
 const FleetRecordPage = page(() => import('../pages/fleets/FleetRecordPage'), 'FleetRecordPage')
 const DashboardPage = page(() => import('../pages/DashboardPage'), 'DashboardPage')
 const DispatchPage = page(() => import('../pages/DispatchPage'), 'DispatchPage')
@@ -139,6 +140,14 @@ export const router = createBrowserRouter([
       // the same reason `fleets` is: `OperatorClientPolicy` and the company
       // scope both key on `access_level`, and a level is not something a role
       // can be given.
+      {
+        path: 'plans',
+        element: (
+          <RequireNavAccess id="plans">
+            <PlansPage />
+          </RequireNavAccess>
+        ),
+      },
       {
         path: 'clients',
         element: (

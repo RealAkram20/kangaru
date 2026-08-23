@@ -5400,6 +5400,61 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/plans:
+    get:
+      summary: What a fleet can pay to be on Kangaru.
+      description: >
+        ADR-0058. Open to any signed-in account — a fleet is entitled to know
+        what it could move to, and the catalogue carries no other fleet's
+        information. A limit of null means **unlimited**, never nought and
+        never a large number: a grandfathered fleet whose unlimited-ness is
+        spelled 999999 is one careless comparison from being limited.
+      responses:
+        '200':
+          description: Every plan, cheapest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Plan' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/operators/{operator}/plan:
+    parameters:
+      - { name: operator, in: path, required: true, schema: { type: integer } }
+    put:
+      summary: Move a fleet onto a plan.
+      description: >
+        Head office only — it is Kangaru's commercial relationship with that
+        fleet, not the fleet's own to edit. **A move to a plan smaller than the
+        fleet's current usage is refused with a 422 naming the figures**
+        (ADR-0058 §4): "Free allows 10 drivers, and this fleet has 38". The
+        office reduces first; the system does not choose which twenty-eight
+        drivers to cut, and it never deactivates anything.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_id]
+              additionalProperties: false
+              properties:
+                plan_id: { type: integer }
+      responses:
+        '200':
+          $ref: '#/components/responses/OperatorResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/kangaru/overview:
     get:
       summary: What head office sees when it signs in.
@@ -8025,6 +8080,43 @@ components:
       type: string
       description: A named bundle of permissions a corporate client's administrator may switch on for one of their own people (App\Enums\ClientCapability).
       enum: [approves_bookings, sees_finance, manages_staff, manages_routes]
+
+    Plan:
+      type: object
+      required: [id, slug, name, description, is_default, price_minor, currency, period, driver_limit, vehicle_limit, staff_limit]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: ['string', 'null'] }
+        is_default:
+          type: boolean
+          description: >
+            The plan a fleet gets when none is named. Free is a real plan and
+            the default, not the absence of one (ADR-0058 §1) — a nullable
+            plan meaning "free" is the inference ADR-0055 §4 refused for access
+            levels, failing the same way and in the direction of giving
+            something away.
+        price_minor:
+          type: integer
+          description: >
+            Minor units, per AGENTS.md. Nought is a real price on Free rather than
+            an absence — ADR-0058 §1 is explicit that Free is a plan, not the
+            lack of one.
+        currency: { type: string, minLength: 3, maxLength: 3 }
+        period: { enum: [none, monthly, annual] }
+        driver_limit:
+          type: ['integer', 'null']
+          description: >
+            Null means **unlimited** — never nought, and never a large number. A
+            grandfathered fleet whose unlimited-ness is spelled 999999 is one
+            careless comparison away from being limited.
+        vehicle_limit: { type: ['integer', 'null'] }
+        staff_limit: { type: ['integer', 'null'] }
+        fleets_count:
+          type: integer
+          description: Present on the listing only.
 
     Contract:
       type: object
