@@ -10,6 +10,7 @@ import { EmptyState } from '../components/feedback/EmptyState'
 import { Checkbox } from '../components/forms/Checkbox'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { Switch } from '../components/forms/Switch'
 import { PageFill } from '../components/layout/PageFill'
 import { apiClient } from '../lib/apiClient'
 import { apiError, fieldErrors } from '../lib/apiError'
@@ -89,6 +90,7 @@ export function RolesPage() {
   }, [load])
 
   const canManage = meta?.can_manage ?? false
+  const mfaEnforced = meta?.mfa_enforced ?? true
 
   const rows = useMemo(() => (roles ?? []).map((role) => ({ ...role, id: role.slug })), [roles])
 
@@ -148,6 +150,22 @@ export function RolesPage() {
         render: (row) => row.permissions.length,
       },
       {
+        key: 'requires_mfa',
+        card: 'meta',
+        header: 'Second factor',
+        // Never colour alone (DESIGN.md, WCAG AA) — the badge carries the
+        // word, and the platform switch being off is said out loud rather
+        // than left to be inferred from a control that looks live.
+        render: (row) =>
+          row.requires_mfa ? (
+            <Badge tone={mfaEnforced ? 'success' : 'neutral'}>
+              {mfaEnforced ? 'Required' : 'Off platform-wide'}
+            </Badge>
+          ) : (
+            <span style={{ color: 'var(--text-secondary)' }}>Not required</span>
+          ),
+      },
+      {
         key: 'users_count',
         card: 'meta',
         header: 'Accounts',
@@ -176,7 +194,7 @@ export function RolesPage() {
         ),
       },
     ],
-    [canManage],
+    [canManage, mfaEnforced],
   )
 
   if (refused) {
@@ -286,6 +304,10 @@ function RoleDialog({
   const [name, setName] = useState(role?.name ?? '')
   const [slug, setSlug] = useState('')
   const [description, setDescription] = useState(role?.description ?? '')
+  // ADR-0061. Defaults to what the role already says; a new role starts
+  // without the requirement, which is the same direction `RoleSeeder`
+  // takes for anything it did not name explicitly.
+  const [requiresMfa, setRequiresMfa] = useState(role?.requires_mfa ?? false)
   const [selected, setSelected] = useState<string[]>(role?.permissions ?? [])
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [message, setMessage] = useState<string | null>(null)
@@ -319,6 +341,7 @@ function RoleDialog({
         // A built-in role's name is immutable server-side, so it is not
         // sent — PATCH carries only what may actually change.
         await apiClient.patch(`/roles/${role.slug}`, {
+          ...(meta.can_manage_mfa ? { requires_mfa: requiresMfa } : {}),
           ...(role.is_system ? {} : { name }),
           description: description.trim() === '' ? null : description,
           permissions: selected,
@@ -426,6 +449,28 @@ function RoleDialog({
             disabled={readOnly}
           />
         </FormField>
+
+        {meta.can_manage_mfa && (
+          <FormField
+            label="Ask holders of this role for a second factor"
+            htmlFor="r-mfa"
+            hint={
+              !meta.mfa_enforced
+                ? 'Saved, but inert: the platform-wide switch in Settings is off, so nobody is asked.'
+                : requiresMfa && (role?.unenrolled_count ?? 0) > 0
+                  ? `${role?.unenrolled_count} of these accounts have not set one up, and will be asked to at their next sign-in.`
+                  : 'Holders sign in with a code as well as a password.'
+            }
+            error={errors.requires_mfa}
+          >
+            <Switch
+              id="r-mfa"
+              checked={requiresMfa}
+              onChange={(event) => setRequiresMfa(event.target.checked)}
+              disabled={readOnly}
+            />
+          </FormField>
+        )}
 
         <div>
           <div

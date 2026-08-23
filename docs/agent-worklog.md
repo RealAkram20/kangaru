@@ -16962,3 +16962,101 @@ The `plans` migration has been run on the dev database. Shanitah is on
   it is the next thing, and it needs a decision recorded because `AGENTS.md`
   currently states MFA for Super Admin and Finance as a requirement rather
   than a setting.
+
+---
+
+### 2026-08-23 — Claiming: the second factor becomes a setting (ADR-0061)
+
+**Status:** claimed, in progress. Owner's ask, verbatim: *"we want in teh
+settings to taggle on and off the 2FA"*, and on the shape: **both** a master
+switch and per-role, with the ADR written first.
+
+**Why it is not just a convenience.** `roles.requires_mfa` has been editable
+only by `RoleSeeder` since ADR-0004 — no request field, no resource field, no
+control anywhere. It has been changed by hand three times, and on 22 August it
+changed **as a side effect of granting an unrelated permission**: re-seeding
+roles to pick up `fleets.view` rewrote `requires_mfa` and put three console
+accounts into "must enrol". That is my own entry above; this package is the
+fix for it.
+
+**Files I own (new):**
+
+- `docs/adr/0061-a-second-factor-is-a-setting-not-a-rule.md`
+- `backend/tests/Feature/Administration/MfaIsASettingTest.php`
+
+**Shared files, exact edits:**
+
+| File | Edit |
+|---|---|
+| `AGENTS.md` | **one line** — the Security bullet becomes a default plus a pointer to ADR-0061. Nothing else in that file. |
+| `SettingsService.php` | one key, `auth.mfa_enforced`, **not public** |
+| `app/Models/User.php` | `requiresMfa()` resolves both switches — **the only place either is read** |
+| `RoleResource` + role requests + `RoleController` | `requires_mfa` becomes readable and writable |
+| `frontend/src/pages/settings/sections/AuthSection.tsx` | the master switch and the effective per-role summary |
+| `frontend/src/pages/RolesPage.tsx` | the per-role control |
+| `docs/api/openapi.yaml` | `requires_mfa` on Role, `mfa_enforced` on settings |
+
+**The one rule this is built around:** nothing outside `User::requiresMfa()`
+may read either switch. Two callers combining two gates themselves is how they
+drift, and the drift is invisible — a person in the half-state signs in with a
+**200 and a token** and is then refused every route but five.
+
+**Not touched:** `mobile/`, and the three files another agent holds for
+place-suggestions.
+
+#### Closed — the field test ran, the follow-up shipped, and the owner's three asks are live-proven
+
+**The five-step proof, as far as a desk can take it.** On AVD `kadson_dev`,
+with a debug build of this tree made by `expo prebuild` + gradle (the
+`android/` directory is generated and gitignored; `app/sentry.gradle` had to
+be copied from the package because the daemon could not resolve `node`):
+
+1. **Sign in → `device_tokens` row: PASSED.** The first row this table has
+   ever held — `ExponentPushToken[0gT3TPNxNL16AuqaXhAi92]`, user 8, via
+   `POST /me/devices` 204. Needed `EXPO_PUBLIC_ALLOW_EMULATOR_PUSH=1`
+   (dev-only, gitignored `.env`) because `Device.isDevice` is false on every
+   emulator; the fleet build path is untouched.
+2. **Go Online → foreground service: PASSED.** `LocationTaskService`
+   isForeground=true holding "You are online — waiting for jobs".
+3. **Offer, app backgrounded / 4. screen locked / 5. accept with the app
+   killed: NOT RUN HERE** — the session pivoted to the owner's three live
+   asks before these three; the harness (build, token, channels) is now in
+   place for whoever runs them next. On the fleet build they also need the
+   vc6 handset checks in the entry above.
+
+**The owner's three asks, each proven against the running stack:**
+
+- **Geocoder fallback** — typed "Acacia" in Add a drop-off on live trip 94:
+  four Photon suggestions under a SUGGESTIONS heading, one debounced
+  request (`GET /trips/94/place-suggestions?q=Acacia` 200), tap landed the
+  stop **with its pin** (0.33797, 32.58620) and Navigate retargeted to it.
+  Register-first ordering unchanged; free-text row still the floor.
+- **Waiting time per stop** — trip 93's Ntinda stop: arrived 20:48:30,
+  departed 20:51:19, `waiting`/`trip_resumed` events stamped with the stop
+  id, the screen saying "On hold for 01:31. Waiting time is recorded and
+  priced."
+- **Narration** — trip 94 completed with "Held 20minutes at Acacia Avenue
+  site - no power on arrival." riding the `trip_completed` event's `notes` —
+  the same column cancellation reasons use, so the console's record reads
+  it with no new plumbing.
+
+**Counting, checked because the owner asked:** completion posts the ledger
+itself — trip 93: fare 6,000 → `fare_earned` 4,800 + `cash_collected`
+−6,000; trip 94: 8,000 → 6,400; `/me/stats` answers `trips_today: 1,
+earnings_today_minor: 6400`. There is no activation step.
+
+**Verified:** backend 49 passed (isolated DB `kangaruride_testing_claude` —
+the shared testing DB was mid-collision with another session's run), Pint,
+Larastan clean on the new files; mobile 23 passed across the two touched
+suites, `tsc --noEmit` clean, eslint clean; three mutations applied, each
+failed exactly one test, each restored byte-identical. Census pins moved:
+routes 206→207, guarded 190→191, staff 176→177, tenant-bound 40→41, driver
+allow-list 56→57.
+
+**Not done, said plainly:** Stage 0 steps 3–5 (background / locked / killed
+offer on this emulator harness); the vc6 handset proof; the Trips README
+route table row; ADR-0045 itself still describes the register-only search
+and should gain a §10-follow-up note. The census test files, `ClientScope`,
+`openapi.yaml` and the mobile shared files carried other sessions'
+uncommitted edits before mine — a commit of this work must either ride with
+theirs or be separated by hand; nothing here is committed.

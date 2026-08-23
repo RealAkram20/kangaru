@@ -2,6 +2,7 @@
 
 namespace Modules\Administration\Requests;
 
+use App\Enums\AccessLevel;
 use App\Enums\Permission;
 use App\Models\User;
 use Illuminate\Contracts\Validation\Validator;
@@ -34,6 +35,12 @@ class UpdateRoleRequest extends FormRequest
             'description' => ['nullable', 'string', 'max:255'],
             'permissions' => ['sometimes', 'array', 'min:1'],
             'permissions.*' => ['string', Rule::enum(Permission::class)],
+            // ADR-0061. The per-role half of the second-factor rule.
+            // `RolePolicy::update` already narrows who may reach this,
+            // and ADR-0061 §5 adds the level: a control that weakens
+            // authentication must not be reachable by the account it
+            // would weaken.
+            'requires_mfa' => ['sometimes', 'boolean'],
         ];
     }
 
@@ -56,6 +63,32 @@ class UpdateRoleRequest extends FormRequest
 
             if ($actor === null || $role === null) {
                 return;
+            }
+
+            // ADR-0061 §5. A control that weakens authentication must not be
+            // reachable by the account it would weaken — so the second-factor
+            // switch is head office's, the same shape as `support.act-as` and
+            // the fleet register.
+            //
+            // Refused on the **field**, not on the whole role edit: a fleet's
+            // Super Admin may legitimately rename their own custom roles and
+            // change their permissions, and taking that away to protect one
+            // boolean would be a much larger change than this decision made.
+            //
+            // `has` rather than `filled` because the question is whether
+            // the field was sent at all, not whether it carries a truthy
+            // value — switching a factor **off** is the direction that most
+            // needs refusing.
+            //
+            // (`filled()` would behave identically here: it only treats an
+            // empty *string* as absent, so a JSON `false` passes it. Checked,
+            // rather than assumed — an earlier version of this comment
+            // claimed otherwise and was wrong.)
+            if ($this->has('requires_mfa') && $actor->access_level !== AccessLevel::KANGARU) {
+                $validator->errors()->add(
+                    'requires_mfa',
+                    'Only Kangaru head office can change whether a role needs a second factor.',
+                );
             }
 
             if ($role->is_system && $this->filled('name') && $this->input('name') !== $role->name) {

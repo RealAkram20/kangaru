@@ -28,6 +28,8 @@ export interface Settings {
     google_client_ids: string | null
     facebook_app_id: string | null
     facebook_app_secret: SecretValue
+    /** ADR-0061: the platform-wide half of the second-factor rule. */
+    mfa_enforced: boolean
   }
   regional: {
     currency: string

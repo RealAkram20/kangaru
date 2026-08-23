@@ -92,6 +92,26 @@ class Role extends Model
         return $this->hasMany(User::class, 'role', 'slug');
     }
 
+    /**
+     * Holders of this role who have **not** set a second factor up.
+     *
+     * Turning `requires_mfa` on puts exactly these people into the state
+     * ADR-0008 decision 3 forces out of: signed in, holding a token, and
+     * refused every route but five until they enrol. The console counts them
+     * before saving so the switch names who it is about to affect rather than
+     * firing later, on somebody else (ADR-0061 §4).
+     *
+     * `mfa_confirmed_at` rather than `mfa_secret`: enrolment is only real
+     * once a code has been verified against it, which is what
+     * `User::hasMfaEnabled()` says.
+     *
+     * @return HasMany<User, $this>
+     */
+    public function unenrolledUsers(): HasMany
+    {
+        return $this->users()->whereNull('mfa_confirmed_at');
+    }
+
     public function grants(Permission $permission): bool
     {
         return in_array($permission->value, $this->permissions, true);

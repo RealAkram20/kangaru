@@ -2,6 +2,7 @@
 
 namespace Modules\Administration\Controllers;
 
+use App\Enums\AccessLevel;
 use App\Enums\ErrorCode;
 use App\Enums\Permission;
 use App\Http\Controllers\Controller;
@@ -12,6 +13,7 @@ use Modules\Administration\Models\Role;
 use Modules\Administration\Requests\StoreRoleRequest;
 use Modules\Administration\Requests\UpdateRoleRequest;
 use Modules\Administration\Resources\RoleResource;
+use Modules\Administration\Services\SettingsService;
 
 /**
  * The role catalogue (ADR-0004).
@@ -33,7 +35,10 @@ class RoleController extends Controller
         $roles = Role::query()
             ->orderByDesc('is_system')
             ->orderBy('name')
-            ->withCount(['users' => fn ($q) => $q])
+            // `unenrolledUsers` so the console can say how many people a
+            // second-factor switch would ask to enrol, before it is
+            // thrown (ADR-0061 §4).
+            ->withCount(['users' => fn ($q) => $q, 'unenrolledUsers'])
             ->get();
 
         return ApiResponse::success(
@@ -46,6 +51,19 @@ class RoleController extends Controller
                 // at definition time.
                 'grantable' => $actor->permissions(),
                 'can_manage' => $actor->hasPermission(Permission::ROLES_MANAGE),
+                // ADR-0061. Whether the platform is asking for a second
+                // factor at all. Sent here rather than left to the console to
+                // fetch from `/settings`, which needs `settings.manage` — a
+                // Corporate Admin reads this page and holds no such thing,
+                // and a per-role badge that could not say "off platform-wide"
+                // would be a control that looks live and does nothing.
+                'mfa_enforced' => app(SettingsService::class)->mfaEnforced(),
+                // Only head office may change the per-role half (ADR-0061 §5):
+                // a control that weakens authentication must not be reachable
+                // by the account it would weaken. The console reads this
+                // rather than holding its own copy of the rule.
+                'can_manage_mfa' => $actor->access_level === AccessLevel::KANGARU
+                    && $actor->hasPermission(Permission::ROLES_MANAGE),
             ],
         );
     }
@@ -63,7 +81,7 @@ class RoleController extends Controller
     {
         $this->authorize('update', $role);
 
-        $role->fill($request->safe()->only(['name', 'description', 'permissions']));
+        $role->fill($request->safe()->only(['name', 'description', 'permissions', 'requires_mfa']));
         $role->save();
 
         return ApiResponse::success(new RoleResource($role), 'Role updated.');

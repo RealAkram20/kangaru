@@ -20,6 +20,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Modules\Administration\Models\Role;
+use Modules\Administration\Services\SettingsService;
 use Modules\Clients\Models\ClientRoute;
 
 /**
@@ -230,7 +231,21 @@ class User extends Authenticatable
      */
     public function requiresMfa(): bool
     {
-        return (bool) $this->roleRecord?->requires_mfa;
+        // ADR-0061: two switches, one resolved answer. The platform-wide
+        // `auth.mfa_enforced` and the per-role `requires_mfa` are combined
+        // **here and nowhere else** — two callers reading two columns and
+        // combining them themselves is how the gates drift apart, and the
+        // drift is invisible: somebody in the half-state signs in with a 200
+        // *and a token*, then gets refused every route but five.
+        //
+        // Order matters for cost, not correctness: the role read is already
+        // loaded, the setting is a cached lookup, and `&&` short-circuits on
+        // the common answer.
+        if (! (bool) $this->roleRecord?->requires_mfa) {
+            return false;
+        }
+
+        return app(SettingsService::class)->mfaEnforced();
     }
 
     /** Enrolment is only real once a code has been verified against it. */

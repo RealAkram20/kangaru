@@ -23,6 +23,7 @@ export function AuthSection({ settings, onSaved, section }: SectionProps) {
     google_client_ids: auth.google_client_ids ?? '',
     facebook_app_id: auth.facebook_app_id ?? '',
     facebook_app_secret: '',
+    mfa_enforced: auth.mfa_enforced,
   })
   const { value, set } = state
 
@@ -40,6 +41,7 @@ export function AuthSection({ settings, onSaved, section }: SectionProps) {
             facebook_enabled: value.facebook_enabled,
             google_client_ids: orNull(value.google_client_ids),
             facebook_app_id: orNull(value.facebook_app_id),
+            mfa_enforced: value.mfa_enforced,
           },
           { facebook_app_secret: value.facebook_app_secret },
         )
@@ -47,6 +49,22 @@ export function AuthSection({ settings, onSaved, section }: SectionProps) {
     >
       {(errors) => (
         <>
+          <Row
+            label="Require a second factor"
+            htmlFor="settings-auth-mfa"
+            hint={
+              value.mfa_enforced
+                ? 'Roles marked on the Roles page ask for a code at sign-in.'
+                : 'Nobody is asked for a code. Existing factors still work and no role setting is changed.'
+            }
+          >
+            <Switch
+              id="settings-auth-mfa"
+              checked={value.mfa_enforced}
+              onChange={(event) => set('mfa_enforced', event.target.checked)}
+            />
+          </Row>
+
           <Row
             label="Password reset by emailed code"
             htmlFor="settings-auth-reset"

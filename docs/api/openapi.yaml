@@ -829,7 +829,7 @@ paths:
                     items: { $ref: '#/components/schemas/Role' }
                   meta:
                     type: object
-                    required: [catalogue, grantable, can_manage]
+                    required: [catalogue, grantable, can_manage, mfa_enforced, can_manage_mfa]
                     additionalProperties: false
                     properties:
                       catalogue:
@@ -842,6 +842,25 @@ paths:
                         type: array
                         items: { type: string }
                       can_manage: { type: boolean }
+                      mfa_enforced:
+                        type: boolean
+                        description: >
+                          Whether the platform is asking for a second factor at
+                          all (ADR-0061). Sent here rather than left to the
+                          console to fetch from /settings, which needs
+                          settings.manage — a Corporate Admin reads this page
+                          and holds no such thing, and a per-role badge that
+                          could not say "off platform-wide" would be a control
+                          that looks live and does nothing.
+                      can_manage_mfa:
+                        type: boolean
+                        description: >
+                          Whether this actor may change the per-role half.
+                          Kangaru head office only (ADR-0061 §5) — a control
+                          that weakens authentication must not be reachable by
+                          the account it would weaken. The console reads this
+                          rather than holding its own copy of the rule, and
+                          omits the field from its payload entirely when false.
         default:
           $ref: '#/components/responses/Error'
     post:
@@ -872,7 +891,7 @@ paths:
     parameters:
       - { name: role, in: path, required: true, schema: { type: integer } }
     patch:
-      summary: Updates a role's name, description or permissions.
+      summary: Updates a role's name, description, permissions or second-factor requirement.
       requestBody:
         required: true
         content:
@@ -887,6 +906,15 @@ paths:
                   type: array
                   minItems: 1
                   items: { type: string }
+                requires_mfa:
+                  type: boolean
+                  description: >
+                    ADR-0061. Kangaru head office only — a fleet's own Super
+                    Admin is refused with a 422 on this field, in both
+                    directions, because a control that weakens authentication
+                    must not be reachable by the account it would weaken.
+                    Refused on the field alone: a fleet may still rename its
+                    own custom roles and change their permissions.
       responses:
         '200':
           $ref: '#/components/responses/RoleResponse'
@@ -5986,6 +6014,55 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/trips/{trip}/place-suggestions:
+    get:
+      summary: Geocoder suggestions for a stop the register does not know (§10 follow-up, 2026-08-22).
+      description: >
+        The owner's decision of 2026-08-22: when the client's register has no
+        answer — every walk-in trip, and any site nobody has pinned — the
+        server asks a public geocoder (Photon, Kampala-biased) on the
+        driver's behalf. The handset never talks to a third party and no key
+        ships in the app bundle; what the geocoder receives is the typed
+        query alone. Same policy and same active-trip gate as
+        `stop-candidates` beside it: the trip's own driver, while the run is
+        live (409 TRIP_NOT_ACTIVE otherwise, 403 for anyone else).
+
+
+        Fails soft by design: a geocoder outage, timeout or malformed answer
+        is an empty list, never an error — the screen's free-text row is the
+        floor. Every row returned is located; features without a usable
+        coordinate pair are dropped, because the pin is the whole value of a
+        suggestion over free text.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 3, maxLength: 80 } }
+      responses:
+        '200':
+          description: Mapped, deduplicated suggestions, at most six.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    maxItems: 6
+                    items:
+                      type: object
+                      required: [name, detail, latitude, longitude]
+                      additionalProperties: false
+                      properties:
+                        name: { type: string }
+                        detail: { type: ['string', 'null'] }
+                        latitude: { type: number }
+                        longitude: { type: number }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/trips/{trip}/locations:
     post:
       summary: Accepts a batch of GPS pings. Queued, not yet written (ADR-0003).
@@ -7556,7 +7633,7 @@ components:
 
     Role:
       type: object
-      required: [slug, name, description, is_system, permissions, created_at]
+      required: [slug, name, description, is_system, permissions, requires_mfa, created_at]
       additionalProperties: false
       properties:
         slug: { type: string }
@@ -7566,6 +7643,23 @@ components:
         permissions:
           type: array
           items: { type: string }
+        requires_mfa:
+          type: boolean
+          description: >
+            Whether holders of this role need a second factor (ADR-0061). The
+            per-role half of a two-part rule; the other half is the
+            platform-wide auth.mfa_enforced setting, and the two are resolved
+            in exactly one place, User::requiresMfa(). Writable by Kangaru
+            head office only — a control that weakens authentication must not
+            be reachable by the account it would weaken.
+        unenrolled_count:
+          type: integer
+          description: >
+            Holders of this role who have not set a second factor up. Turning
+            requires_mfa on puts exactly these people into the state where
+            they sign in successfully and are then refused every route but
+            five until they enrol, so the console names the number before
+            saving. Present on the listing only.
         users_count:
           type: integer
           description: Present on the listing only.
@@ -8748,6 +8842,7 @@ components:
             - google_client_ids
             - facebook_app_id
             - facebook_app_secret
+            - mfa_enforced
           additionalProperties: false
           properties:
             password_reset_enabled: { type: boolean }
@@ -8756,6 +8851,18 @@ components:
             google_client_ids: { type: ['string', 'null'] }
             facebook_app_id: { type: ['string', 'null'] }
             facebook_app_secret: { $ref: '#/components/schemas/SecretValue' }
+            mfa_enforced:
+              type: boolean
+              description: >
+                Whether the platform asks for a second factor at all
+                (ADR-0061). The platform-wide half of a two-part rule; the
+                other half is roles.requires_mfa, and the two are resolved in
+                exactly one place, User::requiresMfa(). Relaxes only: turning
+                it off suspends the requirement without disabling anybody's
+                existing factor, so turning it back on returns every role to
+                what it already said. Deliberately absent from the public
+                subset — the login screen must not advertise that the
+                platform's second factor is off.
         regional:
           type: object
           required: [currency, timezone, date_format]

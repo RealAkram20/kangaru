@@ -133,6 +133,18 @@ This is a short-form notice. Ask the office for the full safety policy.",
             'google_client_ids' => ['default' => '', 'rules' => ['nullable', 'string', 'max:2000'], 'public' => true],
             'facebook_app_id' => ['default' => '', 'rules' => ['nullable', 'string', 'max:100'], 'public' => true],
             'facebook_app_secret' => ['default' => null, 'rules' => ['nullable', 'string', 'max:255'], 'secret' => true],
+            // ADR-0061. The platform-wide half of the second-factor
+            // requirement; the other half is `roles.requires_mfa`.
+            //
+            // **Deliberately not public.** Every other flag in this group
+            // is, because the login screen has to know which buttons to
+            // draw. This one tells an anonymous visitor whether the
+            // platform's second factor is switched off, which is a
+            // sentence worth saying to nobody.
+            //
+            // Default true: a fresh installation behaves exactly as it
+            // did before this setting existed (AGENTS.md Security).
+            'mfa_enforced' => ['default' => true, 'rules' => ['required', 'boolean']],
         ],
         'regional' => [
             'currency' => ['default' => 'UGX', 'rules' => ['required', 'string', 'size:3'], 'public' => true],
@@ -557,6 +569,33 @@ This is a short-form notice. Ask the office for the full safety policy.",
     public function get(string $group, string $key): mixed
     {
         return $this->all()[$group][$key] ?? null;
+    }
+
+    /**
+     * Whether the platform is asking for a second factor at all (ADR-0061).
+     *
+     * **Only `User::requiresMfa()` may call this.** It is the platform-wide
+     * half of a two-part rule, and a caller that read it alongside
+     * `roles.requires_mfa` and combined them itself would be a second copy of
+     * a decision that has already drifted once — a person in the half-state
+     * signs in with a 200 and a token and is then refused every route but
+     * five, which resembles nothing.
+     *
+     * A missing row means **true**, and the guarantee is the catalogue default
+     * above rather than the null-coalesce below: `all()` fills every key from
+     * the catalogue, so `get()` returning null is already unreachable. The
+     * coalesce stays as cheap defence against `all()` changing shape, and it
+     * is deliberately **not** what the test pins — mutating it changes
+     * nothing, which is how it was found to be unreachable.
+     *
+     * Either way the failure direction is the same: a settings table that
+     * cannot be read must never be a way to switch authentication off.
+     */
+    public function mfaEnforced(): bool
+    {
+        $value = $this->get('auth', 'mfa_enforced');
+
+        return $value === null ? true : (bool) $value;
     }
 
     /**
