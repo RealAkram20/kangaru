@@ -20352,3 +20352,33 @@ says so instead of offering the button - one handover, one live path.
 Files: `EditFleetDialog.tsx` (+2 tests), `FleetRecordPage.tsx`. Verified in
 dark mode against the owner's own screenshot framing; 18 fleet/accept tests
 and `tsc -b` green.
+
+---
+
+### 2026-08-24 — Walk-ins died at 00:47 today, and the door that would revive them was never built
+
+**Status: report + live unblock. No code claimed.** Owner: *"why is that we
+can not get the order from both walkins, from the fleet and corporate
+clients."* Traced on the live pipeline:
+
+- `14a1a0e` (today 00:47, deployed with today's merges) gates the walk-in
+  pool on an ACTIVE `DriverWalkInContract` (ADR-0055 §5). Correct rule — but
+  **nothing anywhere calls `WalkInContractService::request()`**: no route, no
+  controller action, no driver-app screen. The consent/approval/refusal
+  endpoints exist for the consoles; the driver's *ask* step has no door. So
+  no contract can come into existence through the product, and the walk-in
+  candidate pool has been empty on live since the first deploy today.
+  Live order #29 (03:16Z) converted under pre-gate code; #31/#32 tonight
+  closed unserved.
+- **Fleet/corporate is not the gate** — it is presence: the board offers
+  only on-duty, recently-heard drivers, and the driver was off duty at
+  probe time. Worked this morning on duty.
+- With the owner's confirmation, the live driver's contract was activated
+  through the real service chain (request → consent → approve), so walk-ins
+  work again for them tonight. **The driver-side ask screen + endpoint still
+  needs building** — likely belonging to the planned Driver's Application
+  surface. Whoever takes it: the service is finished and state-checked; it
+  needs a `POST` route, policy wiring, and a driver-app surface.
+- Separately: every push ever sent died at Expo with `InvalidCredentials`
+  (no FCM V1 key on EAS) — see the previous entry. Fix in flight with the
+  owner.
