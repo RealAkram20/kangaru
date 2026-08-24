@@ -63,7 +63,11 @@ somebody adds one.
 invariant — ADR-0058 §1, no fleet exists without a plan, and creation *fails*
 rather than defaulting when nothing is flagged default. Everything that makes
 a plan commercial (price, period, limits, Kangaru's invoice to a fleet) is
-`K7`'s, and nothing here presumes its shape.
+`K7`'s, and nothing here presumes its shape. A plan move goes through
+`PUT /operators/{operator}/plan` **alone** — `PATCH /operators/{operator}`
+accepted `plan_id` once, and the bare `update()` behind it skipped
+`PlanAllowance`'s downgrade refusal (ADR-0058 §4), so the field was removed
+rather than guarded twice.
 
 ### A new permission does nothing until `RoleSeeder` runs — and re-running it has a side effect
 

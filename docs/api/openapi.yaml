@@ -2017,7 +2017,10 @@ paths:
                 address_line1: { type: ['string', 'null'], maxLength: 255 }
                 address_line2: { type: ['string', 'null'], maxLength: 255 }
                 city: { type: string, maxLength: 255 }
-                country: { type: string, maxLength: 255 }
+                # ISO 3166-1 alpha-2, matching onboarding. `max:255` here while
+                # onboarding said `size:2` is how the register came to hold
+                # "Uganda" and "UG" as two different countries.
+                country: { type: string, minLength: 2, maxLength: 2 }
                 credit_limit_minor: { type: integer, minimum: 0 }
                 status: { enum: [active, suspended] }
       responses:
@@ -5618,6 +5621,12 @@ paths:
         either fail against its own history or orphan it. A fleet that leaves
         the platform is suspended, which keeps its trips explicable and its
         invoices reconcilable.
+
+        No `plan_id` and no `slug`. A plan move goes through
+        `PUT /operators/{operator}/plan` alone, because that is where the
+        ADR-0058 §4 downgrade refusal runs — this route once accepted the
+        field and moved a fleet without it. The slug names the fleet in URLs
+        and in an invoice series, so a corrected name must not re-key either.
       requestBody:
         required: true
         content:
@@ -5628,9 +5637,6 @@ paths:
               properties:
                 name: { type: string, maxLength: 255 }
                 status: { enum: [active, suspended] }
-                plan_id:
-                  type: integer
-                  description: Which plan this fleet is on. What a plan *means* — limits, price, period — is K7's.
       responses:
         '200':
           $ref: '#/components/responses/OperatorResponse'

@@ -20131,3 +20131,50 @@ tree; against committed code that file is 16/16.
 input (the server's considered 422 still renders as a generic banner) and
 `service_type` on the board (a delivery still reads as a ride). Both are UI
 work; neither leaks anything.
+
+### 2026-08-24 - Fleet companies: edit the name and move the plan, from the record page
+
+**Status: in progress.** Owner asked for head office editing of a fleet
+company; the register renders counts and Onboard only, and nothing in the
+console sends `name` or a plan move. Found while building it: `PATCH
+/operators/{operator}` accepts `plan_id` through a bare `update()`, which
+bypasses `PlanAllowance` - the ADR-0058 s4 downgrade refusal only
+`PUT /operators/{operator}/plan` enforces.
+
+**Files owned - do not edit:**
+
+- `frontend/src/pages/fleets/EditFleetDialog.tsx` (+ test, new)
+- `frontend/src/pages/fleets/FleetRecordPage.tsx` (Edit button + dialog mount)
+- `frontend/src/types/plan.ts` (new - Plan moves out of PlansPage)
+- `backend/Modules/Fleet/Requests/UpdateOperatorRequest.php` (drop `plan_id`)
+
+**Shared files, minimal named edits:**
+
+- `frontend/src/pages/PlansPage.tsx` - import Plan from types instead of local
+- `docs/api/openapi.yaml` - operators PATCH loses `plan_id`; companies PATCH
+  `country` becomes length 2 (follows bc9ceb9)
+- `backend/tests/Feature/Fleet/OperatorRegisterTest.php` - closed-bypass test
+- `backend/Modules/Fleet/README.md` - one sentence in the Plans paragraph
+
+Deliberately not editable in the dialog: `slug` (URL + invoice series
+identity), `status` (record page's confirmed suspend/reinstate owns it).
+
+#### Closed
+
+Built as claimed, plus one repair the claim predicted: `PATCH
+/operators/{operator}` no longer accepts `plan_id` (spec updated,
+`OperatorRegisterTest` proves the closed bypass, guard proved by mutation -
+rule re-added, test red; removed, green). The dialog sends the name over the
+PATCH and the plan over `PUT .../plan`, so the ADR-0058 s4 refusal renders
+under the picker naming the figures - proven in the browser against
+Shanitah (19 drivers refused onto Free). Dark mode checked. Browser flow:
+rename saved and reverted, plan moved and moved back, dev DB left as found.
+
+Also in this session, same ask: `UpdateCompanyRequest.country` tightened to
+`size:2` with spec + both client dialogs hinted (bc9ceb9).
+
+**Deliberately not built:** slug editing (URL + invoice series identity),
+status in the dialog (record page's confirmed suspend/reinstate owns it),
+and any row-level Edit on the fleets list (the row already opens the
+record). Fleet+Clients backend 292 passed; frontend suite 703 passed;
+spec lint, censuses and Pint green.

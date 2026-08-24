@@ -16,6 +16,7 @@ import { Alert } from '../../components/feedback/Alert'
 import { Dialog } from '../../components/feedback/Dialog'
 import { RouteFallback } from '../../components/feedback/RouteFallback'
 import { ActAsDialog } from './ActAsDialog'
+import { EditFleetDialog } from './EditFleetDialog'
 
 /**
  * One fleet company (ADR-0055, ADR-0059).
@@ -64,6 +65,7 @@ export function FleetRecordPage() {
   const [accounts, setAccounts] = useState<User[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [actingAs, setActingAs] = useState(false)
+  const [editing, setEditing] = useState(false)
   const [confirmSuspend, setConfirmSuspend] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -119,6 +121,9 @@ export function FleetRecordPage() {
         actions={
           <span style={{ display: 'inline-flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
             <Badge tone={fleet.is_active ? 'success' : 'warning'}>{fleet.status}</Badge>
+            <Button variant="secondary" onClick={() => setEditing(true)}>
+              Edit
+            </Button>
             <Button variant="secondary" onClick={() => setActingAs(true)}>
               Log in as
             </Button>
@@ -156,6 +161,17 @@ export function FleetRecordPage() {
       </Card>
 
       {actingAs && <ActAsDialog fleet={fleet} onClose={() => setActingAs(false)} />}
+
+      {editing && (
+        <EditFleetDialog
+          fleet={fleet}
+          onClose={() => setEditing(false)}
+          onDone={(saved) => {
+            setEditing(false)
+            setFleet(saved)
+          }}
+        />
+      )}
 
       {confirmSuspend && (
         <Dialog
