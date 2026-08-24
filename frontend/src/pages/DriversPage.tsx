@@ -12,6 +12,7 @@ import { Alert } from '../components/feedback/Alert'
 import { Dialog } from '../components/feedback/Dialog'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { PasswordMeter } from '../components/forms/PasswordMeter'
 import { PageFill } from '../components/layout/PageFill'
 import { DriverDocumentsDialog } from './drivers/DriverDocumentsDialog'
 import { DriverFormDialog } from './drivers/DriverFormDialog'
@@ -403,23 +404,34 @@ function DriverAccountDialog({
             />
           </FormField>
 
-          <FormField
-            label="Password"
-            htmlFor="driver-account-password"
-            hint="At least 12 characters."
-            error={errors.password}
-            required
-          >
-            <Input
-              id="driver-account-password"
-              type="password"
-              iconLeft="lock"
-              value={form.password}
-              onChange={set('password')}
-              revealable
+          {/*
+            No `hint`. It used to read "At least 12 characters." — the number
+            the server held before `PasswordPolicy` brought every door to one
+            floor, and the copy the owner reported. Restating the floor here
+            *and* in the meter's checklist below would be the rule twice
+            (`docs/screen-rules.md` §9), so the meter states it, from the
+            shared constant, the moment there is anything to state it about.
+          */}
+          <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
+            <FormField
+              label="Password"
+              htmlFor="driver-account-password"
+              error={errors.password}
               required
-            />
-          </FormField>
+            >
+              <Input
+                id="driver-account-password"
+                type="password"
+                iconLeft="lock"
+                value={form.password}
+                onChange={set('password')}
+                revealable
+                required
+              />
+            </FormField>
+
+            <PasswordMeter password={form.password} />
+          </div>
         </div>
       )}
     </Dialog>

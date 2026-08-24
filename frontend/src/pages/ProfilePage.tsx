@@ -6,6 +6,7 @@ import { Card } from '../components/core/Card'
 import { Alert } from '../components/feedback/Alert'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { PasswordMeter } from '../components/forms/PasswordMeter'
 import { RecoveryCodeList } from '../components/security/RecoveryCodeList'
 import { apiClient } from '../lib/apiClient'
 import { apiError, fieldErrors } from '../lib/apiError'
@@ -178,23 +179,36 @@ export function ProfilePage() {
               />
             </FormField>
 
-            <FormField
-              label="New password"
-              htmlFor="profile-new-password"
-              hint="At least 12 characters, and different from your current one."
-              error={passwordErrors.password}
-              required
-            >
-              <Input
-                id="profile-new-password"
-                type="password"
-                iconLeft="lock"
-                value={next}
-                onChange={(e) => setNext(e.target.value)}
-                revealable
+            {/*
+              The hint said "At least 12 characters" for a door that accepted
+              eight, and now accepts six — an overstatement is the same class
+              of bug as an understatement, and it survived because the number
+              was written out here rather than read from anywhere. What is left
+              of it is the half the meter cannot say: `different:current_password`
+              is a rule, not a strength, so it stays as the field's hint while
+              the floor moves into the checklist below.
+            */}
+            <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
+              <FormField
+                label="New password"
+                htmlFor="profile-new-password"
+                hint="Different from your current one."
+                error={passwordErrors.password}
                 required
-              />
-            </FormField>
+              >
+                <Input
+                  id="profile-new-password"
+                  type="password"
+                  iconLeft="lock"
+                  value={next}
+                  onChange={(e) => setNext(e.target.value)}
+                  revealable
+                  required
+                />
+              </FormField>
+
+              <PasswordMeter password={next} />
+            </div>
 
             <FormField label="Confirm new password" htmlFor="profile-confirm-password" required>
               <Input

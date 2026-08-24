@@ -83,15 +83,29 @@ it('says nothing at all about an empty field', () => {
 
 it('counts down the characters still needed, rather than restating the rule', () => {
   // "2 more characters" is actionable without re-counting what you typed.
-  expect(passwordStrength('kettle').hint).toBe('2 more characters to go.');
-  expect(passwordStrength('kettles').hint).toBe('1 more character to go.');
+  //
+  // Built from the floor rather than written out. These were the literals
+  // 'kettle' and 'kettles', correct while the floor was eight and silently
+  // wrong the moment it moved to six — the fixture, not the behaviour, was
+  // what broke.
+  const twoShort = 'k'.repeat(MINIMUM_PASSWORD_LENGTH - 2);
+  const oneShort = 'k'.repeat(MINIMUM_PASSWORD_LENGTH - 1);
+
+  expect(passwordStrength(twoShort).hint).toBe('2 more characters to go.');
+  expect(passwordStrength(oneShort).hint).toBe('1 more character to go.');
 });
 
 it('scores nothing below the floor, whatever else is in there', () => {
-  // Every other rule met, and still too short to send. The bar must not
-  // reward what the form will refuse.
-  expect(passwordStrength('Sh0rt!').score).toBe(0);
-  expect(passwordStrength('Sh0rt!').level).toBe('too-short');
+  // Every other rule met — upper, lower, digit, symbol — and still too short
+  // to send. The bar must not reward what the form will refuse.
+  const allFourButShort = ('Sh0!' + 'a'.repeat(MINIMUM_PASSWORD_LENGTH)).slice(
+    0,
+    MINIMUM_PASSWORD_LENGTH - 1,
+  );
+
+  expect(allFourButShort).toHaveLength(MINIMUM_PASSWORD_LENGTH - 1);
+  expect(passwordStrength(allFourButShort).score).toBe(0);
+  expect(passwordStrength(allFourButShort).level).toBe('too-short');
 });
 
 /**

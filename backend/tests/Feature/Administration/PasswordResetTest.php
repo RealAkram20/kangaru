@@ -4,6 +4,7 @@ use App\Enums\AccessLevel;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Models\User;
+use App\Support\Auth\PasswordPolicy;
 use Illuminate\Routing\Middleware\ThrottleRequests;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -242,7 +243,22 @@ it('refuses a code past its fifteen minutes', function () {
     ])->assertStatus(422);
 });
 
-it('holds the same eight-character floor as every other driver-facing door', function () {
+/**
+ * The floor, read from the constant rather than restated.
+ *
+ * This test was called "holds the same eight-character floor" and posted a
+ * literal seven-character password, so it went red the day `PasswordPolicy`
+ * brought every door to one number — not because the door had broken, but
+ * because the test had written the number down. That is precisely the failure
+ * `PasswordPolicy` exists to end: `ProfilePage` telling staff "At least 12
+ * characters" for a door that accepted eight was the same mistake in a hint
+ * instead of an assertion.
+ *
+ * Phrased as a boundary, both sides. "Short passwords are refused" alone stays
+ * green when the floor silently *rises*, which is the direction this platform
+ * actually drifted.
+ */
+it('refuses one character below the platform floor, and accepts it exactly', function () {
     enableReset();
     pinResetCode('123456');
     User::factory()->create(['email' => 'musa@kangaruride.test']);
@@ -250,12 +266,23 @@ it('holds the same eight-character floor as every other driver-facing door', fun
     $this->postJson('/api/v1/auth/password/forgot', ['email' => 'musa@kangaruride.test'])
         ->assertStatus(202);
 
+    $below = str_repeat('k', PasswordPolicy::MINIMUM_LENGTH - 1);
+
     $this->postJson('/api/v1/auth/password/reset', [
         'email' => 'musa@kangaruride.test',
         'code' => '123456',
-        'password' => '2short!',
-        'password_confirmation' => '2short!',
+        'password' => $below,
+        'password_confirmation' => $below,
     ])->assertStatus(422)->assertJsonValidationErrors('password');
+
+    $atFloor = str_repeat('k', PasswordPolicy::MINIMUM_LENGTH);
+
+    $this->postJson('/api/v1/auth/password/reset', [
+        'email' => 'musa@kangaruride.test',
+        'code' => '123456',
+        'password' => $atFloor,
+        'password_confirmation' => $atFloor,
+    ])->assertOk();
 });
 
 /**

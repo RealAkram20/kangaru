@@ -162,6 +162,38 @@ Two things the page states rather than hides:
 
 ## Notes
 
+**One password floor, in `App\Support\Auth\PasswordPolicy` (24 August 2026).**
+Every door on the platform validates against `PasswordPolicy::rule()` — this
+module's `StoreUserRequest`, `ChangePasswordRequest`, `PasswordResetController`,
+`InvitationController` and `CreateKangaruStaff`, plus `StoreDriverAccountRequest`,
+`StoreDriverApplicationRequest` and `RegisterCustomerRequest` in Drivers and
+Customers. The floor is **six**, set by the owner for every door at once.
+
+It is written down here because the previous arrangement was not a policy but
+an accident, and it had already reached users:
+
+- The number lived in **eight** places and disagreed with itself in three —
+  twelve where the office minted an account for somebody else, eight where a
+  person chose their own, a plain `min:8` string rule at the customer register,
+  and an unconfigured `Password::defaults()` in the console command that meant
+  Laravel's own eight by default rather than by decision.
+- `ProfilePage` told staff *"At least 12 characters"* for a door that accepted
+  eight, and the driver sign-in dialog set a password at twelve while telling
+  the office to *"ask them to change it from their own profile afterwards"* —
+  a door with a different rule.
+
+**Adding a ninth place fails a test, not a review.**
+`tests/Feature/Auth/PasswordFloorTest.php` walks the reachable doors as
+boundary tests (one below refused, exactly at it accepted) and then censuses
+the source for any `Password::min(` or `Password::defaults(` outside
+`PasswordPolicy`. The boundary half cannot catch a door that does not exist
+yet; the census is the half that can.
+
+Length is a floor, not the control — there is no complexity requirement at any
+door and never was. The strength meter in both apps
+(`frontend/src/components/forms/PasswordMeter.tsx`,
+`mobile/src/auth/PasswordMeter.tsx`) is what teaches above it.
+
 **A token is now scoped to the app that asked for it (ADR-0022).** `POST
 /auth/login` and `POST /auth/mfa/verify` take an optional
 `client: console | driver`. Absent means `console`, which holds `*` exactly

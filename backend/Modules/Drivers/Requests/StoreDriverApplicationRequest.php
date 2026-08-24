@@ -2,8 +2,8 @@
 
 namespace Modules\Drivers\Requests;
 
+use App\Support\Auth\PasswordPolicy;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rules\Password;
 
 /**
  * A rider applying to drive (ADR-0027 §5). Unauthenticated.
@@ -45,16 +45,12 @@ class StoreDriverApplicationRequest extends FormRequest
             // is worse than storing the spaces.
             'phone' => ['required', 'string', 'min:9', 'max:32'],
             'email' => ['required', 'email', 'max:190'],
-            // The same minimum `ChangePasswordRequest` and
-            // `PasswordResetController` hold, because those are the two doors
-            // an applicant walks through next: a floor here that the change
-            // screen did not share would refuse a driver the password they
-            // signed up with.
-            //
-            // `StoreDriverAccountRequest` is deliberately *not* in that set —
-            // an office-minted account is typed by staff at a desk and keeps
-            // the twelve-character rule.
-            'password' => ['required', 'string', 'confirmed', Password::min(8)],
+            // `PasswordPolicy`, like every other door — including
+            // `StoreDriverAccountRequest`, which used to sit two characters
+            // higher. An applicant walks straight from here to the change
+            // screen, and a floor this door did not share with that one would
+            // refuse a driver the password they signed up with.
+            'password' => ['required', 'string', 'confirmed', PasswordPolicy::rule()],
             // Consent is refused rather than inferred. `accepted` means
             // literally true/"1"/"yes" — a missing field or a false one
             // fails, so an applicant cannot arrive without having agreed.

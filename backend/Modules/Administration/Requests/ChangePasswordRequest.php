@@ -2,8 +2,8 @@
 
 namespace Modules\Administration\Requests;
 
+use App\Support\Auth\PasswordPolicy;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rules\Password;
 
 /**
  * Changing your own password.
@@ -36,13 +36,12 @@ class ChangePasswordRequest extends FormRequest
             // `confirmed` requires a matching password_confirmation, so a
             // typo locks nobody out of their own account.
             //
-            // Eight, matching `PasswordResetController` and
-            // `StoreDriverApplicationRequest` — the three doors a driver can
-            // reach from the phone. Accounts the office mints
-            // (`StoreUserRequest`, `StoreDriverAccountRequest`) still hold
-            // twelve; those are typed by staff at a desk, not by a driver on a
-            // handset in the sun.
-            'password' => ['required', 'string', 'confirmed', Password::min(8), 'different:current_password'],
+            // The floor is `PasswordPolicy`'s, which every door now shares.
+            // This comment used to explain why a driver's own change screen
+            // held eight while the office minted at twelve — a split that sent
+            // a driver from one rule to another between being handed a
+            // password and being told to change it.
+            'password' => ['required', 'string', 'confirmed', PasswordPolicy::rule(), 'different:current_password'],
         ];
     }
 

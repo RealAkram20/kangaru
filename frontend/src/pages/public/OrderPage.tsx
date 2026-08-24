@@ -30,7 +30,11 @@ import {
 } from 'lucide-react'
 import { isAxiosError } from 'axios'
 import { useCustomer } from '../../auth/useCustomer'
-import { passwordStrength, MIN_PASSWORD_LENGTH } from '../../auth/passwordStrength'
+import {
+  passwordStrength,
+  MIN_PASSWORD_LENGTH,
+  STRENGTH_SEGMENTS,
+} from '../../auth/passwordStrength'
 import {
   CustomerValidationError,
   GENDER_OPTIONS,
@@ -2461,7 +2465,9 @@ function AccountStep({
             value={password}
             onChange={setPassword}
             error={errors.password}
-            placeholder={mode === 'signup' ? 'Password (8 characters or more)' : 'Password'}
+            placeholder={
+              mode === 'signup' ? `Password (${MIN_PASSWORD_LENGTH} characters or more)` : 'Password'
+            }
             type="password"
             autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
           />
@@ -2559,7 +2565,7 @@ function AccountStep({
  * floor, and a meter that refuses passwords teaches people to append "1!".
  */
 function PasswordMeter({ password }: { password: string }) {
-  const { score, label, hint, level } = passwordStrength(password)
+  const { score, label, hint, level, requirements } = passwordStrength(password)
 
   const fill =
     level === 'strong'
@@ -2574,7 +2580,12 @@ function PasswordMeter({ password }: { password: string }) {
     <div className="mt-2">
       <div className="flex items-center gap-2">
         <div className="flex flex-1 gap-1" aria-hidden>
-          {[0, 1, 2, 3].map((i) => (
+          {/*
+            The scorer's own ceiling, not a literal four. These were two
+            separate hardcoded fours — one here, one in the scorer — and a
+            fifth point would have rendered as a bar that was already full.
+          */}
+          {Array.from({ length: STRENGTH_SEGMENTS }, (_, i) => (
             <span
               key={i}
               className={`h-1 flex-1 rounded-full transition-colors duration-200 ${
@@ -2590,6 +2601,32 @@ function PasswordMeter({ password }: { password: string }) {
           {label}
         </span>
       </div>
+      {/*
+        The scale, in the open — the third copy of this fix, after the driver
+        app's and the console's. A bar whose standard is invisible grades
+        against a rule the person was never told.
+      */}
+      <ul className="mt-1.5 flex list-none flex-wrap gap-x-4 gap-y-1 p-0">
+        {requirements.map((requirement) => (
+          <li key={requirement.key} className="flex items-center gap-1.5">
+            {/* The words carry it, never the colour: screen-rules §6. */}
+            <span className="sr-only">{requirement.met ? 'Met: ' : 'Not yet: '}</span>
+            {requirement.met ? (
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-brand-green" aria-hidden />
+            ) : (
+              <span
+                className="h-3.5 w-3.5 shrink-0 rounded-full border-[1.5px] border-border"
+                aria-hidden
+              />
+            )}
+            <span
+              className={`text-xs ${requirement.met ? 'text-text-heading' : 'text-text-secondary'}`}
+            >
+              {requirement.label}
+            </span>
+          </li>
+        ))}
+      </ul>
       <p className="mt-1.5 min-h-[1rem] text-xs text-text-secondary" aria-live="polite">
         {hint}
       </p>

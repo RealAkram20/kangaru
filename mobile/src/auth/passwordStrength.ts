@@ -7,10 +7,10 @@
  * deliberate second copy with a test that pins the behaviours it shares. If you
  * change the philosophy here, change it there.
  *
- * The floors now agree: every password door this app can reach —
- * `ChangePasswordRequest`, `PasswordResetController` and
- * `StoreDriverApplicationRequest` — holds `Password::min(8)`, which is the web
- * form's number too. The copy stays a copy for the packaging reason above.
+ * The floors now agree everywhere, not just at the doors this app can reach:
+ * `App\Support\Auth\PasswordPolicy` holds the single number every request
+ * class on the server validates against, and both apps mirror it. The copy
+ * stays a copy for the packaging reason above.
  *
  * Deliberately a **guide, not a gate**. The server's only hard rule is the
  * length; there is no complexity requirement anywhere in the platform, and a
@@ -76,7 +76,7 @@ export const STRENGTH_SEGMENTS = 4;
  * **The floor is `passwordRules.MINIMUM_PASSWORD_LENGTH`, imported rather than
  * restated.** That module already owns the number and already has a mutation
  * test on it; a second constant here would be a second place for the server's
- * `Password::min(8)` to be answered differently — and the two would only
+ * `PasswordPolicy::rule()` to be answered differently — and the two would only
  * disagree on the day somebody changed one of them, which is the day it
  * matters. The first draft of this file did declare its own, and it was wrong
  * to.

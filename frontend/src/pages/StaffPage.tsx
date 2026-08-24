@@ -9,6 +9,7 @@ import { Dialog } from '../components/feedback/Dialog'
 import { EmptyState } from '../components/feedback/EmptyState'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { PasswordMeter } from '../components/forms/PasswordMeter'
 import { PageFill } from '../components/layout/PageFill'
 import { Select } from '../components/forms/Select'
 import { apiClient } from '../lib/apiClient'
@@ -560,21 +561,33 @@ function StaffDialog({
         )}
 
         {isNew && (
-          <FormField
-            label="Initial password"
-            htmlFor="s-password"
-            required
-            hint="At least 12 characters. Tell them in person, not by email."
-            error={errors.password}
-          >
-            <Input
-              id="s-password"
-              type="password"
-              value={form.password}
-              onChange={set('password')}
-              revealable
-            />
-          </FormField>
+          /*
+            The length half of this hint is gone — the meter's checklist states
+            the floor, from the shared constant, rather than a number typed
+            here that outlived two changes to the server's rule. "Tell them in
+            person" stays: it is the one thing on this field that is neither
+            the label nor the rule, and a password mailed to somebody is a
+            password in their inbox forever.
+          */
+          <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
+            <FormField
+              label="Initial password"
+              htmlFor="s-password"
+              required
+              hint="Tell them in person, not by email."
+              error={errors.password}
+            >
+              <Input
+                id="s-password"
+                type="password"
+                value={form.password}
+                onChange={set('password')}
+                revealable
+              />
+            </FormField>
+
+            <PasswordMeter password={form.password} />
+          </div>
         )}
       </div>
     </Dialog>

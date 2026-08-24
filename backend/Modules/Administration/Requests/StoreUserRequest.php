@@ -4,10 +4,10 @@ namespace Modules\Administration\Requests;
 
 use App\Enums\ClientCapability;
 use App\Models\User;
+use App\Support\Auth\PasswordPolicy;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
-use Illuminate\Validation\Rules\Password;
 use Modules\Administration\Models\Role;
 use Modules\Administration\Policies\UserPolicy;
 
@@ -65,7 +65,7 @@ class StoreUserRequest extends FormRequest
             // Laravel's defaults plus a length floor. AGENTS.md leaves
             // hashing to the framework but says nothing about strength, so
             // this is the conservative reading rather than an invention.
-            'password' => ['required', 'string', Password::min(12)],
+            'password' => ['required', 'string', PasswordPolicy::rule()],
             // Super Admin only — a Corporate Admin's users are always their
             // own tenant's, forced in the controller.
             'tenant_id' => ['sometimes', 'integer', 'exists:tenants,id'],
