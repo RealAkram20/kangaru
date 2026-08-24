@@ -87,7 +87,7 @@ Admin whose TOTP secret is committed to this repository.
 docker compose ps                                        # 7 running/healthy
 docker compose exec app printenv APP_BUILD               # the commit you deployed
 curl -fsS https://api.<domain>/up                        # 200
-docker compose exec app php artisan schedule:list        # exactly 7 entries
+docker compose exec app php artisan schedule:list        # exactly 10 entries
 docker compose exec scheduler pgrep -fa schedule:work    # exactly 1
 docker compose exec queue pgrep -fa queue:work           # exactly 1
 docker compose exec app php artisan about                # cache redis, queue database
@@ -106,6 +106,125 @@ that reads like the file was never sent. The container now ships
 ```sh
 docker compose exec app php -r 'echo ini_get("upload_max_filesize"), " ", ini_get("post_max_size"), PHP_EOL;'
 ```
+
+---
+
+## 3a · Mail, before the first real email goes out
+
+Sixty emails are built and every one of them is inert until the four things
+below are true. Three of them fail **silently**: no exception, no error page,
+just nothing arriving.
+
+### The two that will break tonight if they are wrong
+
+**`FRONTEND_URL` must be the live domain, not localhost.**
+
+Every link in every email is built from it — the invitation token, the invoice,
+the preferences footer, all five call sites in `Modules/Notifications`. Get it
+wrong and the invitation email, which is the one thing standing between a new
+fleet owner and their account, sends them to `http://localhost:5173/invite/…`.
+
+It fails in the worst possible way: the email arrives, looks perfect, and the
+link is dead for everybody except somebody sitting at the server.
+
+```sh
+docker compose exec app printenv FRONTEND_URL     # the real domain, https, no trailing slash
+```
+
+**The queue worker must be running.**
+
+Every notification is `ShouldQueue`. No worker means no email at all — and the
+request that raised it still returns 200, because that is the whole point of
+queueing. Nothing in the application will tell you.
+
+```sh
+docker compose exec queue pgrep -fa queue:work    # exactly 1
+docker compose exec app php artisan queue:monitor database:default --max=50
+```
+
+### The two mail settings
+
+Settings → Email, in the console. Not `.env`: `SettingsService::smtpMailer()`
+builds the mailer from the database at send time, so `MAIL_*` in the
+environment does nothing for notifications (ADR-0014).
+
+| | |
+|---|---|
+| Host | `smtp.titan.email` |
+| Port | `587`, encryption `tls` (STARTTLS) |
+| Username / From | `help@kangaruride.com` |
+| Enabled | on |
+| Password | the Titan mailbox password |
+
+Port 465 is implicit TLS and hung for 60 seconds when measured; 587 answered in
+under a second with a real ESMTP banner. Use 587.
+
+Then **Send test email**, and check it actually left rather than trusting the
+green banner:
+
+```sh
+docker compose exec app php artisan tinker --execute="
+  \$d = Modules\Notifications\Models\MailDelivery::latest('id')->first();
+  echo \$d->status, ' ', \$d->recipient, ' ', \$d->error ?? '', PHP_EOL;"
+```
+
+`sent` and no error. A `failed` row carries the transport's own words, which is
+usually enough to tell a wrong password from a rejected From address.
+
+**Turn on password reset last**, once the test send is green: Settings →
+Sign-in methods. It refuses with `AUTH_METHOD_DISABLED` while mail is
+unconfigured, so enabling it first only produces a door that answers 409.
+
+### DNS — SPF and DKIM are done, DMARC is not
+
+Checked 24 August 2026 on `kangaruride.com`:
+
+| | |
+|---|---|
+| SPF | `v=spf1 include:spf.titan.email ~all` — **published** |
+| DKIM | `titan1._domainkey` — **published** |
+| DMARC | **missing** |
+
+Add this when there is time. It is not needed for mail to send tonight, and it
+is needed before volume:
+
+| Field | Value |
+|---|---|
+| Type | `TXT` |
+| Name | `_dmarc` |
+| Value | `v=DMARC1; p=none; rua=mailto:help@kangaruride.com; fo=1` |
+
+`p=none` is monitor-only. It changes nothing about delivery and starts the
+reports, so you can see who is sending as the domain before deciding anything.
+**Do not start at `p=quarantine`**: without a few weeks of reports first, that
+is how an organisation bins its own invoices.
+
+Gmail and Yahoo have required DMARC from bulk senders since February 2024 and
+increasingly penalise its absence for everybody else. Without it the invoice
+emails are measurably likelier to land in spam.
+
+### The cap that fails silently, mid-run
+
+Titan mailboxes have a daily send limit. The platform can exceed it in one
+morning without trying: `drivers:remind-expiring-documents` at 06:30 mails
+every driver whose licence is 30 or 7 days out, and `fleets:alert-without-accounts`
+and `invitations:remind` follow at 07:15 and 09:00.
+
+When the cap is hit the provider simply starts refusing, part-way through, and
+every email after that is lost. `mail_deliveries` is where that becomes
+visible:
+
+```sh
+# Sent today, and anything that failed
+docker compose exec app php artisan tinker --execute="
+  \$q = Modules\Notifications\Models\MailDelivery::whereDate('created_at', today());
+  echo 'sent today: ', (clone \$q)->where('status','sent')->count(), PHP_EOL;
+  echo 'failed:     ', (clone \$q)->where('status','failed')->count(), PHP_EOL;"
+```
+
+Three consecutive failures also report to Sentry on their own. That alarm is
+deliberately **not** an email: the transport that would carry it is the thing
+that has failed.
 
 ---
 
@@ -367,18 +486,21 @@ AGENTS.md Observability, minimum set, **paged — not emailed into a void**:
 | Failed invoice generation | any | billing correctness — the platform's core claim |
 | Disk | > 80% | MySQL, backups and container logs share it |
 | Certificate expiry | < 14 days | Coolify renews; this catches the renewal that didn't |
+| Mail transport failing | 3 in a row | **wired, unlike the rest of this table.** `SettingsMailChannel` reports to Sentry after three consecutive failures. Deliberately not an email: the transport that would carry it is the thing that failed. |
+| Fleet with no account | any | **wired.** `fleets:alert-without-accounts`, daily. ADR-0059 §5 says this cannot happen; if it has, that fleet is unsupportable because there is nobody for support to act as. |
 
 Minimum dashboard: API p95 latency, 5xx rate, queue depth and oldest job age,
 GPS ingestion lag, failed jobs, dispatch decision time, DB connections.
 
-**Status: none of these are wired.** Container logs are JSON on stderr and
+**Status: the two mail rows are wired; none of the rest are.** Container logs are JSON on stderr and
 Coolify captures them, which is where a collector would read from, but no
 alerting exists. **A dispatch stall or a dead queue worker is currently found
 by a human noticing.** Standing this up is not in any Track A package and it
 should be week-one work.
 
 Interim, and worth ten minutes: a cron on the host that greps the two
-counters and emails on threshold —
+counters and emails on threshold — **but not for the mail alarm**, which
+cannot be delivered by the thing it is watching:
 
 ```sh
 docker compose exec -T app php artisan tinker --execute='
