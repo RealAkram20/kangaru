@@ -19769,3 +19769,66 @@ The passenger box said **"Search your colleagues"** to a dispatcher, who is
 searching somebody else's staff. It now reads *"Search a client's staff"* for a
 fleet actor. One word, and getting it wrong tells a fleet's desk it is about to
 book a car for one of its own drivers.
+
+### 2026-08-24 — Five ways a green check proved nothing, from three sessions
+
+`kangaru-c0` and `kangaru-aa` have both ended. This is the transferable part of
+what the three of us found in one day, written here because the messages it was
+learned in are gone and the next agent will otherwise find it the same way.
+
+**One sentence covers four of the five:** *a test that survives the deletion of
+the thing it is about is not a test.*
+
+| Shape | Found in | How it looked |
+|---|---|---|
+| A scope with no call sites | `User::scopeForActor` | `CrossFleetIsolationTest` proved the scope four ways by calling it **directly**. The listings never went through it. |
+| A call site the code did not recognise as a caller | `SettingsMailChannel` | Returned early for anything not a `User`. **Every email to an applicant was dropped for six packages** — the one population with no inbox and no app, only the address they typed. |
+| A constant restated instead of read | the password floor | Lived in eight places and disagreed with itself in three. Two user-visible lies shipped from it. |
+| An assertion whose selector matched something else | the driver documents dialog | `verify[verify.length - 1]` passed **with the feature deleted**, because it then clicked the row's button and asserted the row's request. |
+| A check that inspected nothing | `pint --dirty` | Inspects files changed against HEAD. After a commit they are clean, so a violation introduced in one package is invisible to every package after it. Mine lived through four. |
+
+**The fifth is different and is the one worth the most.** `scopeForActor`
+carried a comment saying *"today one fleet serves all of them"* and *"nothing
+leaks today because there is one fleet, which is exactly the kind of gap that
+ships."* It was **correct when written**. Najjemba was onboarded on 23 August
+and from that moment a rival dispatcher could read every client's staff.
+
+No mutation catches that. The code did not change; the world did. The only
+defence anybody proposed: **a comment saying "true while X" should be a test
+asserting X**, so the day X stops being true something goes red. A test
+asserting the platform had exactly one operator would have failed on 23 August
+and sent somebody to read that comment.
+
+## Two practices worth copying
+
+**Pin a constant twice.** kangaru-aa moved `PasswordPolicy::MINIMUM_LENGTH`
+from 6 to 8 and **every boundary test stayed green**, because each derived from
+the constant and followed it anywhere. Only one literal assertion caught it.
+They do different jobs: boundaries catch **the code drifting away from the
+constant**, one literal catches **the constant moving without a decision**.
+`SettingsMailChannelTest` now does both for `OUTAGE_THRESHOLD`, and both halves
+are proved by mutation.
+
+**Stage the shared spec file through the index, not by path.**
+`docs/api/openapi.yaml` had three agents' hunks in it at once and `git add`
+would have taken all of them. Build HEAD plus your own block into a temp file,
+`git hash-object -w`, then
+`git update-index --cacheinfo 100644,<blob>,docs/api/openapi.yaml`. Stages
+exactly yours and leaves everyone else's in the working tree. It needs no
+coordination, which is why it beats taking turns. Used for `4047a47`; verified
+afterwards that the other twelve lines were still there.
+
+## Two operational signatures, so nobody debugs them as bugs
+
+- **A wild failure count** (348, 485) is a database collision, not breakage.
+  Somebody is mid `migrate:fresh`, or **you are colliding with yourself** — I
+  produced 485 `QueryException`s by leaving a suite running in the background
+  and starting another against the same database. A distinct `DB_DATABASE=` on
+  the pest command fixes the first; only discipline fixes the second.
+- **A wall of exactly-20-second durations** is load, not breakage. Three agents
+  on one machine. Re-run the file alone before believing it.
+
+Also: acting-as is time-boxed rather than per-tab, so a browser script that
+impersonates and exits leaves the session standing. The next run signs in as
+head office and silently arrives as somebody else. Check
+`ImpersonationSession::live()` before driving the console.
