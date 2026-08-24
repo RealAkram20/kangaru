@@ -41,12 +41,15 @@ class DispatchController extends Controller
      * may see which vehicles are contracted here is someone who may dispatch
      * this booking, and a candidate list is a preview of that act.
      */
-    public function candidates(Booking $booking): JsonResponse
+    public function candidates(Request $request, Booking $booking): JsonResponse
     {
         $this->authorize('dispatch', $booking);
 
+        /** @var User $user */
+        $user = $request->user();
+
         return ApiResponse::success(
-            CandidateVehicleResource::collection($this->candidates->forBooking($booking)),
+            CandidateVehicleResource::collection($this->candidates->forBooking($booking, $user)),
         );
     }
 
@@ -56,12 +59,15 @@ class DispatchController extends Controller
      * Same gate as the vehicle list and for the same reason: a candidate
      * list is a preview of the assignment it precedes.
      */
-    public function driverCandidates(Booking $booking): JsonResponse
+    public function driverCandidates(Request $request, Booking $booking): JsonResponse
     {
         $this->authorize('dispatch', $booking);
 
+        /** @var User $user */
+        $user = $request->user();
+
         return ApiResponse::success(
-            CandidateDriverResource::collection($this->driverCandidates->forBooking($booking)),
+            CandidateDriverResource::collection($this->driverCandidates->forBooking($booking, $user)),
         );
     }
 
@@ -72,12 +78,15 @@ class DispatchController extends Controller
      * acts on is how an operator builds confidence in a matcher before it is
      * allowed to act alone, and reading one can do no harm.
      */
-    public function recommendation(Booking $booking): JsonResponse
+    public function recommendation(Request $request, Booking $booking): JsonResponse
     {
         $this->authorize('dispatch', $booking);
 
+        /** @var User $user */
+        $user = $request->user();
+
         return ApiResponse::success(
-            DispatchSuggestionResource::collection($this->recommender->forBooking($booking)),
+            DispatchSuggestionResource::collection($this->recommender->forBooking($booking, $user)),
         );
     }
 
@@ -104,7 +113,13 @@ class DispatchController extends Controller
             );
         }
 
-        $suggestion = $this->recommender->bestFor($booking);
+        /** @var User $user */
+        $user = $request->user();
+
+        // The actor, not just the booking: the pool this chooses from is now
+        // scoped to the dispatcher's own fleet, and this is the path that
+        // *commits* the choice rather than displaying it.
+        $suggestion = $this->recommender->bestFor($booking, $user);
 
         if ($suggestion === null) {
             return ApiResponse::error(
@@ -114,9 +129,6 @@ class DispatchController extends Controller
                 409,
             );
         }
-
-        /** @var User $user */
-        $user = $request->user();
 
         try {
             $trip = $this->dispatch->assign(

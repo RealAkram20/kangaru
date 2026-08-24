@@ -1,6 +1,8 @@
 <?php
 
+use App\Enums\AccessLevel;
 use App\Enums\UserRole;
+use App\Models\Operator;
 use App\Models\Tenant;
 use App\Models\User;
 use Modules\Bookings\Models\Booking;
@@ -145,7 +147,18 @@ it('makes the matcher rank by distance once a booking has coordinates', function
     ])->assertCreated();
 
     $booking = Booking::allTenants()->latest('id')->first();
-    $suggestion = app(DispatchRecommender::class)->bestFor($booking);
+
+    // The recommender scopes its pool by the acting fleet (ADR-0055 §6), so
+    // it now takes the dispatcher rather than the booking alone. Shanitah,
+    // because that is what `VehicleFactory` and `DriverFactory` default to.
+    $dispatcher = User::factory()->create([
+        'tenant_id' => null,
+        'operator_id' => Operator::SHANITAH,
+        'access_level' => AccessLevel::FLEET,
+        'role' => UserRole::DISPATCHER,
+    ]);
+
+    $suggestion = app(DispatchRecommender::class)->bestFor($booking, $dispatcher);
 
     // The whole point of the round trip: before this, every suggestion said
     // "pickup has no coordinates, so distance was not used" — for every

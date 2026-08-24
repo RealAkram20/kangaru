@@ -1,6 +1,8 @@
 <?php
 
+use App\Enums\AccessLevel;
 use App\Enums\UserRole;
+use App\Models\Operator;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
@@ -140,10 +142,28 @@ function twoCandidates(?string $wanted): array
     return [$booking, $van, $sedan];
 }
 
+/**
+ * The actor the recommender scopes its pool by (ADR-0055 §6).
+ *
+ * A fleet dispatcher on `Operator::SHANITAH`, which is what `VehicleFactory`
+ * and `DriverFactory` default to — so the pool these tests build is exactly
+ * the pool this actor may see. Before the scope existed the recommender took
+ * no actor and ranked every fleet's vehicles together.
+ */
+function rankingDispatcher(): User
+{
+    return User::factory()->create([
+        'tenant_id' => null,
+        'operator_id' => Operator::SHANITAH,
+        'access_level' => AccessLevel::FLEET,
+        'role' => UserRole::DISPATCHER,
+    ]);
+}
+
 it('ranks the requested kind of vehicle first', function () {
     [$booking, $van] = twoCandidates('van');
 
-    $suggestions = app(DispatchRecommender::class)->forBooking($booking);
+    $suggestions = app(DispatchRecommender::class)->forBooking($booking, rankingDispatcher());
 
     expect($suggestions)->toHaveCount(2);
     expect($suggestions->first()->vehicle->id)->toBe($van->id);
@@ -153,7 +173,7 @@ it('ranks the requested kind of vehicle first', function () {
 it('still offers the other kinds, saying which they are', function () {
     [$booking] = twoCandidates('van');
 
-    $suggestions = app(DispatchRecommender::class)->forBooking($booking);
+    $suggestions = app(DispatchRecommender::class)->forBooking($booking, rankingDispatcher());
 
     // The whole argument for ranking over filtering. A hard filter would
     // return one suggestion here — and none at all on the morning the van
@@ -167,7 +187,7 @@ it('still offers the other kinds, saying which they are', function () {
 it('changes nothing for a booking that states no preference', function () {
     [$booking] = twoCandidates(null);
 
-    $suggestions = app(DispatchRecommender::class)->forBooking($booking);
+    $suggestions = app(DispatchRecommender::class)->forBooking($booking, rankingDispatcher());
 
     // Neither sentence appears at all, so a booking without a preference
     // scores exactly as it did before ADR-0051 — which is what makes this
@@ -272,7 +292,7 @@ it('lets a contracted vehicle outrank the requested kind, at the worst case for 
         'exclusive' => false,
     ]);
 
-    $suggestions = app(DispatchRecommender::class)->forBooking($booking);
+    $suggestions = app(DispatchRecommender::class)->forBooking($booking, rankingDispatcher());
 
     // ADR-0009 §1: a commercial agreement is not overridden by a preference,
     // even one the client stated, and even against a van at the kerb.
