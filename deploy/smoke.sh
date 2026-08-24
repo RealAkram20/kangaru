@@ -97,18 +97,24 @@ count=0
 # added or silently dropped without a decision. This one is a data-protection
 # obligation (a never-decided application's identity photographs, deleted at
 # 90 days), so the right move was to move the number, not the command.
-for name in reports:prune-exports sanctum:prune-expired dispatch:advance-offers drivers:award-weekly-bonuses duty:close-stale trip-locations:maintain drivers:prune-abandoned-application-documents; do
+# Eighth, ninth and tenth, with the mail plan: invitations:remind (A2 — the link
+# lapses tomorrow and nobody has used it), drivers:remind-expiring-documents (a
+# permit that expires unannounced grounds a driver mid-shift) and
+# fleets:alert-without-accounts (ADR-0059 §5 — a fleet with nobody to act as is
+# unreachable to support for ever). Three commands, three decisions on the
+# record, which is the whole job of the number below.
+for name in reports:prune-exports sanctum:prune-expired dispatch:advance-offers drivers:award-weekly-bonuses duty:close-stale trip-locations:maintain drivers:prune-abandoned-application-documents invitations:remind drivers:remind-expiring-documents fleets:alert-without-accounts; do
   if echo "$schedule" | grep -q "$name"; then count=$((count + 1)); else echo "    missing: $name" >&2; fi
 done
-if [ "$count" -ne 7 ]; then
+if [ "$count" -ne 10 ]; then
   echo "$schedule" >&2
-  fail "schedule:list shows $count/7 expected commands"
+  fail "schedule:list shows $count/10 expected commands"
 fi
 lines=$(echo "$schedule" | grep -c 'php artisan ' || true)
-[ "$lines" -eq 7 ] || { echo "$schedule" >&2; fail "schedule:list has $lines scheduled entries, expected exactly 7"; }
+[ "$lines" -eq 10 ] || { echo "$schedule" >&2; fail "schedule:list has $lines scheduled entries, expected exactly 10"; }
 ten=$(echo "$schedule" | grep 'dispatch:advance-offers' | grep -c ' 10s ' || true)
 [ "$ten" -eq 1 ] || fail "dispatch:advance-offers is not on a ten-second cadence"
-ok "schedule:list: exactly 7 entries, dispatch:advance-offers every 10 s"
+ok "schedule:list: exactly 10 entries, dispatch:advance-offers every 10 s"
 
 sched_alive=$(dc exec -T scheduler sh -c "pgrep -f '[a]rtisan schedule:work' | wc -l" | tr -d '\r ' || true)
 [ "$sched_alive" -eq 1 ] || fail "expected exactly 1 schedule:work process, found $sched_alive"

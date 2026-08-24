@@ -41,6 +41,10 @@ use Modules\Vehicles\Models\Vehicle;
  *                               of this and customer_id is ever set.
  * @property int|null $customer_id
  * @property int|null $booking_id
+ * @property string $channel Walk-in or corporate (ADR-0063 §5). Declared for the
+ *                           same reason User::$access_level is: the column is a plain
+ *                           string, so static analysis reads every isWalkIn() off it as
+ *                           an undefined property and fails the level-8 gate.
  * @property int $vehicle_id
  * @property int $driver_id
  * @property string $origin
