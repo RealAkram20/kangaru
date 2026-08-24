@@ -20441,3 +20441,46 @@ real service chain, since the `14a1a0e` gate had emptied the local pool too.
   `adb pm grant` mid-session** (Android restarts a process when a permission
   changes), not by an offer. Recorded because the alert path is not
   Activity-safe, which a real permission change from Settings would also hit.
+
+---
+
+### 2026-08-24 — Push notifications actually deliver now: the FCM key, and the proof
+
+**Status: done and verified on a device.** The owner uploaded the Firebase
+service-account key to EAS (`eas credentials -p android` → Google Service
+Account → FCM V1); project `kangaru-c698b`, client
+`firebase-adminsdk-fbsvc@kangaru-c698b.iam.gserviceaccount.com`.
+
+**Before/after on the live server, same probe both times:**
+
+| | Expo ticket |
+|---|---|
+| before | `InvalidCredentials` — *"Unable to retrieve the FCM server key"* |
+| after | `{"status":"ok","id":"01a03524-…"}` |
+
+**Delivery proved on the emulator, not just acceptance.** The first receipt
+came back `DeviceNotRegistered` — a stale token from an app instance that had
+been reinstalled, which is exactly the row `ExpoPushChannel::pruneDeadTokens`
+deletes. Re-registered by signing in on a fresh install, then: app sent to
+background, **screen switched off**, walk-in order placed → the notification
+shade carried **"KangaruRide Driver — New job — 3.9 km away · Pickup at
+Garden City, K…"**. Screenshot in the session scratchpad.
+
+**No rebuild was needed for the fix** — the key lives on EAS, so handsets
+already carrying 1.0.4 receive pushes now. v1.0.5 (versionCode 16) was cut
+and released anyway at the owner's request; it carries no app-code change.
+
+**A near-miss worth recording.** The first 1.0.5 build silently reused the JS
+bundle from the local-API test build: the APK had `192.168.1.138` baked in and
+no live URL at all. Gradle reported BUILD SUCCESSFUL and the signature and
+version were perfect. **`assembleRelease` does not re-bundle when only
+`.env.production` changed** — the bundle task was up-to-date. Caught by
+`unzip -p … assets/index.android.bundle | grep -c api.kangaruride.com`, which
+is now the mandatory check before any APK leaves this machine. Fix: delete
+`android/app/build/generated/assets/react` and
+`android/app/build/tmp/createBundleReleaseJsAndAssets`, then rebuild.
+
+**Still open:** the app's *"Let jobs reach you on a locked phone"* prompt
+(full-screen intent) was dismissed with **Not now** during the test, so what
+is proved is the banner-and-ring path, not the incoming-call-style screen.
+Worth a second pass on a device where that permission is granted.
