@@ -206,10 +206,30 @@ export function FleetRecordPage() {
       {editing && (
         <EditFleetDialog
           fleet={fleet}
+          // The active Fleet Owner, so the dialog can say who owns the fleet
+          // — the owner looked for the email here first (24 August). The
+          // founding fleet was seeded with a fleet Super Admin and no
+          // FLEET_OWNER at all, so that role is the fallback rather than a
+          // dash that reads as "nobody".
+          owner={
+            accounts === null
+              ? undefined
+              : (accounts.find(
+                  (account) => account.role === 'fleet_owner' && account.status !== 'suspended',
+                ) ??
+                accounts.find(
+                  (account) => account.role === 'super_admin' && account.status !== 'suspended',
+                ) ??
+                null)
+          }
           onClose={() => setEditing(false)}
           onDone={(saved) => {
             setEditing(false)
             setFleet(saved)
+          }}
+          onTransfer={() => {
+            setEditing(false)
+            setTransferring(true)
           }}
         />
       )}

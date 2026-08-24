@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { apiClient } from '../../lib/apiClient'
 import { apiError, fieldErrors } from '../../lib/apiError'
+import { formatTimestamp } from '../../lib/format'
 import type { ApiSuccess } from '../../types/api'
 import type { Operator } from '../../types/operator'
 import type { Plan } from '../../types/plan'
@@ -25,6 +26,17 @@ import { Select } from '../../components/forms/Select'
  * under a name that never saved is a commercial change on a record that
  * still reads wrong.
  *
+ * ## The owner is shown here, and changed through its own flow
+ *
+ * The owner opened this dialog looking for the email — *"this is what i
+ * see"*, 24 August, over a screenshot of it without one — so the owner
+ * row lives here, where a person edits a fleet. But the email is not an
+ * `<input>`: changing it is changing the ownership, a pending act with an
+ * invitation and a withdrawal, so the row states who owns the fleet and
+ * the button hands over to `TransferOwnershipDialog`. While an invitation
+ * is out, the row says so instead — two live paths to one handover would
+ * be two keys to the same door.
+ *
  * ## What is absent, and why absent rather than disabled
  *
  * No slug — it names the fleet in URLs and in an invoice series, so a
@@ -36,11 +48,16 @@ import { Select } from '../../components/forms/Select'
  */
 interface Props {
   fleet: Operator
+  /** The active Fleet Owner account, from the record page's accounts read.
+   * Undefined while that read is in flight; null when there is none. */
+  owner?: { name: string; email: string } | null
   onClose: () => void
   onDone: (fleet: Operator) => void
+  /** Opens the ownership-transfer flow in place of this dialog. */
+  onTransfer?: () => void
 }
 
-export function EditFleetDialog({ fleet, onClose, onDone }: Props) {
+export function EditFleetDialog({ fleet, owner, onClose, onDone, onTransfer }: Props) {
   const [name, setName] = useState(fleet.name)
   const [planId, setPlanId] = useState(String(fleet.plan?.id ?? ''))
   const [plans, setPlans] = useState<Plan[]>([])
@@ -133,6 +150,42 @@ export function EditFleetDialog({ fleet, onClose, onDone }: Props) {
             options={plans.map((plan) => ({ value: String(plan.id), label: plan.name }))}
             invalid={fields.plan_id !== undefined}
           />
+        </FormField>
+
+        <FormField label="Owner">
+          <div
+            role="group"
+            aria-label="Owner"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 'var(--space-3)',
+              minHeight: 'var(--control-h-md)',
+            }}
+          >
+            <span
+              style={{
+                font: 'var(--type-body-dense)',
+                color: 'var(--text-secondary)',
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {fleet.pending_owner
+                ? `Invitation sent to ${fleet.pending_owner.email} — expires ${formatTimestamp(fleet.pending_owner.expires_at)}`
+                : owner
+                  ? `${owner.name} · ${owner.email}`
+                  : '—'}
+            </span>
+            {!fleet.pending_owner && onTransfer && (
+              <Button size="sm" variant="secondary" onClick={onTransfer} disabled={saving}>
+                Change owner
+              </Button>
+            )}
+          </div>
         </FormField>
       </form>
     </Dialog>

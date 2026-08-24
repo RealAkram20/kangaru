@@ -20338,3 +20338,17 @@ ticket errors now log `push.ticket_error` at warning (Sentry's floor), once
 per error kind per send. Test proved by mutation (guard emptied → red),
 restored, 20/20 green, Pint clean. The token deliberately survives an
 `InvalidCredentials` receipt — the credential is broken, not the handset.
+
+### 2026-08-24 - The owner row lives in Edit fleet
+
+**Status: done.** Owner sent a screenshot of the Edit fleet dialog - name
+and plan, no email - saying "this is what i see". The transfer flow existed
+one card lower; where they looked, it did not. `EditFleetDialog` now carries
+an Owner row (current owner's name and email, from the record page's accounts
+read, falling back to the fleet's Super Admin because the founding fleet was
+seeded with no FLEET_OWNER at all) and a "Change owner" button that closes
+Edit and opens `TransferOwnershipDialog`. While an invitation is out the row
+says so instead of offering the button - one handover, one live path.
+Files: `EditFleetDialog.tsx` (+2 tests), `FleetRecordPage.tsx`. Verified in
+dark mode against the owner's own screenshot framing; 18 fleet/accept tests
+and `tsc -b` green.

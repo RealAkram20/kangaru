@@ -36,10 +36,16 @@ beforeEach(() => {
   get.mockResolvedValue(apiOk(PLANS))
 })
 
-function open() {
+const OWNER = { name: 'Najjemba Transporters', email: 'najjemba@fleet.test' }
+
+function open(fleet: Operator = FLEET) {
   const onDone = vi.fn()
-  renderAs(<EditFleetDialog fleet={FLEET} onClose={vi.fn()} onDone={onDone} />, HEAD_OFFICE)
-  return onDone
+  const onTransfer = vi.fn()
+  renderAs(
+    <EditFleetDialog fleet={fleet} owner={OWNER} onClose={vi.fn()} onDone={onDone} onTransfer={onTransfer} />,
+    HEAD_OFFICE,
+  )
+  return { onDone, onTransfer }
 }
 
 it('opens on what the fleet actually holds, rather than on an empty form', async () => {
@@ -119,6 +125,33 @@ it('puts a refused downgrade under the plan field, naming the figures', async ()
  * record page's confirmed suspend/reinstate, and a dropdown here would let
  * that decision skip its confirmation.
  */
+/**
+ * The owner's screenshot of 24 August — this dialog with no email in sight —
+ * is why the owner row lives here. The email is deliberately not an input:
+ * changing it is changing the ownership, so the button hands over to the
+ * transfer flow instead.
+ */
+it('names the current owner, and hands "Change owner" to the transfer flow', async () => {
+  const { onTransfer } = open()
+
+  await screen.findByLabelText(/fleet name/i)
+  expect(screen.getByText(/najjemba@fleet\.test/i)).toBeInTheDocument()
+
+  await userEvent.click(screen.getByRole('button', { name: /change owner/i }))
+  expect(onTransfer).toHaveBeenCalledTimes(1)
+})
+
+it('shows a pending invitation instead of the button, so one handover has one live path', async () => {
+  open({
+    ...FLEET,
+    pending_owner: { name: 'Grace Auma', email: 'grace@fleet.test', expires_at: '2026-08-31T00:00:00Z' },
+  })
+
+  await screen.findByLabelText(/fleet name/i)
+  expect(screen.getByText(/invitation sent to grace@fleet\.test/i)).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /change owner/i })).toBeNull()
+})
+
 it('offers no control over the slug or the status', async () => {
   open()
 
