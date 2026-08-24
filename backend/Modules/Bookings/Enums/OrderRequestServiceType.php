@@ -5,6 +5,12 @@ namespace Modules\Bookings\Enums;
 /**
  * The three services a visitor can ask for, straight from the product triad
  * in `material/` (ADR-0012): book a ride, send something, rent a vehicle.
+ *
+ * Since ADR-0064 this is also `bookings.service_type` — the internal channel
+ * a desk or a corporate client books through names its service from the same
+ * enum, deliberately, so the two channels cannot grow different vocabularies
+ * for one fleet. The name keeps its `OrderRequest` prefix because renaming it
+ * would touch every dispatch call site for a cosmetic gain.
  */
 enum OrderRequestServiceType: string
 {

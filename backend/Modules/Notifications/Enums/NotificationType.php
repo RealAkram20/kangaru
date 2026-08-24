@@ -48,6 +48,24 @@ enum NotificationType: string
     case TRIP_OFFERED = 'trip.offered';
 
     /**
+     * The desk put a corporate job on this driver's name (ADR-0064).
+     *
+     * The argument this enum demands: without it, a desk-assigned trip
+     * reaches the driver **nowhere a driver looks**. It lands in the Trips
+     * list's Upcoming group and nothing rings, nothing badges, and the home
+     * screen stays idle — observed on a real handset while an owner watched
+     * a delivery they had just dispatched go nowhere. `TRIP_OFFERED` does
+     * not cover it: an offer is the *matcher's* question with a clock on
+     * it; this is the desk's decision, waiting for an answer without one.
+     *
+     * Not the offer ringtone, deliberately. The offer interrupts because a
+     * passenger is standing at the end of its forty-five seconds; an
+     * assignment keeps until the driver reaches their phone, so it takes
+     * Expo's default sound and importance.
+     */
+    case DRIVER_TRIP_ASSIGNED = 'driver.trip.assigned';
+
+    /**
      * That job is gone — stop ringing (ADR-0046 §4).
      *
      * **The only silent notification in this platform**, and the only one
@@ -311,6 +329,7 @@ enum NotificationType: string
             self::TRIP_COMPLETED => 'Trip completed',
             self::ORDER_REQUEST_RECEIVED => 'Walk-in order received',
             self::TRIP_OFFERED => 'New job',
+            self::DRIVER_TRIP_ASSIGNED => 'New trip assigned',
             self::TRIP_OFFER_WITHDRAWN => 'Job withdrawn',
             self::DRIVER_CLOSURE_ANSWERED => 'Account closure',
             self::DRIVER_SUPPORT_ANSWERED => 'Report answered',
@@ -392,6 +411,13 @@ enum NotificationType: string
             // (`dispatch.offer_ttl_seconds`), and an email about one would
             // arrive as an apology.
             self::TRIP_OFFERED => [
+                NotificationChannel::PUSH,
+                NotificationChannel::DATABASE,
+            ],
+            // Push and the row, never mail — the reasoning is TRIP_OFFERED's
+            // with one difference: this one is not urgent enough for the
+            // ringtone, and its docblock says why.
+            self::DRIVER_TRIP_ASSIGNED => [
                 NotificationChannel::PUSH,
                 NotificationChannel::DATABASE,
             ],

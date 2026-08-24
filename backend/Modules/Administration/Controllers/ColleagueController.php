@@ -82,6 +82,17 @@ class ColleagueController extends Controller
             // list which sorts them last. That list is read to administer
             // someone; this one is read to send a car to them.
             ->where('status', UserStatus::ACTIVE->value)
+            // ADR-0064: the booking dialog names the client first, so the
+            // passenger search can stay inside them. `forActor` above has
+            // already bounded the range to clients this fleet serves — this
+            // narrows within it and cannot widen it, which is why an
+            // unserved id yields an empty list rather than an error. Only a
+            // fleet actor may send it (ColleagueIndexRequest); a client's
+            // own scope needs no narrowing.
+            ->when(
+                $request->filled('tenant_id'),
+                fn ($q) => $q->where('users.tenant_id', $request->integer('tenant_id')),
+            )
             ->where(fn ($match) => $match->where('name', 'like', $term)->orWhere('email', 'like', $term))
             ->orderBy('name')
             ->limit(self::LIMIT)

@@ -852,10 +852,19 @@ paths:
         none of it. Gated on `bookings.create` instead — you may look up a
         colleague if you may book a car for one. `q` is required and the
         result is capped, so this is a lookup and never a directory dump.
-        Empty for platform staff, who belong to no tenant and so have no
-        colleagues; they book walk-ins by name.
+        For a fleet actor the range is the staff of the clients the fleet
+        actively serves, and `tenant_id` narrows to one of them — the
+        booking dialog names the client first (ADR-0064), and offering
+        another client's staff after that is offering a mistake.
       parameters:
         - { name: q, in: query, required: true, schema: { type: string, minLength: 2, maxLength: 120 } }
+        - name: tenant_id
+          in: query
+          schema: { type: integer }
+          description: >
+            Fleet actors only — a client's own user has no choice of client
+            and is refused the filter. Narrows within the served range; an
+            unserved id yields an empty list, identically to a real one.
       responses:
         '200':
           description: At most fifteen matching colleagues.
@@ -1261,7 +1270,16 @@ paths:
       summary: The booking queue — one client's, or every client's for platform staff.
       parameters:
         - { name: status, in: query, schema: { $ref: '#/components/schemas/BookingStatus' } }
-        - { name: dispatchable, in: query, schema: { type: boolean } }
+        - name: service_type
+          in: query
+          schema: { enum: [ride, delivery, self_drive] }
+          description: ADR-0064 — narrow a mixed queue to one service.
+        - name: dispatchable
+          in: query
+          schema: { type: boolean }
+          description: >
+            Awaiting a vehicle AND a service a driver is sent to — a
+            self-drive rental never appears here (ADR-0064).
         - { name: q, in: query, schema: { type: string, maxLength: 120 } }
         - { name: tenant_id, in: query, schema: { type: integer }, description: Platform staff only. }
         - { $ref: '#/components/parameters/cursor' }
@@ -1291,9 +1309,29 @@ paths:
           application/json:
             schema:
               type: object
-              required: [passenger_name, passenger_phone, origin, destination]
+              required: [passenger_name, passenger_phone]
               additionalProperties: false
               properties:
+                service_type:
+                  enum: [ride, delivery, self_drive]
+                  description: >
+                    ADR-0064. Omit for a ride — the reading every payload had
+                    before the field existed. `origin` and `destination` are
+                    required for a ride or delivery and refused-as-optional on
+                    a self-drive rental, which has no route; a delivery
+                    requires `details.recipient_name` and `.recipient_phone`;
+                    a self-drive requires `details.start_date` and `.end_date`
+                    and prohibits `scheduled_for` (its clock is the hire
+                    period).
+                tenant_id:
+                  type: ['integer', 'null']
+                  description: >
+                    Which client this booking is for (ADR-0064). **Required
+                    from a fleet actor**, whose desk books on a client's
+                    behalf, and validated against the clients the fleet
+                    actively serves — an unserved and a nonexistent id answer
+                    identically. Not a recognised input from a client's own
+                    user, whose booking is always their own client's.
                 passenger_user_id:
                   type: ['integer', 'null']
                   description: >
@@ -1314,12 +1352,32 @@ paths:
                   anyOf:
                     - { $ref: '#/components/schemas/VehicleCategoryKey' }
                     - { enum: [null] }
-                origin: { type: string, maxLength: 255 }
-                destination: { type: string, maxLength: 255 }
+                origin: { type: ['string', 'null'], maxLength: 255 }
+                destination: { type: ['string', 'null'], maxLength: 255 }
                 scheduled_for:
                   type: ['string', 'null']
                   description: Omit or null for an immediate booking. Must be in the future.
                 notes: { type: ['string', 'null'], maxLength: 1000 }
+                details:
+                  type: ['object', 'null']
+                  description: >
+                    Per-service extras (ADR-0064). Only the submitting
+                    service's keys are stored — stale keys from another
+                    service are dropped by the single writer, never
+                    persisted.
+                  additionalProperties: false
+                  properties:
+                    item_type:
+                      enum: [documents, food, parcel, electronics, furniture, appliances, other, null]
+                    package_size: { enum: [small, medium, large, heavy, null] }
+                    payer: { enum: [sender, receiver, null] }
+                    payment_method: { enum: [cash, mobile_money, card, null] }
+                    recipient_name: { type: ['string', 'null'], maxLength: 120 }
+                    recipient_phone: { type: ['string', 'null'], maxLength: 32 }
+                    confirm_with_pin: { type: ['boolean', 'null'] }
+                    start_date: { type: ['string', 'null'] }
+                    end_date: { type: ['string', 'null'] }
+                    kyc_documents: { type: ['string', 'null'], maxLength: 255 }
       responses:
         '201':
           $ref: '#/components/responses/BookingResponse'
@@ -8157,6 +8215,20 @@ components:
         cursor: { $ref: '#/components/schemas/Cursor' }
         scope: { $ref: '#/components/schemas/Scope' }
         filters: { $ref: '#/components/schemas/ClientsFilter' }
+        bookable_clients:
+          description: >
+            /bookings only (ADR-0064 §5): the clients this fleet actor may
+            raise a booking for — active contracts, narrower than
+            `filters.clients`, which spans existing rows and so includes
+            ended contracts. Empty for a client's own user.
+          type: array
+          items:
+            type: object
+            required: [value, label]
+            additionalProperties: false
+            properties:
+              value: { type: integer }
+              label: { type: string }
 
     ClientRef:
       description: Which client a row belongs to — platform readers only (ADR-0006).
@@ -8216,6 +8288,7 @@ components:
         - SERVER_ERROR
         - INVALID_TRIP_TRANSITION
         - INVALID_BOOKING_TRANSITION
+        - BOOKING_NOT_DISPATCHABLE
         - VEHICLE_UNAVAILABLE
         - DRIVER_UNAVAILABLE
         - REPORT_TOO_LARGE
@@ -10573,6 +10646,8 @@ components:
         - passenger_phone
         - passenger_count
         - vehicle_category
+        - service_type
+        - details
         - origin
         - destination
         - scheduled_for
@@ -10623,8 +10698,38 @@ components:
           anyOf:
             - { $ref: '#/components/schemas/VehicleCategoryKey' }
             - { enum: [null] }
-        origin: { type: string }
-        destination: { type: string }
+        service_type:
+          description: >
+            Which of the platform's three services this asks for (ADR-0064) —
+            the same vocabulary the walk-in order carries. Every booking that
+            predates the field is a `ride`.
+          enum: [ride, delivery, self_drive]
+        details:
+          description: >
+            The per-service extras, allow-listed per service and emitted with
+            every key of that service present (missing values as null) — never
+            the stored column wholesale. Null on a ride, whose absence of
+            details is the fact itself. Delivery carries the parcel and its
+            recipient; self-drive carries the hire period and the identity
+            documents the renter will bring.
+          type: ['object', 'null']
+          additionalProperties: false
+          properties:
+            item_type: { type: ['string', 'null'] }
+            package_size: { type: ['string', 'null'] }
+            payer: { type: ['string', 'null'] }
+            payment_method: { type: ['string', 'null'] }
+            recipient_name: { type: ['string', 'null'] }
+            recipient_phone: { type: ['string', 'null'] }
+            confirm_with_pin: { type: ['boolean', 'null'] }
+            start_date: { type: ['string', 'null'] }
+            end_date: { type: ['string', 'null'] }
+            kyc_documents: { type: ['string', 'null'] }
+        origin:
+          description: Null on a self-drive rental, which has no route (ADR-0064).
+          type: ['string', 'null']
+        destination:
+          type: ['string', 'null']
         scheduled_for: { $ref: '#/components/schemas/NullableTimestamp' }
         is_immediate: { type: boolean }
         status: { $ref: '#/components/schemas/BookingStatus' }

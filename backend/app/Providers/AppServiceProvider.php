@@ -81,6 +81,7 @@ use Modules\Fleet\Support\DatabaseDriverPresenceStore;
 use Modules\Fleet\Support\DriverPresenceStore;
 use Modules\Fleet\Support\RedisDriverPresenceStore;
 use Modules\Notifications\Listeners\SendBookingDecisionNotification;
+use Modules\Notifications\Listeners\SendDriverTripAssignedNotification;
 use Modules\Notifications\Listeners\SendReportExportReadyNotification;
 use Modules\Notifications\Listeners\SendTripProgressNotification;
 use Modules\Reports\Enums\ReportType;
@@ -380,6 +381,9 @@ class AppServiceProvider extends ServiceProvider
         // The requester of a corporate booking hears when their car is
         // assigned, when the driver arrives, and when the trip completes.
         Event::listen(TripStatusChanged::class, SendTripProgressNotification::class);
+        // The driver's half of the same moment (ADR-0064): the requester
+        // hears their car exists, the driver hears the job exists.
+        Event::listen(TripStatusChanged::class, SendDriverTripAssignedNotification::class);
         Event::listen(ReportExportCompleted::class, SendReportExportReadyNotification::class);
 
         // Stable short aliases for audit_logs.auditable_type instead of raw

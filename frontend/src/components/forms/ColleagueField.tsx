@@ -43,7 +43,9 @@ export function ColleagueField({
   value,
   chosen,
   error,
+  label = 'Passenger',
   placeholder = 'Search your colleagues',
+  tenantId,
   onChange,
 }: {
   /** What is in the box. Held by the caller, like every other field here. */
@@ -51,6 +53,18 @@ export function ColleagueField({
   /** The colleague currently chosen, or null while the text is unresolved. */
   chosen: Colleague | null
   error?: string
+  /**
+   * Who this person is to the booking — "Passenger" on a ride, "Sender" on
+   * a delivery, "Renter" on a self-drive (ADR-0064). The field's behaviour
+   * is identical; only the word changes.
+   */
+  label?: string
+  /**
+   * Narrows a fleet's search to one client's staff, once the dialog has
+   * named the client (ADR-0064). Never set for a client's own user, whom
+   * the server refuses the filter.
+   */
+  tenantId?: string
   /**
    * "Your colleagues" is true for a client's own person and false for a
    * dispatcher, who is searching somebody else's staff. One word, and getting
@@ -62,7 +76,7 @@ export function ColleagueField({
   onChange: (value: string, colleague: Colleague | null) => void
 }) {
   const id = useId()
-  const { hits, markTyped, settle } = useColleagueSearch(value)
+  const { hits, markTyped, settle } = useColleagueSearch(value, tenantId)
   const [open, setOpen] = useState(false)
 
   const take = (hit: Colleague) => {
@@ -74,7 +88,7 @@ export function ColleagueField({
   const showing = open && hits.length > 0
 
   return (
-    <FormField label="Passenger" htmlFor={id} required error={error}>
+    <FormField label={label} htmlFor={id} required error={error}>
       <div style={{ position: 'relative' }}>
         <Input
           id={id}

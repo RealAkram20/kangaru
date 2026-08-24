@@ -27,6 +27,14 @@ enum ErrorCode: string
     case INVALID_TRIP_TRANSITION = 'INVALID_TRIP_TRANSITION';
     case INVALID_BOOKING_TRANSITION = 'INVALID_BOOKING_TRANSITION';
     case INVALID_ORDER_REQUEST_TRANSITION = 'INVALID_ORDER_REQUEST_TRANSITION';
+
+    /**
+     * The booking's service never takes a driver (ADR-0064): a self-drive
+     * rental is a vehicle handed over, not a journey somebody is sent on.
+     * A conflict rather than a validation failure — the ids were
+     * well-formed, the booking is simply not that kind of work.
+     */
+    case BOOKING_NOT_DISPATCHABLE = 'BOOKING_NOT_DISPATCHABLE';
     case VEHICLE_UNAVAILABLE = 'VEHICLE_UNAVAILABLE';
     case DRIVER_UNAVAILABLE = 'DRIVER_UNAVAILABLE';
     case REPORT_TOO_LARGE = 'REPORT_TOO_LARGE';

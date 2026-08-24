@@ -62,6 +62,9 @@ function booking(
     // ADR-0051: required on the wire — `BookingResource` sends it
     // unconditionally, and null is the "no preference" case.
     vehicle_category: null,
+    // ADR-0064: every booking names its service; details is null on a ride.
+    service_type: 'ride',
+    details: null,
     origin,
     destination: 'Entebbe',
     scheduled_for: null,

@@ -39,6 +39,7 @@ class DispatchService
      * @param  string|null  $overrideReason  why a contracted vehicle was not used (ADR-0009)
      *
      * @throws InvalidBookingTransitionException the booking is already assigned, rejected or cancelled
+     * @throws BookingNotDispatchableException the service never takes a driver — a self-drive rental (ADR-0064)
      * @throws VehicleUnavailableException
      * @throws DriverUnavailableException
      * @throws AllocationExclusiveException the vehicle belongs exclusively to another client that day
@@ -60,6 +61,18 @@ class DispatchService
 
             if (! $locked->status->canTransitionTo(BookingStatus::ASSIGNED)) {
                 throw new InvalidBookingTransitionException($locked->status, BookingStatus::ASSIGNED);
+            }
+
+            // ADR-0064. The dispatch board is already filtered to services a
+            // driver is sent to, but a dispatcher may post any booking id,
+            // and a constraint that only exists in the list somebody was
+            // shown is not a constraint — the same sentence the allocation
+            // rules below live by. The walk-in queue learned this the hard
+            // way: a five-day rental was offered to a driver, accepted in
+            // under a second, and dispatched as "Pickup → As directed"
+            // (OrderRequestServiceType's docblock records it).
+            if (! $locked->service_type->dispatchesToDriver()) {
+                throw new BookingNotDispatchableException($locked->service_type);
             }
 
             // ADR-0009. Checked here rather than only in the candidate

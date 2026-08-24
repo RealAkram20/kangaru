@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiFailure, apiOk, makeUser, renderAs } from '../test/harness'
@@ -35,6 +35,9 @@ function booking(overrides: Partial<Booking> = {}): Booking {
     // ADR-0051: required on the wire — `BookingResource` sends it
     // unconditionally, and null is the "no preference" case.
     vehicle_category: null,
+    // ADR-0064: every booking names its service; details is null on a ride.
+    service_type: 'ride',
+    details: null,
     origin: 'Kampala',
     destination: 'Entebbe',
     scheduled_for: null,
@@ -165,11 +168,14 @@ describe('BookingsPage', () => {
     ).toBeInTheDocument()
   })
 
-  it('sends a booking with no pickup time as an immediate request', async () => {
+  it('shows the current time and sends an untouched pickup as an immediate request', async () => {
     const user = userEvent.setup()
     renderAs(<BookingsPage />, dispatcher)
 
     await user.click(await screen.findByRole('button', { name: /new booking/i }))
+
+    // Prefilled with now (owner's ask, 24 Aug) — never an empty box.
+    expect(screen.getByLabelText(/pickup time/i)).not.toHaveValue('')
 
     await user.type(screen.getByLabelText(/^passenger\*/i), 'Peter Ochieng')
     await user.type(screen.getByLabelText(/contact number/i), '+256700111222')
@@ -180,9 +186,13 @@ describe('BookingsPage', () => {
 
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
 
-    // `scheduled_for: null` is the contract for "now" — the backend reads a
-    // missing value as immediate, and sending "" would be a 422.
+    // `scheduled_for: null` is the contract for "now". The prefill is what
+    // the dispatcher *sees*; what is sent for an untouched field is null,
+    // because a prefilled clock is stale by submit time and sending it
+    // verbatim earns the "must be in the future" refusal it replaced.
     expect(post).toHaveBeenCalledWith('/bookings', {
+      // ADR-0064: every payload names its service; the dialog opens on Ride.
+      service_type: 'ride',
       passenger_name: 'Peter Ochieng',
       passenger_phone: '+256700111222',
       passenger_count: 1,
@@ -194,6 +204,57 @@ describe('BookingsPage', () => {
       vehicle_category: null,
       notes: null,
     })
+  })
+
+  it('sends a chosen future pickup time as a schedule', async () => {
+    const user = userEvent.setup()
+    renderAs(<BookingsPage />, dispatcher)
+
+    await user.click(await screen.findByRole('button', { name: /new booking/i }))
+    await user.type(screen.getByLabelText(/^passenger\*/i), 'Peter Ochieng')
+    await user.type(screen.getByLabelText(/contact number/i), '+256700111222')
+    await user.type(screen.getByLabelText(/pick-up/i), 'Nakawa')
+    await user.type(screen.getByLabelText(/destination/i), 'Jinja')
+    fireEvent.change(screen.getByLabelText(/pickup time/i), {
+      target: { value: '2026-12-24T09:30' },
+    })
+    await user.click(screen.getByRole('button', { name: /create booking/i }))
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    expect((post.mock.calls[0][1] as Record<string, unknown>).scheduled_for).toBe(
+      new Date('2026-12-24T09:30').toISOString(),
+    )
+  })
+
+  it('reads a pickup re-picked to the current minute as "now", not a stale schedule', async () => {
+    const user = userEvent.setup()
+    renderAs(<BookingsPage />, dispatcher)
+
+    await user.click(await screen.findByRole('button', { name: /new booking/i }))
+    await user.type(screen.getByLabelText(/^passenger\*/i), 'Peter Ochieng')
+    await user.type(screen.getByLabelText(/contact number/i), '+256700111222')
+    await user.type(screen.getByLabelText(/pick-up/i), 'Nakawa')
+    await user.type(screen.getByLabelText(/destination/i), 'Jinja')
+
+    // The dispatcher opens the picker and nudges the shown "now" by a
+    // minute. Sending that verbatim is the exact 422 from the field's
+    // previous life — by submit, "now" is in the past — so anything within
+    // a few minutes of the submit moment travels as null. A minute later
+    // rather than the same value, because React drops a change event whose
+    // value did not change, and an unedited field is the *other* test.
+    const nudged = new Date(Date.now() + 60_000)
+    const pad = (part: number) => String(part).padStart(2, '0')
+    fireEvent.change(screen.getByLabelText(/pickup time/i), {
+      target: {
+        value:
+          `${nudged.getFullYear()}-${pad(nudged.getMonth() + 1)}-${pad(nudged.getDate())}` +
+          `T${pad(nudged.getHours())}:${pad(nudged.getMinutes())}`,
+      },
+    })
+    await user.click(screen.getByRole('button', { name: /create booking/i }))
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    expect((post.mock.calls[0][1] as Record<string, unknown>).scheduled_for).toBeNull()
   })
 
   it('puts a validation error against the field it belongs to', async () => {
@@ -525,5 +586,157 @@ describe('the number that comes with the passenger', () => {
     await user.click(await screen.findByRole('button', { name: /Joseph Okello/ }))
 
     expect(screen.getByLabelText(/contact number/i)).toHaveValue('')
+  })
+})
+
+/**
+ * ADR-0064: the internal channel carries the same three services as the
+ * public order page — and a fleet's desk books **for a corporate client**,
+ * named first, because the booking lands on that client's account.
+ */
+describe('three services on a booking', () => {
+  const fleetDesk = makeUser({
+    role: 'dispatcher',
+    tenant_id: null,
+    tenant_name: null,
+    access_level: 'fleet',
+  })
+
+  it('offers the three services side by side, and opens on Ride', async () => {
+    const user = userEvent.setup()
+    renderAs(<BookingsPage />, dispatcher)
+
+    await user.click(await screen.findByRole('button', { name: /new booking/i }))
+
+    // Visible as three options rather than folded into a dropdown: a
+    // dispatcher on a call should see delivery and self-drive exist.
+    expect(screen.getByRole('radio', { name: /ride/i })).toBeChecked()
+    expect(screen.getByRole('radio', { name: /delivery/i })).not.toBeChecked()
+    expect(screen.getByRole('radio', { name: /self-drive/i })).not.toBeChecked()
+  })
+
+  it('sends a delivery with its parcel details, and no passenger count', async () => {
+    const user = userEvent.setup()
+    renderAs(<BookingsPage />, dispatcher)
+
+    await user.click(await screen.findByRole('button', { name: /new booking/i }))
+    await user.click(screen.getByRole('radio', { name: /delivery/i }))
+
+    // The person the desk rings is the sender now, not a passenger.
+    await user.type(screen.getByLabelText(/^sender\*/i), 'Peter Ochieng')
+    await user.type(screen.getByLabelText(/contact number/i), '+256700111222')
+    await user.type(screen.getByLabelText(/pick-up/i), 'Nakawa')
+    await user.type(screen.getByLabelText(/deliver to/i), 'Jinja')
+    await user.type(screen.getByLabelText(/^recipient\*/i), 'Amina Okello')
+    await user.type(screen.getByLabelText(/recipient number/i), '+256701222333')
+    await user.click(screen.getByLabelText(/confirm handover with a pin/i))
+    await user.click(screen.getByRole('button', { name: /create booking/i }))
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+
+    const payload = post.mock.calls[0][1] as Record<string, unknown>
+    expect(payload).toMatchObject({
+      service_type: 'delivery',
+      origin: 'Nakawa',
+      destination: 'Jinja',
+      details: {
+        recipient_name: 'Amina Okello',
+        recipient_phone: '+256701222333',
+        confirm_with_pin: true,
+      },
+    })
+    // Seats are a ride's question; a count on a parcel would invent a
+    // passenger nobody booked.
+    expect(payload).not.toHaveProperty('passenger_count')
+  })
+
+  it('books a rental with a hire period and no route at all', async () => {
+    const user = userEvent.setup()
+    renderAs(<BookingsPage />, dispatcher)
+
+    await user.click(await screen.findByRole('button', { name: /new booking/i }))
+    await user.click(screen.getByRole('radio', { name: /self-drive/i }))
+
+    // No route and no pickup time: the renter collects the vehicle, and the
+    // rental's clock is the hire period.
+    expect(screen.queryByLabelText(/pick-up/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/pickup time/i)).not.toBeInTheDocument()
+
+    await user.type(screen.getByLabelText(/^renter\*/i), 'Peter Ochieng')
+    await user.type(screen.getByLabelText(/contact number/i), '+256700111222')
+    fireEvent.change(screen.getByLabelText(/^from\*/i), { target: { value: '2026-09-01' } })
+    fireEvent.change(screen.getByLabelText(/^to\*/i), { target: { value: '2026-09-05' } })
+    await user.type(screen.getByLabelText(/identity documents/i), 'National ID')
+    await user.click(screen.getByRole('button', { name: /create booking/i }))
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+
+    const payload = post.mock.calls[0][1] as Record<string, unknown>
+    expect(payload).toMatchObject({
+      service_type: 'self_drive',
+      details: { start_date: '2026-09-01', end_date: '2026-09-05', kyc_documents: 'National ID' },
+    })
+    expect(payload).not.toHaveProperty('origin')
+    expect(payload).not.toHaveProperty('scheduled_for')
+  })
+
+  it('requires the fleet desk to name the client, and sends the choice', async () => {
+    const user = userEvent.setup()
+    get.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.includes('/colleagues')
+          ? apiOk([])
+          : apiOk([booking()], {
+              scope: 'platform',
+              // The filter list names more clients than the dialog offers:
+              // the picker reads `bookable_clients` — active contracts only
+              // — so Ended Ltd must never appear as an option.
+              filters: {
+                clients: [
+                  { value: 7, label: 'Centenary Bank' },
+                  { value: 9, label: 'Ended Ltd' },
+                ],
+              },
+              bookable_clients: [{ value: 7, label: 'Centenary Bank' }],
+            }),
+      ),
+    )
+
+    renderAs(<BookingsPage />, fleetDesk)
+
+    await user.click(await screen.findByRole('button', { name: /new booking/i }))
+
+    // Only the served client is offered — the ended one is in the filter
+    // list and must not be an answer here.
+    const picker = screen.getByLabelText(/^client\*/i)
+    expect(within(picker).queryByRole('option', { name: 'Ended Ltd' })).not.toBeInTheDocument()
+
+    await user.selectOptions(picker, '7')
+    await user.type(screen.getByLabelText(/^passenger\*/i), 'A Caller')
+    await user.type(screen.getByLabelText(/contact number/i), '+256700111222')
+    await user.type(screen.getByLabelText(/pick-up/i), 'Nakawa')
+    await user.type(screen.getByLabelText(/destination/i), 'Jinja')
+    await user.click(screen.getByRole('button', { name: /create booking/i }))
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    expect(post.mock.calls[0][1]).toMatchObject({ tenant_id: 7 })
+  })
+
+  it('shows the hire period where a rental has no route to show', async () => {
+    get.mockResolvedValue(
+      apiOk([
+        booking({
+          service_type: 'self_drive',
+          origin: null,
+          destination: null,
+          details: { start_date: '2026-09-01', end_date: '2026-09-05' },
+        }),
+      ]),
+    )
+
+    renderAs(<BookingsPage />)
+
+    expect(await screen.findByText('2026-09-01 → 2026-09-05')).toBeInTheDocument()
+    expect(screen.getByText('Self-drive')).toBeInTheDocument()
   })
 })

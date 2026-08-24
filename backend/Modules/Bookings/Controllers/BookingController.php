@@ -11,6 +11,7 @@ use App\Support\Database\SearchTerm;
 use App\Support\Tenancy\ClientOptions;
 use Illuminate\Http\JsonResponse;
 use Modules\Bookings\Enums\BookingStatus;
+use Modules\Bookings\Enums\OrderRequestServiceType;
 use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Requests\BookingDecisionRequest;
 use Modules\Bookings\Requests\BookingIndexRequest;
@@ -89,9 +90,17 @@ class BookingController extends Controller
                 });
             })
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
+            ->when($request->filled('service_type'), fn ($q) => $q->where('service_type', $request->string('service_type')))
             ->when(
                 $request->boolean('dispatchable'),
-                fn ($q) => $q->whereIn('status', [BookingStatus::PENDING->value, BookingStatus::APPROVED->value])
+                // Awaiting a vehicle AND a service a driver is sent to. A
+                // self-drive rental must never reach the dispatch board:
+                // the walk-in queue already dispatched a driver to a car
+                // somebody else was going to drive, and the enum's
+                // docblock records how quietly that failed (ADR-0064).
+                fn ($q) => $q
+                    ->whereIn('status', [BookingStatus::PENDING->value, BookingStatus::APPROVED->value])
+                    ->whereIn('service_type', OrderRequestServiceType::dispatchableToDriver())
             )
             // Soonest scheduled pickup first, immediate bookings ahead of
             // them — a dispatch queue ordered by creation time would bury
@@ -117,6 +126,12 @@ class BookingController extends Controller
                 // its own filter values. Empty for a client's own user,
                 // who has no choice of client to make.
                 'filters' => ['clients' => ClientOptions::forActor($user)],
+                // Who a *new* booking may be raised for (ADR-0064 §5) —
+                // active contracts only, so the dialog never offers a
+                // client the store endpoint would refuse. Narrower than
+                // the filter list above on purpose: the queue can hold an
+                // ended contract's history, but no new car goes out to one.
+                'bookable_clients' => ClientOptions::bookableBy($user),
             ],
         );
     }

@@ -19832,3 +19832,186 @@ Also: acting-as is time-boxed rather than per-tab, so a browser script that
 impersonates and exits leaves the session standing. The next run signs in as
 head office and silently arrives as somebody else. Check
 `ImpersonationSession::live()` before driving the console.
+
+### 2026-08-24 — Service types on bookings: ride, delivery, self-drive for the desk and the client
+
+**Status: in progress.** Owner's ask: fleet admin and corporate client must be
+able to book all three services, which today only the public walk-in form
+offers — and the fleet admin books **for a corporate client** (their words),
+which is also the fix for the older gap `ColleagueBookingTest` records:
+`bookings.tenant_id` is NOT NULL, a platform actor has no tenant, so the
+internal booking endpoint has never served the desk at all.
+
+**Files owned — do not edit:**
+
+- `backend/database/migrations/2026_08_24_150000_add_service_type_to_bookings_table.php` (new)
+- `backend/Modules/Bookings/Support/BookingDetails.php` (new)
+- `backend/Modules/Bookings/Requests/StoreBookingRequest.php`
+- `backend/Modules/Bookings/Requests/BookingIndexRequest.php`
+- `backend/Modules/Bookings/Controllers/BookingController.php`
+- `backend/Modules/Bookings/Services/BookingService.php`
+- `backend/Modules/Bookings/Models/Booking.php`
+- `backend/Modules/Bookings/Resources/BookingResource.php`
+- `backend/Modules/Bookings/Enums/OrderRequestServiceType.php` (docblock only)
+- `backend/Modules/Bookings/README.md`
+- `backend/Modules/Dispatch/Services/DispatchService.php` (service-type guard in assign)
+- `backend/Modules/Dispatch/Services/BookingNotDispatchableException.php` (new)
+- `backend/Modules/Dispatch/Controllers/DispatchController.php` (catch mapping only)
+- `backend/Modules/Notifications/Notifications/BookingApprovedNotification.php`
+- `backend/Modules/Notifications/Notifications/BookingRejectedNotification.php`
+- `backend/Modules/Administration/Controllers/ColleagueController.php` (tenant narrowing)
+- `backend/Modules/Administration/Requests/ColleagueIndexRequest.php`
+- `backend/tests/Feature/Bookings/BookingServiceTypeTest.php` (new)
+- `backend/tests/Feature/Bookings/FleetCreatedBookingTest.php` (new)
+- `frontend/src/types/booking.ts`
+- `frontend/src/pages/BookingsPage.tsx`
+- `frontend/src/pages/BookingsPage.test.tsx`
+- `docs/adr/0064-three-services-on-a-booking.md` (new)
+
+**Shared files, minimal additive edits:** `docs/api/openapi.yaml` (Booking
+schema + POST /bookings + filters; staged via hash-object if committed),
+this file.
+
+**Not building in this pass, named:** driver-app surfacing of parcel details
+on booking-created delivery trips (OrderDetails reads order_requests only);
+a fulfilment flow for approved self-drive bookings beyond refusing driver
+assignment; booking edit/PATCH.
+
+#### Closed — same day
+
+**Status: done.** Backend 534 tests green across Bookings, Dispatch, Clients,
+Notifications and Administration (17 of them new, in
+`BookingServiceTypeTest` and `FleetCreatedBookingTest`); frontend 695 green
+across 69 files (5 new dialog/table cases); `tsc -b --force`, eslint, Pint
+and Larastan clean on everything touched. openapi.yaml updated — the
+contract validator is what turned nine tests red until it was.
+
+**Proved by mutation, all restored:** the assign() service guard (red), the
+BookingDetails write narrowing (red), the served-client check (red — the
+byte-identical assertion is what caught it), the dispatchable whereIn (red),
+and the frontend rental payload builder (red on `origin` leaking in).
+
+**Driven in real Chrome** (playwright-core + system Chrome, Vite on 5173
+reused): as Dispatch Desk — dialog opens on Ride with the client picker,
+Delivery shows sender/recipient/parcel fields, Self-drive shows hire dates
+and no route; a real self-drive booking for Centenary Bank was created,
+found via the queue search, and then read from the corporate admin's own
+queue with Approve/Reject offered. No console errors, no failed requests.
+The duplicate row from a first timed-out run was deleted; booking 77 stays
+as demo data.
+
+**Files touched beyond the claim, all small and additive:**
+`backend/app/Enums/ErrorCode.php` (one case), `frontend/src/lib/useColleagueSearch.ts`
+and `frontend/src/components/forms/ColleagueField.tsx` (optional `tenantId`
++ `label` props, defaults preserve old behaviour),
+`frontend/src/pages/DispatchPage.test.tsx` and `CrossClientQueue.test.tsx`
+(two lines each: the Booking factory learned `service_type`/`details`),
+`frontend/src/components/core/iconRegistry.ts` (regenerated for `package`).
+
+**Deliberately not built, so nobody rebuilds it badly:** driver-app parcel
+details for booking-created deliveries (drivers get route + notes;
+`OrderDetails` reads order_requests only — ADR-0064 consequences names the
+follow-on); any self-drive fulfilment past Approved (no handover/return
+flow — only the two guards that keep a driver away from it); a
+served-clients-only option list for the dialog (it reuses
+`meta.filters.clients`, i.e. every client, and the server refuses unserved
+ones — fine at one fleet, named in the ADR for when there are more).
+
+#### Addendum, same day — three refinements from the owner watching the form
+
+1. **Contact number auto-fills from the picked colleague, server-side too.**
+   The dialog already prefilled it; `StoreBookingRequest::prepareForValidation`
+   now merges the named colleague's saved number when none was typed, so the
+   API keeps the promise the screen makes. A typed number still wins. The
+   demo accounts that made the prefill look broken had no numbers saved —
+   `DatabaseSeeder`/`DemoFleetSeeder` now seed phones, and the five
+   numberless client accounts on the dev DB were backfilled by hand.
+2. **Pickup time prefills to the current minute.** `pickupTimeForPayload()`
+   sends null for the untouched prefill, a cleared box, or a choice within
+   five minutes of submit — the owner hit the exact "must be in the future"
+   422 that sending a prefilled clock verbatim produces. A far-past choice
+   still goes to the server to be refused loudly (a typo is not "now").
+3. **The client dropdown offers only assigned clients.**
+   `ClientOptions::bookableBy` (active contracts) feeds a new
+   `meta.bookable_clients` on /bookings; the dialog reads it instead of
+   `filters.clients`, which stays wider for filtering history. The ADR-0064
+   consequence naming this gap is closed.
+
+Five new backend tests (FleetCreatedBookingTest) and three new/updated
+frontend tests. Mutations, all restored: phone fallback off -> red;
+bookableBy unfiltered -> red; means-now window zeroed -> red; dialog fed the
+wide list -> red. Backend 581 green across the five touched modules,
+frontend 74 across the four booking-adjacent files, tsc/eslint/Pint clean;
+Larastan clean on in-scope files (two pre-existing errors in
+DemoFleetSeeder are outside phpstan.neon's paths and untouched lines).
+Demonstrated live for the owner in headed Chrome: served-clients dropdown,
+phone auto-fill on pick, prefilled pickup time, a delivery created and then
+read from the corporate admin''s queue. One throttle 429 mid-demo was the
+auth rate limiter meeting repeated scripted logins, not a bug.
+
+#### Second addendum — why "orders are not sent to the driver", demonstrated live
+
+The owner watched orders being created and asked why the emulator''s boda
+driver never heard about them. Two causes, both shown on screen:
+
+1. **By design, a booking reaches a driver through Dispatch.** Walk-in
+   orders auto-offer (ADR-0024); internal bookings are assigned by the desk
+   because approvals and client vehicle contracts (ADR-0009) sit between.
+   Demonstrated: dispatch board -> the delivery -> assign -> **trip 95,
+   assigned, driver 17** — on the emulator.
+2. **The emulator''s driver was stuck mid-ride** on a stale walk-in (trip
+   76, passenger_onboard, no booking). A driver on a live trip is offered
+   nothing. Cancelled via the state machine with a note.
+
+Three pre-existing gaps found by driving it, NOT fixed here:
+
+- `/bookings/{id}/candidate-vehicles` offers the driver-owned boda
+  (vehicle 23) but `/vehicles` does not list it, so picking it leaves the
+  Assign button dead — candidates and the fleet list disagree about the
+  pool.
+- `DispatchPage` never collects `allocation_override_reason`, so passing
+  over a contracted vehicle is impossible from the UI; the server''s
+  considered 422 renders as a generic banner.
+- The dispatch board does not show `service_type` — the delivery read as a
+  ride to the dispatcher.
+
+Also operational: repeated scripted logins meet the auth throttle (5/min);
+the demo scripts now persist a storage state instead of re-logging in.
+
+#### Third addendum — the assignment now reaches the driver (ADR-0064)
+
+The owner watched the assigned delivery and reported *"there is nothing
+happening"* on the emulator, app open or backgrounded. True, and by
+omission: an `assigned` trip surfaced only in the Trips list''s Upcoming
+group; the home screen starts its active card at `accepted`; nothing pushed.
+The trips poll was delivering the data to a screen that never showed it.
+
+**Built:**
+
+- `NotificationType::DRIVER_TRIP_ASSIGNED` (`driver.trip.assigned`),
+  database + push, never mail; not the offer ringtone — its docblock argues
+  why an assignment keeps where an offer interrupts. `pushOptions` ttl 4h so
+  a dead-zone handset never rings for a job the desk re-dispatched.
+- `DriverTripAssignedNotification` — route only in the body (ADR-0024 §7:
+  no passenger name before accept), trip id in context.
+- `SendDriverTripAssignedNotification` listener on `TripStatusChanged`
+  (creation into Assigned, booking-backed only, driver must have a user).
+  Registered beside `SendTripProgressNotification` in AppServiceProvider —
+  the requester''s half of the same moment.
+- Mobile `AssignedTripCard` on HomeScreen: ActiveTripCard''s shape without
+  the map (no leg to draw before the driver answers), rendered after the
+  active card, tapping to TripDetail where Accept/Decline live.
+
+**Proved:** 3 new backend tests (route-only body; account-less driver =
+requester only; walk-in = nothing) + 2 new HomeScreen tests (card renders
+and routes to TripDetail; absent when nothing is unanswered). Mutations
+restored: card selector nulled -> red; walk-in guard removed -> red.
+Notifications suite 70 green, pint + larastan clean, mobile tsc clean,
+HomeScreen jest 13 green.
+
+**Found, named, not fixed:** the emulator''s signed-in driver (user 10) has
+no device token — the only registered handset is user 8 — so push will not
+reach that handset until the app re-registers its token; the in-app card
+and inbox row carry it meanwhile. Earlier findings (candidate/fleet vehicle
+list mismatch, no override-reason input on DispatchPage, no service type on
+the dispatch board) still stand.

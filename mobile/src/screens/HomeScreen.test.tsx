@@ -239,3 +239,58 @@ it('falls back to the initial when no photograph has been sent', async () => {
 
   expect(within(avatar).getByText('D')).toBeTruthy();
 });
+
+/**
+ * The desk's assignment, on the home screen (ADR-0064).
+ *
+ * An `assigned` trip is one the driver has not answered, and before this
+ * card it surfaced only in the Trips list's Upcoming group — an owner
+ * watched a freshly dispatched delivery reach the handset and show nothing.
+ */
+it('puts an unanswered desk assignment on the home screen, opening the trip record', async () => {
+  mockTrips.mockReturnValue({
+    trips: [
+      {
+        id: 95,
+        status: 'assigned',
+        origin: 'Kampala Road',
+        destination: 'Mukono Health Centre IV, Seeta',
+        completed_at: null,
+      },
+    ],
+    isRefetching: false,
+    refetch: jest.fn(),
+  });
+
+  const screen = await renderHome();
+
+  expect(screen.getByText('New trip assigned')).toBeTruthy();
+  expect(screen.getByText('Mukono Health Centre IV, Seeta')).toBeTruthy();
+
+  fireEvent.press(screen.getByLabelText(/New trip assigned from Kampala Road/));
+
+  // The record view is where Accept and Decline live — an assigned trip is
+  // a question, and the app must not route to a pickup map before it is
+  // answered.
+  expect(navigate).toHaveBeenCalledWith('TripDetail', { tripId: 95 });
+});
+
+it('shows no assignment card when every trip is answered or done', async () => {
+  mockTrips.mockReturnValue({
+    trips: [
+      {
+        id: 96,
+        status: 'trip_completed',
+        origin: 'Wandegeya',
+        destination: 'Ntinda',
+        completed_at: new Date().toISOString(),
+      },
+    ],
+    isRefetching: false,
+    refetch: jest.fn(),
+  });
+
+  const screen = await renderHome();
+
+  expect(screen.queryByText('New trip assigned')).toBeNull();
+});

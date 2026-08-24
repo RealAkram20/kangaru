@@ -16,8 +16,11 @@ class BookingRejectedNotification extends KangaruNotification
 {
     public function __construct(
         private readonly int $bookingId,
-        private readonly string $origin,
-        private readonly string $destination,
+        // See BookingApprovedNotification — the model's requestDescription(),
+        // which knows a rental has no route to name (ADR-0064).
+        private readonly string $description,
+        private readonly ?string $origin,
+        private readonly ?string $destination,
         private readonly ?string $reason,
     ) {}
 
@@ -25,6 +28,7 @@ class BookingRejectedNotification extends KangaruNotification
     {
         return new self(
             $booking->id,
+            $booking->requestDescription(),
             $booking->origin,
             $booking->destination,
             $booking->decision_reason,
@@ -51,8 +55,7 @@ class BookingRejectedNotification extends KangaruNotification
             ? 'No reason was recorded. Please contact your dispatcher.'
             : "Reason given: {$this->reason}";
 
-        return "Your transport request from {$this->origin} to {$this->destination} "
-            ."was not approved. {$because}";
+        return "Your {$this->description} was not approved. {$because}";
     }
 
     public function url(): ?string

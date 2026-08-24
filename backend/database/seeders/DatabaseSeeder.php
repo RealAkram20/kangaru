@@ -42,6 +42,10 @@ class DatabaseSeeder extends Seeder
             'tenant_id' => $tenantA->id,
             'name' => 'Centenary Bank Admin',
             'email' => 'admin@centenarybank.test',
+            // A work number, because the booking dialog prefills the contact
+            // number off the picked colleague (ADR-0064) — a demo directory
+            // of numberless accounts makes that prefill look broken.
+            'phone' => '+256700100001',
             'role' => UserRole::CORPORATE_ADMIN,
         ]);
 
@@ -63,6 +67,8 @@ class DatabaseSeeder extends Seeder
             'tenant_id' => $tenantB->id,
             'name' => 'Acme NGO Admin',
             'email' => 'admin@acmengo.test',
+            // See the Centenary admin above.
+            'phone' => '+256700100002',
             'role' => UserRole::CORPORATE_ADMIN,
         ]);
 

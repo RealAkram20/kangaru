@@ -125,7 +125,7 @@ export function HomeScreen({ navigation }: Props) {
    * offline-first — a filter over the cache keeps working in a dead zone,
    * where a new endpoint would not.
    */
-  const { active, completedToday } = useMemo(() => {
+  const { active, unanswered, completedToday } = useMemo(() => {
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
 
@@ -137,6 +137,11 @@ export function HomeScreen({ navigation }: Props) {
       // `accepted`, which the latter excludes — so the card vanished at the
       // exact moment a passenger started waiting.
       active: trips.find((trip) => isLiveLeg(trip.status)) ?? null,
+      // A desk-assigned trip the driver has not answered (ADR-0064). Before
+      // this card it surfaced only in the Trips list's Upcoming group, which
+      // is nowhere a driver looks while parked at a kerb — an owner watched
+      // a freshly dispatched delivery reach the handset and show nothing.
+      unanswered: trips.find((trip) => trip.status === 'assigned') ?? null,
       completedToday: trips
         .filter((trip) => trip.status === 'trip_completed' && isToday(trip.completed_at))
         // Newest first, which `trips.index` does not give: the server orders
@@ -359,6 +364,23 @@ export function HomeScreen({ navigation }: Props) {
             onOpen={() => {
               // One decision, shared with Today's list — see `tripDestination`.
               const to = tripDestination(active.status, active.id);
+
+              navigation.navigate(to.screen, to.params as never);
+            }}
+          />
+        )}
+
+        {/*
+          After the active card, not before: a job in hand outranks a job on
+          offer. When nothing is live this is the top card, which is the
+          whole point — the desk's assignment is the next thing this driver
+          decides, not something to find in a list.
+        */}
+        {unanswered !== null && (
+          <AssignedTripCard
+            trip={unanswered}
+            onOpen={() => {
+              const to = tripDestination(unanswered.status, unanswered.id);
 
               navigation.navigate(to.screen, to.params as never);
             }}
@@ -624,6 +646,68 @@ function ActiveTripCard({
           longitude={presence?.longitude ?? null}
           stale={presence !== null && presence.latitude !== null && !presence.dispatchable}
         />
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+/**
+ * A desk-assigned trip the driver has not answered (ADR-0064).
+ *
+ * The ActiveTripCard's shape without its map: there is no leg to draw —
+ * the driver has not taken the job — and a map under a question reads as
+ * "you are going here", which the app must not say before they answer.
+ * The tap lands on the trip record, where Accept and Decline live.
+ */
+function AssignedTripCard({ trip, onOpen }: { trip: Trip; onOpen: () => void }) {
+  const press = usePressScale();
+
+  return (
+    <Animated.View style={{ transform: [{ scale: press.scale }] }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`New trip assigned from ${trip.origin} to ${trip.destination}. Opens the trip to accept or decline.`}
+        onPress={onOpen}
+        onPressIn={press.onPressIn}
+        onPressOut={press.onPressOut}
+        style={styles.activeCard}
+      >
+        <View style={styles.activeHead}>
+          <Text style={styles.activeTitle}>New trip assigned</Text>
+          <View style={styles.flex} />
+          <View style={styles.statusPill}>
+            <Text style={styles.statusPillText}>Accept or decline</Text>
+          </View>
+        </View>
+
+        <View style={styles.route}>
+          <View style={styles.routeRail}>
+            <View style={[styles.routeRing, { borderColor: colors.primary }]}>
+              <View style={[styles.routeRingCore, { backgroundColor: colors.primary }]} />
+            </View>
+            <View style={[styles.routeLine, { backgroundColor: colors.primary }]} />
+            <View style={[styles.routeLine, { backgroundColor: colors.danger }]} />
+            <View style={[styles.routeRing, { borderColor: colors.danger }]}>
+              <View style={[styles.routeRingCore, { backgroundColor: colors.danger }]} />
+            </View>
+          </View>
+
+          <View style={styles.flex}>
+            <View style={styles.routeLeg}>
+              <Text style={styles.routeLabel}>Pickup</Text>
+              <Text style={styles.routePlace} numberOfLines={2}>
+                {trip.origin}
+              </Text>
+            </View>
+
+            <View style={styles.routeLeg}>
+              <Text style={styles.routeLabel}>Drop-off</Text>
+              <Text style={styles.routePlace} numberOfLines={2}>
+                {trip.destination}
+              </Text>
+            </View>
+          </View>
+        </View>
       </Pressable>
     </Animated.View>
   );
