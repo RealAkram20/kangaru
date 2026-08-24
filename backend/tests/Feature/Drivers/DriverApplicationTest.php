@@ -4,7 +4,6 @@ use App\Enums\AccessLevel;
 use App\Enums\UserRole;
 use App\Models\User;
 use App\Support\Auth\ClientScope;
-use App\Support\Auth\PasswordPolicy;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Route;
 use Modules\Drivers\Enums\DriverApplicationStatus;
@@ -277,26 +276,34 @@ it('refuses an application without affirmative consent', function () {
 });
 
 /**
- * The floor, read from the constant rather than restated.
+ * The floor this request actually enforces, stated as a number.
  *
- * Named "eight-character floor" and posting literal seven- and eight-character
- * passwords, this went red the day `PasswordPolicy` brought every door to one
- * number — the door was fine, the test had written the number down. Exactly
- * the failure the class exists to end, in an assertion instead of a hint.
+ * **It read `PasswordPolicy::MINIMUM_LENGTH`, and that class is not committed.**
+ * A test importing a class the repository does not contain does not fail on
+ * its assertion — it fatals on `use`, and CI has no way to tell that from a
+ * broken feature. Whoever lands the shared policy should point this back at
+ * the constant in the same commit that adds it.
  *
- * Mutation check — take `PasswordPolicy::rule()` off this request and an
+ * Eight, because `StoreDriverApplicationRequest` says `Password::min(8)` and
+ * so do `ChangePasswordRequest` and `PasswordResetController` — the two doors
+ * this password walks through next. A number restated here is a liability the
+ * moment the floor moves, which is exactly why the pending policy class
+ * exists; until it is on the branch, a literal that matches the committed rule
+ * is the only assertion that can run.
+ *
+ * Mutation check — drop the `Password::min(8)` off this request and an
  * applicant can mint an account with a password the change-password screen
  * would then refuse to let them keep.
  */
 it('refuses one character below the platform floor, and accepts it exactly', function () {
-    $below = str_repeat('k', PasswordPolicy::MINIMUM_LENGTH - 1);
+    $below = str_repeat('k', 7);
 
     $this->postJson('/api/v1/driver-applications', applicationPayload([
         'password' => $below,
         'password_confirmation' => $below,
     ]))->assertStatus(422)->assertJsonValidationErrors('password');
 
-    $atFloor = str_repeat('k', PasswordPolicy::MINIMUM_LENGTH);
+    $atFloor = str_repeat('k', 8);
 
     $this->postJson('/api/v1/driver-applications', applicationPayload([
         'email' => 'at-the-floor@kangaruride.test',
