@@ -102,6 +102,11 @@ function routeCensus(): array
         // every Super Admin holds `settings.manage` including a fleet's own,
         // and `mail_toggles` has no operator_id. A fleet flipping a switch
         // would silence that email for every other fleet.
+        // The DNS side of email (owner request, 24 August). Same
+        // `SettingPolicy` gate as the SMTP settings it sits under, and
+        // throttled because each call makes outbound DNS lookups against a
+        // host derived from a stored setting.
+        'GET api/v1/settings/mail/dns' => 'A',
         'GET api/v1/settings/email' => 'A',
         'PUT api/v1/settings/email' => 'A',
         // A person's own email preferences (mail plan M6). Idiom C: no policy,
@@ -493,7 +498,8 @@ it('has a census row for every API route and a route for every census row', func
     // 235: the two `me/mail-preferences` routes, 2026-08-24. They are the
     // destination of the footer link in every email since M1, which until
     // now 404'd.
-    expect(count($router))->toBe(235);
+    // 236: the mail DNS check.
+    expect(count($router))->toBe(236);
 });
 
 it('uses only the four idioms, and files sixteen routes as public', function () {
@@ -555,7 +561,8 @@ it('authenticates every route that is not filed as public, and throttles every o
     // 214: the email menu's two routes, both authenticated.
     // 217: the two mail-preference routes, both authenticated. Nobody
     // reads or writes anybody else's; the route takes no id.
-    expect($guarded)->toBe(217);
+    // 218: the mail DNS check, authenticated.
+    expect($guarded)->toBe(218);
 });
 
 it('binds the actor\'s tenant on every staff route, so TenantScope has something to scope by', function () {
@@ -604,5 +611,6 @@ it('binds the actor\'s tenant on every staff route, so TenantScope has something
     // 200: the email menu's two routes. Head office only, and they bind
     // the actor's tenant like the fleet register does.
     // 203: the two mail-preference routes, staff-guarded like `me/devices`.
-    expect($staff)->toBe(203);
+    // 204: the mail DNS check.
+    expect($staff)->toBe(204);
 });

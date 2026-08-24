@@ -6,6 +6,7 @@ use Modules\Administration\Controllers\AuthController;
 use Modules\Administration\Controllers\ColleagueController;
 use Modules\Administration\Controllers\ImpersonationController;
 use Modules\Administration\Controllers\InvitationController;
+use Modules\Administration\Controllers\MailDnsController;
 use Modules\Administration\Controllers\PasswordResetController;
 use Modules\Administration\Controllers\PublicLegalController;
 use Modules\Administration\Controllers\PublicSettingsController;
@@ -173,6 +174,17 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::post('/settings/mail/test', [SettingsController::class, 'sendTestMail'])
         ->middleware('throttle:5,1')
         ->name('settings.mail.test');
+
+    // The DNS side of email: whether SPF, DKIM and DMARC are actually there,
+    // and the one record this platform can compose for you.
+    //
+    // Throttled for the same reason the test send is, and it is the same
+    // class of hazard rather than a lesser one: each call makes outbound DNS
+    // lookups against a host derived from a stored setting. Unthrottled, an
+    // account that can edit settings becomes a resolver-probe primitive.
+    Route::get('/settings/mail/dns', [MailDnsController::class, 'show'])
+        ->middleware('throttle:10,1')
+        ->name('settings.mail.dns');
 
     // The role catalogue (ADR-0004). Platform-wide and curated by whoever
     // holds `roles.manage` — Super Admin alone, as seeded. Route key is the
