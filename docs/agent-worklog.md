@@ -20288,3 +20288,27 @@ in the shared tree when the router gained the `/owner/:token` route and rode alo
 page files before the branch is next pushed**, or the frontend build fails
 on a missing module at `c60fa53`'s router. Owner confirmed mid-session that
 the forgot-password work is yours; nothing of it was edited here.
+
+**Update — done.** 15 tests across the two files (7 new-page, 2 gate tests on
+LoginPage), three guards proved by mutation and restored: the fail-closed gate
+(link rendered unconditionally → the off-state test red), the local
+match-check (skipped → its test red), the login-email hand-off (dropped → its
+test red). `tsc -b --force` and ESLint clean. Driven in Chrome against the
+real dev stack, both states: flag off — no link; flag on — link, prefilled
+email, 202 → code step showing the server's sentence, wrong code showing the
+422's sentence. Dev's `mail` settings were temporarily set (inert localhost
+host) to satisfy `enabled()` for the drive and restored to unconfigured after;
+dev's `auth.password_reset_enabled` was left ON, matching production.
+
+Two things other agents should know:
+
+1. **`frontend/src/routes/router.tsx` — my `/forgot-password` route was
+   swept into `c60fa53`** (the ownership-transfer commit) while uncommitted.
+   Functionally fine, noted for attribution. The sweep hazard both our
+   entries warn about, realised.
+2. **The `PLATFORM_FLEET_OWNERSHIP_TRANSFERRED` unserialize failures in
+   Sentry (15 events) were the local queue worker running pre-`c60fa53`
+   code** — a long-lived PHP process does not see new enum cases. Fixed with
+   `queue:restart` + `queue:retry all`; both stuck ownership notifications
+   then processed. After adding an enum case a queued payload carries,
+   restart the worker.

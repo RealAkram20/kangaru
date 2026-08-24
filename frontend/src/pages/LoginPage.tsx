@@ -1,11 +1,12 @@
 import axios from 'axios'
-import { useState, type FormEvent } from 'react'
-import { Navigate } from 'react-router-dom'
+import { useEffect, useState, type FormEvent } from 'react'
+import { Link, Navigate } from 'react-router-dom'
 import { useAuth } from '../auth/useAuth'
 import { Logo } from '../components/brand/Logo'
 import { Button } from '../components/core/Button'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { fetchPublicSettings } from '../lib/publicSettings'
 import { useIsCompact } from '../lib/useMediaQuery'
 
 /**
@@ -83,6 +84,22 @@ export function LoginPage() {
    */
   const [challengeId, setChallengeId] = useState<string | null>(null)
   const [code, setCode] = useState('')
+  /**
+   * ADR-0028 §4: the client reads the flag before showing the flow, so a
+   * door the owner switched off never renders. False until the server says
+   * otherwise — the same fail-closed rule as the driver app.
+   */
+  const [resetEnabled, setResetEnabled] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    void fetchPublicSettings().then((settings) => {
+      if (!cancelled) setResetEnabled(settings.auth.password_reset_enabled)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   if (user) {
     return <Navigate to="/" replace />
@@ -264,6 +281,23 @@ export function LoginPage() {
                   required
                 />
               </FormField>
+              {resetEnabled && (
+                <Link
+                  to="/forgot-password"
+                  // The typed email rides along so the next page does not ask
+                  // for what this one already knows.
+                  state={{ email }}
+                  style={{
+                    font: 'var(--type-body-dense)',
+                    color: 'var(--text-link)',
+                    textDecoration: 'none',
+                    justifySelf: 'end',
+                    alignSelf: 'flex-end',
+                  }}
+                >
+                  Forgot password?
+                </Link>
+              )}
               <Button
                 size="lg"
                 fullWidth

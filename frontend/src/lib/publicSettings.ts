@@ -23,6 +23,14 @@ export interface PublicSettings {
     /** False while the owner has paused online intake — explain, don't fail at submit. */
     walk_in_enabled: boolean
   }
+  auth: {
+    /**
+     * Whether the emailed-code reset flow is on (ADR-0028 §4: the client
+     * reads this before showing the flow; the endpoints' 409 is only the
+     * backstop for a stale client).
+     */
+    password_reset_enabled: boolean
+  }
 }
 
 export const DEFAULT_PUBLIC_SETTINGS: PublicSettings = {
@@ -37,6 +45,9 @@ export const DEFAULT_PUBLIC_SETTINGS: PublicSettings = {
   },
   regional: { currency: 'UGX' },
   ordering: { walk_in_enabled: true },
+  // Fail closed, same rule as the driver app: an unreachable server must not
+  // offer a door the owner may have switched off.
+  auth: { password_reset_enabled: false },
 }
 
 let cached: PublicSettings | null = null
