@@ -238,6 +238,20 @@ hand. They now say `isPlatformLevel()` and `forActor()`. Behaviour is
 unchanged by design; the point is that the sixth copy cannot be written
 differently.
 
+**And the third of them was wrong from the day ADR-0055 landed** (ADR-0065).
+`sharesTenant()` returned true for any `isPlatformLevel()` actor — a phrase
+that meant *head office* when ADR-0006 wrote it and *any fleet* once the axes
+split. Since the listing had been narrowed on 23 August but the policy had
+not, and `User` has no global scope to catch it, `GET|PATCH /users/{user}`
+resolved any id in the table and this policy was all that stood after it. It
+is now `sharesOrganisation()`: an exhaustive `match` on `AccessLevel` that
+answers exactly what `User::scopeForActor` answers — a fleet reaches its own
+people plus the people of clients it **actively** serves, a client reaches its
+own, head office reaches head office, an applicant reaches nobody.
+`StoreUserRequest` carries the write mirror, refusing a `tenant_id` the
+actor's fleet does not serve. Proved by five failing tests against the
+unmodified code, and by mutation in both directions.
+
 **Creating a tenant-less account is a serious act.** `UserAdminService`
 lets a platform-level actor pass `tenant_id: null`, which since ADR-0006
 mints Shanitah staff who read across every client. `staff.manage` is the

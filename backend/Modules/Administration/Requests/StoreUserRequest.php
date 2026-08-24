@@ -3,6 +3,7 @@
 namespace Modules\Administration\Requests;
 
 use App\Enums\ClientCapability;
+use App\Models\OperatorClient;
 use App\Models\User;
 use App\Support\Auth\PasswordPolicy;
 use Illuminate\Contracts\Validation\Validator;
@@ -66,8 +67,14 @@ class StoreUserRequest extends FormRequest
             // hashing to the framework but says nothing about strength, so
             // this is the conservative reading rather than an invention.
             'password' => ['required', 'string', PasswordPolicy::rule()],
-            // Super Admin only — a Corporate Admin's users are always their
-            // own tenant's, forced in the controller.
+            // Read only for a fleet-level actor — a client administrator's
+            // colleagues are always their own client's, forced in
+            // `UserAdminService`, and the field is not consulted for them.
+            //
+            // `exists` is not enough on its own and was the write half of the
+            // ADR-0055 leak: any fleet could name any client on the platform
+            // and plant an account inside it. The `servedBy` check is added in
+            // `withValidator()`, where the actor is available.
             'tenant_id' => ['sometimes', 'integer', 'exists:tenants,id'],
         ];
     }
@@ -115,6 +122,49 @@ class StoreUserRequest extends FormRequest
                     'You cannot create an account with that role: it carries permissions you do not hold yourself.',
                 );
             }
+
+            $this->refuseAnUnservedClient($validator, $actor);
         });
+    }
+
+    /**
+     * A fleet may only place an account inside a client it actually serves.
+     *
+     * The write mirror of the read leak `User::scopeForActor()` closed on
+     * 23 August. Without this, `tenant_id` is validated as *existing* and
+     * nothing else — so any fleet could name any client on the platform and
+     * create a working account inside it. That is worse than the read it
+     * mirrors: a planted account is a standing credential in somebody else's
+     * organisation, and it outlives the request that made it.
+     *
+     * `servedBy` is active contracts only. A fleet that has merely *asked* to
+     * serve a client reaches nobody there — ADR-0060 §4 refuses the read on
+     * the grounds that asking is free and needs nobody's consent, and the same
+     * argument forbids the write.
+     *
+     * A 422 rather than a 403: the actor may create accounts, and it is this
+     * particular client they may not create one in. Head office does not reach
+     * here — `UserAdminService` refuses a Kangaru actor a client outright — and
+     * a client administrator never has this field read at all.
+     */
+    private function refuseAnUnservedClient(Validator $validator, User $actor): void
+    {
+        $tenantId = $this->input('tenant_id');
+
+        if ($tenantId === null || ! $actor->isPlatformLevel()) {
+            return;
+        }
+
+        $serves = OperatorClient::query()
+            ->servedBy((int) $actor->operator_id)
+            ->where('tenant_id', (int) $tenantId)
+            ->exists();
+
+        if (! $serves) {
+            $validator->errors()->add(
+                'tenant_id',
+                'You can only add staff to a client your fleet serves.',
+            );
+        }
     }
 }
