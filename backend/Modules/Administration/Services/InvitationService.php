@@ -4,6 +4,7 @@ namespace Modules\Administration\Services;
 
 use App\Enums\UserStatus;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Administration\Models\Invitation;
@@ -125,9 +126,9 @@ class InvitationService
     /**
      * Invitations that lapse within the reminder window and have not been used.
      *
-     * @return \Illuminate\Database\Eloquent\Collection<int, Invitation>
+     * @return Collection<int, Invitation>
      */
-    public function expiringSoon(): \Illuminate\Database\Eloquent\Collection
+    public function expiringSoon(): Collection
     {
         return Invitation::query()
             ->whereNull('accepted_at')

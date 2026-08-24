@@ -12,6 +12,7 @@ use Modules\Administration\Services\InvitationService;
 use Modules\Administration\Services\SettingsService;
 use Modules\Fleet\Services\OperatorService;
 use Modules\Notifications\Models\MailDelivery;
+use Modules\Notifications\Notifications\AccountInvitedNotification;
 
 /**
  * M2, the invitation.
@@ -230,7 +231,7 @@ it('names the inviter in the email, and never puts the token in the stored paylo
     $user = invitee();
     $inviter = User::factory()->create(['name' => 'Head Office', 'access_level' => AccessLevel::KANGARU]);
 
-    $notification = new Modules\Notifications\Notifications\AccountInvitedNotification(
+    $notification = new AccountInvitedNotification(
         app(InvitationService::class)->invite($user, $inviter),
         'the-plaintext-token',
         $inviter,

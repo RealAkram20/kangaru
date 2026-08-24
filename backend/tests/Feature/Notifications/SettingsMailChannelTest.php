@@ -4,12 +4,14 @@ use App\Enums\UserRole;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification;
 use Modules\Administration\Models\Invitation;
 use Modules\Administration\Services\SettingsService;
 use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Services\BookingService;
+use Modules\Notifications\Channels\SettingsMailChannel;
 use Modules\Notifications\Enums\NotificationType;
 use Modules\Notifications\Models\MailDelivery;
 use Modules\Notifications\Models\MailDeliveryImmutableException;
@@ -245,6 +247,122 @@ it('lowercases the address so support can find it', function () {
     ]);
 
     expect($delivery->recipient)->toBe('grace@nakumatt.test');
+});
+
+/**
+ * The outage alarm, and why it is pinned two ways.
+ *
+ * kangaru-aa's mutation result is the reason for the pairing: they moved
+ * `PasswordPolicy::MINIMUM_LENGTH` from 6 to 8 and **every boundary test
+ * stayed green**, because each derived from the constant and followed it
+ * anywhere. Only one literal assertion caught the move.
+ *
+ * So the two do different jobs and neither is redundant:
+ *
+ * - the boundary test below catches the **alarm drifting away from the
+ *   constant** — firing at two, or not firing at three;
+ * - the literal one catches **the constant itself moving without a decision**,
+ *   which is exactly how an alarm gets quietly turned into a nag or into
+ *   silence.
+ */
+function failedDeliveries(int $count): void
+{
+    for ($i = 0; $i < $count; $i++) {
+        MailDelivery::create([
+            'recipient' => "failure{$i}@nakumatt.test",
+            'type' => NotificationType::BOOKING_APPROVED->value,
+            'subject' => 'Booking approved',
+            'status' => MailDelivery::FAILED,
+        ]);
+    }
+}
+
+it('says nothing after two failures, because two is two bad addresses', function () {
+    configureMail();
+    Mail::shouldReceive('build')->andThrow(new RuntimeException('535 Authentication failed'));
+    Log::spy();
+
+    failedDeliveries(1);
+
+    ['admin' => $admin, 'booking' => $booking] = mailFixture();
+
+    try {
+        app(BookingService::class)->approve($booking, $admin);
+    } catch (Throwable) {
+        // Rethrown so the queue retries. Not the assertion.
+    }
+
+    // Two failures total. Alerting here would train everybody to ignore the
+    // alert, which is how the real outage goes unnoticed.
+    Log::shouldNotHaveReceived('error', ['mail.transport_down', Mockery::any()]);
+});
+
+it('says the transport is down on the third failure in a row', function () {
+    configureMail();
+    Mail::shouldReceive('build')->andThrow(new RuntimeException('535 Authentication failed'));
+    Log::spy();
+
+    failedDeliveries(2);
+
+    ['admin' => $admin, 'booking' => $booking] = mailFixture();
+
+    try {
+        app(BookingService::class)->approve($booking, $admin);
+    } catch (Throwable) {
+    }
+
+    /*
+     * `MailDelivery::consecutiveFailures()` shipped in M0 with a docblock
+     * explaining what it was for and **nothing calling it** — the same shape
+     * as `recoveryCodesAreLow()` before M3. This is the test that proves it is
+     * consulted rather than merely defined.
+     */
+    Log::shouldHaveReceived('error')
+        ->withArgs(fn (string $message, array $context) => $message === 'mail.transport_down'
+            && $context['consecutive_failures'] >= 3);
+});
+
+it('a success between failures resets the run, so a bad address is not an outage', function () {
+    configureMail();
+    Mail::shouldReceive('build')->andThrow(new RuntimeException('535 Authentication failed'));
+    Log::spy();
+
+    failedDeliveries(2);
+
+    // One success on top, which is what an outage cannot produce.
+    MailDelivery::create([
+        'recipient' => 'ok@nakumatt.test',
+        'type' => NotificationType::BOOKING_APPROVED->value,
+        'subject' => 'Booking approved',
+        'status' => MailDelivery::SENT,
+    ]);
+
+    ['admin' => $admin, 'booking' => $booking] = mailFixture();
+
+    try {
+        app(BookingService::class)->approve($booking, $admin);
+    } catch (Throwable) {
+    }
+
+    Log::shouldNotHaveReceived('error', ['mail.transport_down', Mockery::any()]);
+});
+
+it('alerts at three, and the three is written down here on purpose', function () {
+    /*
+     * The literal, and it is the half kangaru-aa proved you cannot do without.
+     * Every assertion above derives from the behaviour and would follow the
+     * constant anywhere: move it to 10 and they all stay green while the
+     * platform silently stops warning about an outage until the tenth failure.
+     *
+     * This line does not follow. Changing the threshold has to be a decision
+     * somebody takes here, with a reason.
+     */
+    $threshold = new ReflectionClassConstant(
+        SettingsMailChannel::class,
+        'OUTAGE_THRESHOLD',
+    );
+
+    expect($threshold->getValue())->toBe(3);
 });
 
 it('counts only an unbroken run of failures at the tail', function () {
