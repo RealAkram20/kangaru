@@ -19658,3 +19658,114 @@ seconds. **A wild failure count is a database collision; a wall of 20-second
 durations is load.** Neither is a bug and both look exactly like one. We are on
 `_pw`, `_1m` and `_mail` now, which fixes the first; only patience fixes the second.
 
+
+---
+
+## kangaru-1M, 24 August ~10:45 — the booking dialog, and a leak the calendar opened
+
+Owner asked for three things on **New booking**, and the third turned over a
+live cross-fleet disclosure.
+
+### 1. The crosshair on Pick-up
+
+`PlaceField` gains an opt-in `locatable`. It goes through the same `take()` a
+suggestion does, so the position lands as a **picked place with coordinates** —
+which is the whole point. A pickup reading "Current location" with no point
+behind it is exactly the no-coordinates booking that component was built to
+stop.
+
+`currentLocationPlace()` already existed and never rejects: a refused prompt, a
+timeout or a geocoder outage all resolve to null and the field is left as the
+person had it. That is the entire error handling, deliberately — there is
+nothing useful to say about a browser permission the page cannot grant itself.
+
+Pick-up only. Nobody orders a car to where they already are.
+
+### 2. Destination now suggests, like Pick-up
+
+It was a bare `Input`, so a destination was whatever a dispatcher typed at
+speed on a phone call — *"muko"*, *"Mukono town"*, *"mukono tc"* — three
+spellings of one place that no report can add up.
+
+**Not Google**, and not a new dependency: `searchPlaces` is Mapbox where a
+token is configured and Photon otherwise. Adding a paid geocoder is the
+owner's call, not a side effect of this.
+
+The resolved place is **not sent**: `bookings` carries `origin_latitude` /
+`origin_longitude` and no destination pair, and inventing one here would mean a
+column, a migration and a decision about what the matcher does with it. The
+value today is the address spelled the way the geocoder spells it.
+
+### 3. The staff search — and the leak underneath it
+
+`/colleagues` answered `[]` to every platform-level actor, with a sound reason:
+*"`forActor` would drop the scope and answer with every client's directory."*
+
+It would have. `User::scopeForActor`'s fleet branch read
+`orWhereNotNull('users.tenant_id')` — **every client's staff, for every
+fleet** — under a comment saying *"F2 narrows the second half to the clients
+this fleet actually contracts with; today one fleet serves all of them, so this
+is behaviour for behaviour what it replaced."*
+
+**That premise expired on 23 August**, when Najjemba was onboarded. From that
+moment a rival fleet's dispatcher could read the name, email and phone of every
+employee of every client on the platform — ADR-0060 §4's named refusal, reached
+through the staff list rather than the client register I had already narrowed
+that morning.
+
+Narrowed to `OperatorClient::servedBy()`, which is **active contracts only**: a
+fleet that has merely asked to serve a client reads none of their people, since
+asking grants no read.
+
+With that fixed the endpoint can answer honestly, so the dispatcher taking a
+call from a bank names the employee instead of typing a name three people spell
+three ways. `whereNotNull('tenant_id')` keeps the original intent — a fleet's
+own staff are not passengers — and gives head office an empty list out of the
+predicate rather than out of a level check.
+
+**The guard that shipped anyway.** The branch two comments up already warned:
+*"nothing leaks today because there is one fleet, which is exactly the kind of
+gap that ships."* It shipped. A guard deferred to a condition nobody is
+watching arrives after the thing it was for — and the test could not catch it
+either: with one client and one contract-free tenant, *"keeping its clients
+visible"* passed on a predicate that kept **everybody's** clients visible.
+
+### 4. And the prefill that deleted numbers
+
+Owner, mid-session: *"the contact should be loaded automatically from the
+selected passenger."* It was — and it also **cleared** one.
+`passenger_phone` was set to `picked?.phone ?? ''` on every pick, and every
+client account on this database has a null `phone`, so picking a passenger
+emptied a box the dispatcher may have filled from the caller thirty seconds
+earlier.
+
+Not fixed by never clearing, because the failure that guarded is worse: Alice's
+number left under Bob's name sends a car out and has the driver ring the wrong
+person, with nothing on screen looking wrong. One flag settles both — **clear
+only what the prefill wrote, never what a person typed.**
+
+Worth saying plainly to the owner: the wiring was always right. Those accounts
+have no number stored. `StoreUserRequest` has required `phone` for a while, so
+anybody added since has one; the seeded staff predate it.
+
+### Proved
+
+Mutations, all restored: the narrowing reverted -> 3 red (and *"offers a
+dispatcher the staff of a client their fleet serves"* stayed green, so the
+guard is not merely refusing everybody); the prefill reverted -> 1 red, the
+other two green, so the fix is targeted.
+
+Backend **1781 passed**. Frontend **690** across 69 files, `tsc -b --force`
+clean, Pint and Larastan clean on my files.
+
+Driven in Chrome as Shanitah's Super Admin: crosshair present on Pick-up;
+pick-up and destination return identical suggestions for "mukono"; the
+passenger box searches and returns the two client staff of the tenants Shanitah
+serves; `GET /colleagues?q=Staff`; no console errors and no failed requests.
+
+### One wording fix found by looking at it
+
+The passenger box said **"Search your colleagues"** to a dispatcher, who is
+searching somebody else's staff. It now reads *"Search a client's staff"* for a
+fleet actor. One word, and getting it wrong tells a fleet's desk it is about to
+book a car for one of its own drivers.

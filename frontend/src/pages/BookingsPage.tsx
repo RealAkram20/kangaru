@@ -453,8 +453,41 @@ function NewBookingDialog({
    * rule. Getting it wrong here shows the wrong field, never the wrong
    * permission.
    */
-  const picksColleague = isCorporateRole(me?.role)
+  /*
+   * Since 24 August this is **not** only a client's form.
+   *
+   * `/colleagues` used to answer an empty list to any platform-level actor, so
+   * offering the field to a dispatcher would have offered a search that never
+   * found anybody. It now answers with the people of the clients that fleet
+   * actively serves, which is precisely who a dispatcher taking a call from a
+   * bank is booking for — and naming them is what stops "J. Mukasa" and
+   * "Joseph Mukasa" being two passengers in the same report.
+   *
+   * A client is still **required** to name a colleague and a fleet is not:
+   * `StoreBookingRequest` refuses a corporate actor who names nobody, and
+   * accepts a fleet's typed name because the walk-ins and callers Shanitah's
+   * desk books for have no account anywhere (ADR-0012). So a dispatcher gets
+   * the search as an accelerator over a box they can still type into, which is
+   * exactly what `PlaceField` is to an address.
+   */
+  const picksColleague = isCorporateRole(me?.role) || me?.access_level === 'fleet'
   const [colleague, setColleague] = useState<Colleague | null>(null)
+  /**
+   * Whether the number in the box was put there by picking a passenger.
+   *
+   * The prefill has to answer two questions at once and they pull opposite
+   * ways. Picking Alice and then Bob **must not** leave Alice's number under
+   * Bob's name — a car goes out and the driver rings the wrong person, and
+   * nothing about the screen looks wrong. But a dispatcher who takes the
+   * number off the caller *first* and then names the passenger must not have
+   * their typing deleted, which is what a blanket clear did: every client
+   * account on this platform has a null `phone`, so picking anybody wiped the
+   * box.
+   *
+   * One flag settles both. Clear only what this prefill wrote; never touch
+   * what a person typed.
+   */
+  const [phoneFromColleague, setPhoneFromColleague] = useState(false)
   const [form, setForm] = useState({
     passenger_name: '',
     passenger_phone: '',
@@ -554,19 +587,36 @@ function NewBookingDialog({
             <ColleagueField
               value={form.passenger_name}
               chosen={colleague}
+              // A dispatcher is searching the staff of the clients their fleet
+              // serves, which are not their colleagues. `isCorporateRole`
+              // rather than the level, so the wording follows the same
+              // condition that decides whether a colleague is required.
+              placeholder={
+                isCorporateRole(me?.role) ? 'Search your colleagues' : "Search a client's staff"
+              }
               // The server rejects a missing colleague on this field; the
               // typed name is only ever a search term here.
               error={errors.passenger_user_id ?? errors.passenger_name}
               onChange={(value, picked) => {
                 setColleague(picked)
+                setPhoneFromColleague(picked?.phone != null)
                 setForm((current) => ({
                   ...current,
                   passenger_name: value,
-                  // Prefilled from the account, and still editable: the
-                  // person raising it may know a better number for today.
-                  // Only on picking, so a correction survives typing on.
+                  /*
+                    Prefilled from the account, still editable, and never
+                    destructive - see `phoneFromColleague` above.
+
+                    - the colleague has a number: it wins, because the box is
+                      about whoever the passenger now is;
+                    - they have none and the box holds a previous colleague's:
+                      cleared, or that number follows the wrong passenger out
+                      of the door;
+                    - they have none and somebody typed it: left alone.
+                  */
                   passenger_phone:
-                    picked?.phone ?? (picked === null ? current.passenger_phone : ''),
+                    picked?.phone ??
+                    (phoneFromColleague ? '' : current.passenger_phone),
                 }))
               }}
             />
@@ -584,7 +634,13 @@ function NewBookingDialog({
             <Input
               id="b-phone"
               value={form.passenger_phone}
-              onChange={set('passenger_phone')}
+              // Not `set('passenger_phone')`: typing here makes the number a
+              // person's answer rather than an account's, and the next pick
+              // must stop treating it as its own to clear.
+              onChange={(event) => {
+                setPhoneFromColleague(false)
+                setForm((current) => ({ ...current, passenger_phone: event.target.value }))
+              }}
               placeholder="+256700000000"
             />
           </FormField>
@@ -594,19 +650,40 @@ function NewBookingDialog({
             required
             error={errors.origin}
             hint="Pick a suggestion and the board can rank drivers by how near they are."
+            /*
+              The crosshair, on pick-up alone. A desk taking a call is usually
+              where the caller is, and the coordinates it fills in are the ones
+              the recommender ranks by — which is the difference between "no
+              driver ranked by distance" and a nearest car.
+
+              Not offered on the destination below: nobody orders a car to
+              where they already are.
+            */
+            locatable
             onChange={(value, place) => {
               setForm((current) => ({ ...current, origin: value }))
               setOriginPlace(place)
             }}
           />
-          <FormField
+          {/*
+            The same suggestions as the pick-up. It was a bare `Input`, so a
+            destination was whatever a dispatcher typed at speed on a phone
+            call — "muko", "Mukono town", "mukono tc" — three spellings of one
+            place that no report can add up and no driver can be certain of.
+
+            The place it resolves to is **not** sent yet: `bookings` carries
+            `origin_latitude`/`origin_longitude` and no destination pair, and
+            inventing one here would mean a column, a migration and a decision
+            about what the matcher does with it. The value today is the
+            address itself, spelled the way the geocoder spells it.
+          */}
+          <PlaceField
             label="Destination"
-            htmlFor="b-destination"
+            value={form.destination}
             required
             error={errors.destination}
-          >
-            <Input id="b-destination" value={form.destination} onChange={set('destination')} />
-          </FormField>
+            onChange={(value) => setForm((current) => ({ ...current, destination: value }))}
+          />
           <FormField label="Passengers" htmlFor="b-count" error={errors.passenger_count}>
             <Input
               id="b-count"

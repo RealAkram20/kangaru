@@ -3,6 +3,7 @@
 use App\Enums\AccessLevel;
 use App\Enums\UserRole;
 use App\Models\Operator;
+use App\Models\OperatorClient;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Support\Access\AccessContext;
@@ -79,17 +80,57 @@ it('shows a fleet only its own vehicles', function () {
         ->and($seen)->not->toContain($mine->id);
 });
 
-it('shows a fleet no other fleet staff, while keeping its clients visible', function () {
-    $client = Tenant::factory()->create();
-    $clientUser = User::factory()->create(['tenant_id' => $client->id]);
+it('shows a fleet no other fleet staff, and only the clients it actually serves', function () {
+    $mine = Tenant::factory()->create();
+    $myClientUser = User::factory()->create(['tenant_id' => $mine->id]);
+    OperatorClient::create([
+        'operator_id' => $this->shanitah->id,
+        'tenant_id' => $mine->id,
+        'status' => OperatorClient::ACTIVE,
+    ]);
+
+    // A client on the platform that Shanitah does not serve. This is the half
+    // the test was missing, and the half that was leaking.
+    $theirs = Tenant::factory()->create();
+    $theirClientUser = User::factory()->create(['tenant_id' => $theirs->id]);
 
     $seen = User::forActor($this->shanitahStaff)->pluck('id');
 
     expect($seen)->toContain($this->shanitahStaff->id)
-        ->and($seen)->toContain($clientUser->id)
+        ->and($seen)->toContain($myClientUser->id)
         // The hole this closes: before ADR-0055 a fleet actor's listing was
         // unscoped, so a second fleet's entire staff list came back.
-        ->and($seen)->not->toContain($this->rivalStaff->id);
+        ->and($seen)->not->toContain($this->rivalStaff->id)
+        /*
+         * And the one this closes now. The branch read
+         * `orWhereNotNull('users.tenant_id')` under a comment saying F2 would
+         * narrow it and that *"today one fleet serves all of them"*. That
+         * stopped being true on 23 August, when a second fleet was onboarded —
+         * from which moment a rival's dispatcher could read the name, email
+         * and phone of every employee of every client on the platform.
+         *
+         * The test could not have caught it either: with one client and one
+         * contract-free tenant, "keeping its clients visible" passed on a
+         * predicate that kept *everybody's* clients visible.
+         */
+        ->and($seen)->not->toContain($theirClientUser->id);
+});
+
+it('shows a fleet none of a client that has only asked to be served', function () {
+    $prospect = Tenant::factory()->create();
+    $prospectUser = User::factory()->create(['tenant_id' => $prospect->id]);
+
+    OperatorClient::create([
+        'operator_id' => $this->shanitah->id,
+        'tenant_id' => $prospect->id,
+        'status' => OperatorClient::REQUESTED,
+    ]);
+
+    // ADR-0060 §4: asking grants no read. A fleet that could see the staff of
+    // every client it had merely requested would learn the size and shape of
+    // any organisation on the platform by asking about it - and asking is
+    // free and needs nobody's consent.
+    expect(User::forActor($this->shanitahStaff)->pluck('id'))->not->toContain($prospectUser->id);
 });
 
 it('shows a client none of any fleet, which is what the permission catalogue already says', function () {

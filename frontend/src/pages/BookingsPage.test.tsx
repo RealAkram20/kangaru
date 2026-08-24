@@ -65,12 +65,15 @@ beforeEach(() => {
  * rewrite that broke the screen, which is the opposite of the point.
  */
 /**
- * Shanitah's own desk: no tenant, so no colleagues to name.
+ * Shanitah's own desk.
  *
- * The dialog tests below type a passenger's name, which is what this
- * account does — it books for walk-ins and callers who have no account
- * anywhere (ADR-0012). A client's own staff get the colleague picker
- * instead, and that has its own tests at the end of this file.
+ * It now gets the colleague picker too — since 24 August `/colleagues`
+ * answers a fleet with the staff of the clients it actively serves, so a
+ * dispatcher taking a call from a bank can name the employee. Picking stays
+ * **optional** for them, which is why the dialog tests below still type a
+ * name: this account books walk-ins and callers who have no account anywhere
+ * (ADR-0012), and `StoreBookingRequest` requires a named colleague only of a
+ * corporate actor.
  */
 const dispatcher = makeUser({ role: 'dispatcher', tenant_id: null, tenant_name: null })
 
@@ -433,5 +436,94 @@ describe('BookingsPage', () => {
     // and there is no input by that name, so untranslated it would render
     // as nothing visibly wrong.
     expect(await screen.findByText('Choose the colleague who is travelling.')).toBeInTheDocument()
+  })
+})
+
+/**
+ * The owner, 24 August: *"the contact should be loaded automatically from the
+ * selected passenger"*.
+ *
+ * It was, and it also **deleted** one. `passenger_phone` was set to
+ * `picked?.phone ?? ''` on every pick, and every client account on the
+ * platform has a null `phone` — so picking a passenger emptied a box the
+ * dispatcher may have filled from the caller thirty seconds earlier. Which is
+ * exactly what it looked like from the outside: a prefill that does nothing.
+ */
+describe('the number that comes with the passenger', () => {
+  /*
+   * `access_level` spelled out, unlike the `dispatcher` fixture above.
+   *
+   * `makeUser()` does not set it, so that fixture is level-less and falls to
+   * the plain text box - which is why the dialog tests above still exercise
+   * the typed-name path and these have to build their own actor. The real
+   * `/auth/me` always sends a level; a fixture that omits one is testing an
+   * account the server cannot produce.
+   */
+  const deskWithClients = makeUser({
+    role: 'dispatcher',
+    tenant_id: null,
+    tenant_name: null,
+    access_level: 'fleet',
+  })
+
+  const colleagues = (...people: { id: number; name: string; phone: string | null }[]) => {
+    get.mockImplementation((url: string) =>
+      Promise.resolve(url.includes('/colleagues') ? apiOk(people) : apiOk([booking()])),
+    )
+  }
+
+  const openWithPassenger = async (user: ReturnType<typeof userEvent.setup>, term: string) => {
+    renderAs(<BookingsPage />, deskWithClients)
+    await user.click(await screen.findByRole('button', { name: /new booking/i }))
+    await user.type(screen.getByLabelText(/^passenger\*/i), term)
+  }
+
+  it('fills the contact number from the colleague who has one', async () => {
+    const user = userEvent.setup()
+    colleagues({ id: 9, name: 'Joseph Mukasa', phone: '+256700111222' })
+
+    await openWithPassenger(user, 'Joseph')
+    await user.click(await screen.findByRole('button', { name: /Joseph Mukasa/ }))
+
+    expect(screen.getByLabelText(/contact number/i)).toHaveValue('+256700111222')
+  })
+
+  it('leaves a number the dispatcher typed when the colleague has none', async () => {
+    const user = userEvent.setup()
+    colleagues({ id: 9, name: 'Joseph Mukasa', phone: null })
+
+    renderAs(<BookingsPage />, deskWithClients)
+    await user.click(await screen.findByRole('button', { name: /new booking/i }))
+    // The order that matters: the number comes off the caller first, and the
+    // passenger is named afterwards.
+    await user.type(screen.getByLabelText(/contact number/i), '+256788999000')
+    await user.type(screen.getByLabelText(/^passenger\*/i), 'Joseph')
+    await user.click(await screen.findByRole('button', { name: /Joseph Mukasa/ }))
+
+    expect(screen.getByLabelText(/contact number/i)).toHaveValue('+256788999000')
+  })
+
+  /**
+   * The failure the blanket clear was guarding, and the reason this is a flag
+   * rather than "never clear": a number left under the wrong name sends a car
+   * out and has the driver ring somebody else, and nothing on the screen looks
+   * wrong.
+   */
+  it("clears a previous colleague's number rather than carrying it to the next", async () => {
+    const user = userEvent.setup()
+    colleagues(
+      { id: 9, name: 'Joseph Mukasa', phone: '+256700111222' },
+      { id: 10, name: 'Joseph Okello', phone: null },
+    )
+
+    await openWithPassenger(user, 'Joseph')
+    await user.click(await screen.findByRole('button', { name: /Joseph Mukasa/ }))
+    expect(screen.getByLabelText(/contact number/i)).toHaveValue('+256700111222')
+
+    await user.clear(screen.getByLabelText(/^passenger\*/i))
+    await user.type(screen.getByLabelText(/^passenger\*/i), 'Joseph')
+    await user.click(await screen.findByRole('button', { name: /Joseph Okello/ }))
+
+    expect(screen.getByLabelText(/contact number/i)).toHaveValue('')
   })
 })
