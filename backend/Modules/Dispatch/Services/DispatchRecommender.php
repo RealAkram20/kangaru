@@ -2,6 +2,7 @@
 
 namespace Modules\Dispatch\Services;
 
+use App\Models\User;
 use Illuminate\Support\Collection;
 use Modules\Bookings\Models\Booking;
 use Modules\Dispatch\Support\GreatCircle;
@@ -76,11 +77,26 @@ class DispatchRecommender
     /**
      * @return Collection<int, DispatchSuggestion>
      */
-    public function forBooking(Booking $booking): Collection
+    public function forBooking(Booking $booking, User $actor): Collection
     {
         [$from, $to] = $this->availability->windowFor($booking->scheduled_for);
 
-        $drivers = $this->availability->availableDrivers($from, $to);
+        // `availableDrivers` answers *who is free*, across the platform — it
+        // is a utility shared with the availability checks and is right to be
+        // unscoped. Which of them are **this fleet's** is a separate question,
+        // and it has to be asked here: this collection is the pool the
+        // suggestion is chosen from, and `bestFor` hands the winner straight
+        // to `assign()`. Unscoped, automatic dispatch could commit another
+        // fleet's driver to this fleet's booking — not merely display them.
+        //
+        // Narrowed through `forActor` rather than a hand-written
+        // `operator_id` comparison, so the three access levels keep one
+        // definition (ADR-0055 §6).
+        $free = $this->availability->availableDrivers($from, $to);
+
+        $mine = Driver::forActor($actor)->whereKey($free->pluck('id')->all())->pluck('id')->flip();
+
+        $drivers = $free->filter(fn (Driver $driver) => $mine->has($driver->id))->values();
 
         if ($drivers->isEmpty()) {
             return collect();
@@ -90,7 +106,7 @@ class DispatchRecommender
         $on = $booking->scheduled_for ?? now();
         $contracted = $this->allocations->vehiclesFor($booking->tenant_id, $on);
 
-        $vehicles = Vehicle::query()
+        $vehicles = Vehicle::forActor($actor)
             ->where('status', 'active')
             // A hard filter, not a penalty: a five-seater cannot take eight
             // passengers, and ranking it low would still eventually offer it
@@ -124,9 +140,9 @@ class DispatchRecommender
     }
 
     /** The single best pair, or null when nothing can take this booking. */
-    public function bestFor(Booking $booking): ?DispatchSuggestion
+    public function bestFor(Booking $booking, User $actor): ?DispatchSuggestion
     {
-        return $this->forBooking($booking)->first();
+        return $this->forBooking($booking, $actor)->first();
     }
 
     private function score(Booking $booking, Vehicle $vehicle, Driver $driver, bool $allocated): DispatchSuggestion
