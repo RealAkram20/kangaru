@@ -19386,3 +19386,78 @@ own hunks**, through the index rather than `git add`, so kangaru-aa's five
 `minLength: 6` entries stay uncommitted and theirs. Same discipline as staging
 by explicit path, one level down — and worth writing down, because `git add` on
 that file would have swept them silently.
+
+---
+
+## kangaru-1M, 24 August ~09:30 — a Verify button on a verified document
+
+Owner: *"i remember adding the verify, reject buttons on this as well. and also
+on this we are still having very button yet the document is verified"*.
+
+They were right on both counts, and both were the **driver** documents dialog
+having missed changes the **applications** queue already had.
+
+### The verdict a document already holds
+
+`DocumentRow` rendered Verify and Reject on every held row, so a document
+badged **Verified** sat beside a button whose only effect would be to rewrite
+the row with what it already said. From the outside that does not read as a
+spare control — it reads as the badge being wrong.
+
+`ApplicationDocuments` already gates, and its comment says why in the same
+words the owner used: *"'Accept' on something already accepted invites a
+reviewer"*. That surface got the fix; this one never did.
+
+**The other verdict stays, in both directions.** Hiding both would satisfy the
+report and leave an office that verified a forged licence with no way to say so
+short of waiting for a replacement. `DriverDocumentService::verify()` clears
+`rejection_reason` *"so a document rejected and later accepted does not carry
+the old objection"* — reversal is a designed flow, not an edge case, and the
+endpoints carry no state guard.
+
+**Reads `status`, not `compliance_state`** — the opposite of the badge two
+elements above it, deliberately. These buttons write `status`, so `status` is
+what decides whether writing it would change anything. An expired document is
+`status: verified`, and verifying it again moves its expiry date not at all;
+Replace is the fix and Replace is already on the row.
+
+### The viewer had an actions slot and was never given one
+
+`MediaPreview` has carried `actions` since the applications queue got it, with
+a docblock arguing the case: *"judging a document and acting on it are the same
+moment."* This dialog passed `source`, `browse`, `onClose` and nothing else. So
+the office reviewing six papers opened one, decided, closed it, found the row
+again and pressed a button — the five steps that slot exists to remove, on the
+surface where six documents are actually worked through in one sitting.
+
+### A test of mine that survived the deletion of its own subject
+
+Worth more than either fix. *"records the verdict from the viewer"* clicked
+`verify[verify.length - 1]` — "the last Verify in the tree" — and **passed with
+the `actions` prop removed entirely**, because it was then clicking the row's
+button and asserting the row's request. Only the mutation showed it. It is
+scoped to `.kr-media__footer` now.
+
+Same family as this branch's other three: an assertion aimed at the wrong
+layer. A test that survives the deletion of the thing it is about is not a test.
+
+### Proved
+
+Mutations, both restored: row gating removed -> 3 red; the `actions` prop
+removed -> both viewer tests red (after the scoping fix; before it, only one).
+
+22 tests in `pages/drivers`. Driven in Chrome as the Najjemba fleet owner: six
+documents badged Verified, **zero Verify buttons** where there were six, six
+Reject still offered, and the viewer footer reading `1 of 6 | Reject | Close`.
+No console errors, no failed requests.
+
+### Two things found on the way, neither a bug in this change
+
+- **There are two drivers named MIIRO RIO AKRAM** — id 20 on Shanitah with no
+  documents, id 21 on Najjemba with the six. Signed in as Shanitah I saw only
+  20 and its empty slots, which is `7c9a07d` working, and which is also why the
+  first two browser runs looked like a regression and were not.
+- **Acting-as is time-boxed, not per-tab.** A driver script that impersonates
+  and exits leaves the session standing, so the next run signs in as head
+  office and arrives as somebody else with no page explaining why. The scripts
+  now press Stop first. Four probe tokens revoked.

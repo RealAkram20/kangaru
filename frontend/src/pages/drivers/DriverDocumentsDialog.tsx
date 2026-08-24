@@ -172,6 +172,65 @@ export function DriverDocumentsDialog({
             onPrevious: previewAt > 0 ? () => setPreviewAt(previewAt - 1) : null,
             onNext: previewAt < held.length - 1 ? () => setPreviewAt(previewAt + 1) : null,
           }}
+          /*
+            The verdicts, on the document being looked at.
+
+            `MediaPreview` has carried an `actions` slot since the applications
+            queue got one, and its docblock argues the case: *"judging a
+            document and acting on it are the same moment."* This dialog never
+            passed it. So the office reviewing a driver's six papers opened
+            one, decided, closed it, found the row again and pressed a button —
+            the five steps that slot exists to remove, on the surface where six
+            documents are actually worked through in a sitting.
+
+            Same rule as the row: never the verdict it already holds, and the
+            other one always available so a decision can be reversed.
+
+            `previewing.document` rather than a captured row, because the
+            arrows move the document under these buttons while they stay
+            mounted. No `aria-label`: the dialog is already titled with the
+            document type, and repeating it would give two controls one name.
+          */
+          /*
+            The verdicts, on the document being looked at.
+
+            `MediaPreview` has carried an `actions` slot since the applications
+            queue got one, and its docblock argues the case: *"judging a
+            document and acting on it are the same moment."* This dialog never
+            passed it. So the office reviewing a driver's six papers opened
+            one, decided, closed it, found the row again and pressed a button —
+            the five steps that slot exists to remove, on the surface where six
+            documents are actually worked through in a sitting.
+
+            Same rule as the row: never the verdict it already holds, and the
+            other one always available so a decision can be reversed.
+
+            `previewing.document` rather than a captured row, because the
+            arrows move the document under these buttons while they stay
+            mounted. No `aria-label`: the dialog is already titled with the
+            document type, and repeating it would give two controls one name.
+          */
+          actions={
+            <>
+              {previewing.document.status !== 'verified' && (
+                <Button
+                  onClick={() => void review(previewing.document as DriverDocument, 'verify')}
+                  disabled={busy === previewing.document.id}
+                >
+                  Verify
+                </Button>
+              )}
+              {previewing.document.status !== 'rejected' && (
+                <Button
+                  variant="destructive"
+                  onClick={() => setRejecting(previewing.document)}
+                  disabled={busy === previewing.document.id}
+                >
+                  Reject
+                </Button>
+              )}
+            </>
+          }
           onClose={() => setPreviewAt(null)}
         />
       )}
@@ -283,12 +342,37 @@ function DocumentRow({
             <Button size="sm" variant="secondary" onClick={onOpen}>
               View
             </Button>
-            <Button size="sm" onClick={onVerify} disabled={busy}>
-              Verify
-            </Button>
-            <Button size="sm" variant="destructive" onClick={onReject} disabled={busy}>
-              Reject
-            </Button>
+            {/*
+              **Never the verdict it already holds.** Both buttons showed on
+              every row, so a document badged *Verified* still offered Verify —
+              a control whose only effect is to rewrite the row with what it
+              already says, beside a badge insisting it is done. The owner read
+              that as the badge being wrong.
+
+              The other verdict stays, in both directions. `DriverDocumentService`
+              clears `rejection_reason` on verify precisely *"so a document
+              rejected and later accepted does not carry the old objection"* —
+              reversal is a designed flow, and an office that verifies a licence
+              later found forged must be able to say so without waiting for a
+              replacement to arrive.
+
+              Reads `status`, not `compliance_state` — the opposite of the badge
+              two elements up, and deliberately. These buttons write `status`,
+              so `status` is what decides whether writing it would change
+              anything. An **expired** document is `status: verified`, and
+              verifying it again would not move its expiry date by a day; what
+              fixes it is Replace, which is already on the row.
+            */}
+            {document.status !== 'verified' && (
+              <Button size="sm" onClick={onVerify} disabled={busy}>
+                Verify
+              </Button>
+            )}
+            {document.status !== 'rejected' && (
+              <Button size="sm" variant="destructive" onClick={onReject} disabled={busy}>
+                Reject
+              </Button>
+            )}
           </>
         )}
       </div>
