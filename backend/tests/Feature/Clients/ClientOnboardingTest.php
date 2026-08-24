@@ -567,3 +567,33 @@ it('still lets a client keep its own registration number while editing something
 
     expect($client->fresh()->city)->toBe('Entebbe');
 });
+
+it('holds an edited country to the ISO code onboarding demands', function () {
+    // Onboarding commits the register to two-letter codes (`size:2`), and
+    // this endpoint said `max:255` — so a PATCH could write the exact value
+    // onboarding refuses, and the register held "Uganda" and "UG" as two
+    // different countries. The console's input is two characters wide, which
+    // made the API the only caller able to widen the drift, and an API-only
+    // gap is precisely the kind nothing in a browser will ever catch.
+    $hq = onboarder('kangaru');
+
+    $client = Company::withoutGlobalScopes()->create([
+        'tenant_id' => Tenant::factory()->create()->id,
+        'legal_name' => 'Centenary Bank',
+        'billing_email' => 'accounts@centenary.test',
+        'city' => 'Kampala',
+        'country' => 'Uganda',
+        'status' => 'active',
+    ]);
+
+    $this->actingAs($hq, 'sanctum')
+        ->patchJson("/api/v1/companies/{$client->id}", ['country' => 'Kenya'])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors('country');
+
+    $this->actingAs($hq, 'sanctum')
+        ->patchJson("/api/v1/companies/{$client->id}", ['country' => 'KE'])
+        ->assertOk();
+
+    expect($client->fresh()->country)->toBe('KE');
+});

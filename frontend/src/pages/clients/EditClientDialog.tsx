@@ -278,7 +278,17 @@ export function EditClientDialog({ client, onClose, onDone }: Props) {
           <FormField label="City" htmlFor="ec-city" required error={fields.city}>
             <Input id="ec-city" value={form.city} onChange={set('city')} required />
           </FormField>
-          <FormField label="Country" htmlFor="ec-country" required error={fields.country}>
+          {/* The hint earns its place here more than anywhere: clients from
+              before the ISO commitment hold "Uganda" spelt out, and an input
+              that shows six letters while accepting two is a stuck control
+              with no explanation. */}
+          <FormField
+            label="Country"
+            htmlFor="ec-country"
+            required
+            error={fields.country}
+            hint="Two-letter code, e.g. UG."
+          >
             <Input id="ec-country" value={form.country} onChange={set('country')} required maxLength={2} />
           </FormField>
         </div>

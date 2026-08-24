@@ -46,7 +46,14 @@ class UpdateCompanyRequest extends FormRequest
             'address_line1' => ['sometimes', 'nullable', 'string', 'max:255'],
             'address_line2' => ['sometimes', 'nullable', 'string', 'max:255'],
             'city' => ['sometimes', 'string', 'max:255'],
-            'country' => ['sometimes', 'string', 'max:255'],
+            /*
+             * `size:2` to match onboarding, which committed the register to
+             * ISO codes. This rule said `max:255` while `OnboardClientRequest`
+             * said `size:2`, so an edit could write the exact value onboarding
+             * refuses — and the console's input is two characters wide, which
+             * left the API the only caller able to widen the drift.
+             */
+            'country' => ['sometimes', 'string', 'size:2'],
             'credit_limit_minor' => ['sometimes', 'integer', 'min:0'],
             'status' => ['sometimes', 'string', 'in:active,suspended'],
         ];
