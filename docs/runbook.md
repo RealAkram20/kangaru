@@ -69,10 +69,32 @@ Full first-time setup is `deploy/README.md` §2. A routine deploy:
    ```sh
    docker compose exec backup /opt/kangaruride/backup.sh --once
    ```
-2. Coolify → the resource → **Redeploy** (or push to the deployed branch if
-   auto-deploy is on). It rebuilds both images and restarts the stack; the
-   `app` container runs `migrate --force` and `storage:link` on start, and
-   `queue`/`scheduler` wait until `app` is healthy.
+2. **On the host**, at `/opt/kangaruride` — the stack is a git checkout there
+   driven by compose, *not* a Coolify resource. Coolify runs on the same
+   server and its own containers sit beside these; do not go looking for this
+   stack in its UI.
+   ```sh
+   cd /opt/kangaruride
+   git fetch origin main && git checkout --detach <sha>
+   # APP_BUILD comes from SOURCE_COMMIT, and nothing else updates it:
+   sed -i "s/^SOURCE_COMMIT=.*/SOURCE_COMMIT=$(git rev-parse --short HEAD)/" .env
+   docker compose -f docker-compose.yml \
+     -f deploy/docker-compose.proxy.yml \
+     -f deploy/docker-compose.osrm.yml up -d --build
+   ```
+   It rebuilds both images and restarts the stack; the `app` container runs
+   `migrate --force` and `storage:link` on start, and `queue`/`scheduler`
+   wait until `app` is healthy.
+
+   **The `sed` is not optional, and skipping it breaks §3's own check.**
+   `docker-compose.yml` reads `APP_BUILD: ${SOURCE_COMMIT:-local}`, and the
+   checkout does not touch `.env`. Miss it and the new images are tagged and
+   labelled with the *previous* commit — so `printenv APP_BUILD` reports the
+   old sha on a **successful** deploy, which means it would report the old sha
+   on a **failed** one too. A verification that cannot fail proves nothing.
+   Both images also overwrite the old tag, so a rollback by tag can no longer
+   tell them apart. Observed on 24 August: a clean deploy of 38 migrations
+   reported `b2341fe` throughout.
 3. Watch the deploy log for `[release] migrate --force` … `[release] done`.
 4. **Verify, do not assume** — §3.
 
