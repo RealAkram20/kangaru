@@ -65,6 +65,14 @@ use Throwable;
  */
 class SettingsMailChannel
 {
+    /**
+     * Consecutive failures before the platform says the transport is down.
+     *
+     * One failure is a bad address. Three is an outage, and only one of those
+     * is worth an alert.
+     */
+    private const OUTAGE_THRESHOLD = 3;
+
     public function __construct(
         private readonly SettingsService $settings,
         private readonly MailRenderer $renderer,
@@ -216,6 +224,8 @@ class SettingsMailChannel
                 'error' => mb_substr($e->getMessage(), 0, 2000),
             ]);
 
+            $this->soundTheAlarmIfMailIsDown();
+
             Log::warning('mail.send_failed', [
                 'delivery_id' => $delivery->id,
                 'type' => $notification->type()->value,
@@ -227,6 +237,61 @@ class SettingsMailChannel
             ]);
 
             throw $e;
+        }
+    }
+
+    /**
+     * Reports to Sentry once the transport has failed repeatedly (mail plan H5).
+     *
+     * ## Why this exists at all
+     *
+     * `MailDelivery::consecutiveFailures()` was written in M0 with a docblock
+     * explaining exactly what it was for, and **nothing called it** — the same
+     * shape as `MfaService::recoveryCodesAreLow()` before M3 and
+     * `ReferralService::rewardMinor()` today. A method that is defined,
+     * documented and never consulted is not a feature; it is a comment.
+     *
+     * ## Three, not one
+     *
+     * One failure is a typo in somebody's email address. Three in a row with
+     * no success between them is a mail server that has stopped working, and
+     * only the second is worth waking anybody for. Alerting on the first
+     * teaches everyone to ignore the alert, which is how the real outage goes
+     * unnoticed.
+     *
+     * ## Sentry, and deliberately not an email
+     *
+     * The obvious thing is to email head office. The obvious thing cannot
+     * work: **the transport that would carry that email is the thing that has
+     * failed.** Anything sent down this path would join the queue of things
+     * that are not arriving.
+     *
+     * `docs/screen-rules.md` requires a Sentry report on a failure path
+     * regardless, so this is where the platform already looks. The delivery
+     * rows are the other half: a support person can read exactly which
+     * messages did not arrive and to whom.
+     */
+    private function soundTheAlarmIfMailIsDown(): void
+    {
+        try {
+            $run = MailDelivery::consecutiveFailures();
+
+            if ($run < self::OUTAGE_THRESHOLD) {
+                return;
+            }
+
+            if (app()->bound('sentry')) {
+                app('sentry')->captureMessage(sprintf(
+                    'Mail transport has failed %d times in a row. No email is leaving the platform.',
+                    $run,
+                ));
+            }
+
+            Log::error('mail.transport_down', ['consecutive_failures' => $run]);
+        } catch (Throwable) {
+            // An alarm that throws inside a failure handler would replace a
+            // mail outage with a queue of unhandleable jobs. It stays quiet
+            // and the original exception goes on to be rethrown.
         }
     }
 

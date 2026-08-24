@@ -4,6 +4,7 @@ use App\Enums\AccessLevel;
 use App\Enums\UserRole;
 use App\Models\User;
 use App\Support\Auth\ClientScope;
+use App\Support\Auth\PasswordPolicy;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Route;
 use Modules\Drivers\Enums\DriverApplicationStatus;
@@ -169,6 +170,29 @@ it('creates an account that signs in and reaches nothing', function () {
                 // the question "may I?" cannot be asked.
                 'me.application.documents.index',
                 'me.application.documents.store',
+
+                /*
+                 | **Reference data plus the reader's own switches, and
+                 | nothing else** (mail plan M6).
+                 |
+                 | The rows are the `NotificationType` catalogue, which is the
+                 | same list for everybody and is no more secret than
+                 | `zones.index` above. The only per-account part is this
+                 | reader's own on/off flags, which for an applicant are all
+                 | default because they have never set one.
+                 |
+                 | Like the two above it: resolved from `$request->user()`
+                 | with no id in the path or the body, so there is no
+                 | parameter to change to reach somebody else's. The question
+                 | "may I?" cannot be asked.
+                 |
+                 | Listed rather than made to return `[]`, because an empty
+                 | list here would be a lie: an applicant *does* receive email
+                 | from this platform — the document rejection of ADR-0057 §5
+                 | is addressed to exactly them — and a preferences screen
+                 | showing nothing would tell them they have no say in it.
+                 */
+                'me.mail-preferences.index',
             ];
 
             $this->assertTrue(
@@ -252,19 +276,32 @@ it('refuses an application without affirmative consent', function () {
     )->assertStatus(422);
 });
 
-it('holds the same eight-character floor the change and reset doors hold', function () {
-    // Seven. Mutation check — drop `Password::min(8)` here and an applicant
-    // can mint an account with a password the change-password screen would
-    // then refuse to let them keep.
-    $this->postJson('/api/v1/driver-applications', applicationPayload([
-        'password' => '2short!',
-        'password_confirmation' => '2short!',
-    ]))->assertStatus(422)->assertJsonValidationErrors('password');
+/**
+ * The floor, read from the constant rather than restated.
+ *
+ * Named "eight-character floor" and posting literal seven- and eight-character
+ * passwords, this went red the day `PasswordPolicy` brought every door to one
+ * number — the door was fine, the test had written the number down. Exactly
+ * the failure the class exists to end, in an assertion instead of a hint.
+ *
+ * Mutation check — take `PasswordPolicy::rule()` off this request and an
+ * applicant can mint an account with a password the change-password screen
+ * would then refuse to let them keep.
+ */
+it('refuses one character below the platform floor, and accepts it exactly', function () {
+    $below = str_repeat('k', PasswordPolicy::MINIMUM_LENGTH - 1);
 
     $this->postJson('/api/v1/driver-applications', applicationPayload([
-        'email' => 'eight@kangaruride.test',
-        'password' => '8chars!!',
-        'password_confirmation' => '8chars!!',
+        'password' => $below,
+        'password_confirmation' => $below,
+    ]))->assertStatus(422)->assertJsonValidationErrors('password');
+
+    $atFloor = str_repeat('k', PasswordPolicy::MINIMUM_LENGTH);
+
+    $this->postJson('/api/v1/driver-applications', applicationPayload([
+        'email' => 'at-the-floor@kangaruride.test',
+        'password' => $atFloor,
+        'password_confirmation' => $atFloor,
     ]))->assertStatus(202);
 });
 

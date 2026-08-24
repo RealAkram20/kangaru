@@ -148,6 +148,42 @@ enum NotificationType: string
      * **without** you signing in to the thing they were using.
      */
     /*
+     | The office families (mail plan M6). `OfficeEventNotification`, and a
+     | case each.
+     |
+     | Everything here is addressed through `OfficeRecipient`, which carries
+     | the one rule this package must not break: **an email about a fleet's
+     | operations goes to that fleet and to nobody else.**
+     */
+    case FLEET_CLOSURE_REQUESTED = 'fleet.closure.requested';
+    case FLEET_SETTLEMENT_REQUESTED = 'fleet.settlement.requested';
+    case FLEET_SUPPORT_REQUESTED = 'fleet.support.requested';
+
+    /**
+     * The fleet has hit what its plan allows (ADR-0058).
+     *
+     * The only email on this list that arrives at the moment somebody is
+     * blocked, so it is the only one that says what to do about it.
+     */
+    case FLEET_PLAN_LIMIT_REACHED = 'fleet.plan.limit_reached';
+
+    /** Head office: a fleet joined. */
+    case PLATFORM_FLEET_ONBOARDED = 'platform.fleet.onboarded';
+
+    /**
+     * ADR-0059 §5's invariant has broken: a fleet has nobody to act as.
+     *
+     * The worklog has carried this as an open gap since `K4`:
+     * *"`fleets_without_an_account` is a number on a dashboard, not an alert.
+     * If ADR-0059 §5's invariant breaks, somebody has to be looking."* This is
+     * the somebody.
+     */
+    case PLATFORM_FLEET_HAS_NO_ACCOUNT = 'platform.fleet.no_account';
+
+    /** Head office: a driver wants to run walk-in work (ADR-0055 §5). */
+    case PLATFORM_WALK_IN_CONTRACT_REQUESTED = 'platform.walk_in_contract.requested';
+
+    /*
      | The client family (mail plan M5). One class,
      | `ClientEventNotification`, and a case each.
      |
@@ -280,6 +316,13 @@ enum NotificationType: string
             self::DRIVER_SUPPORT_ANSWERED => 'Report answered',
             self::DRIVER_DOCUMENT_REVIEWED => 'Document checked',
             self::DRIVER_APPLICATION_DOCUMENT_REJECTED => 'Document needs resending',
+            self::FLEET_CLOSURE_REQUESTED => 'Closure requested',
+            self::FLEET_SETTLEMENT_REQUESTED => 'Settlement requested',
+            self::FLEET_SUPPORT_REQUESTED => 'Support request',
+            self::FLEET_PLAN_LIMIT_REACHED => 'Plan limit reached',
+            self::PLATFORM_FLEET_ONBOARDED => 'New fleet',
+            self::PLATFORM_FLEET_HAS_NO_ACCOUNT => 'Fleet has no account',
+            self::PLATFORM_WALK_IN_CONTRACT_REQUESTED => 'Walk-in contract requested',
             self::CLIENT_INVOICE_ISSUED => 'Invoice issued',
             self::CLIENT_CREDIT_NOTE_ISSUED => 'Credit note issued',
             self::CLIENT_CONTRACT_REQUESTED => 'A fleet asked to serve you',
@@ -416,6 +459,26 @@ enum NotificationType: string
             // Mail alone. See the case's own note: an applicant has no account
             // to notify and no device to push to.
             self::DRIVER_APPLICATION_DOCUMENT_REJECTED => [NotificationChannel::MAIL],
+            /*
+             * Mail and the in-app row for every office alert.
+             *
+             * The in-app row is where a dispatcher actually works, and the
+             * mail is what reaches somebody who is not at the board. No push
+             * anywhere on this list: an office alert is a queue to work
+             * through, not an interruption, and ADR-0025 §5 reserves the
+             * interruption for the one message with a passenger waiting at
+             * the end of it.
+             */
+            self::FLEET_CLOSURE_REQUESTED,
+            self::FLEET_SETTLEMENT_REQUESTED,
+            self::FLEET_SUPPORT_REQUESTED,
+            self::FLEET_PLAN_LIMIT_REACHED,
+            self::PLATFORM_FLEET_ONBOARDED,
+            self::PLATFORM_FLEET_HAS_NO_ACCOUNT,
+            self::PLATFORM_WALK_IN_CONTRACT_REQUESTED => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::MAIL,
+            ],
             /*
              * Mail and the in-app row for the whole client family. No push:
              * a corporate administrator works at a desk, and none of this is
@@ -584,6 +647,23 @@ enum NotificationType: string
              * invisible, which is the thing the notification exists to
              * prevent.
              */
+            /*
+             * The invariant alert, and it is the only office email nobody may
+             * switch off.
+             *
+             * ADR-0059 §5: a fleet with nobody to act as is **permanently
+             * unreachable to the people whose job is to support it**, and it
+             * fails at the worst moment, because "the last administrator left"
+             * and "we need support" are correlated events. An administrator
+             * who silenced this would have silenced the only thing that says
+             * the invariant broke.
+             *
+             * Everything else on the office lists is a queue, and a queue is
+             * exactly the kind of thing an office should be able to decide it
+             * reads on screen instead.
+             */
+            self::PLATFORM_FLEET_HAS_NO_ACCOUNT => true,
+
             /*
              * Money owed, and a decision only this client may take.
              *

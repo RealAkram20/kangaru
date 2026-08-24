@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use Modules\Notifications\Controllers\DeviceTokenController;
+use Modules\Notifications\Controllers\MailPreferenceController;
 use Modules\Notifications\Controllers\MailToggleController;
 use Modules\Notifications\Controllers\NotificationController;
 
@@ -56,3 +57,16 @@ Route::get('settings/email', [MailToggleController::class, 'index'])
 // it off rather than toggling it back on.
 Route::put('settings/email', [MailToggleController::class, 'update'])
     ->name('settings.email.update');
+
+// A person's own email preferences (mail plan M6).
+//
+// `/me/`, like the device routes above: the account is the token and there is
+// no id to supply, precisely so none can be. Nobody edits anybody else's.
+//
+// This is the destination of the "Choose which emails you get" link in every
+// email footer since M1. Until it existed that link 404'd, which is the
+// half-built shape `StoreUserRequest` refused to ship an invite flow as.
+Route::get('me/mail-preferences', [MailPreferenceController::class, 'index'])
+    ->name('me.mail-preferences.index');
+Route::put('me/mail-preferences', [MailPreferenceController::class, 'update'])
+    ->name('me.mail-preferences.update');

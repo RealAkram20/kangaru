@@ -104,6 +104,12 @@ function routeCensus(): array
         // would silence that email for every other fleet.
         'GET api/v1/settings/email' => 'A',
         'PUT api/v1/settings/email' => 'A',
+        // A person's own email preferences (mail plan M6). Idiom C: no policy,
+        // because there is no subject to authorize against — the route takes
+        // no id, scopes to `$request->user()`, and there is deliberately no
+        // way to name anybody else. Same shape as the `me/devices` routes.
+        'GET api/v1/me/mail-preferences' => 'C',
+        'PUT api/v1/me/mail-preferences' => 'C',
         'POST api/v1/auth/social' => 'D',
         'GET api/v1/public/legal' => 'D',
         'GET api/v1/public/settings' => 'D',
@@ -484,7 +490,10 @@ it('has a census row for every API route and a route for every census row', func
     // sign into, because onboarding minted a random password and discarded it.
     // 232: the email menu's read and write, 2026-08-24. Authenticated,
     // so the public count below is unchanged.
-    expect(count($router))->toBe(233);
+    // 235: the two `me/mail-preferences` routes, 2026-08-24. They are the
+    // destination of the footer link in every email since M1, which until
+    // now 404'd.
+    expect(count($router))->toBe(235);
 });
 
 it('uses only the four idioms, and files sixteen routes as public', function () {
@@ -544,7 +553,9 @@ it('authenticates every route that is not filed as public, and throttles every o
     // 195: the four fleet-company routes, all authenticated. Head office's
     // register is the least public surface on the platform.
     // 214: the email menu's two routes, both authenticated.
-    expect($guarded)->toBe(215);
+    // 217: the two mail-preference routes, both authenticated. Nobody
+    // reads or writes anybody else's; the route takes no id.
+    expect($guarded)->toBe(217);
 });
 
 it('binds the actor\'s tenant on every staff route, so TenantScope has something to scope by', function () {
@@ -592,5 +603,6 @@ it('binds the actor\'s tenant on every staff route, so TenantScope has something
     // state, and exempting them would be a second way to be unscoped.
     // 200: the email menu's two routes. Head office only, and they bind
     // the actor's tenant like the fleet register does.
-    expect($staff)->toBe(201);
+    // 203: the two mail-preference routes, staff-guarded like `me/devices`.
+    expect($staff)->toBe(203);
 });

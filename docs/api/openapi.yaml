@@ -274,6 +274,68 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/me/mail-preferences:
+    get:
+      summary: >
+        A person's own email preferences (mail plan M6). `/me/`, so the account
+        is the token and there is no id to supply.
+      description: >
+        The destination of the "Choose which emails you get" link in every
+        email footer. `required` marks the emails nobody may switch off;
+        `available` is false when a system administrator has switched that type
+        off for the whole platform, reported rather than hidden so somebody who
+        stopped getting invoices can see it was not their own doing.
+      responses:
+        '200':
+          description: Every mailable type and this person's setting for it.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string, nullable: true }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [type, label, required, available, enabled]
+                      additionalProperties: false
+                      properties:
+                        type: { type: string }
+                        label: { type: string }
+                        required: { type: boolean }
+                        available: { type: boolean }
+                        enabled: { type: boolean }
+        default:
+          $ref: '#/components/responses/Error'
+
+    put:
+      summary: >
+        Switches one email on or off for the signed-in person (mail plan M6).
+      description: >
+        One switch per call and idempotent. A `required` type answers 422
+        rather than being stored and overridden, because a preference the
+        platform keeps and then ignores reads back to the user as an answer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, enabled]
+              additionalProperties: false
+              properties:
+                type: { type: string }
+                enabled: { type: boolean }
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOnly'
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/settings/email:
     get:
       summary: >

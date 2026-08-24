@@ -2,11 +2,14 @@
 
 namespace Modules\Drivers\Services;
 
+use App\Enums\Permission;
 use Illuminate\Validation\ValidationException;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverWalkInContract;
 use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Mail\OfficeRecipient;
 use Modules\Notifications\Notifications\DriverEventNotification;
+use Modules\Notifications\Notifications\OfficeEventNotification;
 
 /**
  * The three answers a walk-in contract needs (ADR-0055 §5, `K8`).
@@ -73,7 +76,23 @@ class WalkInContractService
             return $existing;
         }
 
-        return DriverWalkInContract::create(['driver_id' => $driver->id, ...$attributes]);
+        $contract = DriverWalkInContract::create(['driver_id' => $driver->id, ...$attributes]);
+
+        /*
+         * Head office hears about it only when it is actually theirs to answer
+         * (mail plan H3).
+         *
+         * A driver who owns their vehicle skips the fleet's consent, because
+         * there is nobody to ask, and lands straight in Kangaru's queue.
+         * Everybody else waits on their fleet first, and telling head office
+         * then would be a queue item they cannot act on yet — which is the
+         * fastest way to teach an office to ignore a sender.
+         */
+        if ($contract->status === DriverWalkInContract::AWAITING_KANGARU) {
+            $this->tellHeadOffice($contract);
+        }
+
+        return $contract;
     }
 
     /** The fleet agrees to let its driver take Kangaru's walk-in work. */
@@ -114,6 +133,28 @@ class WalkInContractService
         );
 
         return $contract;
+    }
+
+    /**
+     * Head office's queue, and only head office's.
+     *
+     * `OfficeRecipient::headOffice()` filters on `access_level`, not on a
+     * permission that every Super Admin happens to hold — including a fleet's
+     * own. That distinction is the one `OperatorPolicy` documents at length
+     * and the one the email menu nearly got wrong in M3.
+     */
+    private function tellHeadOffice(DriverWalkInContract $contract): void
+    {
+        $name = (string) ($contract->driver?->user->name ?? '');
+
+        foreach (app(OfficeRecipient::class)->headOffice(Permission::DRIVERS_MANAGE) as $staff) {
+            $staff->notify(new OfficeEventNotification(
+                NotificationType::PLATFORM_WALK_IN_CONTRACT_REQUESTED,
+                facts: array_filter([__('mail.office.fact_driver') => $name]),
+                url: '/driver-contracts',
+                replacements: ['driver' => $name],
+            ));
+        }
     }
 
     /**

@@ -2,11 +2,15 @@
 
 namespace Modules\Fleet\Services;
 
+use App\Enums\Permission;
 use App\Models\Operator;
 use App\Models\Plan;
 use App\Models\User;
 use Illuminate\Validation\ValidationException;
 use Modules\Drivers\Models\Driver;
+use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Mail\OfficeRecipient;
+use Modules\Notifications\Notifications\OfficeEventNotification;
 use Modules\Vehicles\Models\Vehicle;
 
 /**
@@ -98,6 +102,34 @@ class PlanAllowance
         }
 
         $limit = $this->limitFor($plan, $resource);
+
+        /*
+         * The office is told, at the moment somebody is blocked (mail plan F12).
+         *
+         * The only office email on this list that arrives while a person is
+         * stuck rather than while a queue is filling, which is why it is the
+         * only one that says what to do about it.
+         *
+         * Sent to whoever can act on it — `fleets.manage`, the permission that
+         * lets somebody change a plan — and narrowed to this fleet. A limit
+         * alert reaching a competitor's desk would tell them how large this
+         * fleet is, which is exactly the competitor intelligence ADR-0055 §2
+         * exists to withhold.
+         *
+         * Before the throw, deliberately. The exception is what the person in
+         * front of the screen sees; this is what reaches whoever can unblock
+         * them, and it must not depend on the exception being caught somewhere.
+         */
+        foreach (app(OfficeRecipient::class)->fleet($operator->getKey(), Permission::FLEETS_MANAGE) as $staff) {
+            $staff->notify(new OfficeEventNotification(
+                NotificationType::FLEET_PLAN_LIMIT_REACHED,
+                facts: [
+                    __('mail.office.fact_plan') => (string) $plan->name,
+                    __('mail.office.fact_limit') => $limit.' '.$resource,
+                ],
+                url: '/plans',
+            ));
+        }
 
         throw ValidationException::withMessages([
             $resource => [sprintf(

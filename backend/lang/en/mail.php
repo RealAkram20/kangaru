@@ -108,6 +108,91 @@ return [
     ],
 
     /*
+     | M6, the office families.
+     |
+     | Every one of these is a queue, not an interruption. Somebody has asked
+     | the office for something and is waiting; the email exists so that
+     | waiting has a bound when nobody happens to be at the board.
+     |
+     | So each says who and what, and points at the screen where the work is
+     | done. None carries the driver's reason, the passenger's number or the
+     | amount in dispute: an office inbox is read on a shared machine at a
+     | depot desk, and those details live behind the permission that lets
+     | somebody act on them.
+     */
+    'office' => [
+
+        'fact_driver' => 'Driver',
+        'fact_fleet' => 'Fleet',
+        'fact_limit' => 'Limit',
+        'fact_plan' => 'Plan',
+        'fact_when' => 'Raised',
+
+        'fleet_closure_requested' => [
+            'subject' => ':driver asked to close their account',
+            'heading' => ':driver asked to close their account',
+            'body' => 'Nothing happens until somebody answers.',
+            'action' => 'Open the request',
+        ],
+
+        'fleet_settlement_requested' => [
+            'subject' => ':driver asked for a settlement',
+            'heading' => ':driver asked for a settlement',
+            'body' => 'Their balance does not change until somebody answers.',
+            'action' => 'Open the request',
+        ],
+
+        'fleet_support_requested' => [
+            'subject' => ':driver raised a support request',
+            'heading' => ':driver raised a support request',
+            'body' => 'They are waiting for an answer in the app.',
+            'action' => 'Open the request',
+        ],
+
+        /*
+         | The only office email that arrives at the moment somebody is
+         | blocked, so it is the only one that says what to do about it.
+         */
+        'fleet_plan_limit_reached' => [
+            'subject' => 'You have reached your plan limit',
+            'heading' => 'You have reached your plan limit',
+            'body' => 'Nobody can add another until you remove one or move to a larger plan.',
+            'action' => 'Open your plan',
+        ],
+
+        'platform_fleet_onboarded' => [
+            'subject' => ':fleet joined the platform',
+            'heading' => ':fleet joined the platform',
+            'body' => 'Their owner has been emailed an invitation to sign in.',
+            'action' => 'Open the fleet',
+        ],
+
+        /*
+         | ADR-0059 §5. The worklog has carried this as an open gap since K4:
+         | "a number on a dashboard, not an alert. If the invariant breaks,
+         | somebody has to be looking." Nobody may switch this one off.
+         */
+        // Keyed off the enum value `platform.fleet.no_account`, not off the
+        // case name. `MailKeysTest` pins the whole set so this cannot drift
+        // again: the first version said `has_no_account` and rendered the raw
+        // key into somebody's subject line.
+        'platform_fleet_no_account' => [
+            'subject' => ':fleet has nobody who can sign in',
+            'heading' => ':fleet has nobody who can sign in',
+            'body' => 'Support cannot act as a fleet with no accounts. Somebody has to be invited before anything else can be done for them.',
+            'action' => 'Open the fleet',
+        ],
+
+        'platform_walk_in_contract_requested' => [
+            'subject' => ':driver asked for a walk in contract',
+            'heading' => ':driver asked for a walk in contract',
+            'body' => 'Their fleet has consented. It is yours to approve or refuse.',
+            'action' => 'Open the request',
+        ],
+
+    ],
+
+    /*
      | M5, the client family.
      |
      | Two audiences inside one client. Operations mail goes to the account

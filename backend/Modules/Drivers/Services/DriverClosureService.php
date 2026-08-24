@@ -2,13 +2,17 @@
 
 namespace Modules\Drivers\Services;
 
+use App\Enums\Permission;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Modules\Drivers\Enums\ClosureRequestStatus;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverClosureRequest;
+use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Mail\OfficeRecipient;
 use Modules\Notifications\Notifications\DriverClosureAnsweredNotification;
+use Modules\Notifications\Notifications\OfficeEventNotification;
 
 /**
  * Closing a driver's account, on their own request (ADR-0043).
@@ -36,7 +40,7 @@ class DriverClosureService
      */
     public function request(Driver $driver, ?string $reason): DriverClosureRequest
     {
-        return DB::transaction(function () use ($driver, $reason) {
+        $request = DB::transaction(function () use ($driver, $reason) {
             $open = DriverClosureRequest::query()
                 ->where('driver_id', $driver->getKey())
                 ->where('status', ClosureRequestStatus::PENDING)
@@ -53,6 +57,37 @@ class DriverClosureService
                 'reason' => $reason,
             ]);
         });
+
+        // Somebody has asked to stop driving. Nothing happens until the office
+        // answers, so the office is told rather than left to notice.
+        //
+        // The driver's reason is deliberately not in the email. It is on the
+        // screen behind `drivers.manage`, and an office inbox is read on a
+        // shared machine at a depot desk.
+        $this->tellTheOffice($driver, NotificationType::FLEET_CLOSURE_REQUESTED, '/closure-requests');
+
+        return $request;
+    }
+
+    /**
+     * Tells the driver's own fleet office, and nobody else's.
+     *
+     * `OfficeRecipient::fleet()` carries the guard: the list is narrowed to
+     * `$driver->operator_id`, so an alert naming one fleet's driver cannot
+     * reach a competitor's desk.
+     */
+    private function tellTheOffice(Driver $driver, NotificationType $type, string $url): void
+    {
+        $name = (string) ($driver->user->name ?? '');
+
+        foreach (app(OfficeRecipient::class)->fleet($driver->operator_id, Permission::DRIVERS_MANAGE) as $staff) {
+            $staff->notify(new OfficeEventNotification(
+                $type,
+                facts: array_filter([__('mail.office.fact_driver') => $name]),
+                url: $url,
+                replacements: ['driver' => $name],
+            ));
+        }
     }
 
     /**

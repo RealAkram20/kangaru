@@ -4,6 +4,7 @@ namespace Modules\Fleet\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Models\Operator;
+use App\Models\User;
 use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -64,7 +65,12 @@ class OperatorController extends Controller
         /** @var array{name: string, slug?: string|null, owner_name: string, owner_email: string} $input */
         $input = $request->validated();
 
-        $operator = $this->operators->onboard($input, $request->user());
+        $actor = $request->user();
+
+        // Narrowed rather than passed through: `$request->user()` is
+        // `Customer|User` across the two guards, and only a `User` can be the
+        // inviter named in the owner's invitation email.
+        $operator = $this->operators->onboard($input, $actor instanceof User ? $actor : null);
 
         $operator->load('plan')
             ->loadCount(['users', 'drivers', 'vehicles', 'contracts as clients_count']);

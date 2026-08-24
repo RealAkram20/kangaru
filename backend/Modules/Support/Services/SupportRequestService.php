@@ -2,10 +2,14 @@
 
 namespace Modules\Support\Services;
 
+use App\Enums\Permission;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Modules\Drivers\Models\Driver;
+use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Mail\OfficeRecipient;
+use Modules\Notifications\Notifications\OfficeEventNotification;
 use Modules\Notifications\Notifications\SupportRequestAnsweredNotification;
 use Modules\Support\Enums\SupportRequestStatus;
 use Modules\Support\Enums\SupportRequestTopic;
@@ -40,13 +44,45 @@ class SupportRequestService
         string $body,
         ?Trip $trip = null,
     ): SupportRequest {
-        return SupportRequest::create([
+        $request = SupportRequest::create([
             'driver_id' => $driver->getKey(),
             'topic' => $topic,
             'status' => SupportRequestStatus::OPEN,
             'trip_id' => $trip?->getKey(),
             'body' => $body,
         ]);
+
+        /*
+         * The office is told (mail plan F6).
+         *
+         * The driver's own words are **not** in the email. A support request
+         * is somebody reporting a problem, sometimes about a passenger and
+         * sometimes about a colleague, and the body belongs behind
+         * `drivers.manage` on a screen rather than in an inbox on a shared
+         * depot machine.
+         *
+         * Narrowed to the driver's own fleet by `OfficeRecipient::fleet()`.
+         */
+        $this->tellTheOffice($driver, NotificationType::FLEET_SUPPORT_REQUESTED, '/support-requests');
+
+        return $request;
+    }
+
+    /**
+     * Tells the driver's own fleet office, and nobody else's.
+     */
+    private function tellTheOffice(Driver $driver, NotificationType $type, string $url): void
+    {
+        $name = (string) ($driver->user->name ?? '');
+
+        foreach (app(OfficeRecipient::class)->fleet($driver->operator_id, Permission::DRIVERS_MANAGE) as $staff) {
+            $staff->notify(new OfficeEventNotification(
+                $type,
+                facts: array_filter([__('mail.office.fact_driver') => $name]),
+                url: $url,
+                replacements: ['driver' => $name],
+            ));
+        }
     }
 
     /**

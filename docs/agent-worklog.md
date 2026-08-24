@@ -19461,3 +19461,200 @@ No console errors, no failed requests.
   and exits leaves the session standing, so the next run signs in as head
   office and arrives as somebody else with no page explaining why. The scripts
   now press Stop first. Four probe tokens revoked.
+
+### 2026-08-24 — M6 done. The mail plan is complete, M0 through M6.
+
+Seven office emails, the preferences screen, and two gaps that had been
+recorded as open for weeks.
+
+## `fleets_without_an_account` is an alert now, not a number
+
+The worklog has carried this since `K4`: *"a number on a dashboard, not an
+alert. If ADR-0059 §5's invariant breaks, somebody has to be looking."*
+`fleets:alert-without-accounts` runs daily and is the somebody. It repeats
+until fixed, deliberately: this is a broken invariant, not a queue item, and
+until it is fixed the platform has a fleet nobody can support.
+
+**It found something while being tested.** The base migration creates Shanitah
+with no accounts, so a fresh database is already in the broken state and this
+alert fires on day one of any new deployment. Correctly — the invariant
+genuinely is false until somebody is invited. Worth knowing before somebody
+reads the first alert as a bug.
+
+## `MailDelivery::consecutiveFailures()` is consulted now
+
+Written in M0 with a docblock explaining what it was for and **called by
+nothing** — the same shape as `recoveryCodesAreLow()` before M3 and
+`ReferralService::rewardMinor()` today. Three consecutive transport failures
+now report to Sentry.
+
+Not an email, and that is the point: the transport that would carry it is the
+thing that has failed.
+
+## The footer link went nowhere for six packages
+
+**Every email since M1 carries "Choose which emails you get" pointing at
+`/settings/notifications`, and there was nothing there.** That is exactly the
+shape `StoreUserRequest` refused to ship an invite flow as: a link to nowhere
+is worse than no link, because it tells the reader they can stop these emails
+and then proves they cannot.
+
+`MailPreference` has existed since M0 with no UI and no endpoint. Both exist
+now, and the screen reports the two silencers it does not own — required types,
+and the platform switch — so nobody hunts for a control that is already off.
+
+## `OfficeRecipient` carries M6's one rule
+
+**An email about a fleet's operations goes to that fleet and to nobody else.**
+One class resolves every office recipient, so the guard is written once rather
+than re-derived at fifteen send sites. That is kangaru-c0's finding stated as a
+design rule: a guard is only as deployed as its call sites, so have one.
+
+The cross-fleet test asserts the rival's office **exists** and then that it is
+absent, in that order. An "is absent" assertion alone passes against an empty
+table.
+
+## Two positional hazards, one paid for
+
+`DriverOwnershipIsolationTest` broke in four places when I inserted two routes:
+an ordering-sensitive table, a non-driver allow list, and three hardcoded
+counts. kangaru-c0 paid an hour for the same shape in
+`CrossTenantAnswers404Test` and warned me; I still spent twenty minutes on it,
+which is the warning being worth less than it should have been.
+
+`MailKeysTest` is the guard that came out of it. The parameterised families
+build lang keys from the enum value, and `__()` returns the key when nothing
+matches — so a rename renders `mail.office.platform_fleet_has_no_account.subject`
+into somebody's subject line and every test passes. **That happened in this
+package.** It now walks the enum and fails instead.
+
+## Deliberately not built
+
+F10 (nobody took the offer) and F11 (odometer against GPS) have no clean hook:
+the dispatch expiry path re-dispatches and the exhausted case is spread across
+`advance()`, `retryUnoffered()` and a config window. They want a domain event
+that does not exist, and inventing one inside a notification package would put
+dispatch logic in the wrong module. F15's daily digest waits on
+`operators.timezone`, which does not exist.
+
+## Verified
+
+Pint and Larastan clean. Two guards proved by mutation and restored: the
+cross-fleet line, and the permission filter that keeps a driver out of the
+queue their own request created. The preferences screen driven in Chrome,
+including a platform-off row explaining itself — which is how I found that
+`PageFill` pins to 100% height and had pushed the first card out of reach.
+### Done — what shipped, and the two things worth inheriting
+
+**Status: done.** Everything claimed above was built, plus three files the claim
+did not anticipate (named below). Nothing was left half-built.
+
+#### The shape of the fix
+
+`App\Support\Auth\PasswordPolicy` holds the number once. **Nine call sites**
+read it — the eight in the claim plus `CreateKangaruStaff`, which had been
+calling `Password::defaults()` against a closure nobody registered, so it sat
+at Laravel's built-in eight by accident. Not `Password::defaults()` for the
+same reason: if the registration is ever dropped the floor silently becomes
+eight again rather than failing.
+
+The console had **no strength meter at all**. One lived inline inside the
+public `OrderPage` (Tailwind, unexported) and one in the driver app; every
+password field a member of staff touched had a box, a stale sentence, and
+nothing else. `frontend/src/components/forms/PasswordMeter.tsx` is the
+console's, and `frontend/src/auth/passwordStrength.ts` is now the driver app's
+module back-ported — the port had gained a requirements checklist, a
+sequential-run check and unanchored junk matching, and none of it had come home.
+
+#### Two guards, and the mutation that showed why both are needed
+
+Proved by mutation, restored, re-run green:
+
+| Mutation | What caught it |
+|---|---|
+| `MINIMUM_LENGTH` 6 → 8 | **Only** `it states its floor as six`. Every boundary test stayed green — they derive from the constant, so they follow it anywhere. |
+| A ninth door stating `Password::min(8)` | The census, naming the file. |
+| Checklist renders only met rules | The **count** assertion (`toHaveLength(4)`), not the `getByText` — a text assertion passes with three rules deleted. |
+| The spoken "Met:"/"Not yet:" removed | The colour-alone test (screen-rules §6). |
+
+**The inheritance:** boundary tests protect against *doors drifting apart*; a
+single literal assertion protects against *the floor moving without a
+decision*. Neither substitutes for the other, and the first mutation is the
+proof — six tests green while the platform's floor silently rose.
+
+#### The bug I shipped into two of my own fixes
+
+`PasswordResetTest` and `DriverApplicationTest` went red, and both were named
+*"holds the same eight-character floor"* with literal `'2short!'` fixtures.
+**`kangaru-c0` diagnosed it before I did** and was right: that is the same bug
+as `ProfilePage` promising "At least 12 characters" for a door that accepted
+eight — a number restated instead of read — written as an assertion instead of
+a hint. Both are now boundaries reading the constant, both sides asserted.
+
+#### Verified by running, not by assuming
+
+Driven in Chrome against the live stack as a fleet-scoped Super Admin, on the
+owner's actual screen:
+
+- empty field renders nothing; `pa` → "Too short", 0/4, "4 more characters to go."
+- **`passwo` (six) → accepted, 1/4, "Met: 6 characters or more"** — and
+  `POST /api/v1/drivers/14/account` answered **201**. The owner's report, closed
+  end to end through the UI rather than through a test.
+- `password` → named as a guess; `Kim27!ne` → Strong, 4/4, silent.
+- `abcdef` clears the floor and still reads **Weak — "Keys in order are the
+  first thing anyone tries."** This is the case that most justifies the whole
+  change: at six, a keyboard run is the likeliest thing anybody types, and the
+  check that catches it only existed in the driver app until today.
+- `my blue kettle sings` → Strong on length with two rules unticked, and the
+  one sentence that exists to explain it: *"Long enough that the rest is optional."*
+- Light **and** dark (`data-theme='dark'`), no console errors in any run.
+- `ProfilePage` no longer says "At least 12 characters" anywhere.
+
+Backend **1777 passed**, frontend **681 passed** (69 files), `tsc -b --force`
+clean, ESLint clean, Pint and Larastan clean on my files.
+
+#### Files beyond the claim
+
+- `backend/Modules/Administration/README.md` — the floor documented, with the
+  eight-places history and the fact that a ninth fails a test rather than a review.
+- `backend/tests/Feature/Administration/PasswordResetTest.php` and
+  `backend/tests/Feature/Drivers/DriverApplicationTest.php` — the two above.
+- `mobile/src/auth/passwordStrength.test.ts` and `passwordRules.test.ts` — two
+  fixtures were literals tuned to a floor of eight; now derived from the constant.
+
+#### Deliberately not built, and what is not mine
+
+- **No complexity requirement.** There never was one at any door, and adding
+  one alongside a lower floor would be a different decision than the one the
+  owner made. The meter teaches; the server counts characters.
+- **`OrderPage`'s meter keeps its Tailwind skin.** Same scorer — the part that
+  carries the judgement — different skin, which carries nothing. Merging them
+  would drag console tokens into the public marketing bundle.
+- **The dialog's three-sentence description is untouched**, and it is a
+  screen-rules §9 problem: *"They sign in with the password you set here, and
+  can then accept trips and record odometer readings."* explains the screen.
+  Out of scope for a password fix and a real finding for whoever owns that dialog.
+- **`kangaru-45`'s `AcceptInvitePage` edit was kept, not overwritten.** Their
+  `minLength={MIN_PASSWORD_LENGTH}` stays and is credited in the comment. I
+  dropped only their `hint`, because the meter's checklist now says "6
+  characters or more" two lines below it — the rule stated twice.
+
+#### Two things for other agents
+
+1. **`Tests\Feature\Drivers\DriverApplicationTest > it creates an account that
+   signs in and reaches nothing` is red, and it is the mail work, not mine.**
+   An applicant reaches `GET /api/v1/me/mail-preferences` and gets data. That
+   census exists so a new route defaults to *shut*; the route needs to be empty
+   for an applicant or listed with a reason. It is the only failure on a clean
+   solo run of 1778.
+2. **`InvitationService.php` and `MfaService.php` fail `pint --test`** and are
+   committed, unmodified, and not mine. Pre-existing on this branch.
+
+#### The re-run rule, now with a second tell
+
+My first full sweep read **348 failures**; solo it was **1**. `kangaru-c0` hit
+the mirror image on the frontend — four failures, every one at exactly 20
+seconds. **A wild failure count is a database collision; a wall of 20-second
+durations is load.** Neither is a bug and both look exactly like one. We are on
+`_pw`, `_1m` and `_mail` now, which fixes the first; only patience fixes the second.
+

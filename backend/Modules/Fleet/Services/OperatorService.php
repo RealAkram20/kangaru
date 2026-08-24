@@ -3,13 +3,17 @@
 namespace Modules\Fleet\Services;
 
 use App\Enums\AccessLevel;
+use App\Enums\Permission;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Models\Operator;
 use App\Models\User;
-use Modules\Administration\Services\InvitationService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Modules\Administration\Services\InvitationService;
+use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Mail\OfficeRecipient;
+use Modules\Notifications\Notifications\OfficeEventNotification;
 
 /**
  * Onboarding a fleet company (ADR-0055, ADR-0059 §5).
@@ -97,6 +101,27 @@ class OperatorService
              * itself is queued, so nothing here waits on a network.
              */
             app(InvitationService::class)->invite($owner, $invitedBy);
+
+            /*
+             * Head office hears about it (mail plan H1).
+             *
+             * `fleets.view`, not `fleets.manage`: whoever reads the register
+             * is who wants to know a fleet joined, and narrowing to whoever
+             * can edit it would leave an operations manager watching the
+             * platform uninformed about its own growth.
+             *
+             * Never to another fleet. `OfficeRecipient::headOffice()` is the
+             * only path here, and it filters on `access_level` rather than on
+             * a permission every Super Admin happens to hold.
+             */
+            foreach (app(OfficeRecipient::class)->headOffice(Permission::FLEETS_VIEW) as $staff) {
+                $staff->notify(new OfficeEventNotification(
+                    NotificationType::PLATFORM_FLEET_ONBOARDED,
+                    facts: [__('mail.office.fact_fleet') => (string) $operator->name],
+                    url: '/fleets/'.$operator->getKey(),
+                    replacements: ['fleet' => (string) $operator->name],
+                ));
+            }
 
             return $operator;
         });

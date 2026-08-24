@@ -25,6 +25,7 @@ use Modules\Dispatch\Console\AdvanceDispatchOffers;
 use Modules\Drivers\Console\AwardWeeklyBonuses;
 use Modules\Drivers\Console\PruneAbandonedApplicationDocuments;
 use Modules\Drivers\Console\SendExpiringDocumentReminders;
+use Modules\Fleet\Console\AlertOnFleetsWithoutAccounts;
 use Modules\Fleet\Console\CloseStaleDutySessions;
 use Modules\Notifications\Console\PreviewMail;
 use Modules\Reports\Console\PruneReportExports;
@@ -57,6 +58,7 @@ return Application::configure(basePath: dirname(__DIR__))
         PreviewMail::class,
         SendInvitationReminders::class,
         SendExpiringDocumentReminders::class,
+        AlertOnFleetsWithoutAccounts::class,
     ])
     ->withMiddleware(function (Middleware $middleware): void {
         // ---------------------------------------------------------------------

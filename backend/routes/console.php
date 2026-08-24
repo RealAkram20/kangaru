@@ -8,6 +8,7 @@ use Modules\Dispatch\Console\AdvanceDispatchOffers;
 use Modules\Drivers\Console\AwardWeeklyBonuses;
 use Modules\Drivers\Console\PruneAbandonedApplicationDocuments;
 use Modules\Drivers\Console\SendExpiringDocumentReminders;
+use Modules\Fleet\Console\AlertOnFleetsWithoutAccounts;
 use Modules\Fleet\Console\CloseStaleDutySessions;
 use Modules\Reports\Console\PruneReportExports;
 use Modules\Trips\Console\MaintainTripLocationPartitions;
@@ -210,4 +211,19 @@ Schedule::command(SendInvitationReminders::class)
  */
 Schedule::command(SendExpiringDocumentReminders::class)
     ->dailyAt('06:30')
+    ->withoutOverlapping();
+
+/*
+ | ADR-0059 §5's invariant, checked out loud (mail plan H2).
+ |
+ | The worklog has carried this as an open gap since K4:
+ | "`fleets_without_an_account` is a number on a dashboard, not an alert. If
+ | ADR-0059 §5's invariant breaks, somebody has to be looking."
+ |
+ | Daily and early, because a fleet nobody can act as is unsupportable and the
+ | office should learn it before somebody at that fleet phones about something
+ | else. It should always find nothing, which is what makes it cheap.
+ */
+Schedule::command(AlertOnFleetsWithoutAccounts::class)
+    ->dailyAt('07:15')
     ->withoutOverlapping();

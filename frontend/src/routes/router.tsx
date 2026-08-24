@@ -36,6 +36,10 @@ const DriversPage = page(() => import('../pages/DriversPage'), 'DriversPage')
 const InvoicesPage = page(() => import('../pages/InvoicesPage'), 'InvoicesPage')
 const LoginPage = page(() => import('../pages/LoginPage'), 'LoginPage')
 const AcceptInvitePage = page(() => import('../pages/AcceptInvitePage'), 'AcceptInvitePage')
+const NotificationPreferencesPage = page(
+  () => import('../pages/NotificationPreferencesPage'),
+  'NotificationPreferencesPage',
+)
 const MfaEnrolmentPage = page(() => import('../pages/MfaEnrolmentPage'), 'MfaEnrolmentPage')
 const NotificationsPage = page(() => import('../pages/NotificationsPage'), 'NotificationsPage')
 const OrderRequestsPage = page(() => import('../pages/OrderRequestsPage'), 'OrderRequestsPage')
@@ -264,6 +268,11 @@ export const router = createBrowserRouter([
       // Roles: a custom role holding `settings.manage` is invisible to a
       // slug list, so the page gates on whether the API answers.
       { path: 'system-settings', element: <SystemSettingsPage /> },
+      // The destination of the "Choose which emails you get" link in every
+      // email footer. Inside the shell rather than standalone: the reader has
+      // an account and is signed in, and the surrounding navigation is what
+      // lets them go somewhere useful afterwards.
+      { path: 'settings/notifications', element: <NotificationPreferencesPage /> },
       // ADR-0018. Behind RequireNavAccess like Staff, not unguarded like
       // Roles: `customers.view` is seeded on real roles rather than being a
       // permission a custom role is expected to carry, and the register is
