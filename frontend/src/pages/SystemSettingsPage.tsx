@@ -13,6 +13,7 @@ import { BillingSection } from './settings/sections/BillingSection'
 import { BookingSection } from './settings/sections/BookingSection'
 import { BrandingSection } from './settings/sections/BrandingSection'
 import { LegalSection } from './settings/sections/LegalSection'
+import { EmailSection } from './settings/sections/EmailSection'
 import { MailSection } from './settings/sections/MailSection'
 import { MapsSection } from './settings/sections/MapsSection'
 import { OrderingSection } from './settings/sections/OrderingSection'
@@ -77,7 +78,7 @@ interface Section {
  * sign-in methods, submitting it, and getting a 404 from a tab the console
  * offered them. An offered door that refuses is worse than no door.
  */
-const KANGARU_ONLY_GROUPS = ['branding', 'legal', 'ordering', 'auth']
+const KANGARU_ONLY_GROUPS = ['branding', 'legal', 'ordering', 'auth', 'email-notifications']
 
 const SECTIONS: Section[] = [
   {
@@ -171,6 +172,31 @@ const SECTIONS: Section[] = [
   },
   {
     meta: {
+      id: 'email-notifications',
+      /*
+        Not a settings group: this section reads and writes /settings/email,
+        which is backed by the NotificationType enum rather than by the
+        settings table, and it never PATCHes /settings/{group}.
+
+        Its own `group` string rather than reusing 'mail', because that string
+        is what KANGARU_ONLY_GROUPS filters on and these two need opposite
+        answers. A fleet may edit its own SMTP settings (ADR-0055 §5 gives it
+        an override beside Kangaru's default). It may not touch these, because
+        `mail_toggles` has no operator_id: one row per type for the whole
+        platform, so a fleet flipping a switch would silence that email for
+        every other fleet. The server refuses it either way; this keeps the
+        console from offering a door that answers 403.
+      */
+      group: 'email-notifications',
+      label: 'Which emails',
+      icon: 'bell',
+      title: 'Which emails go out',
+      description: 'Switch off the ones your office does not want. Security and money emails cannot be switched off.',
+    },
+    Component: EmailSection,
+  },
+  {
+    meta: {
       id: 'sms',
       group: 'sms',
       label: 'SMS',
@@ -227,7 +253,7 @@ const RAIL: { heading: string; ids: string[] }[] = [
   { heading: 'Platform', ids: ['branding', 'regional'] },
   { heading: 'Operations', ids: ['ordering', 'booking', 'tracking'] },
   { heading: 'Money', ids: ['billing'] },
-  { heading: 'Connections', ids: ['maps', 'mail', 'sms', 'payments'] },
+  { heading: 'Connections', ids: ['maps', 'mail', 'email-notifications', 'sms', 'payments'] },
   { heading: 'Access and legal', ids: ['auth', 'legal'] },
 ]
 

@@ -69,6 +69,17 @@ return [
             NotificationChannel::MAIL->value,
         ],
 
+        /*
+         | The desk assigned a corporate trip to a driver (ADR-0064). Push is
+         | what makes the handset react with the app closed; the row is what
+         | survives a push that never arrives. Never mail — a time-sensitive
+         | job by email arrives as an apology, the TRIP_OFFERED reasoning.
+         */
+        NotificationType::DRIVER_TRIP_ASSIGNED->value => [
+            NotificationChannel::DATABASE->value,
+            NotificationChannel::PUSH->value,
+        ],
+
     ],
 
     /*

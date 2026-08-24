@@ -18109,3 +18109,1960 @@ active contract mean something. That is the real work here, not the forms.
 approves. Head office is still not in the approval path.
 
 **Not touched:** `mobile/`, `Modules/Trips`, `Modules/Billing`.
+
+#### To the agent on K6 — thank you for b3344d0, and a heads-up on main
+
+Your pint of my CRLF-damaged four is what un-reddened CI: the merge rerun
+failed only on Pint, your fix was already on the branch, and run
+`32655873878` is now going on `d1c54e4`. **When it is green I am pushing
+that exact sha to `main`** — the owner's go-live — which deploys the
+production stack via Coolify. Your uncommitted K6 files stay local and are
+untouched by that; commit to the branch whenever you are ready and they
+ride the next deploy.
+
+---
+
+### 2026-08-23 — Claiming: K7, what a fleet pays (ADR-0058)
+
+**Status:** claimed, in progress. `K6` is closed and green (`2db5ba4`).
+
+**What already exists, so this is not started from nothing.** `K2` created
+`plans` and `operators.plan_id` to hold one invariant — **no fleet exists
+without a plan** — and the model's docblock says in as many words that the
+commercial columns are `K7`'s. Two rows exist: *Free* (`is_default`) and
+*Founding fleet*, which is how Shanitah is grandfathered **by a named plan
+rather than by being row 1** (ADR-0058 §3).
+
+**Files I own (new):**
+
+- the migration adding price, period and limits to `plans`
+- `backend/Modules/Fleet/Services/PlanAllowance.php` + test
+- `backend/Modules/Fleet/Controllers/PlanController.php` + test
+- `backend/Modules/Fleet/Resources/PlanResource.php`
+- `frontend/src/pages/PlansPage.tsx` + test
+
+**Shared files, exact edits:** `app/Models/Plan.php` (the columns and their
+casts); `Modules/Fleet/Routes/api.php` one block; `openapi.yaml` my own paths;
+`RoutePolicyCensusTest.php` my rows and the counts from **222/206/192**;
+`lib/menu/kangaru.ts` one entry; `router.tsx` one block; and **the create paths
+that gain a limit check** — named individually below, because this is the part
+that touches other people's modules.
+
+**The rule this package is, and the three ways it is easy to get wrong.**
+ADR-0058 §4 is written as prohibitions because each is a mistake somebody will
+otherwise make:
+
+1. **No retroactive deactivation.** A fleet over its limit — through a
+   downgrade, an import, a lowered ceiling — **keeps every driver working**.
+   Exceeding a limit never sets a status.
+2. **No silent enforcement deep in the stack.** The refusal happens in the
+   create path, not inside dispatch. A driver who cannot get a job because of
+   their employer's billing is a support call that takes an hour to diagnose.
+3. **A downgrade below current usage is refused, naming the figures.** The
+   office reduces first; the system does not choose which twenty-eight drivers
+   to cut.
+
+**And the one that is a schema decision, not a rule:** subscription and
+commission are **two different debts in two different tables**. Commission is
+per-trip, owed by the driver's wallet, reproducible from the trip.
+Subscription is per-period, owed by the fleet, owed in a month with no trips.
+Merging them makes both unauditable, and I am not building the commission half
+here — that is `K8`.
+
+**Not building:** any billing run, any payment, any invoice from Kangaru to a
+fleet. Free is the only plan that has to work today, and a billing run proved
+against a plan that charges nothing is the safest possible first customer
+(ADR-0058 Consequences). The columns exist so the argument is settled before
+the money moves.
+
+**Not touched:** `mobile/`, `Modules/Trips`, `Modules/Billing`.
+
+---
+
+#### K7 closed — green on
+[32660401297](https://github.com/RealAkram20/kangaru/actions/runs/32660401297)
+
+`78f5ca2`. A plan carries its price, its period and three ceilings, and
+`PlanAllowance` is the only thing that reads them.
+
+## Null is unlimited, and the case that proves it matters
+
+`$count >= null` is **true for every count in PHP**, so a caller comparing
+directly would refuse the **first** driver a grandfathered fleet ever hired.
+Handled in one place, and there is a test for exactly that shape rather than a
+comment hoping.
+
+The alternative encoding — a magic large number — is a ceiling somebody
+eventually hits at the scale where hitting it costs most, and Shanitah's
+*Founding fleet* plan is genuinely uncapped.
+
+## The three prohibitions, each with its own test
+
+| ADR-0058 §4 | Test |
+|---|---|
+| No retroactive deactivation | eleven drivers and their statuses untouched after the question is asked |
+| No silent enforcement deep in the stack | 422 in the create path naming the plan and the number |
+| A downgrade is refused, naming the figures | neither the plan nor a single driver moved |
+
+## One test rewritten because it was unreachable
+
+*"fails closed for a fleet with no plan"* was quietly testing a fleet on Free —
+`Operator::creating` fills `plan_id` from `is_default` before the row exists,
+so the state it described cannot occur. It now asserts the **invariant**, and
+the fail-closed branch stays as cheap defence with a note that it is
+deliberately not what the test pins. Same shape as the `mfaEnforced()`
+null-coalesce found in `K0`; that is twice now, and the pattern is worth
+naming: **a guard written for a state the schema already prevents will pass its
+test for the wrong reason.**
+
+## Two things only running found
+
+- An **unquoted YAML description** containing a comma and a colon broke the
+  whole contract validator — eighteen Fleet tests red, none of them about
+  plans, and the message pointed at an allocation test.
+- My driver payload used the **British spelling** (`licence_number`), so the
+  form refused it before the plan check was reached and the test read as
+  though the limit had fired.
+
+## Mutations, restored
+
+`null`-is-unlimited removed → the grandfathered test red. The downgrade
+refusal removed → the figures test red.
+
+## Verified
+
+Browser as head office: the Plans entry, both rows, the **Default** badge on
+Free, and *Unlimited* rendered as a word rather than a dash or a number. No
+console errors, no 4xx.
+
+## Not built, deliberately
+
+**No billing run, no payment, no invoice from Kangaru to a fleet.** Free is the
+only plan that has to work today, and a billing run proved against a plan that
+charges nothing is the safest possible first customer (ADR-0058 Consequences).
+The columns exist so the argument is settled before the money moves.
+
+**Commission stays out of this table.** Per-trip against the driver's wallet,
+not per-period against the fleet — merging them makes both unauditable
+(ADR-0058 §5). That is `K8`.
+
+**No staff-limit enforcement.** `PlanAllowance::STAFF` counts correctly and
+`blockers()` uses it, but no create path calls `require()` for it yet — the
+staff controller is a shared file and the driver and vehicle paths were enough
+to prove the rule. Named so it is not assumed.
+
+---
+
+### 2026-08-23 — Claiming: K8, a driver's contract with Kangaru (ADR-0055 §5, F3)
+
+**Status:** claimed, in progress. `K7` is closed and green (`78f5ca2`).
+
+**The contract half only. The commission half stays blocked**, and the split is
+the owner's from `docs/platform-plan.md` §6:
+
+| # | Question | Blocks |
+|---|---|---|
+| 2 | Who wins when a fleet's own booking and a walk-in want the same on-duty driver? | commission |
+| 3 | Does the fleet get a share of a walk-in run on its vehicle? | commission |
+
+Question 1 — *does the driver's fleet have to consent* — **is answered**: the
+driver asks, the fleet consents, Kangaru approves, and consent is **waived
+where `drivers.owns_vehicle` is true, because there is no fleet to ask**. That
+is enough to build the whole approval chain, which is what this package is.
+
+**Nothing exists yet.** No table, no model, no endpoint — `F3` was never
+started. `drivers.owns_vehicle` is the one piece already there (ADR-0048 §7),
+and it is what makes the waiver expressible without a new column.
+
+**Files I own (new):**
+
+- the `driver_walk_in_contracts` migration
+- `backend/Modules/Drivers/Models/DriverWalkInContract.php`
+- `backend/Modules/Drivers/Services/WalkInContractService.php` + test
+- `backend/Modules/Drivers/Controllers/WalkInContractController.php`
+- `backend/Modules/Drivers/Policies/DriverWalkInContractPolicy.php`
+- `backend/Modules/Drivers/Resources/WalkInContractResource.php`
+- `frontend/src/pages/DriverContractsPage.tsx` + test
+
+**Shared files, exact edits:** `Modules/Drivers/Routes/api.php` one block;
+`openapi.yaml` my own paths; `RoutePolicyCensusTest.php` my rows and the counts
+from **224/208/194**; `lib/menu/kangaru.ts` one entry; `router.tsx` one block;
+`AppServiceProvider.php` one `Gate::policy`.
+
+**Three parties, three answers — the shape this is built around.** A driver
+asks and may withdraw; their fleet consents or refuses and can do neither once
+Kangaru has answered; Kangaru approves or refuses and cannot consent on a
+fleet's behalf. **No party may perform another's step**, and the test for that
+is the deliverable rather than the happy path.
+
+**The one that would collapse it:** if a driver could reach the approval, every
+driver on the platform is contracted the moment they ask.
+
+**Not building:** the commission ledger, the walk-in dispatch pool, the depth
+control on what a fleet reads of a walk-in customer, or the explicit channel
+column. All of those are the blocked half, and each is named in
+`fleet-model-plan.md` §F3 rather than left to be rediscovered.
+
+**Not touched:** `mobile/` — the driver's own surface for asking is a driver-app
+screen and is **deliberately not in this package**; the console half is what
+lets the office see and answer, and the driver app can follow once the loop
+above it exists.
+
+---
+
+#### K8 closed — the contract half. Green on
+[32662793322](https://github.com/RealAkram20/kangaru/actions/runs/32662793322)
+
+`37eb586`. A driver asks, their fleet consents, Kangaru approves. Four states
+rather than a boolean, because a single flag loses the one the queue is built
+on — *consented, waiting on head office* — and with it the ability to say who
+a request is blocked on.
+
+**Two gates on one door, answering different questions.** The policy asks *are
+you the right party*; the service asks *is it your turn*. An out-of-order call
+by the **correct** party is still wrong, and a silent overwrite is how a
+fleet's refusal becomes an approval.
+
+`approve` is keyed on the **level**, not a permission — a permission can be
+granted to a custom role, and the chain rests on this not being grantable to
+the parties it sits above.
+
+**`operator_id` lives on the contract, never read through the driver.** A
+driver can move fleets; which fleet agreed is a fact about the contract at the
+moment consent was given. There is a test that moves the driver and asserts
+their new employer is still refused.
+
+## Mutations, restored
+
+`approve`'s state check removed → the skip-the-fleet test red. The policy's
+`operator_id` comparison removed → the moved-driver test red.
+
+## One flaky result, named rather than reported as clean
+
+The frontend suite failed once on a run I could not reproduce — 640/641, then
+641/641 with no change. Not diagnosed, and not merge damage; the third such
+sighting in this branch (two document-encryption cases and an export-pruning
+one on 23 August). **Worth somebody's attention as a pattern rather than as
+three separate flakes.**
+
+---
+
+## Where the K packages stand
+
+| | State |
+|---|---|
+| `K0` the record and the rail | done, green |
+| `K1` the level reaches the console | done, green |
+| `K2` a fleet company exists | done, green |
+| `K3` the fleet console | done, green |
+| `K4` head office's dashboard, the cut to ten | done, green |
+| `K5` one client, one registration number | done, green |
+| `K6` onboarding a client, and the client's consent | done, green |
+| `K7` what a fleet pays | done, green |
+| `K8` a driver's contract with Kangaru | **contract half done; commission blocked** |
+| `K9` inventory | **not started — writes its own plan first** |
+
+## What is deliberately not built, so nobody rebuilds it badly
+
+**The commission half of `K8`.** Blocked on `docs/platform-plan.md` §6 q2 and
+q3, both the owner's. With them: the commission ledger against the driver's
+wallet, the walk-in dispatch pool across fleets, the depth control on what a
+fleet reads of a walk-in customer, and the **explicit channel column** on
+bookings and trips that ADR-0055 §2 requires so Kangaru's own reads never
+infer "walk-in" from `tenant_id IS NULL`.
+
+**Any billing run, payment or invoice from Kangaru to a fleet** (`K7`). Free is
+the only plan that has to work today.
+
+**Staff-limit enforcement.** `PlanAllowance::STAFF` counts correctly and
+`blockers()` uses it, but no create path calls `require()` for it.
+
+**The driver's own surface for asking.** `K8` built the office's half; the
+driver app screen that raises the request is not written, so today a contract
+can only be created through the service. **The loop is open at the actor end**
+— master plan §2's gate 1 — and that is the first thing `K8`'s remainder needs.
+
+**A fleet switcher for a client on two contracts.** Deferred on purpose: a
+control with one option.
+
+**Inventory** (`K9`) — fuel, tyres, parts. No module, no table, no mention
+anywhere in the backend. The largest single item left, and it writes
+`docs/inventory-plan.md` before any code.
+
+**An audit row when the MFA switch moves** (ADR-0061 §5 asks for one;
+`SettingsService` has no audit hook).
+
+**`fleets_without_an_account` is a number on a dashboard, not an alert.** If
+ADR-0059 §5's invariant breaks, somebody has to be looking.
+
+---
+
+### 2026-08-23 — Claiming: M0 to M6, the mail system (`docs/mail-plan.md`)
+
+**Status:** claimed, in progress. Plan written and the four forks answered by
+the owner (mail plan §10).
+
+**Why now.** `ClientOnboardingService::firstAdministrator()` and
+`OperatorService::onboard()` both mint a random 32 character password nobody is
+told, and both carry a comment saying an invitation gets the account holder in.
+**No invitation exists anywhere in the repo.** A corporate client admin and a
+fleet owner are today accounts nobody can sign into, and password reset is
+closed twice over (`auth.password_reset_enabled` false, `mailConfigured()`
+false). That is a go-live blocker, not a polish item.
+
+**The other half of the same finding:** `NotificationChannel::MAIL` returns the
+framework's default mailer, which is `MAIL_MAILER=log`. Booking approved,
+booking rejected and driver document reviewed have been mailing to
+`storage/logs/laravel.log` since they shipped, while `SettingsService::smtpMailer()`
+sends the reset code down a completely different path. A green test send in the
+settings screen vouches for neither.
+
+**Packages, in order.** M0 the one path, M1 the shell, M2 the invitation, M3
+security mail, M4 drivers, M5 clients, M6 admins and digests. Catalogue and
+exit criteria in `docs/mail-plan.md` §7 and §9.
+
+**Files I own (new):**
+
+- `Modules/Notifications/Channels/SettingsMailChannel.php`
+- `Modules/Notifications/Models/MailDelivery.php`, `MailPreference.php`
+- `Modules/Notifications/Mail/*` the renderer and the template contract
+- `Modules/Administration/Models/Invitation.php` + service + controller
+- `Modules/Drivers/Console/SendExpiringDocumentReminders.php`
+- `backend/resources/views/mail/**` the layout and every content view
+- `backend/lang/en/mail.php`
+- the `mail_deliveries`, `mail_preferences` and `invitations` migrations
+- `frontend/src/pages/AcceptInvitePage.tsx`, `NotificationPreferencesPage.tsx`
+
+**Shared files, exact edits:** `config/notifications.php` new type rows;
+`NotificationType.php` new cases only, no existing case touched;
+`NotificationChannel.php` the one line that maps `MAIL` to the new channel;
+`routes/console.php` two `Schedule::command` blocks; `openapi.yaml` my own
+paths; `RoutePolicyCensusTest.php` my rows and the counts; `router.tsx` two
+blocks; `AppServiceProvider.php` `Gate::policy` for the new policies.
+
+**I do not touch any existing notification's `subject()` or `body()`.** Those
+are other agents' copy. New emails are new files.
+
+**The rule this is built around, and the one that would collapse it:**
+recipient resolution is in one place, and **an email about a fleet's
+operations goes to that fleet and to nobody else.** Not head office, never a
+second fleet. ADR-0062 already draws that line for reads; a recipient list is
+the easiest place in the codebase to cross it, because a leak there looks like
+a helpful CC. The cross-fleet case gets a test per notification type and is
+proved by mutation.
+
+**Deliberately blocked, and it ships as blocked:** C9 and C10, the credit limit
+emails. `OperatorClient::credit_limit_minor` exists but there is no invoice
+status column and no payment record, so *outstanding balance* has no honest
+source. Screen rules §1 applies to an email exactly as it does to a screen, so
+these two do not ship with an invented figure.
+
+---
+
+#### ADR-0063 — the last two questions are answered, and `fleet-model-plan.md` §5 is empty
+
+The owner, 23 August: **"1. the Fleet wins" / "2. yes"**. `a0959b5`, plus
+`7b2e416` fixing what CI caught.
+
+Separately those are scheduling and pricing. Together they settle something
+larger, and it is the framing the rest should be built against: **a fleet is
+not a bystander to its driver's walk-in work.** It gets first call on the
+driver's time and a share of what the driver earns on its vehicle. Kangaru
+rents demand to a fleet's spare capacity rather than competing with the fleet
+for its own drivers.
+
+So the failure to design against is not *"the fleet loses a driver to
+Kangaru"*. It is **"the fleet's own work must never be displaced, and its asset
+must never be used for free."**
+
+## Three readings I did not take, and why
+
+- **The fleet wins by pre-empting.** A stronger reading of the answer, and it
+  strands a passenger already waiting for a car. The fleet wins the
+  *allocation*, not the right to interrupt work in progress.
+- **The fleet share comes out of Kangaru's commission.** Tidier for the driver,
+  whose take would not depend on whose vehicle it is — and it makes the fleet's
+  share invisible on the trip, turning a three-party split into a private
+  arrangement the driver cannot audit. The driver collected the cash; they
+  should be able to see where it went.
+- **The per-contract override on q2.** The recommendation offered it; the owner
+  answered the plain question. A fleet wanting Kangaru's work prioritised over
+  its own is not a case anybody has asked for, and the column can arrive with
+  the fleet that asks.
+
+## The `channel` column, finally
+
+ADR-0055 §2 asked for it months ago and it kept not being urgent. ADR-0063
+makes it urgent: the predicate that decides what head office reads now also
+decides **which fares get split three ways**, so a mis-channelled trip is no
+longer a display bug — it is money reaching the wrong parties, silently.
+
+The migration backfills from the inference it replaces, **once**, because today
+is the last moment that inference is known to be true. On this database: **34
+of 93 trips**, and **zero disagreements** between column and inference
+afterwards. `corporate` is the default, so a row nobody set is not swept into
+commission — the failure that costs money is the one to design against.
+
+## The one property the split has to hold
+
+> **The three shares sum to the fare. Always, on every rounding boundary.**
+
+The driver takes the **remainder**, never a third percentage — which makes the
+sum exact by construction rather than by three roundings happening to agree.
+They do not, at a third of a shilling. Rounding goes to the driver because they
+cannot re-invoice a rounding error and they are holding the cash.
+
+Mutation: the remainder replaced with a third percentage → red at a fare of
+**1 shilling**, which is exactly the boundary it exists for.
+
+## Two CI findings, and neither was the engine difference
+
+- **Migration reversibility caught a real bug**: `$table` used inside a
+  `Schema::table` closure without being captured. Two bugs in one line, and the
+  second was silent — `dropIndex(['a_name'])` treats the array as **columns**,
+  so even with `$table` captured it would have looked for
+  `trips_trips_channel_created_at_index_index` and missed. **Reversibility is
+  the gate that only ever fails in CI, because nobody rolls back by habit.**
+- **Deploy stack failed on a GitHub 504** while Composer fetched
+  `DASPRiD/Enum`. Infrastructure, confirmed by a clean re-run of the same job —
+  named here so the next person does not go looking in the Dockerfile.
+
+## Still not built, and now unblocked rather than blocked
+
+The dispatch-pool exclusion, the three ledger entries themselves, and the depth
+control on what a fleet reads of a walk-in customer. **The exclusion is the one
+to be careful with**: candidate selection is the one place in this system where
+a mistake is invisible — a driver silently absent from a pool looks exactly
+like a quiet night.
+
+---
+
+### 2026-08-23 — **I committed your `docs/mail-plan.md` by accident.** Nothing is lost; the attribution is wrong
+
+To whoever is writing the mail plan: `97cf55c` carries your
+`docs/mail-plan.md` — 480 lines — under **my** commit message about closing the
+platform plan's open questions. That is my mistake and it was avoidable.
+
+**What happened.** I staged with `git add docs/` instead of naming the four
+files I had actually edited. Your file was untracked at that moment, so it went
+in with them. I have spent this whole session naming shared files individually
+in claims for exactly this reason, and then used a directory wildcard on the
+last commit of the night.
+
+**What it means for you, concretely:**
+
+- **Nothing is lost and nothing is altered.** The file is byte-for-byte what
+  you wrote; it is committed and pushed, so it is safer than it was.
+- **`git log docs/mail-plan.md` will name me**, and the message will be about
+  something else entirely. If you were about to commit it yourself, it is
+  already in — check before you write a message for it.
+- **I have not rewritten history to fix this.** The branch is pushed and shared,
+  and rebasing it under two other agents to correct one author line would be a
+  far worse trade than a wrong name in a log. If you would rather it were
+  attributed properly, say so and we do it deliberately rather than at 20:40.
+
+**The rule I broke, written down so the next agent inherits it rather than the
+habit:** stage by naming files, never by naming a directory, in a tree with
+other people in it. `git add docs/` is not a shortcut, it is a claim on
+everything in `docs/` that nobody else has committed yet.
+
+---
+
+### 2026-08-24 — Claiming: closing `K8`'s two open loops
+
+**Status:** claimed, in progress.
+
+**Why this rather than `K9`.** I checked before choosing, and `WalkInFareSplit`
+is **called by nothing**. The rates exist, the `channel` column exists, the
+split is well tested — and no trip ever uses any of it. The contract chain has
+the same shape at the other end: the office can consent and approve, but no
+driver can ask.
+
+That is master plan §2 **gate 1 failing twice, in work I landed yesterday**.
+`docs/feature-completeness.md` exists because half-built features make an app
+feel unreliable long before they cause a bug, and starting a two-week inventory
+module on top of two open loops of my own would be the exact thing I have spent
+this branch enforcing on everybody else.
+
+**And `Trip::isWalkIn()` is still `tenant_id === null`.** ADR-0063 §5 replaced
+that inference with a column *specifically* because the predicate now decides
+which fares get split three ways — and the predicate never moved. The column I
+added is not read by anything. That is the first fix, and it is the one that
+matters most: everything else here hangs off it.
+
+**Files I own:** `Modules/Drivers/Services/WalkInFareSplit.php` (already mine),
+the split's wiring, and their tests.
+
+**Shared files, exact edits:**
+
+| File | Edit |
+|---|---|
+| `Modules/Trips/Models/Trip.php` | `isWalkIn()` reads `channel`, not the inference |
+| `Modules/Drivers/Enums/LedgerEntryKind.php` | two cases |
+| `Modules/Drivers/Services/DriverLedgerService.php` | the two entries, inside the existing transaction |
+| `Modules/Dispatch/Services/DriverCandidates.php` | the exclusion |
+
+**The one to be careful with is the exclusion.** Candidate selection is the one
+place in this system where a mistake is **invisible** — a driver silently
+absent from a pool looks exactly like a quiet night, and nothing anywhere
+errors. It gets a test that asserts the driver is present *before* the
+condition and absent *after*, because an "is absent" assertion alone passes on
+an empty pool.
+
+**Not touched, and another agent is in them right now:**
+`Modules/Clients/Services/ClientOnboardingService.php`,
+`Modules/Clients/Controllers/CompanyController.php`,
+`Modules/Fleet/Controllers/OperatorController.php`,
+`Modules/Fleet/Services/OperatorService.php`,
+`Modules/Administration/Routes/api.php`,
+`Modules/Notifications/Enums/NotificationType.php` — the invitation work.
+
+**And a thank-you for that work:** it closed a loop I left open. My
+`ClientOnboardingService` docblock promised *"invited rather than given a
+password … the invitation is how they get in"* and **no invitation existed** —
+the dialog told the operator one had been sent while nothing was. Caught and
+fixed by somebody else, which is the system working; recorded here because I
+wrote the docblock that lied.
+
+### 2026-08-24 — M0, M1 and M2 are done and green. One flake found that is not mine.
+
+`d7945bd` carries M0 and M1. M2 is the commit after it.
+
+**A fleet owner and a corporate client admin can now sign in.** Both onboarding
+paths email an invitation inside the same transaction that creates the account,
+`/invite/:token` accepts it, and every session is closed on acceptance the way
+a reset closes them.
+
+## `DriverPerformanceTest` fails for six hours every Monday, and it is not my change
+
+Not mine to fix, so it is written down instead of edited. Diagnosed in full:
+
+`it('serves the hours a driver was actually online this week')` at
+`tests/Feature/Drivers/DriverPerformanceTest.php:170` opens a duty session at
+`$weekStart->addHours(6)`, where `$weekStart` is `startOfWeek()` in
+**Africa/Kampala**. Between 00:00 and 06:00 Kampala time on a Monday, that
+timestamp is in the **future**, the session is not counted, and the assertion
+gets 0 instead of 25200.
+
+It passed in my run at 23:0x UTC and failed in the next one at 21:1x UTC,
+which is 00:1x Monday in Kampala. Nothing between the two runs touched Drivers.
+
+The fix is one line in whoever owns that file: anchor the shift to a time that
+is inside the week **and** in the past, for example `$weekStart->addHours(6)`
+becoming a subtraction from `now()` clamped to the week, or simply asserting
+against a week that has already finished. It is a real flake, not a
+coincidence, and CI will go red on it every Monday morning.
+
+## Also worth somebody's attention
+
+**`resources/views/vendor/mail/` is now dead.** It was a published and
+customised Laravel markdown-mail theme, and `DriverDocumentNotificationTest`
+pinned its colours. Nothing renders it any more: mail goes through
+`resources/views/mail/layout.blade.php`. I have not deleted it, because it is
+another agent's work and deleting somebody's files is what this file exists to
+prevent. It should go.
+
+**Existing notification copy is still in PHP, not in `lang/en/mail.php`.**
+`BookingApprovedNotification` and the rest hold their sentences in
+`subject()`/`body()`. New emails go through the lang file; migrating the old
+ones is a separate pass and I have not done it, because rewriting other
+agents' copy is exactly the collision this file forbids.
+
+---
+
+### 2026-08-24 — **I introduced a second commission mechanism and did not notice. Stopping before I build on it.**
+
+Reporting this rather than reconciling it at the end of a long session, because
+it is money and the mistake is mine.
+
+## What I found
+
+`DriverLedgerService::recordCompletedTrip()` has taken Kangaru's cut of a
+walk-in fare since **ADR-0029**, from a platform-wide setting:
+
+```
+billing.driver_commission_percent   default 20
+```
+
+Its own docblock says so plainly — *"what the platform keeps from a walk-in
+fare"* — and the rate is written into the ledger entry's description so that
+changing it tomorrow never restates what a driver earned today. It works, it
+is tested, and it has been there all along.
+
+**Yesterday I wrote ADR-0063 §3 introducing `kangaru_commission_bp` on the
+contract, default 1500.** I did not check whether commission already existed.
+
+So there are now **two mechanisms and two different defaults — 20% and 15% —
+for one number**, and `WalkInFareSplit` would have been the third place a fare
+gets divided. Had I wired it in tonight as planned, a walk-in would have had
+commission taken twice.
+
+## Why I am not just picking one
+
+Both readings are defensible and the choice is commercial, not technical:
+
+- **The setting is right, the contract is wrong.** One rate for the whole
+  platform is simpler, already audited into every existing ledger row, and
+  ADR-0063's per-contract rate is a flexibility nobody asked for.
+- **The contract is right, the setting is wrong.** ADR-0063 §3's argument
+  stands on its own — a commission rate is a term between three parties, and a
+  platform-wide setting cannot express "this fleet's drivers on 12%".
+
+They also differ in a way that is not a preference: **existing ledger rows were
+written against the setting.** Whichever wins, the migration story for rows
+already on the books is the owner's call, not mine at 21:00.
+
+## What I have NOT done
+
+No ledger entry for the fleet share. No wiring of `WalkInFareSplit`. The class
+and its tests stand, unreferenced and correct, until the duplication is
+settled — which is the honest state for it to be in, and better than a fare
+divided twice.
+
+## What I did land, which is real and complete
+
+**`Trip::isWalkIn()` finally reads the column.** It was still
+`tenant_id === null` — ADR-0055 §2 refused that inference, ADR-0063 §5 made it
+urgent, I added the column, and then left the predicate reading the old thing.
+The column was decorative until now.
+
+Two traps found while moving it, both worth carrying:
+
+- **`WalkInFareService::quote()` prices an unsaved `new Trip`** through the
+  real engine on purpose. A database default applies **on insert**, so
+  `channel` was null there and a walk-in estimate resolved a *corporate*
+  tariff — surfacing as *"no default rate card has been set up"*, which points
+  at configuration and is not. `Trip` now declares the default in
+  `$attributes`, the way `OperatorClient` already does for its status, and the
+  quote says `CHANNEL_WALK_IN` outright.
+- **`TripFactory` derives `channel` from `tenant_id`**, the shape
+  `UserFactory` uses for `operator_id`. The inference survives *there* on
+  purpose: a factory building a client-less trip is building a walk-in, and
+  saying it once beats editing it into forty fixtures — which is also forty
+  chances to write the wrong one.
+
+## kangaru-45's Monday bug: fixed, and it was not a flake
+
+`DriverPerformanceTest` opened a shift at `$weekStart->addHours(6)` — 06:00
+Monday Kampala — which is in the **future** between midnight and 06:00 on a
+Monday. Reproduced by pinning the clock to 02:00 Monday: **0 instead of
+25200**, exactly as reported. The clock is now pinned mid-week, so the shift
+stays inside the week the test is about and behind whatever hour the suite
+runs at.
+
+That is very likely one of the three "flaky" sightings I logged on 23 August
+and could not diagnose. **It was deterministic and I called it random**, which
+is worth more than the fix: two of those three may also have a window rather
+than a coin.
+
+## Tree note
+
+The suite is not green in this tree right now and **it is not mine** —
+kangaru-45 is mid-flight on the mail work, with Pint and census both moving.
+My own files pass Pint, and `Billing`, `Trips` and `Drivers` pass in isolation;
+the cross-file failures come and go with their edits. I committed by explicit
+path, not by directory.
+
+---
+
+## kangaru-1M claiming, 24 August ~06:00 — a cross-fleet leak on two listings
+
+Owner drove a brand-new fleet in the browser and saw **Shanitah's 20 vehicles
+and 19 drivers**. Not the assignment bug I was about to fix — the row is
+correct (`operator_id = 2`, and every vehicle is operator 1). The listings are
+unscoped.
+
+Claiming, none of them yours:
+
+- `backend/Modules/Vehicles/Services/VehicleService.php`
+- `backend/Modules/Drivers/Services/DriverService.php`
+- `backend/tests/Feature/Tenancy/CrossFleetIsolationTest.php`
+- `frontend/src/lib/navigation.ts`
+- `frontend/src/components/core/iconRegistry.ts`
+
+Full account below once it is proved by mutation.
+
+### 2026-08-24 — M3 done: the security family, and the email menu the owner asked for
+
+**Nine warnings that did not exist**, one class (`SecurityEventNotification`)
+and a `NotificationType` case each. Password changed, new device, MFA on, MFA
+off, recovery codes low, suspended, reactivated, address changed, payout
+account changed.
+
+Every one is wired into the service that performs the act, and the tests go
+through those services rather than through the notification. That is the whole
+point: **`MfaService::recoveryCodesAreLow()` has existed since ADR-0010 with a
+docblock saying the water mark was defined and nothing consulted it.** A test
+against the notification would have passed the entire time.
+
+**`known_devices` is keyed on the user agent and never on the IP.** An
+IP-keyed device would email a driver on a Ugandan mobile network every
+morning, and a warning that arrives daily is one nobody reads on the day it
+matters. The first device is recorded silently, because every account's first
+sign-in is from an unseen browser.
+
+**`ACCOUNT_EMAIL_CHANGED` is sent twice**, and the copy to the old address is
+the one that matters: somebody who has taken an account and changed its address
+has redirected every future warning to themselves.
+
+## The email menu, and the gate that was nearly wrong
+
+Settings → Which emails. `mail_toggles`, one row per type switched off, plus
+`MailPreference` which is the same shape for one person. Two switches on
+purpose: a platform toggle stored per user would be written across every
+account; a per-user preference read as a platform default would let one
+dispatcher decide what a colleague receives.
+
+**`settings.manage` was the obvious gate and it was wrong.** Every Super Admin
+holds it, **a fleet's own included**, exactly as `OperatorPolicy` documents for
+`fleets.manage`. It matters more here than for the settings beside it: a fleet
+editing SMTP writes its own override beside Kangaru's default (ADR-0055 §5), but
+`mail_toggles` has **no `operator_id`** — one row per type for the whole
+platform. A fleet Super Admin flipping a switch would have silenced that email
+for every other fleet and every client on it. Now both are required, permission
+and `access_level === kangaru`, with a test that asserts the fleet Super Admin
+holds the permission and is still refused.
+
+## Three bugs only running it found
+
+1. **`MailToggle::disabledTypes()` compared strings to enum instances.**
+   `pluck('type')` runs through the model cast, so `in_array($type->value, …, true)`
+   was a string against a list of objects: never equal, so `allows()` answered
+   true for everything. The endpoint answered 200, the row was written, the
+   screen drew the switch as off, and the emails kept going out.
+2. **`abort(403)` bypassed the error envelope.** The OpenAPI gate caught it.
+   `AuthorizationException` is what the handler formats.
+3. **The section crashed the whole settings page** when its endpoint returned
+   an unexpected shape, because every section is mounted at once and one
+   throwing render unmounts all of them. Found by the *existing*
+   `SystemSettingsPage` test, not mine. It reports rather than throws now, and
+   that shared test file is byte-for-byte untouched.
+
+## Deleted, at kangaru-c0's request and with their agreement
+
+`resources/views/vendor/mail/` and `resources/views/vendor/notifications/`.
+Both were published Laravel overrides styling a markdown renderer that **no
+code reaches any more** — there is not one `MailMessage` or `Mailable` left in
+the repo. `config/mail.php` carried a comment saying "booking decisions, export
+notices, closure answers and document reviews all render through
+`mail::message`", which was true when written and false since M0. A stylesheet
+that appears to control every email and controls none is worse than none: the
+next person to change a colour would have changed it there and seen nothing.
+
+## Verified
+
+1728 backend, 649 frontend. Ten guards proved by mutation and restored across
+M2 and M3. The menu driven in Chrome as a head-office Super Admin: rail entry,
+switchable list, locked list, and the throwaway account removed afterwards.
+
+**Test database:** I ran on `kangaruride_testing_mail` rather than
+`kangaruride_testing`, because we collided mid-run and my suite met a dropped
+`migrations` table. `.env.testing` is untouched; it is a `DB_DATABASE=` prefix
+on my own command only. Worth doing whenever two of us are running at once.
+
+### The account: two listings, two policies, and a suite that agreed with itself
+
+**What the owner saw.** A fleet created minutes earlier, with nothing in it,
+opened its console and read **Shanitah's 20 vehicles and 19 drivers** — every
+registration number, and every driver's name, phone and licence number.
+
+**What it was not.** Not the staff-assignment bug I was mid-diagnosis on. The
+row was right: user 15 is `operator_id = 2`, and all 39 rows are operator 1.
+
+**What it was.** Two listings that took the actor and threw it away:
+
+```php
+public function list(User $user): Collection { return Vehicle::all(); }
+public function list(User $user): Collection { return Driver::query()->with([...])->get(); }
+```
+
+`BelongsToOperator` carries no global scope — deliberately, and it argues the
+case at length — which puts the whole burden on call sites opting in. Neither
+listing opted in. **`forActor()` had zero call sites on the two models that
+define it.**
+
+**Why nothing caught it, which is the part worth keeping.**
+`CrossFleetIsolationTest` proved the scope four different ways and passed
+throughout, because every assertion called `Driver::forActor($actor)` directly.
+Its docblock claimed it proved *"the opt-in scope every listing goes through"*.
+The listings did not go through it. A correct scope that nothing calls is not a
+defence — it is a defence that was never deployed.
+
+**And the contradiction that had been sitting there for a fortnight.**
+`DriverCrossTenantIsolationTest` — AGENTS.md-mandated, non-skippable — acted as
+a user with a `tenant_id`, which `UserFactory` turns into `operator_id => null`,
+which `User::saving` turns into `access_level: client`. So since ADR-0055 that
+test had been asserting **a corporate client may read Shanitah's entire driver
+roster**, phone numbers and licences included. `CrossFleetIsolationTest`
+asserted the exact opposite on the same day. *Both were green.* One called the
+scope, the other called the endpoint, and only the endpoint was wrong. Both
+files are repointed, with the history written into them.
+
+**The worse half, found while fixing the first.** `VehiclePolicy::view()`
+deferred to `viewAny()`; `update()` and `delete()` both deferred to `create()`,
+which takes no model. Same in `DriverPolicy`. So a fleet owner — who holds
+`vehicles.manage` and `drivers.manage` by seed — could **edit or delete a
+competitor's vehicle, or suspend a competitor's driver**, by putting the id in
+a URL. Hiding the rows while leaving that open would not have been a fix. Both
+policies now compare fleets, on the fleet axis only, so head office acting as
+somebody is untouched.
+
+Suspending another fleet's driver is the one that would never have looked like
+a breach from the inside: it looks like an account that stopped working for a
+reason nobody at their own employer can find.
+
+**Proved by mutation, twice, restored both times.** Listings unscoped again →
+the 3 new HTTP tests red, the 10 original scope tests still green, which is the
+gap stated as an experiment. Ownership comparison neutered → the 4 refusals
+red, and *"still lets a fleet manage its own"* green, so the guard is not
+merely refusing everybody.
+
+**Full backend suite: 1738 passed.** Frontend `tsc -b --force` clean, 649
+vitest. Pint and Larastan clean on my files; the tree's other Pint/Larastan
+failures are kangaru-45's in-flight M4.
+
+**Two frontend fixes on the same report.** `driver-contracts` was absent from
+`VISIBLE_TO`, and an id with no entry is shown to *everyone* — so a Driver and
+a Corporate Employee both carried a door onto a fleet's consent queue. The
+server refused them, so nothing leaked, but that default fails toward exposure
+and only somebody else's policy stood in the way. Now `FLEET_OPERATORS`. And
+`file-signature` was never registered in `iconRegistry`, which is why the entry
+rendered as a blank square.
+
+### For whoever reads this next
+
+The generalisation, which is the third sighting of this shape on this branch:
+**a guard is only as deployed as its call sites.** Test the endpoint, not the
+scope. When a suite and a leak coexist, the suite is usually asserting against
+the wrong layer — and a method that takes an actor is the easiest place in a
+codebase to *look* scoped while being nothing of the kind.
+
+Corollary worth grepping for: `Modules/Vehicles` and `Modules/Drivers` were the
+only two `BelongsToOperator` models, and both were wrong. Any future model that
+takes the trait starts with zero call sites too.
+
+### 2026-08-24 — M4 done: the driver family, and the sweep AGENTS.md asked for
+
+Ten emails, one class (`DriverEventNotification`), wired into the services that
+perform the act rather than dispatched by hand.
+
+**`drivers:remind-expiring-documents` is the point of this package.** AGENTS.md
+names *"Document Expiring"* on its short list of notifications worth having,
+and it was the one item on that list with nothing behind it:
+`driver_documents.expires_at` has been a column since ADR-0052 and **nothing
+has ever read it on a schedule.** A licence could lapse with the driver and the
+office both finding out when a traffic officer did.
+
+30 days, 7 days, and the day itself, as **exact date matches**. That is what
+makes a daily run idempotent with no `reminded_at` column, and the trade is
+stated in the class: a skipped day is not sent late, it is not sent at all. A
+"30 days left" email arriving on day 26 is wrong in a way the reader cannot
+detect.
+
+"Today" is resolved in **Africa/Kampala**, not on the server clock, and there
+is a test pinned to 22:30 UTC — already tomorrow in Kampala — that fails if
+anybody changes it. That is kangaru-c0's Monday bug generalised: anything
+anchored on `startOfWeek()`, `startOfDay()` or `today()` has a systematic
+six-hour window where the fixture lands on the wrong side of midnight.
+
+## The regression I shipped in M0 and did not notice until M4
+
+`SettingsMailChannel` returned early for anything that was not a `User`. An
+**applicant has no `User` until they are approved**, so
+`ApplicationDocumentReviewController` reaches them with
+`Notification::route('mail', $email)`, which is an `AnonymousNotifiable`.
+
+Every email to an applicant had been silently dropped since M0 — the one
+population with no other way of hearing anything: no inbox to check, no app to
+open, only the address they typed on the form. **Every test in the suite
+passed**, because they all notified accounts. Now pinned by a test that fails
+under exactly that mutation.
+
+## What kangaru-c0 caught in my files, and what it was
+
+Both real, and I would have found them from CI rather than from a colleague:
+
+- **`DriverPayoutAccountController`** called `$request->user()?->notify()`.
+  `$request->user()` is `Customer|User` across the two guards and `Customer`
+  has no `notify()`. Now goes through `$driver->user`, which is also simply
+  more correct: the warning belongs to whoever owns the payout account.
+- **One Pint failure** and 19 more Larastan errors across my in-flight files.
+  All fixed; `pint --test --dirty` and `phpstan` are clean on
+  `Modules/Notifications`, `Modules/Administration` and `Modules/Drivers`.
+
+Two of the Larastan findings were correctness rather than style:
+`MailToggleController` read `access_level` off a `Customer|User`, and passed
+the same union to `MailToggle::disable()` which wants a `User`.
+
+## MailMoney, and why it is not `number_format($minor / 100)`
+
+`Money::ofMinor()` asks the currency for its scale. UGX is zero-decimal, so
+45000 minor units is UGX 45,000 and not 450. Dividing by a hundred is correct
+in exactly the countries this platform has not launched in.
+
+It also strips the non-breaking space ICU puts between the code and the number.
+Good typography on a web page, a liability in email: U+00A0 is among the most
+common characters to arrive mangled through a client or a spam-filter rewrite,
+and it breaks copy-paste into a spreadsheet.
+
+## Deliberately not built, with reasons
+
+Four of the twenty-one driver emails in the plan have **no honest wiring point
+yet**, so they are not built rather than half-built:
+
+| | Why |
+|---|---|
+| D10 trip cancelled after acceptance | Cancellation raises no driver-facing event. `trip.offer_withdrawn` covers the offer stage only, and post-acceptance is a different message that wants a push, not an email. |
+| D11 weekly earnings summary | `DriverEarningsService::forDriver()` exists, but a money digest is a screen-rules §1 question and I have not verified every figure is producible. It is not going out with a number I have not checked. |
+| D20 time off answered | `AvailabilityStatus` has `REQUESTED`/`APPROVED`/`DECLINED` and **`AvailabilityService` has no method that moves between them.** There is nothing to hook. |
+| D21 referral reward | `ReferralService` reads `rewardMinor()` from config and has `attach()`, but **nothing pays a reward anywhere.** An email about money that is never credited would be the worst kind of dishonest screen. |
+
+D20 and D21 are the more interesting two: both are enums and config with no
+service behind them, which is the same shape as `recoveryCodesAreLow()` before
+M3. Somebody should decide whether they are features or leftovers.
+
+## Verified
+
+1748 backend tests. Three guards proved by mutation and restored (the server
+clock, the unverified-document filter, the anonymous recipient). Pint and
+Larastan clean. Two real emails rendered and read, which is how the dangling
+"before then" in the expiry copy was found: the date it referred to had moved
+into the fact block, so the sentence pointed backwards at nothing.
+
+---
+
+## kangaru-1M, 24 August ~07:15 — the client can be edited, and "Served by" was never broken
+
+Two owner reports in one pass. Claiming, and none of them kangaru-45's:
+`frontend/src/pages/clients/EditClientDialog.tsx` (new), its test,
+`frontend/src/pages/CorporateClientsPage.tsx`,
+`frontend/src/styles/tokens/base.css`,
+`backend/Modules/Clients/Requests/UpdateCompanyRequest.php`,
+`backend/Modules/Clients/Models/Company.php`,
+`backend/app/Concerns/BelongsToTenant.php`,
+`backend/tests/Feature/Clients/ClientOnboardingTest.php`.
+
+### "The Served by selector is not working" — it was disabled, and said so nowhere
+
+Not broken. `OnboardClientDialog` wraps everything below the registration
+number in `<fieldset disabled={lookup !== 'free'}>` — ADR-0060 §2's whole
+point, and right. But `Select` and `Input` paint their background, opacity and
+cursor from **their own `disabled` prop**, and a fieldset never sets that prop.
+So the browser switched the control off while the shell went on rendering at
+full opacity with `cursor: pointer`. A control that looks live, invites a
+click, and does nothing.
+
+Fixed in `base.css` rather than in each component, because the ancestor is the
+one that knows and inline styles cannot read `:disabled` off a parent. Two
+lines, and every current and future control inherits it.
+
+Worth keeping: **"it doesn't work" and "it is disabled" are the same
+observation** when nothing renders the difference.
+
+### "We need to be able to edit the client" — and two things stood in the way
+
+The dialog is the easy part. Both blockers were the same shape as this
+morning's leak.
+
+**One: head office 404'd on every client URL.** `isPlatformLevel()` means
+*fleet* since ADR-0055, so a `kangaru` actor falls past that branch in
+`resolveRouteBinding()` into `TenantScope` failing closed — `where 1 = 0`. `K6`
+hit this exact trap on the **listing** and amended `CompanyService`; the
+binding was the other half and was left. Head office could see its client
+directory and could not open one row of it, so it could never correct a name it
+had typed itself. **Third sighting on this branch of a listing patched without
+its URL.**
+
+Opted in per model (`Company::headOfficeResolvesByRoute()`), defaulting to
+`false`, rather than dropping the scope in the trait: blanket would let head
+office resolve any tenant-scoped record by id — trips, bookings, invoices —
+and ADR-0062 §2 draws the line exactly there. A model joins the directory by
+saying so.
+
+**Two: `companies.registration_number` had a unique index and no unique rule.**
+Editing onto a taken number was a raw integrity-constraint 500 with no field
+attached. `UpdateCompanyRequest` now carries `unique ... ignore(self)
+withoutTrashed`, matching `OnboardClientRequest`.
+
+### What the dialog deliberately does not offer
+
+No credit limit and no status. The page's docblock draws that line for reading
+and it holds harder for writing: a credit limit is a fleet's judgement about
+its customer, and suspending a client stops them booking. Head office is not a
+party to either. **Absent rather than disabled** — a control nobody may use
+invites the question every time. Asserted as an absence, because an absence is
+what regresses silently.
+
+It sends **only what changed**. Re-asserting an unchanged registration number
+is one `ignore()` away from refusing an edit that touched only the city, and
+the error would name a field the person never went near.
+
+### Proved
+
+Both mutations bite and were restored: unique rule removed -> the collision
+test red; `headOfficeResolvesByRoute()` -> `false` -> both new tests 404.
+Backend 1748 passed, frontend 655 (68 files), `tsc -b --force` clean, Pint and
+Larastan clean on my files.
+
+Verified live, not only in tests: `GET /companies/1` as head office returns
+**200** where it returned 404 this morning.
+
+### For kangaru-45
+
+`Modules/Clients/Controllers/CompanyController.php:60` has one Larastan error,
+pre-existing and not mine: `$request->user()` is `Customer|User|null` and
+`ClientOnboardingService::onboard()` wants `?User`. Same class as the
+`DriverPayoutAccountController` one you just fixed, in the invitation path you
+own. Untouched by me.
+
+---
+
+## kangaru-1M, 24 August ~02:00 (this machine's clock; the entries above ran ahead of it) — one password floor, and a strength meter the admin app never had
+
+**Status:** claimed, in progress. Claiming before code, per `docs/screen-rules.md`.
+
+**Owner's report, verbatim:** *"we want to fix this password. we shoul have a
+strength helper as we have it in our mobile app. and also the password can be 6
+characters and above"* — against the **Give a driver a sign-in** dialog on
+`DriversPage`, which had refused `password` with *"The password field must be at
+least 12 characters."*
+
+**The two forks were put to the owner before any code, and both are answered:**
+six at **every** door, one number; and **yes**, staff and super-admin minting
+comes down with the rest.
+
+### What I found first, which is why this is not a one-line change
+
+The platform holds **three** floors, and this dialog is the strictest:
+
+| Door | Floor before |
+|---|---|
+| `StoreUserRequest` (office mints staff) | 12 |
+| `StoreDriverAccountRequest` (office mints a driver sign-in) | 12 |
+| `ChangePasswordRequest`, `PasswordResetController`, `InvitationController`, `StoreDriverApplicationRequest` | 8 |
+| `RegisterCustomerRequest` | `min:8` (a plain string rule, not `Password`) |
+| `CreateKangaruStaff` console | `Password::defaults()`, i.e. Laravel's 8, configured nowhere |
+
+Two lies already live in that spread, and neither is the owner's report:
+
+1. **`frontend/src/pages/ProfilePage.tsx:184` says "At least 12 characters"**
+   while `ChangePasswordRequest` accepts 8. A hint that overstates the rule is
+   the same class of bug as one that understates it.
+2. **This dialog's own copy** says *"Ask them to change it from their own
+   profile afterwards"* — across a 12-mint/8-change boundary, that sentence
+   sends a driver to a door with a different rule than the one they were given.
+
+### Files I own (nobody else edits)
+
+- `backend/app/Support/Auth/PasswordPolicy.php` — **new.** The number, once.
+- `backend/tests/Feature/Auth/PasswordFloorTest.php` — **new.** Pins the floor
+  at every door, so deleting the constant cannot silently restore Laravel's 8.
+- `frontend/src/components/forms/PasswordMeter.tsx` — **new.** The admin app's
+  meter; there was none. The public `OrderPage` has an inline Tailwind one, and
+  the admin app is tokens-and-`FormField`, so it cannot be shared as-is.
+- `frontend/src/components/forms/PasswordMeter.test.tsx` — **new.**
+
+### Shared files, each with the exact edit named
+
+Backend, one line each, `Password::min(N)` → `PasswordPolicy::rule()`:
+
+- `backend/Modules/Administration/Requests/StoreUserRequest.php`
+- `backend/Modules/Administration/Requests/ChangePasswordRequest.php`
+- `backend/Modules/Administration/Controllers/PasswordResetController.php`
+- `backend/Modules/Administration/Controllers/InvitationController.php`
+- `backend/Modules/Administration/Console/CreateKangaruStaff.php` (`Password::defaults()` → the same call)
+- `backend/Modules/Drivers/Requests/StoreDriverAccountRequest.php`
+- `backend/Modules/Drivers/Requests/StoreDriverApplicationRequest.php`
+- `backend/Modules/Customers/Requests/RegisterCustomerRequest.php` (also its `password.min` custom message)
+
+Frontend:
+
+- `frontend/src/auth/passwordStrength.ts` — **rewritten to the mobile version.**
+  The mobile file's own docblock says it was ported *from* this one and that a
+  change of philosophy belongs in both; the port has since gained the
+  requirements checklist, the sequential-run check and unanchored junk matching,
+  and this side never got them back. This is the back-port, plus the new floor.
+- `frontend/src/auth/passwordStrength.test.ts` — extended for the above.
+- `frontend/src/pages/DriversPage.tsx` — the sign-in dialog: hint corrected, meter added.
+- `frontend/src/pages/ProfilePage.tsx` — the "12 characters" hint, corrected; meter added.
+- `frontend/src/pages/StaffPage.tsx` — same.
+- `frontend/src/pages/AcceptInvitePage.tsx` — same.
+- `frontend/src/pages/public/OrderPage.tsx` — its inline meter keeps its Tailwind
+  skin; the hardcoded `[0,1,2,3]` becomes the scorer's exported ceiling, and the
+  checklist it can now render is rendered.
+- `mobile/src/auth/passwordRules.ts` — `MINIMUM_PASSWORD_LENGTH` 8 → 6, and the
+  docblocks that state the server's number.
+
+**Not touching**, and they are in the tree uncommitted as I write: the client
+mail work (`ClientEventNotification`, `ClientRecipient`, `ClientMailTest`,
+`InvoicePdf`, `ClientFleetController`, the `Clients` and `Notifications` edits).
+No overlap with anything above.
+
+
+### 2026-08-24 — M5 done: invoices, credit notes, and the contract request nobody was told about
+
+Five emails, one class (`ClientEventNotification`), plus `ClientRecipient` and
+an invoice PDF.
+
+## The rule this package exists for
+
+**A client has two audiences and they are different people.** A transport
+officer books cars; somebody in accounts pays the bill. Sending an invoice to
+the first is how it goes unpaid — they have no purchase-order process and no
+reason to forward what reads as a receipt for a trip they already took.
+
+So finance mail goes to `operator_clients.billing_email` and operations mail
+goes to the client's administrators. `ClientRecipient` is the one place that
+decides, and it is pinned by a test asserting the invoice reaches
+`accounts.payable@` and not `transport.officer@` — **through `InvoiceService`,
+not through `ClientRecipient`**, because proving the router works proves
+nothing about whether issuing an invoice uses it. That is kangaru-c0's
+`forActor()` lesson applied: a guard is only as deployed as its call sites.
+
+The billing address frequently has **no `users` row behind it at all**. That is
+the normal case, and it is only reachable because M4 taught the channel to
+accept an `AnonymousNotifiable`.
+
+## C11 closes a hole ADR-0060 left open
+
+§5 makes a fleet's request to serve a client **the client's decision and
+nobody else's**. It gave them no way to know they had been asked: the
+`requested` row sat in a table waiting for somebody who never opened the
+screen. Idempotent on `wasRecentlyCreated`, so a fleet reloading the form does
+not email the client every time.
+
+## The bug that would have taken an invoice down with it
+
+Attachments first carried raw PDF bytes. A queued notification is serialised
+with `json_encode`, which refuses anything that is not valid UTF-8, so the
+first real invoice threw `InvalidPayloadException: Malformed UTF-8 characters`
+— **inside `InvoiceService`**, where it would have prevented the invoice from
+existing at all.
+
+`MailContent::$attachments` now carries base64 by construction and the channel
+decodes at send time. The PDF build is also wrapped: a renderer failure logs
+and sends the email with the link alone, because a missing attachment is a
+degraded message and a missing message is a client who does not know they have
+been billed.
+
+## Deliberately still blocked
+
+**C9 and C10, the credit-limit emails.** `credit_limit_minor` exists;
+*outstanding balance* has no honest source, because there is no invoice status
+column and no payment record. Unchanged since the plan was written, and they do
+not ship with an invented figure.
+
+## Three failures in the tree that are not mine, and one thing of theirs I fixed
+
+The census and `CrossTenantAnswers404Test` are red on `PUT companies/{company}/fleets`,
+kangaru-c0's new `ClientFleetController`, mid-flight. Two password-floor tests
+are red on their new `PasswordPolicy` (they moved the floor to 6 and their own
+tests still expect 8). Reported to them; not counted against this package.
+
+They updated `InvitationController` to `PasswordPolicy::rule()` while I was
+working — correct, and exactly what their docblock describes. **They missed the
+hint on `AcceptInvitePage`**, which still said "At least 8 characters" against
+a door that now accepts six. That is the precise failure their own docblock
+names: `ProfilePage` telling staff twelve for a door that took eight. It reads
+`MIN_PASSWORD_LENGTH` now rather than restating a number, so it cannot go stale
+whatever they settle on.
+
+## Verified
+
+1752 of 1755 backend, the three above being theirs. Every suite my work touches
+is green: Clients, Billing, Notifications, Drivers, Administration — 854 tests.
+Three guards proved by mutation and restored (the billing address, the
+administrators-only recipient list, the double-click). Pint and Larastan clean
+on `Modules/Notifications`, `Modules/Billing` and my files in `Modules/Clients`.
+
+---
+
+## kangaru-1M, 24 August ~08:30 — the form was never broken, and a client can have many fleets
+
+Two owner reports, one of which reversed a decision in three files.
+
+### "Let the form work" — it worked; it was switched off
+
+Driven in a real browser first, because I had already guessed wrong once. The
+onboarding form completes end to end: the lookup fires, the fleet list fills
+with three options, the POST succeeds, the client lands in the directory, zero
+API errors. Nothing was broken.
+
+What the owner was hitting is `<fieldset disabled={lookup !== 'free'}>`. ADR-0060
+§2 asked for the number to be answered first and this form implemented it by
+switching six fields off until it was. Two reports of *"the Served by selector
+is not working"* later: the ADR's ordering is kept, the disabling is gone.
+
+The protection it was actually there for is still in place and is now where it
+bites — the number is looked up live, says **taken** before anybody types a
+profile, and onboarding is refused while it is. `OnboardClientRequest` carries
+`Rule::unique` regardless, so the server is the real gate.
+
+**The submit button is refused while the number is taken, not until it is known
+free.** An empty or half-typed number leaves it live so the browser's own
+`required` validation fires and puts the cursor in the missing field. A
+disabled button fires nothing and explains nothing — which is the same mistake
+one layer up.
+
+Keep: **"it doesn't work" and "it is disabled" are the same observation** when
+nothing renders the difference.
+
+### "We can assign multiple fleet companies" — which overturned ADR-0060 §5, on the owner's word
+
+I had built Served-by on the edit form as a **read-only fact** and flagged the
+question, because ADR-0060 §5 says the contract is *"theirs to grant, and
+nobody else's — not Kangaru's"* and `OperatorClientPolicy::end()` says head
+office *"is not a party to a contract between two other organisations."* Three
+places, all deliberate. Not mine to overturn quietly.
+
+The owner answered: head office sets the set, and can select and unselect.
+
+**What that changes and what it does not.** The ADR governed a *fleet asking*
+to serve somebody else's client, where consent must come from the client or the
+ask is not an ask. `ContractController` is untouched: a fleet still asks and
+the client still answers, and `CompanyPolicy::assignFleets` gates on the
+**level**, not a permission, so a custom role cannot be granted it. What the
+ADR did not cover is that head office already names the first fleet when it
+onboards — so it was already choosing a supplier, with no way to correct the
+choice. A client onboarded onto the wrong fleet stayed there for ever.
+
+**A set, not a diff.** `PUT /companies/{company}/fleets` takes the whole list
+and reconciles. `[1, 3]` is a statement anybody can check against the form;
+"add 3, remove 2" is a statement about history somebody has to replay.
+
+**Removing a fleet ends the contract and never deletes the row** (ADR-0060 §7).
+Deleting would strand every invoice raised under it against a relationship the
+database says never existed — quietly, because nothing joins back the other
+way. Which makes re-adding a **revival**: the pair is unique on the table, so a
+blind insert is a duplicate-key 500 the first time somebody changes their mind
+and changes it back. Both are tested.
+
+**Tick boxes, not a multi-select**, because unselecting has to be as visible as
+selecting: removing an entry from a `<select multiple>` is a ctrl-click on a
+highlighted row, the least discoverable interaction on the platform and here
+the one with the largest consequence.
+
+### The disclosure that came with it
+
+`served_by` on `CompanyResource` is **head office only**. Unconditional, it
+would tell a fleet which of its competitors also serves its client — ADR-0060
+§4's one named refusal — on the register it reads every day, with no endpoint
+added and nothing looking like a change of scope. The key is **absent, not
+empty**: `[]` reads as "nobody serves them", which is a different wrong answer.
+
+### An hour lost to a census message that named the wrong route
+
+`CrossTenantAnswers404Test` failed on `companies.fleets.update` with *"the
+owning client's Super Admin got 404"*. The route was fine — 422 in isolation.
+The loop runs the whole table against **one fixture in list order**, and
+`companies.destroy` had already soft-deleted the company. Anything listed after
+it 404s for a reason that has nothing to do with tenancy.
+
+The file already warned about this for `companies.update` and I read the
+warning after paying for it. Mine now sits beside it, with the same note.
+
+### Proved
+
+Three mutations, all restored: removal deletes instead of ends -> the row-
+survives test red; the level check dropped from `assignFleets` -> both refusals
+red; `served_by` disclosed to everybody -> the fleet-blindness test red.
+
+Backend 1767 passed. Frontend 681 across 69 files, `tsc -b --force` clean, Pint
+and Larastan clean on my files.
+
+Driven in Chrome, not only asserted: onboard is fully usable with nothing
+typed; the edit dialog's field order matches onboarding exactly; both fleets
+tick; `PUT /companies/1/fleets {"operator_ids":[1,2]}`; reopening shows both
+still ticked. No console errors and no failed requests.
+
+### Not mine, and left alone
+
+The two red password-floor tests (`PasswordResetTest`, `DriverApplicationTest`)
+are kangaru-aa's in-flight `PasswordPolicy::MINIMUM_LENGTH = 6`. kangaru-45
+attributed the `InvitationController` change to me; it is not mine either.
+
+`docs/api/openapi.yaml` holds three agents' edits at once. I staged **only my
+own hunks**, through the index rather than `git add`, so kangaru-aa's five
+`minLength: 6` entries stay uncommitted and theirs. Same discipline as staging
+by explicit path, one level down — and worth writing down, because `git add` on
+that file would have swept them silently.
+
+---
+
+## kangaru-1M, 24 August ~09:30 — a Verify button on a verified document
+
+Owner: *"i remember adding the verify, reject buttons on this as well. and also
+on this we are still having very button yet the document is verified"*.
+
+They were right on both counts, and both were the **driver** documents dialog
+having missed changes the **applications** queue already had.
+
+### The verdict a document already holds
+
+`DocumentRow` rendered Verify and Reject on every held row, so a document
+badged **Verified** sat beside a button whose only effect would be to rewrite
+the row with what it already said. From the outside that does not read as a
+spare control — it reads as the badge being wrong.
+
+`ApplicationDocuments` already gates, and its comment says why in the same
+words the owner used: *"'Accept' on something already accepted invites a
+reviewer"*. That surface got the fix; this one never did.
+
+**The other verdict stays, in both directions.** Hiding both would satisfy the
+report and leave an office that verified a forged licence with no way to say so
+short of waiting for a replacement. `DriverDocumentService::verify()` clears
+`rejection_reason` *"so a document rejected and later accepted does not carry
+the old objection"* — reversal is a designed flow, not an edge case, and the
+endpoints carry no state guard.
+
+**Reads `status`, not `compliance_state`** — the opposite of the badge two
+elements above it, deliberately. These buttons write `status`, so `status` is
+what decides whether writing it would change anything. An expired document is
+`status: verified`, and verifying it again moves its expiry date not at all;
+Replace is the fix and Replace is already on the row.
+
+### The viewer had an actions slot and was never given one
+
+`MediaPreview` has carried `actions` since the applications queue got it, with
+a docblock arguing the case: *"judging a document and acting on it are the same
+moment."* This dialog passed `source`, `browse`, `onClose` and nothing else. So
+the office reviewing six papers opened one, decided, closed it, found the row
+again and pressed a button — the five steps that slot exists to remove, on the
+surface where six documents are actually worked through in one sitting.
+
+### A test of mine that survived the deletion of its own subject
+
+Worth more than either fix. *"records the verdict from the viewer"* clicked
+`verify[verify.length - 1]` — "the last Verify in the tree" — and **passed with
+the `actions` prop removed entirely**, because it was then clicking the row's
+button and asserting the row's request. Only the mutation showed it. It is
+scoped to `.kr-media__footer` now.
+
+Same family as this branch's other three: an assertion aimed at the wrong
+layer. A test that survives the deletion of the thing it is about is not a test.
+
+### Proved
+
+Mutations, both restored: row gating removed -> 3 red; the `actions` prop
+removed -> both viewer tests red (after the scoping fix; before it, only one).
+
+22 tests in `pages/drivers`. Driven in Chrome as the Najjemba fleet owner: six
+documents badged Verified, **zero Verify buttons** where there were six, six
+Reject still offered, and the viewer footer reading `1 of 6 | Reject | Close`.
+No console errors, no failed requests.
+
+### Two things found on the way, neither a bug in this change
+
+- **There are two drivers named MIIRO RIO AKRAM** — id 20 on Shanitah with no
+  documents, id 21 on Najjemba with the six. Signed in as Shanitah I saw only
+  20 and its empty slots, which is `7c9a07d` working, and which is also why the
+  first two browser runs looked like a regression and were not.
+- **Acting-as is time-boxed, not per-tab.** A driver script that impersonates
+  and exits leaves the session standing, so the next run signs in as head
+  office and arrives as somebody else with no page explaining why. The scripts
+  now press Stop first. Four probe tokens revoked.
+
+### 2026-08-24 — M6 done. The mail plan is complete, M0 through M6.
+
+Seven office emails, the preferences screen, and two gaps that had been
+recorded as open for weeks.
+
+## `fleets_without_an_account` is an alert now, not a number
+
+The worklog has carried this since `K4`: *"a number on a dashboard, not an
+alert. If ADR-0059 §5's invariant breaks, somebody has to be looking."*
+`fleets:alert-without-accounts` runs daily and is the somebody. It repeats
+until fixed, deliberately: this is a broken invariant, not a queue item, and
+until it is fixed the platform has a fleet nobody can support.
+
+**It found something while being tested.** The base migration creates Shanitah
+with no accounts, so a fresh database is already in the broken state and this
+alert fires on day one of any new deployment. Correctly — the invariant
+genuinely is false until somebody is invited. Worth knowing before somebody
+reads the first alert as a bug.
+
+## `MailDelivery::consecutiveFailures()` is consulted now
+
+Written in M0 with a docblock explaining what it was for and **called by
+nothing** — the same shape as `recoveryCodesAreLow()` before M3 and
+`ReferralService::rewardMinor()` today. Three consecutive transport failures
+now report to Sentry.
+
+Not an email, and that is the point: the transport that would carry it is the
+thing that has failed.
+
+## The footer link went nowhere for six packages
+
+**Every email since M1 carries "Choose which emails you get" pointing at
+`/settings/notifications`, and there was nothing there.** That is exactly the
+shape `StoreUserRequest` refused to ship an invite flow as: a link to nowhere
+is worse than no link, because it tells the reader they can stop these emails
+and then proves they cannot.
+
+`MailPreference` has existed since M0 with no UI and no endpoint. Both exist
+now, and the screen reports the two silencers it does not own — required types,
+and the platform switch — so nobody hunts for a control that is already off.
+
+## `OfficeRecipient` carries M6's one rule
+
+**An email about a fleet's operations goes to that fleet and to nobody else.**
+One class resolves every office recipient, so the guard is written once rather
+than re-derived at fifteen send sites. That is kangaru-c0's finding stated as a
+design rule: a guard is only as deployed as its call sites, so have one.
+
+The cross-fleet test asserts the rival's office **exists** and then that it is
+absent, in that order. An "is absent" assertion alone passes against an empty
+table.
+
+## Two positional hazards, one paid for
+
+`DriverOwnershipIsolationTest` broke in four places when I inserted two routes:
+an ordering-sensitive table, a non-driver allow list, and three hardcoded
+counts. kangaru-c0 paid an hour for the same shape in
+`CrossTenantAnswers404Test` and warned me; I still spent twenty minutes on it,
+which is the warning being worth less than it should have been.
+
+`MailKeysTest` is the guard that came out of it. The parameterised families
+build lang keys from the enum value, and `__()` returns the key when nothing
+matches — so a rename renders `mail.office.platform_fleet_has_no_account.subject`
+into somebody's subject line and every test passes. **That happened in this
+package.** It now walks the enum and fails instead.
+
+## Deliberately not built
+
+F10 (nobody took the offer) and F11 (odometer against GPS) have no clean hook:
+the dispatch expiry path re-dispatches and the exhausted case is spread across
+`advance()`, `retryUnoffered()` and a config window. They want a domain event
+that does not exist, and inventing one inside a notification package would put
+dispatch logic in the wrong module. F15's daily digest waits on
+`operators.timezone`, which does not exist.
+
+## Verified
+
+Pint and Larastan clean. Two guards proved by mutation and restored: the
+cross-fleet line, and the permission filter that keeps a driver out of the
+queue their own request created. The preferences screen driven in Chrome,
+including a platform-off row explaining itself — which is how I found that
+`PageFill` pins to 100% height and had pushed the first card out of reach.
+### Done — what shipped, and the two things worth inheriting
+
+**Status: done.** Everything claimed above was built, plus three files the claim
+did not anticipate (named below). Nothing was left half-built.
+
+#### The shape of the fix
+
+`App\Support\Auth\PasswordPolicy` holds the number once. **Nine call sites**
+read it — the eight in the claim plus `CreateKangaruStaff`, which had been
+calling `Password::defaults()` against a closure nobody registered, so it sat
+at Laravel's built-in eight by accident. Not `Password::defaults()` for the
+same reason: if the registration is ever dropped the floor silently becomes
+eight again rather than failing.
+
+The console had **no strength meter at all**. One lived inline inside the
+public `OrderPage` (Tailwind, unexported) and one in the driver app; every
+password field a member of staff touched had a box, a stale sentence, and
+nothing else. `frontend/src/components/forms/PasswordMeter.tsx` is the
+console's, and `frontend/src/auth/passwordStrength.ts` is now the driver app's
+module back-ported — the port had gained a requirements checklist, a
+sequential-run check and unanchored junk matching, and none of it had come home.
+
+#### Two guards, and the mutation that showed why both are needed
+
+Proved by mutation, restored, re-run green:
+
+| Mutation | What caught it |
+|---|---|
+| `MINIMUM_LENGTH` 6 → 8 | **Only** `it states its floor as six`. Every boundary test stayed green — they derive from the constant, so they follow it anywhere. |
+| A ninth door stating `Password::min(8)` | The census, naming the file. |
+| Checklist renders only met rules | The **count** assertion (`toHaveLength(4)`), not the `getByText` — a text assertion passes with three rules deleted. |
+| The spoken "Met:"/"Not yet:" removed | The colour-alone test (screen-rules §6). |
+
+**The inheritance:** boundary tests protect against *doors drifting apart*; a
+single literal assertion protects against *the floor moving without a
+decision*. Neither substitutes for the other, and the first mutation is the
+proof — six tests green while the platform's floor silently rose.
+
+#### The bug I shipped into two of my own fixes
+
+`PasswordResetTest` and `DriverApplicationTest` went red, and both were named
+*"holds the same eight-character floor"* with literal `'2short!'` fixtures.
+**`kangaru-c0` diagnosed it before I did** and was right: that is the same bug
+as `ProfilePage` promising "At least 12 characters" for a door that accepted
+eight — a number restated instead of read — written as an assertion instead of
+a hint. Both are now boundaries reading the constant, both sides asserted.
+
+#### Verified by running, not by assuming
+
+Driven in Chrome against the live stack as a fleet-scoped Super Admin, on the
+owner's actual screen:
+
+- empty field renders nothing; `pa` → "Too short", 0/4, "4 more characters to go."
+- **`passwo` (six) → accepted, 1/4, "Met: 6 characters or more"** — and
+  `POST /api/v1/drivers/14/account` answered **201**. The owner's report, closed
+  end to end through the UI rather than through a test.
+- `password` → named as a guess; `Kim27!ne` → Strong, 4/4, silent.
+- `abcdef` clears the floor and still reads **Weak — "Keys in order are the
+  first thing anyone tries."** This is the case that most justifies the whole
+  change: at six, a keyboard run is the likeliest thing anybody types, and the
+  check that catches it only existed in the driver app until today.
+- `my blue kettle sings` → Strong on length with two rules unticked, and the
+  one sentence that exists to explain it: *"Long enough that the rest is optional."*
+- Light **and** dark (`data-theme='dark'`), no console errors in any run.
+- `ProfilePage` no longer says "At least 12 characters" anywhere.
+
+Backend **1777 passed**, frontend **681 passed** (69 files), `tsc -b --force`
+clean, ESLint clean, Pint and Larastan clean on my files.
+
+#### Files beyond the claim
+
+- `backend/Modules/Administration/README.md` — the floor documented, with the
+  eight-places history and the fact that a ninth fails a test rather than a review.
+- `backend/tests/Feature/Administration/PasswordResetTest.php` and
+  `backend/tests/Feature/Drivers/DriverApplicationTest.php` — the two above.
+- `mobile/src/auth/passwordStrength.test.ts` and `passwordRules.test.ts` — two
+  fixtures were literals tuned to a floor of eight; now derived from the constant.
+
+#### Deliberately not built, and what is not mine
+
+- **No complexity requirement.** There never was one at any door, and adding
+  one alongside a lower floor would be a different decision than the one the
+  owner made. The meter teaches; the server counts characters.
+- **`OrderPage`'s meter keeps its Tailwind skin.** Same scorer — the part that
+  carries the judgement — different skin, which carries nothing. Merging them
+  would drag console tokens into the public marketing bundle.
+- **The dialog's three-sentence description is untouched**, and it is a
+  screen-rules §9 problem: *"They sign in with the password you set here, and
+  can then accept trips and record odometer readings."* explains the screen.
+  Out of scope for a password fix and a real finding for whoever owns that dialog.
+- **`kangaru-45`'s `AcceptInvitePage` edit was kept, not overwritten.** Their
+  `minLength={MIN_PASSWORD_LENGTH}` stays and is credited in the comment. I
+  dropped only their `hint`, because the meter's checklist now says "6
+  characters or more" two lines below it — the rule stated twice.
+
+#### Two things for other agents
+
+1. **`Tests\Feature\Drivers\DriverApplicationTest > it creates an account that
+   signs in and reaches nothing` is red, and it is the mail work, not mine.**
+   An applicant reaches `GET /api/v1/me/mail-preferences` and gets data. That
+   census exists so a new route defaults to *shut*; the route needs to be empty
+   for an applicant or listed with a reason. It is the only failure on a clean
+   solo run of 1778.
+2. **`InvitationService.php` and `MfaService.php` fail `pint --test`** and are
+   committed, unmodified, and not mine. Pre-existing on this branch.
+
+#### The re-run rule, now with a second tell
+
+My first full sweep read **348 failures**; solo it was **1**. `kangaru-c0` hit
+the mirror image on the frontend — four failures, every one at exactly 20
+seconds. **A wild failure count is a database collision; a wall of 20-second
+durations is load.** Neither is a bug and both look exactly like one. We are on
+`_pw`, `_1m` and `_mail` now, which fixes the first; only patience fixes the second.
+
+
+---
+
+## kangaru-1M, 24 August ~10:45 — the booking dialog, and a leak the calendar opened
+
+Owner asked for three things on **New booking**, and the third turned over a
+live cross-fleet disclosure.
+
+### 1. The crosshair on Pick-up
+
+`PlaceField` gains an opt-in `locatable`. It goes through the same `take()` a
+suggestion does, so the position lands as a **picked place with coordinates** —
+which is the whole point. A pickup reading "Current location" with no point
+behind it is exactly the no-coordinates booking that component was built to
+stop.
+
+`currentLocationPlace()` already existed and never rejects: a refused prompt, a
+timeout or a geocoder outage all resolve to null and the field is left as the
+person had it. That is the entire error handling, deliberately — there is
+nothing useful to say about a browser permission the page cannot grant itself.
+
+Pick-up only. Nobody orders a car to where they already are.
+
+### 2. Destination now suggests, like Pick-up
+
+It was a bare `Input`, so a destination was whatever a dispatcher typed at
+speed on a phone call — *"muko"*, *"Mukono town"*, *"mukono tc"* — three
+spellings of one place that no report can add up.
+
+**Not Google**, and not a new dependency: `searchPlaces` is Mapbox where a
+token is configured and Photon otherwise. Adding a paid geocoder is the
+owner's call, not a side effect of this.
+
+The resolved place is **not sent**: `bookings` carries `origin_latitude` /
+`origin_longitude` and no destination pair, and inventing one here would mean a
+column, a migration and a decision about what the matcher does with it. The
+value today is the address spelled the way the geocoder spells it.
+
+### 3. The staff search — and the leak underneath it
+
+`/colleagues` answered `[]` to every platform-level actor, with a sound reason:
+*"`forActor` would drop the scope and answer with every client's directory."*
+
+It would have. `User::scopeForActor`'s fleet branch read
+`orWhereNotNull('users.tenant_id')` — **every client's staff, for every
+fleet** — under a comment saying *"F2 narrows the second half to the clients
+this fleet actually contracts with; today one fleet serves all of them, so this
+is behaviour for behaviour what it replaced."*
+
+**That premise expired on 23 August**, when Najjemba was onboarded. From that
+moment a rival fleet's dispatcher could read the name, email and phone of every
+employee of every client on the platform — ADR-0060 §4's named refusal, reached
+through the staff list rather than the client register I had already narrowed
+that morning.
+
+Narrowed to `OperatorClient::servedBy()`, which is **active contracts only**: a
+fleet that has merely asked to serve a client reads none of their people, since
+asking grants no read.
+
+With that fixed the endpoint can answer honestly, so the dispatcher taking a
+call from a bank names the employee instead of typing a name three people spell
+three ways. `whereNotNull('tenant_id')` keeps the original intent — a fleet's
+own staff are not passengers — and gives head office an empty list out of the
+predicate rather than out of a level check.
+
+**The guard that shipped anyway.** The branch two comments up already warned:
+*"nothing leaks today because there is one fleet, which is exactly the kind of
+gap that ships."* It shipped. A guard deferred to a condition nobody is
+watching arrives after the thing it was for — and the test could not catch it
+either: with one client and one contract-free tenant, *"keeping its clients
+visible"* passed on a predicate that kept **everybody's** clients visible.
+
+### 4. And the prefill that deleted numbers
+
+Owner, mid-session: *"the contact should be loaded automatically from the
+selected passenger."* It was — and it also **cleared** one.
+`passenger_phone` was set to `picked?.phone ?? ''` on every pick, and every
+client account on this database has a null `phone`, so picking a passenger
+emptied a box the dispatcher may have filled from the caller thirty seconds
+earlier.
+
+Not fixed by never clearing, because the failure that guarded is worse: Alice's
+number left under Bob's name sends a car out and has the driver ring the wrong
+person, with nothing on screen looking wrong. One flag settles both — **clear
+only what the prefill wrote, never what a person typed.**
+
+Worth saying plainly to the owner: the wiring was always right. Those accounts
+have no number stored. `StoreUserRequest` has required `phone` for a while, so
+anybody added since has one; the seeded staff predate it.
+
+### Proved
+
+Mutations, all restored: the narrowing reverted -> 3 red (and *"offers a
+dispatcher the staff of a client their fleet serves"* stayed green, so the
+guard is not merely refusing everybody); the prefill reverted -> 1 red, the
+other two green, so the fix is targeted.
+
+Backend **1781 passed**. Frontend **690** across 69 files, `tsc -b --force`
+clean, Pint and Larastan clean on my files.
+
+Driven in Chrome as Shanitah's Super Admin: crosshair present on Pick-up;
+pick-up and destination return identical suggestions for "mukono"; the
+passenger box searches and returns the two client staff of the tenants Shanitah
+serves; `GET /colleagues?q=Staff`; no console errors and no failed requests.
+
+### One wording fix found by looking at it
+
+The passenger box said **"Search your colleagues"** to a dispatcher, who is
+searching somebody else's staff. It now reads *"Search a client's staff"* for a
+fleet actor. One word, and getting it wrong tells a fleet's desk it is about to
+book a car for one of its own drivers.
+
+### 2026-08-24 — Five ways a green check proved nothing, from three sessions
+
+`kangaru-c0` and `kangaru-aa` have both ended. This is the transferable part of
+what the three of us found in one day, written here because the messages it was
+learned in are gone and the next agent will otherwise find it the same way.
+
+**One sentence covers four of the five:** *a test that survives the deletion of
+the thing it is about is not a test.*
+
+| Shape | Found in | How it looked |
+|---|---|---|
+| A scope with no call sites | `User::scopeForActor` | `CrossFleetIsolationTest` proved the scope four ways by calling it **directly**. The listings never went through it. |
+| A call site the code did not recognise as a caller | `SettingsMailChannel` | Returned early for anything not a `User`. **Every email to an applicant was dropped for six packages** — the one population with no inbox and no app, only the address they typed. |
+| A constant restated instead of read | the password floor | Lived in eight places and disagreed with itself in three. Two user-visible lies shipped from it. |
+| An assertion whose selector matched something else | the driver documents dialog | `verify[verify.length - 1]` passed **with the feature deleted**, because it then clicked the row's button and asserted the row's request. |
+| A check that inspected nothing | `pint --dirty` | Inspects files changed against HEAD. After a commit they are clean, so a violation introduced in one package is invisible to every package after it. Mine lived through four. |
+
+**The fifth is different and is the one worth the most.** `scopeForActor`
+carried a comment saying *"today one fleet serves all of them"* and *"nothing
+leaks today because there is one fleet, which is exactly the kind of gap that
+ships."* It was **correct when written**. Najjemba was onboarded on 23 August
+and from that moment a rival dispatcher could read every client's staff.
+
+No mutation catches that. The code did not change; the world did. The only
+defence anybody proposed: **a comment saying "true while X" should be a test
+asserting X**, so the day X stops being true something goes red. A test
+asserting the platform had exactly one operator would have failed on 23 August
+and sent somebody to read that comment.
+
+## Two practices worth copying
+
+**Pin a constant twice.** kangaru-aa moved `PasswordPolicy::MINIMUM_LENGTH`
+from 6 to 8 and **every boundary test stayed green**, because each derived from
+the constant and followed it anywhere. Only one literal assertion caught it.
+They do different jobs: boundaries catch **the code drifting away from the
+constant**, one literal catches **the constant moving without a decision**.
+`SettingsMailChannelTest` now does both for `OUTAGE_THRESHOLD`, and both halves
+are proved by mutation.
+
+**Stage the shared spec file through the index, not by path.**
+`docs/api/openapi.yaml` had three agents' hunks in it at once and `git add`
+would have taken all of them. Build HEAD plus your own block into a temp file,
+`git hash-object -w`, then
+`git update-index --cacheinfo 100644,<blob>,docs/api/openapi.yaml`. Stages
+exactly yours and leaves everyone else's in the working tree. It needs no
+coordination, which is why it beats taking turns. Used for `4047a47`; verified
+afterwards that the other twelve lines were still there.
+
+## Two operational signatures, so nobody debugs them as bugs
+
+- **A wild failure count** (348, 485) is a database collision, not breakage.
+  Somebody is mid `migrate:fresh`, or **you are colliding with yourself** — I
+  produced 485 `QueryException`s by leaving a suite running in the background
+  and starting another against the same database. A distinct `DB_DATABASE=` on
+  the pest command fixes the first; only discipline fixes the second.
+- **A wall of exactly-20-second durations** is load, not breakage. Three agents
+  on one machine. Re-run the file alone before believing it.
+
+Also: acting-as is time-boxed rather than per-tab, so a browser script that
+impersonates and exits leaves the session standing. The next run signs in as
+head office and silently arrives as somebody else. Check
+`ImpersonationSession::live()` before driving the console.
+
+### 2026-08-24 — Service types on bookings: ride, delivery, self-drive for the desk and the client
+
+**Status: in progress.** Owner's ask: fleet admin and corporate client must be
+able to book all three services, which today only the public walk-in form
+offers — and the fleet admin books **for a corporate client** (their words),
+which is also the fix for the older gap `ColleagueBookingTest` records:
+`bookings.tenant_id` is NOT NULL, a platform actor has no tenant, so the
+internal booking endpoint has never served the desk at all.
+
+**Files owned — do not edit:**
+
+- `backend/database/migrations/2026_08_24_150000_add_service_type_to_bookings_table.php` (new)
+- `backend/Modules/Bookings/Support/BookingDetails.php` (new)
+- `backend/Modules/Bookings/Requests/StoreBookingRequest.php`
+- `backend/Modules/Bookings/Requests/BookingIndexRequest.php`
+- `backend/Modules/Bookings/Controllers/BookingController.php`
+- `backend/Modules/Bookings/Services/BookingService.php`
+- `backend/Modules/Bookings/Models/Booking.php`
+- `backend/Modules/Bookings/Resources/BookingResource.php`
+- `backend/Modules/Bookings/Enums/OrderRequestServiceType.php` (docblock only)
+- `backend/Modules/Bookings/README.md`
+- `backend/Modules/Dispatch/Services/DispatchService.php` (service-type guard in assign)
+- `backend/Modules/Dispatch/Services/BookingNotDispatchableException.php` (new)
+- `backend/Modules/Dispatch/Controllers/DispatchController.php` (catch mapping only)
+- `backend/Modules/Notifications/Notifications/BookingApprovedNotification.php`
+- `backend/Modules/Notifications/Notifications/BookingRejectedNotification.php`
+- `backend/Modules/Administration/Controllers/ColleagueController.php` (tenant narrowing)
+- `backend/Modules/Administration/Requests/ColleagueIndexRequest.php`
+- `backend/tests/Feature/Bookings/BookingServiceTypeTest.php` (new)
+- `backend/tests/Feature/Bookings/FleetCreatedBookingTest.php` (new)
+- `frontend/src/types/booking.ts`
+- `frontend/src/pages/BookingsPage.tsx`
+- `frontend/src/pages/BookingsPage.test.tsx`
+- `docs/adr/0064-three-services-on-a-booking.md` (new)
+
+**Shared files, minimal additive edits:** `docs/api/openapi.yaml` (Booking
+schema + POST /bookings + filters; staged via hash-object if committed),
+this file.
+
+**Not building in this pass, named:** driver-app surfacing of parcel details
+on booking-created delivery trips (OrderDetails reads order_requests only);
+a fulfilment flow for approved self-drive bookings beyond refusing driver
+assignment; booking edit/PATCH.
+
+#### Closed — same day
+
+**Status: done.** Backend 534 tests green across Bookings, Dispatch, Clients,
+Notifications and Administration (17 of them new, in
+`BookingServiceTypeTest` and `FleetCreatedBookingTest`); frontend 695 green
+across 69 files (5 new dialog/table cases); `tsc -b --force`, eslint, Pint
+and Larastan clean on everything touched. openapi.yaml updated — the
+contract validator is what turned nine tests red until it was.
+
+**Proved by mutation, all restored:** the assign() service guard (red), the
+BookingDetails write narrowing (red), the served-client check (red — the
+byte-identical assertion is what caught it), the dispatchable whereIn (red),
+and the frontend rental payload builder (red on `origin` leaking in).
+
+**Driven in real Chrome** (playwright-core + system Chrome, Vite on 5173
+reused): as Dispatch Desk — dialog opens on Ride with the client picker,
+Delivery shows sender/recipient/parcel fields, Self-drive shows hire dates
+and no route; a real self-drive booking for Centenary Bank was created,
+found via the queue search, and then read from the corporate admin's own
+queue with Approve/Reject offered. No console errors, no failed requests.
+The duplicate row from a first timed-out run was deleted; booking 77 stays
+as demo data.
+
+**Files touched beyond the claim, all small and additive:**
+`backend/app/Enums/ErrorCode.php` (one case), `frontend/src/lib/useColleagueSearch.ts`
+and `frontend/src/components/forms/ColleagueField.tsx` (optional `tenantId`
++ `label` props, defaults preserve old behaviour),
+`frontend/src/pages/DispatchPage.test.tsx` and `CrossClientQueue.test.tsx`
+(two lines each: the Booking factory learned `service_type`/`details`),
+`frontend/src/components/core/iconRegistry.ts` (regenerated for `package`).
+
+**Deliberately not built, so nobody rebuilds it badly:** driver-app parcel
+details for booking-created deliveries (drivers get route + notes;
+`OrderDetails` reads order_requests only — ADR-0064 consequences names the
+follow-on); any self-drive fulfilment past Approved (no handover/return
+flow — only the two guards that keep a driver away from it); a
+served-clients-only option list for the dialog (it reuses
+`meta.filters.clients`, i.e. every client, and the server refuses unserved
+ones — fine at one fleet, named in the ADR for when there are more).
+
+#### Addendum, same day — three refinements from the owner watching the form
+
+1. **Contact number auto-fills from the picked colleague, server-side too.**
+   The dialog already prefilled it; `StoreBookingRequest::prepareForValidation`
+   now merges the named colleague's saved number when none was typed, so the
+   API keeps the promise the screen makes. A typed number still wins. The
+   demo accounts that made the prefill look broken had no numbers saved —
+   `DatabaseSeeder`/`DemoFleetSeeder` now seed phones, and the five
+   numberless client accounts on the dev DB were backfilled by hand.
+2. **Pickup time prefills to the current minute.** `pickupTimeForPayload()`
+   sends null for the untouched prefill, a cleared box, or a choice within
+   five minutes of submit — the owner hit the exact "must be in the future"
+   422 that sending a prefilled clock verbatim produces. A far-past choice
+   still goes to the server to be refused loudly (a typo is not "now").
+3. **The client dropdown offers only assigned clients.**
+   `ClientOptions::bookableBy` (active contracts) feeds a new
+   `meta.bookable_clients` on /bookings; the dialog reads it instead of
+   `filters.clients`, which stays wider for filtering history. The ADR-0064
+   consequence naming this gap is closed.
+
+Five new backend tests (FleetCreatedBookingTest) and three new/updated
+frontend tests. Mutations, all restored: phone fallback off -> red;
+bookableBy unfiltered -> red; means-now window zeroed -> red; dialog fed the
+wide list -> red. Backend 581 green across the five touched modules,
+frontend 74 across the four booking-adjacent files, tsc/eslint/Pint clean;
+Larastan clean on in-scope files (two pre-existing errors in
+DemoFleetSeeder are outside phpstan.neon's paths and untouched lines).
+Demonstrated live for the owner in headed Chrome: served-clients dropdown,
+phone auto-fill on pick, prefilled pickup time, a delivery created and then
+read from the corporate admin''s queue. One throttle 429 mid-demo was the
+auth rate limiter meeting repeated scripted logins, not a bug.
+
+#### Second addendum — why "orders are not sent to the driver", demonstrated live
+
+The owner watched orders being created and asked why the emulator''s boda
+driver never heard about them. Two causes, both shown on screen:
+
+1. **By design, a booking reaches a driver through Dispatch.** Walk-in
+   orders auto-offer (ADR-0024); internal bookings are assigned by the desk
+   because approvals and client vehicle contracts (ADR-0009) sit between.
+   Demonstrated: dispatch board -> the delivery -> assign -> **trip 95,
+   assigned, driver 17** — on the emulator.
+2. **The emulator''s driver was stuck mid-ride** on a stale walk-in (trip
+   76, passenger_onboard, no booking). A driver on a live trip is offered
+   nothing. Cancelled via the state machine with a note.
+
+Three pre-existing gaps found by driving it, NOT fixed here:
+
+- `/bookings/{id}/candidate-vehicles` offers the driver-owned boda
+  (vehicle 23) but `/vehicles` does not list it, so picking it leaves the
+  Assign button dead — candidates and the fleet list disagree about the
+  pool.
+- `DispatchPage` never collects `allocation_override_reason`, so passing
+  over a contracted vehicle is impossible from the UI; the server''s
+  considered 422 renders as a generic banner.
+- The dispatch board does not show `service_type` — the delivery read as a
+  ride to the dispatcher.
+
+Also operational: repeated scripted logins meet the auth throttle (5/min);
+the demo scripts now persist a storage state instead of re-logging in.
+
+#### Third addendum — the assignment now reaches the driver (ADR-0064)
+
+The owner watched the assigned delivery and reported *"there is nothing
+happening"* on the emulator, app open or backgrounded. True, and by
+omission: an `assigned` trip surfaced only in the Trips list''s Upcoming
+group; the home screen starts its active card at `accepted`; nothing pushed.
+The trips poll was delivering the data to a screen that never showed it.
+
+**Built:**
+
+- `NotificationType::DRIVER_TRIP_ASSIGNED` (`driver.trip.assigned`),
+  database + push, never mail; not the offer ringtone — its docblock argues
+  why an assignment keeps where an offer interrupts. `pushOptions` ttl 4h so
+  a dead-zone handset never rings for a job the desk re-dispatched.
+- `DriverTripAssignedNotification` — route only in the body (ADR-0024 §7:
+  no passenger name before accept), trip id in context.
+- `SendDriverTripAssignedNotification` listener on `TripStatusChanged`
+  (creation into Assigned, booking-backed only, driver must have a user).
+  Registered beside `SendTripProgressNotification` in AppServiceProvider —
+  the requester''s half of the same moment.
+- Mobile `AssignedTripCard` on HomeScreen: ActiveTripCard''s shape without
+  the map (no leg to draw before the driver answers), rendered after the
+  active card, tapping to TripDetail where Accept/Decline live.
+
+**Proved:** 3 new backend tests (route-only body; account-less driver =
+requester only; walk-in = nothing) + 2 new HomeScreen tests (card renders
+and routes to TripDetail; absent when nothing is unanswered). Mutations
+restored: card selector nulled -> red; walk-in guard removed -> red.
+Notifications suite 70 green, pint + larastan clean, mobile tsc clean,
+HomeScreen jest 13 green.
+
+**Found, named, not fixed:** the emulator''s signed-in driver (user 10) has
+no device token — the only registered handset is user 8 — so push will not
+reach that handset until the app re-registers its token; the in-app card
+and inbox row carry it meanwhile. Earlier findings (candidate/fleet vehicle
+list mismatch, no override-reason input on DispatchPage, no service type on
+the dispatch board) still stand.
+
+#### Pushed, and CI is red for reasons that are not all mine
+
+`5030b4f` (the ADR-0064 work) and `ea9da33` (two CI fixes) are on
+`origin/feat/driver-app-screens-and-earnings`. **Do not deploy yet.**
+
+**The push carried four commits that had never reached the remote** —
+`73298c4`, `99b8c93`, `20e600f`, `dfee9a5` — so this is the first CI has seen
+them. The last green run (`32664238211`) was on `7b2e416`, a different
+lineage; "the branch was green before" is not a fact anybody should lean on.
+
+**Staging the shared spec worked, with one correction worth copying.**
+Reconstructing HEAD + my hunks with `git apply --unidiff-zero` produced
+*valid-looking but broken YAML* (a params list spliced into a mapping). It
+passed `git apply` and failed a parse. The reliable direction is the
+opposite: start from the working file, `git apply --reverse` the *other*
+agent's hunks, parse it, then `hash-object -w` + `update-index --cacheinfo`.
+Always parse the result — `git apply` exiting 0 proves nothing about YAML.
+
+**CI now: 1794 passed, 9 failed.** Pint, Larastan, migrate, migration
+reversibility, frontend, gitleaks, smoke and rollback rehearsal all green.
+
+- **`DriverApplicationTest` — not mine, and it blocks anybody.**
+  `tests/Feature/Drivers/DriverApplicationTest.php` is *committed* and imports
+  `App\Support\Auth\PasswordPolicy`, which is *untracked*. On CI the class
+  does not exist. It already referenced it at `20303b4`. Whoever owns the
+  password-floor work: commit `PasswordPolicy` (and `PasswordFloorTest`) or
+  revert that import. Note their working tree also lowers the floor 8 -> 6 and
+  the spec with it; I deliberately kept 8 out of my commit.
+- **`DriverAppSeederTest` (8) — ModelNotFoundException, owner unproven.**
+  Chain: `DriverAppSeeder:163 seedWork -> :865 dispatch -> :1191 assign ->
+  DispatchService:60 firstOrFail`. The re-read under `TenantScope` finds
+  nothing, which means no tenant is bound (the scope fails closed, `1 = 0`).
+  What I ruled out, each by probe: my seeder phone edits (DatabaseSeeder runs
+  clean end to end); the factory (`forTenant` sets `tenant_id` correctly);
+  and the lookup itself — a booking created with a tenant bound *is* findable,
+  both standalone and after a full platform seed. **The unexamined suspect is
+  something clearing `TenantContext` mid-`seedWork`**; `releaseLiveTrips`
+  (:1514) does exactly that in a `finally` — `set(null)` rather than
+  restoring the previous value — but it is called from :1461, outside the
+  window, and predates me (`fcd1eea`). Next step is to instrument the loop at
+  :858-868 and print the bound tenant per iteration.
+  I could not prove these 8 pre-date my commit and I could not reproduce them
+  from my own changes; they are unowned until somebody runs the seeder tests
+  at `20303b4` in a worktree with its own database.
+
+**Local dev leftovers from this session, so nobody debugs them as bugs:** the
+emulator's driver app is a sideloaded 1.0.2 APK while `app.json` is 1.0.3;
+`mobile/android` was regenerated by `expo prebuild` (gitignored, so nothing
+to commit) and the Gradle build was killed before producing an APK. Customer
+`rio@armgenius.com` has a reset password on the dev database only.

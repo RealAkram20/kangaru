@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 // `makeUser()`, not a `{ permissions: [...] }` literal. `renderAs` takes a
@@ -311,4 +311,149 @@ describe('filing and browsing', () => {
   })
 })
 
+})
+
+/**
+ * The owner's report, 24 August: *"we are still having verify button yet the
+ * document is verified"*.
+ *
+ * Both verdicts rendered on every held row, so a document badged **Verified**
+ * sat beside a button whose only effect would be to rewrite the row with what
+ * it already said. Read from the outside that is not a spare control — it is
+ * the badge appearing to be wrong.
+ */
+describe('the verdict a document already holds', () => {
+  const verified = () =>
+    slot({
+      document: {
+        ...(slot().document as NonNullable<DriverDocumentSlot['document']>),
+        status: 'verified',
+        status_label: 'Verified',
+        compliance_state: 'verified',
+      },
+    })
+
+  it('offers no Verify on a document that is already verified', async () => {
+    get.mockResolvedValue(apiOk([verified()]))
+
+    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, makeUser())
+
+    expect(await screen.findByText('Verified')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^verify$/i })).toBeNull()
+  })
+
+  /**
+   * The other half, and the reason this is a pair rather than one assertion:
+   * hiding both would pass the test above and leave an office that verified a
+   * forged licence with no way to say so short of waiting for a replacement.
+   *
+   * `DriverDocumentService::verify()` clears `rejection_reason` on purpose,
+   * *"so a document rejected and later accepted does not carry the old
+   * objection"* — reversal is a designed flow, not an edge case.
+   */
+  it('still offers Reject on a verified document, so a decision can be reversed', async () => {
+    get.mockResolvedValue(apiOk([verified()]))
+
+    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, makeUser())
+
+    expect(await screen.findByRole('button', { name: /^reject$/i })).toBeInTheDocument()
+  })
+
+  it('offers no Reject on a rejected document, and does offer Verify', async () => {
+    get.mockResolvedValue(
+      apiOk([
+        slot({
+          document: {
+            ...(slot().document as NonNullable<DriverDocumentSlot['document']>),
+            status: 'rejected',
+            status_label: 'Rejected',
+            compliance_state: 'rejected',
+            rejection_reason: 'The photograph is unreadable.',
+          },
+        }),
+      ]),
+    )
+
+    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, makeUser())
+
+    expect(await screen.findByRole('button', { name: /^verify$/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^reject$/i })).toBeNull()
+  })
+
+  /**
+   * An expired document is `status: verified` with `compliance_state: expired`,
+   * which is why the buttons read `status` and the badge reads
+   * `compliance_state`. Verifying it again would not move its expiry date by a
+   * day; Replace is what fixes it, and Replace is already on the row.
+   */
+  it('offers no Verify on an expired document either, because verifying changes nothing', async () => {
+    get.mockResolvedValue(
+      apiOk([
+        slot({
+          document: {
+            ...(slot().document as NonNullable<DriverDocumentSlot['document']>),
+            status: 'verified',
+            status_label: 'Verified',
+            compliance_state: 'expired',
+            expires_at: '2026-01-01',
+            expired: true,
+          },
+        }),
+      ]),
+    )
+
+    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, makeUser())
+
+    expect(await screen.findByText('Expired')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^verify$/i })).toBeNull()
+    expect(screen.getByRole('button', { name: /^replace$/i })).toBeInTheDocument()
+  })
+})
+
+/**
+ * `MediaPreview` has carried an `actions` slot since the applications queue
+ * got one, and its docblock argues the case: *"judging a document and acting
+ * on it are the same moment."* This dialog never passed it, so the office
+ * reviewing six papers opened one, decided, closed it, found the row again and
+ * pressed a button — the five steps that slot exists to remove, on the surface
+ * where six documents are actually worked through in one sitting.
+ */
+describe('deciding without closing the document', () => {
+  it('carries the verdicts inside the viewer', async () => {
+    get.mockResolvedValue(apiOk([slot()]))
+
+    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, makeUser())
+
+    await userEvent.click(await screen.findByRole('button', { name: /^view$/i }))
+
+    // Two of each now — the row's pair and the viewer's — which is itself the
+    // assertion: before this the viewer had none.
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /^verify$/i })).toHaveLength(2))
+    expect(screen.getAllByRole('button', { name: /^reject$/i })).toHaveLength(2)
+  })
+
+  it('records the verdict from the viewer against the document on screen', async () => {
+    get.mockResolvedValue(apiOk([slot()]))
+    post.mockResolvedValue(apiOk({}))
+
+    renderAs(<DriverDocumentsDialog driver={driver()} onClose={() => {}} />, makeUser())
+
+    await userEvent.click(await screen.findByRole('button', { name: /^view$/i }))
+
+    // Scoped to the viewer's own footer, not "the last Verify in the tree".
+    // The loose version passed with the actions prop removed entirely - it was
+    // clicking the row's button and asserting the row's request. A test that
+    // survives the deletion of the thing it is about is not a test.
+    const footer = await waitFor(() => {
+      const node = window.document.querySelector('.kr-media__footer')
+      if (node === null) throw new Error('the viewer footer never rendered')
+      return node as HTMLElement
+    })
+
+    await userEvent.click(within(footer).getByRole('button', { name: /^verify$/i }))
+
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith('/drivers/3/documents/11/verify', undefined),
+    )
+  })
 })

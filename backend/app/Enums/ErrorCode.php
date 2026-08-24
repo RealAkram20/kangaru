@@ -27,6 +27,14 @@ enum ErrorCode: string
     case INVALID_TRIP_TRANSITION = 'INVALID_TRIP_TRANSITION';
     case INVALID_BOOKING_TRANSITION = 'INVALID_BOOKING_TRANSITION';
     case INVALID_ORDER_REQUEST_TRANSITION = 'INVALID_ORDER_REQUEST_TRANSITION';
+
+    /**
+     * The booking's service never takes a driver (ADR-0064): a self-drive
+     * rental is a vehicle handed over, not a journey somebody is sent on.
+     * A conflict rather than a validation failure — the ids were
+     * well-formed, the booking is simply not that kind of work.
+     */
+    case BOOKING_NOT_DISPATCHABLE = 'BOOKING_NOT_DISPATCHABLE';
     case VEHICLE_UNAVAILABLE = 'VEHICLE_UNAVAILABLE';
     case DRIVER_UNAVAILABLE = 'DRIVER_UNAVAILABLE';
     case REPORT_TOO_LARGE = 'REPORT_TOO_LARGE';
@@ -287,5 +295,28 @@ enum ErrorCode: string
     /** ADR-0043. One open closure request per driver; withdraw it to change it. */
     case CLOSURE_REQUEST_ALREADY_OPEN = 'CLOSURE_REQUEST_ALREADY_OPEN';
     /** ADR-0043. A second reviewer answering a queue row a colleague just answered. */
+    /**
+     * The invitation link has already been used (mail plan M2).
+     *
+     * Separate from `INVITATION_EXPIRED` because the two send the reader to
+     * different places, and a client that could not tell them apart would send
+     * both to the same one. Somebody who already accepted needs the sign-in
+     * screen. Somebody whose link lapsed needs a colleague to send a new one,
+     * and telling the first person that has them chasing an email they do not
+     * need.
+     */
+    case INVITATION_ALREADY_USED = 'INVITATION_ALREADY_USED';
+
+    /**
+     * The invitation link has lapsed, or the account was suspended after it
+     * went out (mail plan M2).
+     *
+     * Both answer the same way on purpose. A suspended account is one somebody
+     * decided should not be used, and an invitation issued before that
+     * decision must not be the way around it; saying so would confirm the
+     * suspension to whoever is holding the link.
+     */
+    case INVITATION_EXPIRED = 'INVITATION_EXPIRED';
+
     case CLOSURE_REQUEST_ALREADY_DECIDED = 'CLOSURE_REQUEST_ALREADY_DECIDED';
 }

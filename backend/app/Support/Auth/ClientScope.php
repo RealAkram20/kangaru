@@ -246,6 +246,24 @@ final class ClientScope
                 'me.devices.store',
                 'me.devices.destroy',
 
+                /*
+                 * Which of those emails they want (mail plan M6).
+                 *
+                 * On the driver's list rather than the console's alone,
+                 * because **drivers are the audience for a third of the
+                 * emails this platform sends**: a document expiring, a
+                 * settlement answered, a weekly bonus. Every one of those
+                 * carries a footer link to this screen, and a link that 403s
+                 * for the app it was sent to is the same broken promise as a
+                 * link that 404s.
+                 *
+                 * Reading and writing only their own: the routes take no id
+                 * and scope to the token, which is the property that makes
+                 * them safe here at all.
+                 */
+                'me.mail-preferences.index',
+                'me.mail-preferences.update',
+
                 // Their inbox.
                 'notifications.index',
                 'notifications.read',

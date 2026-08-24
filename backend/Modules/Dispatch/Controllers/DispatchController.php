@@ -16,6 +16,7 @@ use Modules\Dispatch\Resources\CandidateVehicleResource;
 use Modules\Dispatch\Resources\DispatchSuggestionResource;
 use Modules\Dispatch\Services\AllocationExclusiveException;
 use Modules\Dispatch\Services\AllocationOverrideRequiredException;
+use Modules\Dispatch\Services\BookingNotDispatchableException;
 use Modules\Dispatch\Services\DispatchRecommender;
 use Modules\Dispatch\Services\DispatchService;
 use Modules\Dispatch\Services\DriverCandidates;
@@ -133,6 +134,8 @@ class DispatchController extends Controller
             return ApiResponse::error(ErrorCode::VEHICLE_UNAVAILABLE, $e->getMessage(), [], 409);
         } catch (InvalidBookingTransitionException $e) {
             return ApiResponse::error(ErrorCode::INVALID_BOOKING_TRANSITION, $e->getMessage(), [], 409);
+        } catch (BookingNotDispatchableException $e) {
+            return ApiResponse::error(ErrorCode::BOOKING_NOT_DISPATCHABLE, $e->getMessage(), [], 409);
         }
 
         return ApiResponse::success(new TripResource($trip), 'Assigned automatically.', 201);
@@ -181,6 +184,10 @@ class DispatchController extends Controller
             return ApiResponse::error(ErrorCode::DRIVER_UNAVAILABLE, $e->getMessage(), [], 409);
         } catch (InvalidBookingTransitionException $e) {
             return ApiResponse::error(ErrorCode::INVALID_BOOKING_TRANSITION, $e->getMessage(), [], 409);
+        } catch (BookingNotDispatchableException $e) {
+            // ADR-0064: the service never takes a driver. A 409, not a 422 —
+            // the ids were well-formed, the booking is not that kind of work.
+            return ApiResponse::error(ErrorCode::BOOKING_NOT_DISPATCHABLE, $e->getMessage(), [], 409);
         }
 
         return ApiResponse::success(

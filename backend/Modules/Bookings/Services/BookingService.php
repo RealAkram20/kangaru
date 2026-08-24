@@ -6,9 +6,11 @@ use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Modules\Administration\Services\SettingsService;
 use Modules\Bookings\Enums\BookingStatus;
+use Modules\Bookings\Enums\OrderRequestServiceType;
 use Modules\Bookings\Events\BookingApproved;
 use Modules\Bookings\Events\BookingRejected;
 use Modules\Bookings\Models\Booking;
+use Modules\Bookings\Support\BookingDetails;
 
 /**
  * Owns the booking's own lifecycle — creation and the approve/reject/cancel
@@ -25,8 +27,19 @@ class BookingService
      */
     public function create(array $attributes, User $requester): Booking
     {
+        // Validation accepts every service's detail keys on every request —
+        // it cannot know a delivery payload was re-submitted as a ride after
+        // somebody toggled the form. The narrowing to this service's own
+        // keys happens here, in the one writer, so a stale recipient number
+        // can never sit unrendered in a ride's row (ADR-0064).
+        $service = OrderRequestServiceType::from(
+            $attributes['service_type'] ?? OrderRequestServiceType::RIDE->value,
+        );
+
         $booking = Booking::create([
             ...$attributes,
+            'service_type' => $service,
+            'details' => BookingDetails::toStore($service, $attributes['details'] ?? null),
             'requested_by_user_id' => $requester->id,
             'status' => BookingStatus::PENDING,
         ]);

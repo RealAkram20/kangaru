@@ -77,6 +77,11 @@ function meRoutes(): array
         'me.duty.update' => ['PUT', '/api/v1/me/duty', ['on_duty' => true]],
         'me.earnings.show' => ['GET', '/api/v1/me/earnings', []],
         'me.ledger-entries.index' => ['GET', '/api/v1/me/ledger-entries', []],
+        // Mail plan M6. On the driver's list because a third of the emails
+        // this platform sends are addressed to drivers, and every one carries
+        // a footer link here.
+        'me.mail-preferences.index' => ['GET', '/api/v1/me/mail-preferences', []],
+        'me.mail-preferences.update' => ['PUT', '/api/v1/me/mail-preferences', ['type' => 'driver.document.expiring', 'enabled' => true]],
         'me.offers.index' => ['GET', '/api/v1/me/offers', []],
         'me.offers.acceptance.store' => ['POST', '/api/v1/me/offers/{offer}/acceptance', []],
         'me.offers.decline.store' => ['POST', '/api/v1/me/offers/{offer}/decline', []],
@@ -120,6 +125,20 @@ function meRoutesOpenToNonDrivers(): array
         'me.devices.store' => 204,
         'me.devices.destroy' => 204,
         'me.documents.file' => 200,
+
+        /*
+            Mail plan M6. Not driver routes either: they are **any signed-in
+            account's own email preferences**, and a dispatcher who wants to
+            stop getting the settlement queue has as much business here as a
+            driver does.
+
+            200 for a non-driver, therefore, and the guard that keeps them
+            honest is not `NOT_A_DRIVER` but the absence of an id: the routes
+            take no parameter and scope to the token, so there is nothing to
+            supply that would reach somebody else's row.
+        */
+        'me.mail-preferences.index' => 200,
+        'me.mail-preferences.update' => 200,
 
         /*
             **These two are not driver routes at all** (ADR-0057 §5). They
@@ -236,10 +255,13 @@ it('lists every /me route exactly once, so a new one cannot skip this file', fun
 
     expect($inTable)->toBe($inRouter);
     // 37: ADR-0057 §5 added the applicant's own two.
-    expect(count($inTable))->toBe(37);
+    // 37 -> 39: mail plan M6's two `me/mail-preferences` routes.
+    expect(count($inTable))->toBe(39);
     // 5: the applicant's own two joined the three that are not driver gates
     // (ADR-0057 §5). Pinned so a fourth kind of exception is a decision.
-    expect(count(meRoutesOpenToNonDrivers()))->toBe(5);
+    // 5 -> 7: mail plan M6's two preference routes, which belong to the
+    // account rather than to the driver profile.
+    expect(count(meRoutesOpenToNonDrivers()))->toBe(7);
 });
 
 it('refuses a console user who is not a driver on every /me route but the three that are the user\'s own', function () {
@@ -268,7 +290,9 @@ it('refuses a console user who is not a driver on every /me route but the three 
     expect($refused)->toBe(32);
     // 5: ADR-0057 §5 added the applicant's own two, which refuse everybody
     // here with a 404 rather than NOT_A_DRIVER.
-    expect($open)->toBe(5);
+    // 5 -> 7: the two preference routes are the account's own, not the
+    // driver profile's, so a non-driver reaches them.
+    expect($open)->toBe(7);
 });
 
 it('lets the driver through the same 32 gates, so the refusals above are the gate and not the fixture', function () {
@@ -295,7 +319,8 @@ it('lets the driver through the same 32 gates, so the refusals above are the gat
     // 37: the two ADR-0057 §5 routes are walked here too. A driver gets a
     // plain 404 from them — they have no open application — which is exactly
     // what this test permits: anything but `NOT_A_DRIVER`.
-    expect($reached)->toBe(37);
+    // 37 -> 39: mail plan M6's two `me/mail-preferences` routes.
+    expect($reached)->toBe(39);
 });
 
 it('answers 404 when driver A names driver B\'s offer, availability request, or trip', function () {
@@ -390,5 +415,8 @@ it('names no route in the driver allow-list that the router does not have', func
     // 56: ADR-0057 §5 added the applicant's own two.
     // 57: the §10 geocoder follow-up, `trips.place-suggestions.index`
     // (owner decision, 2026-08-22).
-    expect(count(ClientScope::routesFor(ClientScope::DRIVER)))->toBe(57);
+    // 57 -> 59: the driver app reaches its own email preferences, because a
+    // third of this platform's emails are addressed to drivers and every one
+    // carries a footer link there.
+    expect(count(ClientScope::routesFor(ClientScope::DRIVER)))->toBe(59);
 });

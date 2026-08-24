@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Modules\Administration\Resources\UserResource;
 use Modules\Bookings\Models\Booking;
+use Modules\Bookings\Support\BookingDetails;
 use Modules\Trips\Resources\TripResource;
 
 /**
@@ -59,6 +60,15 @@ class BookingResource extends JsonResource
             // a client's auditor both need to be able to tell those apart,
             // so this is never coerced to a default.
             'vehicle_category' => $this->vehicle_category,
+            // ADR-0064: which of the three services this asks for.
+            'service_type' => $this->service_type->value,
+            // Allow-listed per service, never the column wholesale — the
+            // OrderDetails lesson: a JSON column named `details` is exactly
+            // where a personal number leaks looking innocent in review.
+            // Null on a ride, whose absence of details is the fact itself.
+            'details' => BookingDetails::for($this->resource),
+            // Null on a self-drive rental, which has no route — the hire
+            // period in `details` is that service's when-and-where.
             'origin' => $this->origin,
             'destination' => $this->destination,
             'scheduled_for' => $this->scheduled_for,

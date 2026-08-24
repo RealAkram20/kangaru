@@ -26,7 +26,7 @@ or §2 completeness gate. Those still outrank it.
 **ADRs this plan rests on:** 0055 (fleets above the client), 0056 (acting as
 someone else), **0058** (what a fleet pays), **0059** (three consoles),
 **0060** (one client, many fleets), **0062** (head office reads the
-directory, not the operations). 0058–0060 are written by `K0`; 0062 followed
+directory, not the operations), **0063** (splitting a walk-in fare three ways). 0058–0060 are written by `K0`; 0062 followed
 from the owner's question on 23 August.
 
 ---
@@ -420,8 +420,8 @@ Still open, and each blocks only what is named:
 
 | # | Question | Recommended | Blocks |
 |---|---|---|---|
-| 2 | Who wins when a fleet's own booking and a walk-in want the same on-duty driver? | The fleet's own work, overridable per contract | `K8` commission half |
-| 3 | Does the fleet get a share of a walk-in run on its vehicle? | A fleet share on the contract, defaulting to zero — so the column exists before the argument does | `K8` commission half |
+| 2 | Who wins when a fleet's own booking and a walk-in want the same on-duty driver? | ~~recommended~~ **answered 23 Aug: the fleet wins.** Implemented as an *exclusion at candidate selection*, not a comparison at assignment — and **never as pre-emption**: a walk-in already accepted is not cancelled. ADR-0063 §1. | closed |
+| 3 | Does the fleet get a share of a walk-in run on its vehicle? | ~~recommended~~ **answered 23 Aug: yes.** The share is **for the vehicle**, so a driver-partner on their own car has none. Both rates live on the contract, not the plan. ADR-0063 §2–3. | closed |
 | 4 | **Does Kangaru see a corporate-client count, a list, or nothing?** | ~~The count only~~ — **answered the other way, 23 Aug: a register.** Head office onboards clients, so it cannot be unable to see the one it just created. **ADR-0062** moves the line from *how much* to *what kind*: Kangaru reads the **directory** (fleets, clients, the contracts between them) and never the **operations** (trips, invoices, drivers). | closed |
 | 5 | What happens to existing `companies` rows with no registration number? | Require it on the next edit rather than inventing one; block new onboarding without it | `K5` migration |
 

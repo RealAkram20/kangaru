@@ -96,6 +96,12 @@ function tenantBoundRoutes(): array
         // whole table against one fixture, and a soft-deleted company would
         // 404 on its own update for the wrong reason.
         'companies.update' => ['PATCH', '/api/v1/companies/{company}'],
+        // Before `destroy`, like `update` above it and for the same reason
+        // this file already states: the loop runs in list order against one
+        // fixture, so anything after the delete meets a soft-deleted row and
+        // 404s for a reason that has nothing to do with tenancy. It cost an
+        // hour to find, because the failure names the route that is fine.
+        'companies.fleets.update' => ['PUT', '/api/v1/companies/{company}/fleets'],
         'companies.destroy' => ['DELETE', '/api/v1/companies/{company}'],
         // ADR-0045. Same `update` before `destroy` ordering as companies,
         // and for the same reason. `place` is deliberately not on `route`'s
@@ -295,7 +301,7 @@ it('binds a tenant-owned model on exactly the routes this file lists', function 
     expect(tenantBoundRoutesByReflection())->toBe($visibleToReflection);
     // 41: `trips.place-suggestions.index`, the §10 geocoder follow-up
     // (2026-08-22).
-    expect(count($expected))->toBe(43);
+    expect(count($expected))->toBe(44);
 });
 
 it('answers 404, never 403, when another client names a tenant-owned record', function () {
@@ -330,7 +336,7 @@ it('answers 404, never 403, when another client names a tenant-owned record', fu
     }
 
     // 41: place-suggestions (2026-08-22).
-    expect($checked)->toBe(43);
+    expect($checked)->toBe(44);
 });
 
 it('answers something other than 404 to the owning client on every one of those routes, so the 404s above are not vacuous', function () {
@@ -368,5 +374,5 @@ it('answers something other than 404 to the owning client on every one of those 
     }
 
     // 41: place-suggestions (2026-08-22).
-    expect($checked)->toBe(43);
+    expect($checked)->toBe(44);
 });

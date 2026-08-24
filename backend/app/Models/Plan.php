@@ -34,6 +34,12 @@ class Plan extends Model
         'name',
         'description',
         'is_default',
+        'price_minor',
+        'currency',
+        'period',
+        'driver_limit',
+        'vehicle_limit',
+        'staff_limit',
     ];
 
     /** @return array<string, string> */
@@ -41,6 +47,15 @@ class Plan extends Model
     {
         return [
             'is_default' => 'boolean',
+            'price_minor' => 'integer',
+            // Nullable on purpose, and **null is unlimited** rather than
+            // nought or unset (ADR-0058). `PlanAllowance` is the only thing
+            // that reads them, so the null case is handled in exactly one
+            // place — a caller comparing `count >= null` would refuse the
+            // first driver a grandfathered fleet ever hired.
+            'driver_limit' => 'integer',
+            'vehicle_limit' => 'integer',
+            'staff_limit' => 'integer',
         ];
     }
 

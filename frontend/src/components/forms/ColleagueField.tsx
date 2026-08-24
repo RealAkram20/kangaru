@@ -17,19 +17,35 @@ import { Input } from './Input'
  * person types, capped by the server, and scoped by the server to the
  * caller's own organisation — the screen never learns that rule.
  *
- * ## Why picking is required here and optional in `PlaceField`
+ * ## Whose people it searches
+ *
+ * The server decides, and it decides differently per level: a client's own
+ * organisation, or — since 24 August — the clients a **fleet** actively holds
+ * a contract with. This component is told neither; it sends the term and
+ * renders what comes back, which is why widening the search to dispatchers
+ * needed no change here at all.
+ *
+ * ## Why picking is required for a client and not for a fleet
  *
  * An address is whatever the caller said; a passenger is an account. The
  * whole point of naming a colleague is that "J. Mukasa" and "Joseph Mukasa"
- * stop being two passengers, so typing over a chosen name clears the choice
- * and the dialog will not submit until one is made again. The *number* is
- * still editable beside this field — the account's is prefilled, and the
- * person raising the booking may know a better one for today.
+ * stop being two passengers, so typing over a chosen name clears the choice.
+ *
+ * `StoreBookingRequest` is where that is enforced, and only for a corporate
+ * actor: a fleet's desk books walk-ins and callers who have no account
+ * anywhere (ADR-0012), so for them this is an accelerator over a box they can
+ * still type into — the same relationship `PlaceField` has to an address.
+ *
+ * The *number* is editable beside this field either way: the account's is
+ * prefilled, and the person raising the booking may know a better one today.
  */
 export function ColleagueField({
   value,
   chosen,
   error,
+  label = 'Passenger',
+  placeholder = 'Search your colleagues',
+  tenantId,
   onChange,
 }: {
   /** What is in the box. Held by the caller, like every other field here. */
@@ -37,11 +53,30 @@ export function ColleagueField({
   /** The colleague currently chosen, or null while the text is unresolved. */
   chosen: Colleague | null
   error?: string
+  /**
+   * Who this person is to the booking — "Passenger" on a ride, "Sender" on
+   * a delivery, "Renter" on a self-drive (ADR-0064). The field's behaviour
+   * is identical; only the word changes.
+   */
+  label?: string
+  /**
+   * Narrows a fleet's search to one client's staff, once the dialog has
+   * named the client (ADR-0064). Never set for a client's own user, whom
+   * the server refuses the filter.
+   */
+  tenantId?: string
+  /**
+   * "Your colleagues" is true for a client's own person and false for a
+   * dispatcher, who is searching somebody else's staff. One word, and getting
+   * it wrong tells a fleet's desk it is about to book a car for one of its own
+   * drivers.
+   */
+  placeholder?: string
   /** `colleague` is null when the text was typed rather than picked. */
   onChange: (value: string, colleague: Colleague | null) => void
 }) {
   const id = useId()
-  const { hits, markTyped, settle } = useColleagueSearch(value)
+  const { hits, markTyped, settle } = useColleagueSearch(value, tenantId)
   const [open, setOpen] = useState(false)
 
   const take = (hit: Colleague) => {
@@ -53,12 +88,12 @@ export function ColleagueField({
   const showing = open && hits.length > 0
 
   return (
-    <FormField label="Passenger" htmlFor={id} required error={error}>
+    <FormField label={label} htmlFor={id} required error={error}>
       <div style={{ position: 'relative' }}>
         <Input
           id={id}
           value={value}
-          placeholder="Search your colleagues"
+          placeholder={placeholder}
           autoComplete="off"
           role="combobox"
           aria-expanded={showing}

@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Notification as NotificationFacade;
 use Modules\Bookings\Enums\BookingStatus;
 use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Services\BookingService;
+use Modules\Notifications\Channels\SettingsMailChannel;
 use Modules\Notifications\Channels\TenantDatabaseChannel;
 use Modules\Notifications\Enums\NotificationType;
 use Modules\Notifications\Models\Notification;
@@ -112,7 +113,15 @@ it('sends a booking decision by mail as well as filing it in the inbox', functio
         BookingApprovedNotification::class,
         // Both channels, per config/notifications.php: the person who asked
         // for transport may not be looking at the platform.
-        fn ($notification, array $channels) => in_array('mail', $channels, true)
+        //
+        // `SettingsMailChannel::class` rather than the string `'mail'`. That
+        // string was Laravel's default mailer, which is `MAIL_MAILER`, which
+        // is `log` — so this assertion passed for the whole life of the
+        // feature against an email that was written to a log file and
+        // delivered to nobody. The channel now builds from the SMTP settings
+        // the owner saved, which is the same path the settings screen's test
+        // send proves.
+        fn ($notification, array $channels) => in_array(SettingsMailChannel::class, $channels, true)
             && in_array(TenantDatabaseChannel::class, $channels, true),
     );
 

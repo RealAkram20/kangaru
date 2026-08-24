@@ -40,6 +40,23 @@ class TripFactory extends Factory
     {
         return [
             'tenant_id' => Tenant::factory(),
+            /*
+             * Derived from the caller's own override, the same shape
+             * `UserFactory` uses for `operator_id`: attributes are merged
+             * before closures expand, so `->create(['tenant_id' => null])`
+             * yields a **walk-in** and every fixture that predates the
+             * `channel` column keeps meaning what it meant.
+             *
+             * ADR-0063 §5 moved the platform off this inference in the code,
+             * where it decides which fares are split three ways. It survives
+             * *here* deliberately: a factory building a client-less trip is
+             * building a walk-in, and saying so once in the factory beats
+             * editing it into forty fixtures — which is also forty chances to
+             * write the wrong one.
+             */
+            'channel' => fn (array $attributes) => ($attributes['tenant_id'] ?? null) === null
+                ? Trip::CHANNEL_WALK_IN
+                : Trip::CHANNEL_CORPORATE,
             'vehicle_id' => fn () => Vehicle::factory()->create()->id,
             'driver_id' => fn () => Driver::factory()->create()->id,
             'origin' => 'Kampala',

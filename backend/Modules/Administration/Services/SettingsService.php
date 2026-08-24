@@ -811,7 +811,27 @@ This is a short-form notice. Ask the office for the full safety policy.",
 
         return [
             'mailer' => Mail::build([
-                'transport' => 'smtp',
+                /*
+                 * Always `smtp` in a real deployment. Overridable only so a
+                 * test can reach this method at all.
+                 *
+                 * **`Mail::fake()` does not intercept `Mail::build()`.** It
+                 * swaps the manager's resolved mailers; a mailer built here
+                 * from an explicit config array is a different object and
+                 * opens a real socket. So before this seam existed there was
+                 * no way to assert anything about the settings mail path
+                 * without an SMTP server, and a test that tried got a DNS
+                 * failure rather than an assertion.
+                 *
+                 * That is very likely why nobody noticed that the notification
+                 * `mail` channel and this method were two different paths for
+                 * the whole life of the feature: the one that mattered could
+                 * not be covered.
+                 *
+                 * `MAIL_SETTINGS_TRANSPORT` is set to `array` in phpunit.xml
+                 * and nowhere else. Production reads the default.
+                 */
+                'transport' => (string) config('mail.settings_transport', 'smtp'),
                 'host' => $mail['host'],
                 'port' => $mail['port'],
                 'username' => $mail['username'] ?: null,

@@ -2,7 +2,7 @@
 //
 // `import { icons } from 'lucide-react'` pulls all 1756 icons into the
 // bundle: a runtime dictionary lookup cannot be tree-shaken. That measured
-// 467,925 bytes, 34% of the main chunk, for the 137 icons this app names.
+// 467,925 bytes, 34% of the main chunk, for the 143 icons this app names.
 // Named imports are tree-shakeable, so only these ship.
 //
 // Regenerate after adding an icon:  node tools/generate-icon-registry.mjs
@@ -22,7 +22,6 @@ import {
   BellOff,
   Briefcase,
   Building2,
-  Bus,
   Calendar,
   CalendarClock,
   CalendarOff,
@@ -45,6 +44,8 @@ import {
   Clock,
   Code,
   Contact,
+  Copy,
+  Cpu,
   Crosshair,
   Currency,
   Dot,
@@ -89,6 +90,7 @@ import {
   Moon,
   Navigation,
   Option,
+  Package,
   PanelLeft,
   PanelLeftClose,
   Pause,
@@ -106,6 +108,7 @@ import {
   RotateCcw,
   RotateCw,
   Route,
+  Satellite,
   Scale,
   Search,
   Section,
@@ -113,6 +116,7 @@ import {
   Settings,
   Sheet,
   Shield,
+  ShieldAlert,
   ShieldCheck,
   ShieldQuestionMark,
   SignalZero,
@@ -122,6 +126,7 @@ import {
   Split,
   Star,
   StickyNote,
+  Store,
   Summary,
   Sun,
   Table,
@@ -164,7 +169,6 @@ export const ICON_REGISTRY: Record<string, LucideIcon> = {
   'bell-off': BellOff,
   'briefcase': Briefcase,
   'building-2': Building2,
-  'bus': Bus,
   'calendar': Calendar,
   'calendar-clock': CalendarClock,
   'calendar-off': CalendarOff,
@@ -187,6 +191,8 @@ export const ICON_REGISTRY: Record<string, LucideIcon> = {
   'clock': Clock,
   'code': Code,
   'contact': Contact,
+  'copy': Copy,
+  'cpu': Cpu,
   'crosshair': Crosshair,
   'currency': Currency,
   'dot': Dot,
@@ -231,6 +237,7 @@ export const ICON_REGISTRY: Record<string, LucideIcon> = {
   'moon': Moon,
   'navigation': Navigation,
   'option': Option,
+  'package': Package,
   'panel-left': PanelLeft,
   'panel-left-close': PanelLeftClose,
   'pause': Pause,
@@ -248,6 +255,7 @@ export const ICON_REGISTRY: Record<string, LucideIcon> = {
   'rotate-ccw': RotateCcw,
   'rotate-cw': RotateCw,
   'route': Route,
+  'satellite': Satellite,
   'scale': Scale,
   'search': Search,
   'section': Section,
@@ -255,6 +263,7 @@ export const ICON_REGISTRY: Record<string, LucideIcon> = {
   'settings': Settings,
   'sheet': Sheet,
   'shield': Shield,
+  'shield-alert': ShieldAlert,
   'shield-check': ShieldCheck,
   'shield-question-mark': ShieldQuestionMark,
   'signal-zero': SignalZero,
@@ -264,6 +273,7 @@ export const ICON_REGISTRY: Record<string, LucideIcon> = {
   'split': Split,
   'star': Star,
   'sticky-note': StickyNote,
+  'store': Store,
   'summary': Summary,
   'sun': Sun,
   'table': Table,

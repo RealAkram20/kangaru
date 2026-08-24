@@ -17,7 +17,7 @@ import type { Colleague } from '../types/staff'
  * without this that would immediately reopen a suggestion list over a
  * field the user had settled.
  */
-export function useColleagueSearch(value: string) {
+export function useColleagueSearch(value: string, tenantId?: string) {
   const [hits, setHits] = useState<Colleague[]>([])
   const [dirty, setDirty] = useState(false)
 
@@ -36,7 +36,10 @@ export function useColleagueSearch(value: string) {
 
       apiClient
         .get<ApiSuccess<Colleague[]>>('/colleagues', {
-          params: { q: query },
+          // `tenant_id` narrows a fleet's search to the client the booking
+          // dialog has named (ADR-0064). Only ever sent when the caller has
+          // one — a client's own user is refused the filter outright.
+          params: { q: query, ...(tenantId ? { tenant_id: tenantId } : {}) },
           signal: controller.signal,
         })
         .then((response) => setHits(response.data.data))
@@ -54,7 +57,7 @@ export function useColleagueSearch(value: string) {
       // that no longer match what is in the box.
       controller.abort()
     }
-  }, [value, dirty])
+  }, [value, dirty, tenantId])
 
   return {
     hits,

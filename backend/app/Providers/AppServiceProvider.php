@@ -63,10 +63,12 @@ use Modules\Drivers\Models\DriverDocument;
 use Modules\Drivers\Models\DriverLedgerEntry;
 use Modules\Drivers\Models\DriverPayoutAccount;
 use Modules\Drivers\Models\DriverSettlementRequest;
+use Modules\Drivers\Models\DriverWalkInContract;
 use Modules\Drivers\Policies\DriverApplicationPolicy;
 use Modules\Drivers\Policies\DriverDocumentPolicy;
 use Modules\Drivers\Policies\DriverPolicy;
 use Modules\Drivers\Policies\DriverSettlementRequestPolicy;
+use Modules\Drivers\Policies\DriverWalkInContractPolicy;
 use Modules\Fleet\Models\AvailabilityBlock;
 use Modules\Fleet\Models\DriverShiftWindow;
 use Modules\Fleet\Models\VehicleAllocation;
@@ -79,6 +81,7 @@ use Modules\Fleet\Support\DatabaseDriverPresenceStore;
 use Modules\Fleet\Support\DriverPresenceStore;
 use Modules\Fleet\Support\RedisDriverPresenceStore;
 use Modules\Notifications\Listeners\SendBookingDecisionNotification;
+use Modules\Notifications\Listeners\SendDriverTripAssignedNotification;
 use Modules\Notifications\Listeners\SendReportExportReadyNotification;
 use Modules\Notifications\Listeners\SendTripProgressNotification;
 use Modules\Reports\Enums\ReportType;
@@ -274,6 +277,10 @@ class AppServiceProvider extends ServiceProvider
         // ADR-0060. Three parties, three answers — a fleet asks, the client
         // approves, either ends. No permission can express that.
         Gate::policy(OperatorClient::class, OperatorClientPolicy::class);
+        // ADR-0055 §5. Three parties, three answers, and no party may perform
+        // another's step — `approve` is keyed on the level precisely so it
+        // cannot be granted to the parties it sits above.
+        Gate::policy(DriverWalkInContract::class, DriverWalkInContractPolicy::class);
         // ADR-0045. Two policies rather than one: reading the register and
         // building a circuit are different acts, and only the second is
         // gated on `routes.manage`.
@@ -374,6 +381,9 @@ class AppServiceProvider extends ServiceProvider
         // The requester of a corporate booking hears when their car is
         // assigned, when the driver arrives, and when the trip completes.
         Event::listen(TripStatusChanged::class, SendTripProgressNotification::class);
+        // The driver's half of the same moment (ADR-0064): the requester
+        // hears their car exists, the driver hears the job exists.
+        Event::listen(TripStatusChanged::class, SendDriverTripAssignedNotification::class);
         Event::listen(ReportExportCompleted::class, SendReportExportReadyNotification::class);
 
         // Stable short aliases for audit_logs.auditable_type instead of raw

@@ -40,4 +40,10 @@ export interface ScopedCursorMeta {
    * no choice of client to make.
    */
   filters?: { clients: FilterOption[] }
+  /**
+   * /bookings only (ADR-0064 §5): the clients this fleet actor may raise a
+   * booking for — active contracts, narrower than `filters.clients`, which
+   * spans existing rows and so includes ended contracts. Absent elsewhere.
+   */
+  bookable_clients?: FilterOption[]
 }

@@ -1,7 +1,10 @@
 <?php
 
+use App\Enums\AccessLevel;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
+use App\Models\Operator;
+use App\Models\OperatorClient;
 use App\Models\Tenant;
 use App\Models\User;
 use Modules\Bookings\Models\Booking;
@@ -206,15 +209,61 @@ it('refuses a lookup with no search term, so it cannot become a directory dump',
         ->assertStatus(422)->assertJsonValidationErrors('q');
 });
 
-it('has no colleagues to offer platform staff, who belong to no client', function () {
+/*
+ * Owner's request, 24 August: a dispatcher taking a call from a bank should be
+ * able to find the employee rather than type a name three people spell three
+ * ways.
+ *
+ * This endpoint answered `[]` to every platform-level actor, and the reason it
+ * gave was sound - `forActor` would have dropped the scope and handed back
+ * every client's directory. The scope is narrowed now, so the honest answer is
+ * available: the clients this fleet actually serves, and no others.
+ */
+it('offers a dispatcher the staff of a client their fleet serves', function () {
+    ['bank' => $bank, 'employee' => $employee] = colleagueFixture();
+
+    OperatorClient::create([
+        'operator_id' => Operator::SHANITAH,
+        'tenant_id' => $bank->id,
+        'status' => OperatorClient::ACTIVE,
+    ]);
+
+    $dispatcher = User::factory()->create(['role' => UserRole::DISPATCHER]);
+
+    $found = $this->actingAs($dispatcher, 'sanctum')
+        ->getJson('/api/v1/colleagues?q=Joseph')->assertOk()->json('data');
+
+    expect($found)->toHaveCount(1)
+        ->and($found[0]['id'])->toBe($employee->id);
+});
+
+it('offers a dispatcher nobody from a client their fleet does not serve', function () {
     colleagueFixture();
 
-    $dispatcher = User::factory()->create(['tenant_id' => null, 'role' => UserRole::DISPATCHER]);
+    // No contract at all. The interesting failure is not a 403 - it is
+    // `forActor` matching every row that has a tenant, which is what it did
+    // until 24 August and which one fleet on the platform hid completely.
+    $dispatcher = User::factory()->create(['role' => UserRole::DISPATCHER]);
 
-    // The interesting failure is not a 403 — it is `forActor` dropping the
-    // scope for an actor with no tenant and handing back every client's
-    // directory to somebody who only needed a picker.
     expect($this->actingAs($dispatcher, 'sanctum')
+        ->getJson('/api/v1/colleagues?q=Joseph')->assertOk()->json('data'))->toBe([]);
+});
+
+it('offers head office nobody, having no client of its own to search', function () {
+    colleagueFixture();
+
+    // Head office reaches a client by acting as somebody at the fleet serving
+    // them (ADR-0056), and arrives scoped as that person. Its own scope is
+    // Kangaru-level accounts, none of which has a tenant - so the empty list
+    // falls out of the predicate rather than out of a level check.
+    $hq = User::factory()->create([
+        'tenant_id' => null,
+        'operator_id' => null,
+        'access_level' => AccessLevel::KANGARU,
+        'role' => UserRole::SUPER_ADMIN,
+    ]);
+
+    expect($this->actingAs($hq, 'sanctum')
         ->getJson('/api/v1/colleagues?q=Joseph')->assertOk()->json('data'))->toBe([]);
 });
 

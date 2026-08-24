@@ -48,6 +48,24 @@ enum NotificationType: string
     case TRIP_OFFERED = 'trip.offered';
 
     /**
+     * The desk put a corporate job on this driver's name (ADR-0064).
+     *
+     * The argument this enum demands: without it, a desk-assigned trip
+     * reaches the driver **nowhere a driver looks**. It lands in the Trips
+     * list's Upcoming group and nothing rings, nothing badges, and the home
+     * screen stays idle — observed on a real handset while an owner watched
+     * a delivery they had just dispatched go nowhere. `TRIP_OFFERED` does
+     * not cover it: an offer is the *matcher's* question with a clock on
+     * it; this is the desk's decision, waiting for an answer without one.
+     *
+     * Not the offer ringtone, deliberately. The offer interrupts because a
+     * passenger is standing at the end of its forty-five seconds; an
+     * assignment keeps until the driver reaches their phone, so it takes
+     * Expo's default sound and importance.
+     */
+    case DRIVER_TRIP_ASSIGNED = 'driver.trip.assigned';
+
+    /**
      * That job is gone — stop ringing (ADR-0046 §4).
      *
      * **The only silent notification in this platform**, and the only one
@@ -147,6 +165,157 @@ enum NotificationType: string
      * notice about somebody else using your account has to reach you
      * **without** you signing in to the thing they were using.
      */
+    /*
+     | The office families (mail plan M6). `OfficeEventNotification`, and a
+     | case each.
+     |
+     | Everything here is addressed through `OfficeRecipient`, which carries
+     | the one rule this package must not break: **an email about a fleet's
+     | operations goes to that fleet and to nobody else.**
+     */
+    case FLEET_CLOSURE_REQUESTED = 'fleet.closure.requested';
+    case FLEET_SETTLEMENT_REQUESTED = 'fleet.settlement.requested';
+    case FLEET_SUPPORT_REQUESTED = 'fleet.support.requested';
+
+    /**
+     * The fleet has hit what its plan allows (ADR-0058).
+     *
+     * The only email on this list that arrives at the moment somebody is
+     * blocked, so it is the only one that says what to do about it.
+     */
+    case FLEET_PLAN_LIMIT_REACHED = 'fleet.plan.limit_reached';
+
+    /** Head office: a fleet joined. */
+    case PLATFORM_FLEET_ONBOARDED = 'platform.fleet.onboarded';
+
+    /**
+     * ADR-0059 §5's invariant has broken: a fleet has nobody to act as.
+     *
+     * The worklog has carried this as an open gap since `K4`:
+     * *"`fleets_without_an_account` is a number on a dashboard, not an alert.
+     * If ADR-0059 §5's invariant breaks, somebody has to be looking."* This is
+     * the somebody.
+     */
+    case PLATFORM_FLEET_HAS_NO_ACCOUNT = 'platform.fleet.no_account';
+
+    /** Head office: a driver wants to run walk-in work (ADR-0055 §5). */
+    case PLATFORM_WALK_IN_CONTRACT_REQUESTED = 'platform.walk_in_contract.requested';
+
+    /*
+     | The client family (mail plan M5). One class,
+     | `ClientEventNotification`, and a case each.
+     |
+     | Two audiences inside one client, and the split is the point. Operations
+     | mail goes to the account that raised the booking; **finance mail goes to
+     | `operator_clients.billing_email`**, because a transport officer who
+     | books cars and the person who pays the bill are different people, and
+     | sending invoices to the first is how they go unpaid.
+     */
+    case CLIENT_INVOICE_ISSUED = 'client.invoice.issued';
+    case CLIENT_CREDIT_NOTE_ISSUED = 'client.credit_note.issued';
+
+    /** ADR-0060 §4: a fleet has asked to serve this client, and only the client may answer. */
+    case CLIENT_CONTRACT_REQUESTED = 'client.contract.requested';
+    case CLIENT_CONTRACT_APPROVED = 'client.contract.approved';
+    case CLIENT_CONTRACT_ENDED = 'client.contract.ended';
+
+    /*
+     | The driver family (mail plan M4). One class,
+     | `DriverEventNotification`, and a case each.
+     |
+     | AGENTS.md names "Document Expiring" on its own short list of
+     | notifications worth having, and it was the one item on that list with
+     | nothing behind it: `driver_documents.expires_at` has been a column since
+     | ADR-0052 and **nothing has ever read it on a schedule**, so a licence
+     | could lapse with the office and the driver both finding out when a
+     | traffic officer did.
+     */
+    case DRIVER_APPLICATION_RECEIVED = 'driver_application.received';
+    case DRIVER_APPLICATION_APPROVED = 'driver_application.approved';
+    case DRIVER_APPLICATION_REJECTED = 'driver_application.rejected';
+
+    /** Warned at 30 days and again at 7. See `SendExpiringDocumentReminders`. */
+    case DRIVER_DOCUMENT_EXPIRING = 'driver.document.expiring';
+
+    /** The day it lapses, because that is the day they stop being compliant. */
+    case DRIVER_DOCUMENT_EXPIRED = 'driver.document.expired';
+
+    case DRIVER_SETTLEMENT_CONFIRMED = 'driver.settlement.confirmed';
+    case DRIVER_SETTLEMENT_DECLINED = 'driver.settlement.declined';
+
+    case DRIVER_WALK_IN_CONTRACT_APPROVED = 'driver.walk_in_contract.approved';
+    case DRIVER_WALK_IN_CONTRACT_REFUSED = 'driver.walk_in_contract.refused';
+
+    case DRIVER_WEEKLY_BONUS_AWARDED = 'driver.weekly_bonus.awarded';
+
+    /*
+     | The security family (mail plan M3). One notification class,
+     | `SecurityEventNotification`, and a case each.
+     |
+     | Every one exists for the same reason: **the person who did it is not
+     | always the person who owns the account.** A password change, an MFA
+     | removal, a payout account edit and an address change are each a
+     | legitimate action a user takes, and each the first move of somebody who
+     | has taken an account. The email is a tripwire for the owner, not a
+     | receipt for whoever clicked.
+     |
+     | Cases rather than one `account.security` value because this string is
+     | also AGENTS.md's business-event name and the `notifications.type`
+     | column: collapsing them would leave the audit log unable to say which
+     | of nine things happened.
+     */
+    case ACCOUNT_PASSWORD_CHANGED = 'account.password_changed';
+
+    /**
+     * A sign-in from a browser this account has not used before (ADR-0028's
+     * neighbourhood, mail plan A5).
+     *
+     * Keyed on the user agent alone and never on the IP. A Ugandan mobile
+     * address changes several times a day, so an IP-keyed device would email
+     * a driver every morning, and a warning that arrives daily is a warning
+     * nobody reads on the day it matters.
+     */
+    case ACCOUNT_SIGNED_IN_NEW_DEVICE = 'account.signed_in_new_device';
+
+    case ACCOUNT_MFA_ENABLED = 'account.mfa_enabled';
+    case ACCOUNT_MFA_DISABLED = 'account.mfa_disabled';
+
+    /** ADR-0010: the count nobody consulted, now said out loud before it runs out. */
+    case ACCOUNT_RECOVERY_CODES_LOW = 'account.recovery_codes_low';
+
+    case ACCOUNT_SUSPENDED = 'account.suspended';
+    case ACCOUNT_REACTIVATED = 'account.reactivated';
+
+    /**
+     * Sent to the old address as well as the new one.
+     *
+     * Somebody who has taken an account and changed its address would
+     * otherwise have silenced the one warning that reaches the real owner, by
+     * redirecting it to themselves.
+     */
+    case ACCOUNT_EMAIL_CHANGED = 'account.email_changed';
+
+    /** Where a driver's money goes. Same reasoning, higher stakes. */
+    case DRIVER_PAYOUT_ACCOUNT_CHANGED = 'driver.payout_account.changed';
+
+    /**
+     * Somebody has an account and no way into it yet (mail plan M2).
+     *
+     * The first email this platform ever sends a new corporate client admin
+     * or a new fleet owner, and until it existed those two were **accounts
+     * nobody could sign into**: onboarding minted `Str::password(32)` and
+     * discarded it, and both call sites carried a comment promising an
+     * invitation that was never built.
+     *
+     * Because it is somebody's first contact, it is also the email most
+     * likely to be read as a phishing attempt. That is why the footer names
+     * the account and the reason, and why the body names who created it.
+     */
+    case ACCOUNT_INVITED = 'account.invited';
+
+    /** The link lapses tomorrow and nobody has used it (mail plan A2). */
+    case ACCOUNT_INVITATION_EXPIRING = 'account.invitation_expiring';
+
     case ACCOUNT_ACCESSED_BY_SUPPORT = 'account.accessed_by_support';
 
     public function label(): string
@@ -160,11 +329,45 @@ enum NotificationType: string
             self::TRIP_COMPLETED => 'Trip completed',
             self::ORDER_REQUEST_RECEIVED => 'Walk-in order received',
             self::TRIP_OFFERED => 'New job',
+            self::DRIVER_TRIP_ASSIGNED => 'New trip assigned',
             self::TRIP_OFFER_WITHDRAWN => 'Job withdrawn',
             self::DRIVER_CLOSURE_ANSWERED => 'Account closure',
             self::DRIVER_SUPPORT_ANSWERED => 'Report answered',
             self::DRIVER_DOCUMENT_REVIEWED => 'Document checked',
             self::DRIVER_APPLICATION_DOCUMENT_REJECTED => 'Document needs resending',
+            self::FLEET_CLOSURE_REQUESTED => 'Closure requested',
+            self::FLEET_SETTLEMENT_REQUESTED => 'Settlement requested',
+            self::FLEET_SUPPORT_REQUESTED => 'Support request',
+            self::FLEET_PLAN_LIMIT_REACHED => 'Plan limit reached',
+            self::PLATFORM_FLEET_ONBOARDED => 'New fleet',
+            self::PLATFORM_FLEET_HAS_NO_ACCOUNT => 'Fleet has no account',
+            self::PLATFORM_WALK_IN_CONTRACT_REQUESTED => 'Walk-in contract requested',
+            self::CLIENT_INVOICE_ISSUED => 'Invoice issued',
+            self::CLIENT_CREDIT_NOTE_ISSUED => 'Credit note issued',
+            self::CLIENT_CONTRACT_REQUESTED => 'A fleet asked to serve you',
+            self::CLIENT_CONTRACT_APPROVED => 'Fleet approved',
+            self::CLIENT_CONTRACT_ENDED => 'Contract ended',
+            self::DRIVER_APPLICATION_RECEIVED => 'Application received',
+            self::DRIVER_APPLICATION_APPROVED => 'Application approved',
+            self::DRIVER_APPLICATION_REJECTED => 'Application not approved',
+            self::DRIVER_DOCUMENT_EXPIRING => 'Document expiring',
+            self::DRIVER_DOCUMENT_EXPIRED => 'Document expired',
+            self::DRIVER_SETTLEMENT_CONFIRMED => 'Settlement confirmed',
+            self::DRIVER_SETTLEMENT_DECLINED => 'Settlement declined',
+            self::DRIVER_WALK_IN_CONTRACT_APPROVED => 'Walk-in contract approved',
+            self::DRIVER_WALK_IN_CONTRACT_REFUSED => 'Walk-in contract refused',
+            self::DRIVER_WEEKLY_BONUS_AWARDED => 'Weekly bonus',
+            self::ACCOUNT_PASSWORD_CHANGED => 'Password changed',
+            self::ACCOUNT_SIGNED_IN_NEW_DEVICE => 'New sign in',
+            self::ACCOUNT_MFA_ENABLED => 'Two factor on',
+            self::ACCOUNT_MFA_DISABLED => 'Two factor off',
+            self::ACCOUNT_RECOVERY_CODES_LOW => 'Recovery codes low',
+            self::ACCOUNT_SUSPENDED => 'Account suspended',
+            self::ACCOUNT_REACTIVATED => 'Account active again',
+            self::ACCOUNT_EMAIL_CHANGED => 'Sign-in email changed',
+            self::DRIVER_PAYOUT_ACCOUNT_CHANGED => 'Payout account changed',
+            self::ACCOUNT_INVITED => 'Invitation to sign in',
+            self::ACCOUNT_INVITATION_EXPIRING => 'Invitation expiring',
             self::ACCOUNT_ACCESSED_BY_SUPPORT => 'Support opened your account',
         };
     }
@@ -208,6 +411,13 @@ enum NotificationType: string
             // (`dispatch.offer_ttl_seconds`), and an email about one would
             // arrive as an apology.
             self::TRIP_OFFERED => [
+                NotificationChannel::PUSH,
+                NotificationChannel::DATABASE,
+            ],
+            // Push and the row, never mail — the reasoning is TRIP_OFFERED's
+            // with one difference: this one is not urgent enough for the
+            // ringtone, and its docblock says why.
+            self::DRIVER_TRIP_ASSIGNED => [
                 NotificationChannel::PUSH,
                 NotificationChannel::DATABASE,
             ],
@@ -275,6 +485,127 @@ enum NotificationType: string
             // Mail alone. See the case's own note: an applicant has no account
             // to notify and no device to push to.
             self::DRIVER_APPLICATION_DOCUMENT_REJECTED => [NotificationChannel::MAIL],
+            /*
+             * Mail and the in-app row for every office alert.
+             *
+             * The in-app row is where a dispatcher actually works, and the
+             * mail is what reaches somebody who is not at the board. No push
+             * anywhere on this list: an office alert is a queue to work
+             * through, not an interruption, and ADR-0025 §5 reserves the
+             * interruption for the one message with a passenger waiting at
+             * the end of it.
+             */
+            self::FLEET_CLOSURE_REQUESTED,
+            self::FLEET_SETTLEMENT_REQUESTED,
+            self::FLEET_SUPPORT_REQUESTED,
+            self::FLEET_PLAN_LIMIT_REACHED,
+            self::PLATFORM_FLEET_ONBOARDED,
+            self::PLATFORM_FLEET_HAS_NO_ACCOUNT,
+            self::PLATFORM_WALK_IN_CONTRACT_REQUESTED => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::MAIL,
+            ],
+            /*
+             * Mail and the in-app row for the whole client family. No push:
+             * a corporate administrator works at a desk, and none of this is
+             * urgent in the interrupting sense.
+             *
+             * The two finance ones are the only emails on the platform that
+             * may go to an address with no account behind it at all — see
+             * `ClientEventNotification`.
+             */
+            self::CLIENT_INVOICE_ISSUED,
+            self::CLIENT_CREDIT_NOTE_ISSUED,
+            self::CLIENT_CONTRACT_REQUESTED,
+            self::CLIENT_CONTRACT_APPROVED,
+            self::CLIENT_CONTRACT_ENDED => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::MAIL,
+            ],
+            /*
+             * An applicant has no account yet and no handset, so mail is the
+             * only channel that reaches them. Same shape as
+             * `DRIVER_APPLICATION_DOCUMENT_REJECTED` beside it, for the same
+             * reason.
+             */
+            self::DRIVER_APPLICATION_RECEIVED,
+            self::DRIVER_APPLICATION_REJECTED => [NotificationChannel::MAIL],
+            /*
+             * Approval is the one that earns a push as well: the applicant
+             * has an account from this moment and the app is what they do next.
+             */
+            self::DRIVER_APPLICATION_APPROVED => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::MAIL,
+                NotificationChannel::PUSH,
+            ],
+            /*
+             * All three for an expiry, and this is the one type on the list
+             * where the *email* is the load-bearing channel rather than the
+             * courtesy. A driver whose licence lapses stops being able to work
+             * legally, and the app they would see the row in is the app they
+             * may have uninstalled. The push is what makes the seven-day
+             * warning reach somebody the same day.
+             */
+            self::DRIVER_DOCUMENT_EXPIRING,
+            self::DRIVER_DOCUMENT_EXPIRED => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::PUSH,
+                NotificationChannel::MAIL,
+            ],
+            /*
+             * Money the driver asked about, so the in-app row is where they go
+             * looking and the mail is what reaches them off-shift. No push:
+             * ADR-0032 §3 already argues that a settlement answer is not an
+             * interruption, it is an answer.
+             */
+            self::DRIVER_SETTLEMENT_CONFIRMED,
+            self::DRIVER_SETTLEMENT_DECLINED,
+            self::DRIVER_WALK_IN_CONTRACT_APPROVED,
+            self::DRIVER_WALK_IN_CONTRACT_REFUSED,
+            self::DRIVER_WEEKLY_BONUS_AWARDED => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::MAIL,
+            ],
+            /*
+             * Mail and the in-app row, for the whole security family except
+             * the two below.
+             *
+             * No push. These are not urgent in the interrupting sense: the
+             * thing has already happened and the reader's response is to make
+             * a phone call, not to tap. A lock-screen alert saying somebody
+             * changed your payout account is also a lock-screen alert
+             * announcing to whoever is holding the phone that this account is
+             * worth taking.
+             */
+            self::ACCOUNT_PASSWORD_CHANGED,
+            self::ACCOUNT_SIGNED_IN_NEW_DEVICE,
+            self::ACCOUNT_MFA_ENABLED,
+            self::ACCOUNT_MFA_DISABLED,
+            self::ACCOUNT_RECOVERY_CODES_LOW,
+            self::ACCOUNT_REACTIVATED,
+            self::ACCOUNT_EMAIL_CHANGED,
+            self::DRIVER_PAYOUT_ACCOUNT_CHANGED => [
+                NotificationChannel::DATABASE,
+                NotificationChannel::MAIL,
+            ],
+            /*
+             * **Mail alone.** A suspended account cannot be signed into, so an
+             * in-app row would be filed in an inbox nobody can open. Same
+             * shape as `DRIVER_CLOSURE_ANSWERED`, and the same argument.
+             */
+            self::ACCOUNT_SUSPENDED => [NotificationChannel::MAIL],
+            /*
+             * **Mail alone**, and for the plainest reason on this list: the
+             * recipient cannot sign in. That is the entire subject of the
+             * message. An in-app row would be filed in an inbox they have no
+             * way to open, and there is no handset to push to because the
+             * account has never been used.
+             *
+             * Same shape as `DRIVER_CLOSURE_ANSWERED`, arrived at from the
+             * other end of an account's life.
+             */
+            self::ACCOUNT_INVITED, self::ACCOUNT_INVITATION_EXPIRING => [NotificationChannel::MAIL],
             // Both, deliberately. The in-app row is the record they can go
             // back to; the mail is what reaches them without signing in to the
             // account somebody else was just holding.
@@ -287,6 +618,136 @@ enum NotificationType: string
                 NotificationChannel::PUSH,
                 NotificationChannel::MAIL,
             ],
+        };
+    }
+
+    /**
+     * Whether a recipient may switch this email off.
+     *
+     * Required means **security or money**: something that changes how an
+     * account is reached, or something somebody owes or is owed. A person who
+     * has silenced their password reset has silenced their only way back in,
+     * and a client who has silenced their invoices has not stopped owing the
+     * money.
+     *
+     * Everything else is optional, and the default is optional on purpose.
+     * AGENTS.md asks for an argument before a notification type exists at
+     * all; a type that additionally claims nobody may decline it needs a
+     * second one. Adding a case here is that argument being made.
+     *
+     * `MailPreference::allows()` reads this at send time rather than trusting
+     * a stored row, so a type that *becomes* required cannot stay silenced by
+     * a preference somebody set while it was optional.
+     */
+    public function mailIsRequired(): bool
+    {
+        return match ($this) {
+            /*
+             * A refusal is required and an approval is not, which looks
+             * asymmetric and is not. An approved booking is confirmed again
+             * by the car arriving. A rejected one is confirmed by nothing:
+             * the only signal is the absence of transport at 8am, by which
+             * time the meeting is missed.
+             */
+            self::BOOKING_REJECTED => true,
+
+            /*
+             * A closure answer reaches an account that has just stopped
+             * working, so there is no in-app row to fall back on. Switching
+             * off the only channel would mean nobody is told their account
+             * closed.
+             */
+            self::DRIVER_CLOSURE_ANSWERED => true,
+
+            /*
+             * Both document decisions gate whether somebody may drive, and a
+             * rejected document that goes unread is a driver who turns up to
+             * a shift they cannot work.
+             */
+            self::DRIVER_DOCUMENT_REVIEWED,
+            self::DRIVER_APPLICATION_DOCUMENT_REJECTED => true,
+
+            /*
+             * Somebody else held this account. ADR-0056 makes that legitimate
+             * and visible; a switch that hid it would make it legitimate and
+             * invisible, which is the thing the notification exists to
+             * prevent.
+             */
+            /*
+             * The invariant alert, and it is the only office email nobody may
+             * switch off.
+             *
+             * ADR-0059 §5: a fleet with nobody to act as is **permanently
+             * unreachable to the people whose job is to support it**, and it
+             * fails at the worst moment, because "the last administrator left"
+             * and "we need support" are correlated events. An administrator
+             * who silenced this would have silenced the only thing that says
+             * the invariant broke.
+             *
+             * Everything else on the office lists is a queue, and a queue is
+             * exactly the kind of thing an office should be able to decide it
+             * reads on screen instead.
+             */
+            self::PLATFORM_FLEET_HAS_NO_ACCOUNT => true,
+
+            /*
+             * Money owed, and a decision only this client may take.
+             *
+             * An invoice switched off is a bill nobody was told about, and a
+             * credit note switched off is money returned that nobody knows
+             * arrived. ADR-0060 §5 makes the contract request the client's own
+             * to answer and nobody else's, so silencing it would leave a fleet
+             * waiting on an answer the client never knew was wanted.
+             */
+            self::CLIENT_INVOICE_ISSUED,
+            self::CLIENT_CREDIT_NOTE_ISSUED,
+            self::CLIENT_CONTRACT_REQUESTED => true,
+
+            /*
+             * An expiring or expired document is the one driver email that is
+             * not a courtesy: it decides whether somebody may legally work.
+             * A driver who switched it off and then drove on a lapsed licence
+             * would have been failed by the switch, not served by it.
+             *
+             * The settlement answers are money the driver is owed or has been
+             * refused, which is the other half of the required test.
+             */
+            self::DRIVER_DOCUMENT_EXPIRING,
+            self::DRIVER_DOCUMENT_EXPIRED,
+            self::DRIVER_SETTLEMENT_CONFIRMED,
+            self::DRIVER_SETTLEMENT_DECLINED,
+            self::DRIVER_APPLICATION_APPROVED,
+            self::DRIVER_APPLICATION_REJECTED => true,
+
+            /*
+             * The whole security family, and this is the clearest case on the
+             * list. A person who has silenced these has silenced the only
+             * warning they will ever get that somebody else is holding their
+             * account, and the preference itself could only have been set by
+             * somebody signed in as them.
+             */
+            self::ACCOUNT_PASSWORD_CHANGED,
+            self::ACCOUNT_SIGNED_IN_NEW_DEVICE,
+            self::ACCOUNT_MFA_ENABLED,
+            self::ACCOUNT_MFA_DISABLED,
+            self::ACCOUNT_RECOVERY_CODES_LOW,
+            self::ACCOUNT_SUSPENDED,
+            self::ACCOUNT_REACTIVATED,
+            self::ACCOUNT_EMAIL_CHANGED,
+            self::DRIVER_PAYOUT_ACCOUNT_CHANGED => true,
+
+            /*
+             * There is no other way in. A preference that switched this off
+             * would leave somebody holding an account they can never open,
+             * and they would have had to be signed in to set the preference,
+             * which they cannot be.
+             */
+            self::ACCOUNT_INVITED,
+            self::ACCOUNT_INVITATION_EXPIRING => true,
+
+            self::ACCOUNT_ACCESSED_BY_SUPPORT => true,
+
+            default => false,
         };
     }
 }

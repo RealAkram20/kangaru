@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Modules\Fleet\Services\PlanAllowance;
 use Modules\Vehicles\Models\Vehicle;
 use Modules\Vehicles\Requests\StoreVehicleRequest;
 use Modules\Vehicles\Requests\UpdateVehicleRequest;
@@ -37,6 +38,21 @@ class VehicleController extends Controller
     public function store(StoreVehicleRequest $request): JsonResponse
     {
         $this->authorize('create', Vehicle::class);
+
+        /** @var User $actor */
+        $actor = $request->user();
+
+        // ADR-0058 §4. The limit is checked **here, at the point of adding**,
+        // and nowhere else — a vehicle who cannot work because of their
+        // employer's billing is a support call that takes an hour to diagnose
+        // and reaches the wrong team twice on the way. Exceeding a limit never
+        // touches what already exists.
+        //
+        // Head office has no fleet of its own, so there is nothing to charge
+        // and nothing to check.
+        if ($actor->operator_id !== null && $actor->operator !== null) {
+            app(PlanAllowance::class)->require($actor->operator, PlanAllowance::VEHICLES);
+        }
 
         $vehicle = $this->vehicles->create($request);
 

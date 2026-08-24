@@ -4,6 +4,33 @@ import type { Trip } from './trip'
 /** Mirrors Modules/Bookings/Enums/BookingStatus.php. */
 export type BookingStatus = 'pending' | 'approved' | 'rejected' | 'assigned' | 'cancelled'
 
+/**
+ * Mirrors Modules/Bookings/Enums/OrderRequestServiceType.php — the same
+ * triad the walk-in order form offers, on the internal channel since
+ * ADR-0064.
+ */
+export type BookingServiceType = 'ride' | 'delivery' | 'self_drive'
+
+/**
+ * The per-service extras, exactly as `BookingResource` emits them: the
+ * service's own keys all present (missing values as null), and null on a
+ * ride, whose absence of details is the fact itself.
+ */
+export interface BookingDetails {
+  // Delivery
+  item_type?: string | null
+  package_size?: string | null
+  payer?: string | null
+  payment_method?: string | null
+  recipient_name?: string | null
+  recipient_phone?: string | null
+  confirm_with_pin?: boolean | null
+  // Self drive
+  start_date?: string | null
+  end_date?: string | null
+  kyc_documents?: string | null
+}
+
 export interface BookingUser {
   id: number
   name: string
@@ -43,8 +70,11 @@ export interface Booking {
    * them apart — so this is never rendered as a default or coerced to one.
    */
   vehicle_category: string | null
-  origin: string
-  destination: string
+  service_type: BookingServiceType
+  details: BookingDetails | null
+  /** Null on a self-drive rental, which has no route (ADR-0064). */
+  origin: string | null
+  destination: string | null
   /** Null for an immediate request. */
   scheduled_for: string | null
   is_immediate: boolean

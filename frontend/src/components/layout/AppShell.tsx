@@ -36,6 +36,9 @@ const NAV_PATHS: Partial<Record<string, string>> = {
   // dashboard lives at its own path and `/` redirects signed-in users here.
   dashboard: '/dashboard',
   fleets: '/fleets',
+  clients: '/clients',
+  plans: '/plans',
+  'driver-contracts': '/driver-contracts',
   bookings: '/bookings',
   dispatch: '/dispatch',
   'walk-ins': '/order-requests',
@@ -62,6 +65,9 @@ const NAV_PATHS: Partial<Record<string, string>> = {
 const PAGE_BY_PATH: Record<string, { id: string; title: string }> = {
   '/dashboard': { id: 'dashboard', title: 'Dashboard' },
   '/fleets': { id: 'fleets', title: 'Fleet companies' },
+  '/clients': { id: 'clients', title: 'Corporate clients' },
+  '/plans': { id: 'plans', title: 'Plans' },
+  '/driver-contracts': { id: 'driver-contracts', title: 'Driver contracts' },
   '/bookings': { id: 'bookings', title: 'Bookings' },
   '/dispatch': { id: 'dispatch', title: 'Dispatch board' },
   '/order-requests': { id: 'walk-ins', title: 'Walk-in orders' },

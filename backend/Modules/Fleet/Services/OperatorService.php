@@ -3,12 +3,17 @@
 namespace Modules\Fleet\Services;
 
 use App\Enums\AccessLevel;
+use App\Enums\Permission;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Models\Operator;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Modules\Administration\Services\InvitationService;
+use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Mail\OfficeRecipient;
+use Modules\Notifications\Notifications\OfficeEventNotification;
 
 /**
  * Onboarding a fleet company (ADR-0055, ADR-0059 §5).
@@ -48,13 +53,13 @@ class OperatorService
      *
      * @param  array{name: string, slug?: string|null, owner_name: string, owner_email: string}  $input
      */
-    public function onboard(array $input): Operator
+    public function onboard(array $input, ?User $invitedBy = null): Operator
     {
         // The plan is not named here. `Operator::booted()` assigns the
         // default and throws when none is flagged (ADR-0058 §1) — on the
         // model rather than here, so a seeder or a fixture cannot make an
         // unpriced fleet by taking a different path.
-        return DB::transaction(function () use ($input): Operator {
+        return DB::transaction(function () use ($input, $invitedBy): Operator {
             $operator = Operator::create([
                 'name' => $input['name'],
                 'slug' => $this->slugFor($input['name'], $input['slug'] ?? null),
@@ -64,7 +69,7 @@ class OperatorService
             // `access_level` is declared, never inferred (ADR-0055 §4), and
             // the database trigger refuses the row if it disagrees with the
             // two columns. A fleet account names its fleet and no client.
-            User::create([
+            $owner = User::create([
                 'name' => $input['owner_name'],
                 'email' => $input['owner_email'],
                 // No password. The account is reached by the invitation the
@@ -78,6 +83,45 @@ class OperatorService
                 'operator_id' => $operator->id,
                 'access_level' => AccessLevel::FLEET,
             ]);
+
+            /*
+             * The invitation, inside the same transaction.
+             *
+             * This line is what the comment above it promised for the whole
+             * life of this method and did not deliver. `Str::password(32)` was
+             * generated and thrown away, no invitation was sent, and the
+             * result was a fleet owner who **could not sign in at all**: the
+             * forgot-password route was closed twice over, by a disabled flag
+             * and by an unconfigured mailer.
+             *
+             * In the transaction rather than after it, for the same reason the
+             * account is: a fleet that exists with an owner nobody can reach
+             * is the failure mode this method's own docblock names, and it
+             * should not be reachable by a partial success either. The mail
+             * itself is queued, so nothing here waits on a network.
+             */
+            app(InvitationService::class)->invite($owner, $invitedBy);
+
+            /*
+             * Head office hears about it (mail plan H1).
+             *
+             * `fleets.view`, not `fleets.manage`: whoever reads the register
+             * is who wants to know a fleet joined, and narrowing to whoever
+             * can edit it would leave an operations manager watching the
+             * platform uninformed about its own growth.
+             *
+             * Never to another fleet. `OfficeRecipient::headOffice()` is the
+             * only path here, and it filters on `access_level` rather than on
+             * a permission every Super Admin happens to hold.
+             */
+            foreach (app(OfficeRecipient::class)->headOffice(Permission::FLEETS_VIEW) as $staff) {
+                $staff->notify(new OfficeEventNotification(
+                    NotificationType::PLATFORM_FLEET_ONBOARDED,
+                    facts: [__('mail.office.fact_fleet') => (string) $operator->name],
+                    url: '/fleets/'.$operator->getKey(),
+                    replacements: ['fleet' => (string) $operator->name],
+                ));
+            }
 
             return $operator;
         });

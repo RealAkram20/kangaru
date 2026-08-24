@@ -169,6 +169,29 @@ it('creates an account that signs in and reaches nothing', function () {
                 // the question "may I?" cannot be asked.
                 'me.application.documents.index',
                 'me.application.documents.store',
+
+                /*
+                 | **Reference data plus the reader's own switches, and
+                 | nothing else** (mail plan M6).
+                 |
+                 | The rows are the `NotificationType` catalogue, which is the
+                 | same list for everybody and is no more secret than
+                 | `zones.index` above. The only per-account part is this
+                 | reader's own on/off flags, which for an applicant are all
+                 | default because they have never set one.
+                 |
+                 | Like the two above it: resolved from `$request->user()`
+                 | with no id in the path or the body, so there is no
+                 | parameter to change to reach somebody else's. The question
+                 | "may I?" cannot be asked.
+                 |
+                 | Listed rather than made to return `[]`, because an empty
+                 | list here would be a lie: an applicant *does* receive email
+                 | from this platform — the document rejection of ADR-0057 §5
+                 | is addressed to exactly them — and a preferences screen
+                 | showing nothing would tell them they have no say in it.
+                 */
+                'me.mail-preferences.index',
             ];
 
             $this->assertTrue(
@@ -252,19 +275,40 @@ it('refuses an application without affirmative consent', function () {
     )->assertStatus(422);
 });
 
-it('holds the same eight-character floor the change and reset doors hold', function () {
-    // Seven. Mutation check — drop `Password::min(8)` here and an applicant
-    // can mint an account with a password the change-password screen would
-    // then refuse to let them keep.
-    $this->postJson('/api/v1/driver-applications', applicationPayload([
-        'password' => '2short!',
-        'password_confirmation' => '2short!',
-    ]))->assertStatus(422)->assertJsonValidationErrors('password');
+/**
+ * The floor this request actually enforces, stated as a number.
+ *
+ * **It read `PasswordPolicy::MINIMUM_LENGTH`, and that class is not committed.**
+ * A test importing a class the repository does not contain does not fail on
+ * its assertion — it fatals on `use`, and CI has no way to tell that from a
+ * broken feature. Whoever lands the shared policy should point this back at
+ * the constant in the same commit that adds it.
+ *
+ * Eight, because `StoreDriverApplicationRequest` says `Password::min(8)` and
+ * so do `ChangePasswordRequest` and `PasswordResetController` — the two doors
+ * this password walks through next. A number restated here is a liability the
+ * moment the floor moves, which is exactly why the pending policy class
+ * exists; until it is on the branch, a literal that matches the committed rule
+ * is the only assertion that can run.
+ *
+ * Mutation check — drop the `Password::min(8)` off this request and an
+ * applicant can mint an account with a password the change-password screen
+ * would then refuse to let them keep.
+ */
+it('refuses one character below the platform floor, and accepts it exactly', function () {
+    $below = str_repeat('k', 7);
 
     $this->postJson('/api/v1/driver-applications', applicationPayload([
-        'email' => 'eight@kangaruride.test',
-        'password' => '8chars!!',
-        'password_confirmation' => '8chars!!',
+        'password' => $below,
+        'password_confirmation' => $below,
+    ]))->assertStatus(422)->assertJsonValidationErrors('password');
+
+    $atFloor = str_repeat('k', 8);
+
+    $this->postJson('/api/v1/driver-applications', applicationPayload([
+        'email' => 'at-the-floor@kangaruride.test',
+        'password' => $atFloor,
+        'password_confirmation' => $atFloor,
     ]))->assertStatus(202);
 });
 

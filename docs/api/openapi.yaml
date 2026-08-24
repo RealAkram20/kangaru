@@ -274,6 +274,282 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/me/mail-preferences:
+    get:
+      summary: >
+        A person's own email preferences (mail plan M6). `/me/`, so the account
+        is the token and there is no id to supply.
+      description: >
+        The destination of the "Choose which emails you get" link in every
+        email footer. `required` marks the emails nobody may switch off;
+        `available` is false when a system administrator has switched that type
+        off for the whole platform, reported rather than hidden so somebody who
+        stopped getting invoices can see it was not their own doing.
+      responses:
+        '200':
+          description: Every mailable type and this person's setting for it.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string, nullable: true }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [type, label, required, available, enabled]
+                      additionalProperties: false
+                      properties:
+                        type: { type: string }
+                        label: { type: string }
+                        required: { type: boolean }
+                        available: { type: boolean }
+                        enabled: { type: boolean }
+        default:
+          $ref: '#/components/responses/Error'
+
+    put:
+      summary: >
+        Switches one email on or off for the signed-in person (mail plan M6).
+      description: >
+        One switch per call and idempotent. A `required` type answers 422
+        rather than being stored and overridden, because a preference the
+        platform keeps and then ignores reads back to the user as an answer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, enabled]
+              additionalProperties: false
+              properties:
+                type: { type: string }
+                enabled: { type: boolean }
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOnly'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/settings/mail/dns:
+    get:
+      summary: >
+        Whether SPF, DKIM and DMARC exist for the sending domain, and the one
+        record this platform can compose (mail plan, owner request 24 August).
+        Gated by SettingPolicy, throttled 10/min/IP.
+      description: >
+        The domain comes from the configured `mail.from_address`. DMARC is
+        offered whole because its name is fixed and its only variable is the
+        reporting address; SPF and DKIM are reported as present or not and
+        never composed, because their contents come from the email provider and
+        a plausible guess would look authoritative and break mail for whoever
+        pasted it. DKIM answers `unknown` rather than `missing` when no known
+        selector matches: a selector nobody tried is indistinguishable from no
+        DKIM, and only one of those is worth telling somebody about.
+        Throttled because each call makes outbound DNS lookups against a host
+        derived from a stored setting.
+      responses:
+        '200':
+          description: The sending domain and the state of its mail records.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string, nullable: true }
+                  data:
+                    type: object
+                    required: [domain, from_address, spf, dkim, dmarc]
+                    additionalProperties: false
+                    properties:
+                      domain: { type: string, nullable: true }
+                      from_address: { type: string, nullable: true }
+                      spf:
+                        type: object
+                        required: [status, value]
+                        additionalProperties: false
+                        properties:
+                          status: { enum: [found, missing, unknown] }
+                          value: { type: string, nullable: true }
+                      dkim:
+                        type: object
+                        required: [status, selector]
+                        additionalProperties: false
+                        properties:
+                          status: { enum: [found, missing, unknown] }
+                          selector: { type: string, nullable: true }
+                      dmarc:
+                        type: object
+                        required: [status, value, name, suggested]
+                        additionalProperties: false
+                        properties:
+                          status: { enum: [found, missing, unknown] }
+                          value: { type: string, nullable: true }
+                          name: { type: string }
+                          suggested: { type: string }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/settings/email:
+    get:
+      summary: >
+        Which emails this deployment sends at all (mail plan M3). Gated by
+        SettingPolicy, which ADR-0014 §4 holds at `settings.manage` for both
+        directions, so this is Super Admin and nobody else.
+      description: >
+        The list is the `NotificationType` enum filtered to the types that
+        actually carry mail, so a type added tomorrow appears here tomorrow
+        with no migration. `required` marks the emails that cannot be switched
+        off, and those are listed rather than hidden: an administrator looking
+        for "why did nobody get the password reset email" needs to find it and
+        see that it is locked. Reading this list tells you which warnings the
+        platform does not send, which is why the read is held as tightly as the
+        write.
+      responses:
+        '200':
+          description: Every mailable notification type and its state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string, nullable: true }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [type, label, required, enabled]
+                      additionalProperties: false
+                      properties:
+                        type: { type: string }
+                        label: { type: string }
+                        required:
+                          type: boolean
+                          description: True when the email cannot be switched off.
+                        enabled: { type: boolean }
+        default:
+          $ref: '#/components/responses/Error'
+
+    put:
+      summary: >
+        Switches one email on or off for the whole platform (mail plan M3).
+      description: >
+        One switch per call rather than a whole list, so a screen that fails
+        halfway leaves a state somebody can read. Idempotent: sending `false`
+        twice leaves it off rather than toggling it back on. A `required` type
+        answers 422 rather than being accepted and ignored, because a switch
+        the platform stores and then overrides reads back to the administrator
+        as an answer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, enabled]
+              additionalProperties: false
+              properties:
+                type: { type: string }
+                enabled: { type: boolean }
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOnly'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/invitations/{token}:
+    get:
+      summary: >
+        Whose account an invitation link opens (mail plan M2). Unauthenticated:
+        the caller has an account and no way into it, which is the whole
+        subject of the request. The 48-character token is the only credential
+        and it is single use. Throttled 20/min/IP: an idempotent read that
+        reveals nothing new to the holder of the token does not need the
+        accept route's budget, and at 5/min it tripped while somebody was
+        simply looking at the page.
+      description: >
+        200 with the name, address and expiry so the accept page can say whose
+        account is being opened rather than presenting a bare password form.
+        404 NOT_FOUND for an unknown or truncated token, 409
+        INVITATION_ALREADY_USED for one that has been accepted (go and sign
+        in), 410 INVITATION_EXPIRED for one that lapsed (ask for a new one).
+        The three are distinct because they send the reader to three different
+        places, and nothing is revealed that the holder of a valid token did
+        not already have.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 64 }
+      responses:
+        '200':
+          description: The account this link opens.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string, nullable: true }
+                  data:
+                    type: object
+                    required: [name, email, expires_at]
+                    additionalProperties: false
+                    properties:
+                      name: { type: string }
+                      email: { type: string, format: email }
+                      expires_at: { type: string, format: date-time }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/invitations/{token}/accept:
+    post:
+      summary: >
+        Sets the password and burns the link (mail plan M2). Unauthenticated,
+        throttled 5/min/IP, single use. The password floor is the same 8 a
+        reset sets, because an invitation that accepted a weaker one would be
+        the weakest door into a brand new account.
+      description: >
+        Answers a message rather than a session. Signing the caller in here
+        would skip the second factor ADR-0008 requires of a Super Admin or a
+        Finance officer, and those are exactly the roles most likely to be
+        invited. A suspended account answers 410 like an expired link, so the
+        response does not confirm the suspension to whoever holds the token.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password, password_confirmation]
+              additionalProperties: false
+              properties:
+                password: { type: string, minLength: 8 }
+                password_confirmation: { type: string }
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOnly'
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/auth/social:
     post:
       summary: >
@@ -576,10 +852,19 @@ paths:
         none of it. Gated on `bookings.create` instead — you may look up a
         colleague if you may book a car for one. `q` is required and the
         result is capped, so this is a lookup and never a directory dump.
-        Empty for platform staff, who belong to no tenant and so have no
-        colleagues; they book walk-ins by name.
+        For a fleet actor the range is the staff of the clients the fleet
+        actively serves, and `tenant_id` narrows to one of them — the
+        booking dialog names the client first (ADR-0064), and offering
+        another client's staff after that is offering a mistake.
       parameters:
         - { name: q, in: query, required: true, schema: { type: string, minLength: 2, maxLength: 120 } }
+        - name: tenant_id
+          in: query
+          schema: { type: integer }
+          description: >
+            Fleet actors only — a client's own user has no choice of client
+            and is refused the filter. Narrows within the served range; an
+            unserved id yields an empty list, identically to a real one.
       responses:
         '200':
           description: At most fifteen matching colleagues.
@@ -985,7 +1270,16 @@ paths:
       summary: The booking queue — one client's, or every client's for platform staff.
       parameters:
         - { name: status, in: query, schema: { $ref: '#/components/schemas/BookingStatus' } }
-        - { name: dispatchable, in: query, schema: { type: boolean } }
+        - name: service_type
+          in: query
+          schema: { enum: [ride, delivery, self_drive] }
+          description: ADR-0064 — narrow a mixed queue to one service.
+        - name: dispatchable
+          in: query
+          schema: { type: boolean }
+          description: >
+            Awaiting a vehicle AND a service a driver is sent to — a
+            self-drive rental never appears here (ADR-0064).
         - { name: q, in: query, schema: { type: string, maxLength: 120 } }
         - { name: tenant_id, in: query, schema: { type: integer }, description: Platform staff only. }
         - { $ref: '#/components/parameters/cursor' }
@@ -1015,9 +1309,29 @@ paths:
           application/json:
             schema:
               type: object
-              required: [passenger_name, passenger_phone, origin, destination]
+              required: [passenger_name, passenger_phone]
               additionalProperties: false
               properties:
+                service_type:
+                  enum: [ride, delivery, self_drive]
+                  description: >
+                    ADR-0064. Omit for a ride — the reading every payload had
+                    before the field existed. `origin` and `destination` are
+                    required for a ride or delivery and refused-as-optional on
+                    a self-drive rental, which has no route; a delivery
+                    requires `details.recipient_name` and `.recipient_phone`;
+                    a self-drive requires `details.start_date` and `.end_date`
+                    and prohibits `scheduled_for` (its clock is the hire
+                    period).
+                tenant_id:
+                  type: ['integer', 'null']
+                  description: >
+                    Which client this booking is for (ADR-0064). **Required
+                    from a fleet actor**, whose desk books on a client's
+                    behalf, and validated against the clients the fleet
+                    actively serves — an unserved and a nonexistent id answer
+                    identically. Not a recognised input from a client's own
+                    user, whose booking is always their own client's.
                 passenger_user_id:
                   type: ['integer', 'null']
                   description: >
@@ -1038,12 +1352,32 @@ paths:
                   anyOf:
                     - { $ref: '#/components/schemas/VehicleCategoryKey' }
                     - { enum: [null] }
-                origin: { type: string, maxLength: 255 }
-                destination: { type: string, maxLength: 255 }
+                origin: { type: ['string', 'null'], maxLength: 255 }
+                destination: { type: ['string', 'null'], maxLength: 255 }
                 scheduled_for:
                   type: ['string', 'null']
                   description: Omit or null for an immediate booking. Must be in the future.
                 notes: { type: ['string', 'null'], maxLength: 1000 }
+                details:
+                  type: ['object', 'null']
+                  description: >
+                    Per-service extras (ADR-0064). Only the submitting
+                    service's keys are stored — stale keys from another
+                    service are dropped by the single writer, never
+                    persisted.
+                  additionalProperties: false
+                  properties:
+                    item_type:
+                      enum: [documents, food, parcel, electronics, furniture, appliances, other, null]
+                    package_size: { enum: [small, medium, large, heavy, null] }
+                    payer: { enum: [sender, receiver, null] }
+                    payment_method: { enum: [cash, mobile_money, card, null] }
+                    recipient_name: { type: ['string', 'null'], maxLength: 120 }
+                    recipient_phone: { type: ['string', 'null'], maxLength: 32 }
+                    confirm_with_pin: { type: ['boolean', 'null'] }
+                    start_date: { type: ['string', 'null'] }
+                    end_date: { type: ['string', 'null'] }
+                    kyc_documents: { type: ['string', 'null'], maxLength: 255 }
       responses:
         '201':
           $ref: '#/components/responses/BookingResponse'
@@ -1693,6 +2027,43 @@ paths:
       responses:
         '204':
           description: Deleted. No content.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/companies/{company}/fleets:
+    parameters:
+      - { name: company, in: path, required: true, schema: { type: integer } }
+    put:
+      summary: Sets which fleets serve this client. Head office only.
+      description: >
+        The whole set, reconciled to - sending [1, 3] means those two serve the
+        client and nobody else does. Removing a fleet ENDS its contract and
+        never deletes the row: the trips and invoices it explains are still the
+        client's history (ADR-0060 section 7).
+
+
+        At least one fleet is required. A client with none books and is never
+        dispatched, and nothing anywhere errors (ADR-0062 section 3).
+
+
+        A fleet cannot reach this. It asks, through POST /api/v1/contracts, and
+        the client answers - which is ADR-0060 section 5 unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operator_ids]
+              additionalProperties: false
+              properties:
+                operator_ids:
+                  type: array
+                  minItems: 1
+                  items: { type: integer }
+      responses:
+        '200':
+          $ref: '#/components/responses/CompanyResponse'
         default:
           $ref: '#/components/responses/Error'
 
@@ -5400,6 +5771,146 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/walk-in-contracts:
+    get:
+      summary: What is waiting on me — a driver's contract with Kangaru.
+      description: >
+        ADR-0055 §5. Two queues behind one route, because it is one question
+        asked by different parties: a **fleet** sees its own drivers waiting on
+        its consent; **head office** sees everything already consented and
+        waiting on them, oldest first. Two URLs would let a fleet ask head
+        office's.
+      responses:
+        '200':
+          description: The contracts waiting on this actor.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/WalkInContract' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/walk-in-contracts/{contract}/consent:
+    parameters:
+      - { name: contract, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: The fleet agrees to let its driver take walk-in work.
+      description: >
+        The fleet named **on the contract**, not the driver's current employer —
+        a driver who moves must not hand this decision to whoever they work for
+        now. Head office cannot consent on a fleet's behalf, or "the fleet
+        consents" is a sentence in an ADR and nothing in the code.
+      responses:
+        '200':
+          $ref: '#/components/responses/WalkInContractResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/walk-in-contracts/{contract}/approval:
+    parameters:
+      - { name: contract, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: Kangaru accepts the driver into walk-in work.
+      description: >
+        Head office only, and **refused unless the fleet has already
+        consented** — a 422 even for the party entitled to call it. If this
+        could be reached early, every driver on the platform is contracted the
+        moment they ask and the consent step is decorative.
+      responses:
+        '200':
+          $ref: '#/components/responses/WalkInContractResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/walk-in-contracts/{contract}/refusal:
+    parameters:
+      - { name: contract, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: Whoever's turn it is says no.
+      description: >
+        One route for both answers. **Which timestamp it stamps is decided by
+        the contract's state, not by the caller**, so a fleet cannot record
+        Kangaru's answer by calling the wrong verb. The reason is optional — a
+        fleet declining its own driver may have nothing to say publicly — and
+        the driver is told the outcome either way (ADR-0052).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason: { type: ['string', 'null'], maxLength: 500 }
+      responses:
+        '200':
+          $ref: '#/components/responses/WalkInContractResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/plans:
+    get:
+      summary: What a fleet can pay to be on Kangaru.
+      description: >
+        ADR-0058. Open to any signed-in account — a fleet is entitled to know
+        what it could move to, and the catalogue carries no other fleet's
+        information. A limit of null means **unlimited**, never nought and
+        never a large number: a grandfathered fleet whose unlimited-ness is
+        spelled 999999 is one careless comparison from being limited.
+      responses:
+        '200':
+          description: Every plan, cheapest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Plan' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/operators/{operator}/plan:
+    parameters:
+      - { name: operator, in: path, required: true, schema: { type: integer } }
+    put:
+      summary: Move a fleet onto a plan.
+      description: >
+        Head office only — it is Kangaru's commercial relationship with that
+        fleet, not the fleet's own to edit. **A move to a plan smaller than the
+        fleet's current usage is refused with a 422 naming the figures**
+        (ADR-0058 §4): "Free allows 10 drivers, and this fleet has 38". The
+        office reduces first; the system does not choose which twenty-eight
+        drivers to cut, and it never deactivates anything.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_id]
+              additionalProperties: false
+              properties:
+                plan_id: { type: integer }
+      responses:
+        '200':
+          $ref: '#/components/responses/OperatorResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/kangaru/overview:
     get:
       summary: What head office sees when it signs in.
@@ -7128,6 +7639,18 @@ components:
               reason: { type: string, maxLength: 1000 }
 
   responses:
+    WalkInContractResponse:
+      description: One driver's walk-in contract.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, message, data]
+            additionalProperties: false
+            properties:
+              success: { enum: [true] }
+              message: { type: string }
+              data: { $ref: '#/components/schemas/WalkInContract' }
     ContractResponse:
       description: One contract between a fleet and a client.
       content:
@@ -7692,6 +8215,20 @@ components:
         cursor: { $ref: '#/components/schemas/Cursor' }
         scope: { $ref: '#/components/schemas/Scope' }
         filters: { $ref: '#/components/schemas/ClientsFilter' }
+        bookable_clients:
+          description: >
+            /bookings only (ADR-0064 §5): the clients this fleet actor may
+            raise a booking for — active contracts, narrower than
+            `filters.clients`, which spans existing rows and so includes
+            ended contracts. Empty for a client's own user.
+          type: array
+          items:
+            type: object
+            required: [value, label]
+            additionalProperties: false
+            properties:
+              value: { type: integer }
+              label: { type: string }
 
     ClientRef:
       description: Which client a row belongs to — platform readers only (ADR-0006).
@@ -7751,6 +8288,7 @@ components:
         - SERVER_ERROR
         - INVALID_TRIP_TRANSITION
         - INVALID_BOOKING_TRANSITION
+        - BOOKING_NOT_DISPATCHABLE
         - VEHICLE_UNAVAILABLE
         - DRIVER_UNAVAILABLE
         - REPORT_TOO_LARGE
@@ -7798,6 +8336,8 @@ components:
         # worth losing safely, because a second confirm would move the retention
         # clock the closure is measured from.
         - CLOSURE_REQUEST_ALREADY_DECIDED
+        - INVITATION_ALREADY_USED
+        - INVITATION_EXPIRED
 
     TripStatus:
       enum:
@@ -8026,6 +8566,79 @@ components:
       description: A named bundle of permissions a corporate client's administrator may switch on for one of their own people (App\Enums\ClientCapability).
       enum: [approves_bookings, sees_finance, manages_staff, manages_routes]
 
+    WalkInContract:
+      type: object
+      required: [id, status, fleet_answered_at, kangaru_answered_at, refused_reason]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        status:
+          enum: [requested, awaiting_kangaru, active, refused]
+          description: >
+            Four states rather than a boolean, because each step belongs to a
+            different party and the queue is built on the gap between the
+            second and the third — consented, waiting on head office.
+        fleet_answered_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        kangaru_answered_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        refused_reason: { type: ['string', 'null'] }
+        driver:
+          type: object
+          required: [id, name, owns_vehicle]
+          additionalProperties: false
+          properties:
+            id: { type: ['integer', 'null'] }
+            name: { type: ['string', 'null'] }
+            owns_vehicle:
+              type: boolean
+              description: >
+                Whether fleet consent was waived (ADR-0048 §7, ADR-0055 §5).
+                Without it the office sees a contract naming no fleet and
+                cannot tell a driver-partner from a data error.
+        fleet:
+          type: ['object', 'null']
+          required: [id, name]
+          additionalProperties: false
+          properties:
+            id: { type: integer }
+            name: { type: string }
+
+    Plan:
+      type: object
+      required: [id, slug, name, description, is_default, price_minor, currency, period, driver_limit, vehicle_limit, staff_limit]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: ['string', 'null'] }
+        is_default:
+          type: boolean
+          description: >
+            The plan a fleet gets when none is named. Free is a real plan and
+            the default, not the absence of one (ADR-0058 §1) — a nullable
+            plan meaning "free" is the inference ADR-0055 §4 refused for access
+            levels, failing the same way and in the direction of giving
+            something away.
+        price_minor:
+          type: integer
+          description: >
+            Minor units, per AGENTS.md. Nought is a real price on Free rather than
+            an absence — ADR-0058 §1 is explicit that Free is a plan, not the
+            lack of one.
+        currency: { type: string, minLength: 3, maxLength: 3 }
+        period: { enum: [none, monthly, annual] }
+        driver_limit:
+          type: ['integer', 'null']
+          description: >
+            Null means **unlimited** — never nought, and never a large number. A
+            grandfathered fleet whose unlimited-ness is spelled 999999 is one
+            careless comparison away from being limited.
+        vehicle_limit: { type: ['integer', 'null'] }
+        staff_limit: { type: ['integer', 'null'] }
+        fleets_count:
+          type: integer
+          description: Present on the listing only.
+
     Contract:
       type: object
       required: [id, status, started_on, ended_on]
@@ -8148,6 +8761,20 @@ components:
         country: { type: ['string', 'null'] }
         credit_limit_minor: { type: ['integer', 'null'] }
         status: { enum: [active, suspended] }
+        # Present for a `kangaru` actor only, and absent - not empty - for
+        # every other level. ADR-0060 section 4 refuses one fleet the knowledge
+        # of which competitor also serves its client, so the key is omitted
+        # rather than sent as `[]`, which a reader would take for "nobody".
+        # Deliberately not in `required` for exactly that reason.
+        served_by:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            additionalProperties: false
+            properties:
+              id: { type: integer }
+              name: { type: ['string', 'null'] }
         created_at: { $ref: '#/components/schemas/NullableTimestamp' }
         updated_at: { $ref: '#/components/schemas/NullableTimestamp' }
 
@@ -10019,6 +10646,8 @@ components:
         - passenger_phone
         - passenger_count
         - vehicle_category
+        - service_type
+        - details
         - origin
         - destination
         - scheduled_for
@@ -10069,8 +10698,38 @@ components:
           anyOf:
             - { $ref: '#/components/schemas/VehicleCategoryKey' }
             - { enum: [null] }
-        origin: { type: string }
-        destination: { type: string }
+        service_type:
+          description: >
+            Which of the platform's three services this asks for (ADR-0064) —
+            the same vocabulary the walk-in order carries. Every booking that
+            predates the field is a `ride`.
+          enum: [ride, delivery, self_drive]
+        details:
+          description: >
+            The per-service extras, allow-listed per service and emitted with
+            every key of that service present (missing values as null) — never
+            the stored column wholesale. Null on a ride, whose absence of
+            details is the fact itself. Delivery carries the parcel and its
+            recipient; self-drive carries the hire period and the identity
+            documents the renter will bring.
+          type: ['object', 'null']
+          additionalProperties: false
+          properties:
+            item_type: { type: ['string', 'null'] }
+            package_size: { type: ['string', 'null'] }
+            payer: { type: ['string', 'null'] }
+            payment_method: { type: ['string', 'null'] }
+            recipient_name: { type: ['string', 'null'] }
+            recipient_phone: { type: ['string', 'null'] }
+            confirm_with_pin: { type: ['boolean', 'null'] }
+            start_date: { type: ['string', 'null'] }
+            end_date: { type: ['string', 'null'] }
+            kyc_documents: { type: ['string', 'null'] }
+        origin:
+          description: Null on a self-drive rental, which has no route (ADR-0064).
+          type: ['string', 'null']
+        destination:
+          type: ['string', 'null']
         scheduled_for: { $ref: '#/components/schemas/NullableTimestamp' }
         is_immediate: { type: boolean }
         status: { $ref: '#/components/schemas/BookingStatus' }

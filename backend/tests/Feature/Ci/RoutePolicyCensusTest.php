@@ -90,6 +90,31 @@ function routeCensus(): array
         'PATCH api/v1/auth/password' => 'C',
         'POST api/v1/auth/password/forgot' => 'D',
         'POST api/v1/auth/password/reset' => 'D',
+        // The invitation link (mail plan M2). Public for the same reason the
+        // two above are: the caller has an account and no way into it, which
+        // is the entire subject of the request. The 48-character token is the
+        // credential, it is single use, and neither route sends an email, so
+        // there is no outbound-mail cost to defend the way the forgot leg has.
+        'GET api/v1/invitations/{token}' => 'D',
+        'POST api/v1/invitations/{token}/accept' => 'D',
+        // The email menu (mail plan M3). Authenticated, and gated twice: the
+        // `SettingPolicy` permission AND `access_level === kangaru`, because
+        // every Super Admin holds `settings.manage` including a fleet's own,
+        // and `mail_toggles` has no operator_id. A fleet flipping a switch
+        // would silence that email for every other fleet.
+        // The DNS side of email (owner request, 24 August). Same
+        // `SettingPolicy` gate as the SMTP settings it sits under, and
+        // throttled because each call makes outbound DNS lookups against a
+        // host derived from a stored setting.
+        'GET api/v1/settings/mail/dns' => 'A',
+        'GET api/v1/settings/email' => 'A',
+        'PUT api/v1/settings/email' => 'A',
+        // A person's own email preferences (mail plan M6). Idiom C: no policy,
+        // because there is no subject to authorize against — the route takes
+        // no id, scopes to `$request->user()`, and there is deliberately no
+        // way to name anybody else. Same shape as the `me/devices` routes.
+        'GET api/v1/me/mail-preferences' => 'C',
+        'PUT api/v1/me/mail-preferences' => 'C',
         'POST api/v1/auth/social' => 'D',
         'GET api/v1/public/legal' => 'D',
         'GET api/v1/public/settings' => 'D',
@@ -118,6 +143,10 @@ function routeCensus(): array
         'GET api/v1/companies/{company}' => 'A',
         'DELETE api/v1/companies/{company}' => 'A',
         'PATCH api/v1/companies/{company}' => 'A',
+        // Which fleets serve a client (owner's decision, 24 Aug). Head office
+        // alone - `CompanyPolicy::assignFleets` gates on the level, not on a
+        // permission, so a custom role cannot be granted it.
+        'PUT api/v1/companies/{company}/fleets' => 'A',
         // ADR-0045. All A: both policies are consulted by
         // `$this->authorize()` on every action, and reads are additionally
         // narrowed by `forActor()` for platform staff (A/C in effect, filed
@@ -268,6 +297,16 @@ function routeCensus(): array
         // ADR-0056 acts as a person, not an organisation, so Log in as needs somebody to name.
         'GET api/v1/operators/{operator}/accounts' => 'A',
         // Head office's own dashboard: counts only, never a row (ADR-0055 §2).
+        // ADR-0058. The catalogue is open to any signed-in account; moving a
+        // fleet between plans is head office's.
+        // ADR-0055 §5. Three parties, three answers, and no party may perform
+        // another's step — `approve` is keyed on the level, not a permission.
+        'GET api/v1/walk-in-contracts' => 'A',
+        'POST api/v1/walk-in-contracts/{contract}/consent' => 'A',
+        'POST api/v1/walk-in-contracts/{contract}/approval' => 'A',
+        'POST api/v1/walk-in-contracts/{contract}/refusal' => 'A',
+        'GET api/v1/plans' => 'C',
+        'PUT api/v1/operators/{operator}/plan' => 'A',
         'GET api/v1/kangaru/overview' => 'A',
         // ADR-0060: a boolean, so two fleets cannot create two rows for one bank.
         'GET api/v1/clients/lookup' => 'A',
@@ -450,7 +489,17 @@ it('has a census row for every API route and a route for every census row', func
     // 211: the fleet-company register (K2, ADR-0059) — index, store, show,
     // update. No destroy: a fleet that leaves is suspended, because six
     // operational tables carry `operator_id`.
-    expect(count($router))->toBe(222);
+    // 230: mail plan M2's two invitation routes, 2026-08-24. Public, and the
+    // reason they are worth the tripwire firing: until they existed, a fleet
+    // owner and a corporate client admin were active accounts nobody could
+    // sign into, because onboarding minted a random password and discarded it.
+    // 232: the email menu's read and write, 2026-08-24. Authenticated,
+    // so the public count below is unchanged.
+    // 235: the two `me/mail-preferences` routes, 2026-08-24. They are the
+    // destination of the footer link in every email since M1, which until
+    // now 404'd.
+    // 236: the mail DNS check.
+    expect(count($router))->toBe(236);
 });
 
 it('uses only the four idioms, and files sixteen routes as public', function () {
@@ -469,7 +518,8 @@ it('uses only the four idioms, and files sixteen routes as public', function () 
      * id in the URL — the row is whichever one the claim ticket resolves to,
      * so there is nothing to enumerate by changing a path segment.
      */
-    expect($idioms['D'])->toBe(16);
+    // 16 -> 18: mail plan M2's two invitation routes.
+    expect($idioms['D'])->toBe(18);
     expect($idioms['B'])->toBe(3);
 });
 
@@ -497,7 +547,8 @@ it('authenticates every route that is not filed as public, and throttles every o
     // 13 -> 16: ADR-0048 §4's three applicant KYC verbs, all throttled at
     // ADR-0027 §5's 5/min/IP. `$guarded` is unchanged because all three are
     // public by design, not by omission.
-    expect($public)->toBe(16);
+    // 16 -> 18: the two invitation routes, both throttled at 5/min/IP.
+    expect($public)->toBe(18);
     // 181: the two ADR-0045 stop routes, both authenticated.
     // 183: the two application-document reads, both authenticated. They serve
     // somebody's identity document, so being counted here is the point.
@@ -507,7 +558,11 @@ it('authenticates every route that is not filed as public, and throttles every o
     // register search beside it.
     // 195: the four fleet-company routes, all authenticated. Head office's
     // register is the least public surface on the platform.
-    expect($guarded)->toBe(206);
+    // 214: the email menu's two routes, both authenticated.
+    // 217: the two mail-preference routes, both authenticated. Nobody
+    // reads or writes anybody else's; the route takes no id.
+    // 218: the mail DNS check, authenticated.
+    expect($guarded)->toBe(218);
 });
 
 it('binds the actor\'s tenant on every staff route, so TenantScope has something to scope by', function () {
@@ -553,5 +608,9 @@ it('binds the actor\'s tenant on every staff route, so TenantScope has something
     // they bind the actor's tenant like the rest even though a Kangaru
     // account has none - IdentifyTenant binding a null is the fail-closed
     // state, and exempting them would be a second way to be unscoped.
-    expect($staff)->toBe(192);
+    // 200: the email menu's two routes. Head office only, and they bind
+    // the actor's tenant like the fleet register does.
+    // 203: the two mail-preference routes, staff-guarded like `me/devices`.
+    // 204: the mail DNS check.
+    expect($staff)->toBe(204);
 });

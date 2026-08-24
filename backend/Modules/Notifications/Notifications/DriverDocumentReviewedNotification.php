@@ -2,10 +2,10 @@
 
 namespace Modules\Notifications\Notifications;
 
-use Illuminate\Notifications\Messages\MailMessage;
 use Modules\Drivers\Enums\DriverDocumentStatus;
 use Modules\Drivers\Models\DriverDocument;
 use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Mail\MailContent;
 
 /**
  * Tells a driver what the office decided about one of their documents
@@ -117,26 +117,31 @@ class DriverDocumentReviewedNotification extends KangaruNotification
      * how somebody stops using a feature (ADR-0032 §3 reached the same
      * conclusion about a declined settlement).
      *
-     * `KangaruNotification::toMail()` builds the subject and the greeting;
+     * `KangaruNotification::mailContent()` builds the subject and the body;
      * this adds the one extra line and nothing more. There is no action
      * button, because `url()` is null and there is no staff-console page to
-     * send a driver to. Deliberately plain — no summary of the document, no
+     * send a driver to. Deliberately plain: no summary of the document, no
      * restatement of the subject, and no closing paragraph about how much the
      * office values them.
+     *
+     * Ported from `toMail()` when the mail channel moved onto the settings
+     * mailer. Same words, same order, and the same reason for the order.
      */
-    public function toMail(object $notifiable): MailMessage
+    public function mailContent(): MailContent
     {
-        $mail = parent::toMail($notifiable);
+        $content = parent::mailContent();
 
-        if (! $this->verified && $this->reason !== null && $this->reason !== '') {
-            // Ahead of the body line rather than after it: the reason is the
-            // message, and "open the app" is the instruction that follows from
-            // it. `MailMessage` renders introduction lines in the order they
-            // are added, so this has to be inserted rather than appended.
-            $mail->introLines = [$this->reason, ...$mail->introLines];
+        if ($this->verified || $this->reason === null || $this->reason === '') {
+            return $content;
         }
 
-        return $mail;
+        // Ahead of the body line rather than after it: the reason is the
+        // message, and "open the app" is the instruction that follows from it.
+        return new MailContent(
+            subject: $content->subject,
+            heading: $content->heading,
+            paragraphs: [$this->reason, ...$content->paragraphs],
+        );
     }
 
     /**

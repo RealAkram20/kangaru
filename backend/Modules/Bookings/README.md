@@ -7,6 +7,20 @@ what a Corporate Employee raises and a Dispatcher works from. Covers
 PROJECT.md's Booking Management scope for Phase 1: immediate and scheduled
 bookings, with an optional approval step.
 
+Since ADR-0064 a booking names its **service** — `ride`, `delivery` or
+`self_drive`, the same `OrderRequestServiceType` the walk-in form submits —
+and a fleet's desk can raise one **for a corporate client** by naming the
+client (`tenant_id`, validated against active contracts). Per-service extras
+live in `bookings.details`, written and read only through
+`Support/BookingDetails` (the `OrderDetails` allow-list lesson, applied
+before the leak): a delivery carries its parcel and recipient, a self-drive
+carries its hire period and the identity documents the renter will bring —
+never the documents themselves; the desk checks originals at collection. A
+self-drive booking has no route (`origin`/`destination` are null), never
+appears under `?dispatchable=1`, and `POST /bookings/{id}/assignment`
+refuses it with `409 BOOKING_NOT_DISPATCHABLE` — the walk-in queue's
+"Pickup → As directed" incident is the reason both guards exist.
+
 A Booking becomes a Trip only through `Modules/Dispatch`; this module never
 touches vehicles or drivers.
 
@@ -62,7 +76,7 @@ the transition check.
 
 | Method | Path | Policy |
 |---|---|---|
-| GET | `/api/v1/bookings` | `viewAny` — cursor-paginated; a Corporate Employee sees only their own requests. Filters: `status`, `dispatchable` |
+| GET | `/api/v1/bookings` | `viewAny` — cursor-paginated; a Corporate Employee sees only their own requests. Filters: `status`, `service_type`, `dispatchable`. Meta also carries `bookable_clients` — who a fleet may raise a *new* booking for (active contracts, narrower than `filters.clients`) |
 | GET | `/api/v1/bookings/{id}` | `view` — desk roles see any; others only their own |
 | POST | `/api/v1/bookings` | `create` — every role except Driver |
 | POST | `/api/v1/bookings/{id}/approval` | `approve` — Super Admin, Operations Manager, Corporate Admin, Branch Manager |
@@ -141,20 +155,22 @@ stay in range. See ADR-0020's consequences.
    `Company`).
 3. **Credit-limit checks at booking time** — `companies.credit_limit_minor`
    exists but nothing consults it; that belongs with `Modules/Billing`.
-4. **Notifications on assignment.** Approval and rejection now notify the
-   requester: `BookingService` dispatches `BookingApproved` and
-   `BookingRejected` after the transaction commits, and
-   `Modules/Notifications` listens. Assignment does not — that happens in
-   `Modules/Dispatch`, and notifying the *driver* is blocked on drivers
-   having no `user_id` linkage (`Modules/Trips` README, item 9). Notifying
-   the requester that a vehicle was assigned is buildable and simply not
-   built.
+4. **Notifications on assignment — both halves now exist.** Approval and
+   rejection notify the requester (`BookingService` dispatches
+   `BookingApproved`/`BookingRejected` after commit). Assignment notifies
+   the requester (`TripProgressNotification`) **and, since ADR-0064, the
+   driver**: `SendDriverTripAssignedNotification` listens to the same
+   `TripStatusChanged` creation event and sends the driver's user
+   `driver.trip.assigned` in-app and by push — booking-backed trips only,
+   because a walk-in's trip is born from the driver's own accept.
 
    Cancellation deliberately notifies nobody: it is usually the requester's
    own act, and telling somebody what they just did is the fatigue
    AGENTS.md warns against.
-5. **Chauffeur service, self-drive, corporate-booking variants** — Phase 2+
-   per PROJECT.md.
+5. **Chauffeur-service variants** — still Phase 2+ per PROJECT.md. Delivery
+   and self-drive stopped being deferred with ADR-0064; what remains open
+   for self-drive is fulfilment past approval — there is no handover or
+   return flow, only the refusal to dispatch a driver at it.
 6. **Editing a booking after creation** — there is no `PATCH`. A booking
    with the wrong destination is cancelled and re-raised, which keeps the
    original request intact for audit. Revisit if dispatchers find that
@@ -166,6 +182,11 @@ stay in range. See ADR-0020's consequences.
    tenant-owned and inventing a pseudo-tenant would decide rider-account
    architecture inside a CRM column. The conversion foreign key lands with
    the walk-in-fulfilment ADR, not before.
+
+   What ADR-0064 changed here: a **fleet's desk** can now create bookings —
+   the endpoint had never served them, `tenant_id` being NOT NULL with no
+   tenant to fill it — by answering whose booking it is. The walk-in with
+   no client still belongs in the order-request queue, on purpose.
 8. **No date filter.** `?q=` searches text and `?status=` narrows state,
    but "everything raised last week" is not expressible — the audit log has
    `from`/`to` and this does not. The obvious next filter, and the one a

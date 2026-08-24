@@ -5,13 +5,18 @@ namespace Modules\Clients\Services;
 use App\Enums\AccessLevel;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
+use App\Models\Operator;
 use App\Models\OperatorClient;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Support\Access\AccessContext;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Modules\Administration\Services\InvitationService;
 use Modules\Clients\Models\Company;
+use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Mail\ClientRecipient;
+use Modules\Notifications\Notifications\ClientEventNotification;
 
 /**
  * Onboarding a corporate client (ADR-0060, ADR-0062).
@@ -53,9 +58,9 @@ class ClientOnboardingService
      *
      * @param  array<string, mixed>  $attributes
      */
-    public function onboard(array $attributes, int $operatorId): Company
+    public function onboard(array $attributes, int $operatorId, ?User $invitedBy = null): Company
     {
-        return DB::transaction(function () use ($attributes, $operatorId) {
+        return DB::transaction(function () use ($attributes, $operatorId, $invitedBy) {
             $tenant = Tenant::create([
                 'name' => $attributes['trading_name'] ?? $attributes['legal_name'],
                 'slug' => $this->slugFor($attributes['legal_name']),
@@ -78,7 +83,24 @@ class ClientOnboardingService
                 'credit_limit_minor' => $attributes['credit_limit_minor'] ?? null,
             ]);
 
-            $this->firstAdministrator($tenant, $attributes);
+            $admin = $this->firstAdministrator($tenant, $attributes);
+
+            /*
+             * The invitation this method's own docblock has been promising.
+             *
+             * *"invited rather than given a password ... the invitation is how
+             * they get in"* was true of the intent and false of the code: no
+             * invitation existed anywhere in the repo, and the onboarding
+             * dialog told the operator "They are invited to set their own
+             * password" while nothing was sent. A corporate client admin was
+             * an active account nobody could open.
+             *
+             * Inside the transaction with the other four rows, on the same
+             * argument the class already makes about them: a client whose
+             * administrator can never sign in is the same shape as ADR-0059
+             * §5's fleet with nobody to act as.
+             */
+            app(InvitationService::class)->invite($admin, $invitedBy);
 
             return $company;
         });
@@ -107,10 +129,41 @@ class ClientOnboardingService
         // rather than "no such client", which would confirm the number is free.
         abort_if($tenantId === null, 404);
 
-        return OperatorClient::firstOrCreate(
+        $contract = OperatorClient::firstOrCreate(
             ['operator_id' => $operatorId, 'tenant_id' => $tenantId],
             ['status' => OperatorClient::REQUESTED],
         );
+
+        /*
+         * The client is told (mail plan C11), and only on a genuinely new
+         * request.
+         *
+         * `wasRecentlyCreated` is what keeps this idempotent alongside the
+         * `firstOrCreate` above: a fleet clicking twice must not email the
+         * client twice, for the same reason it must not queue two requests
+         * for them to answer.
+         *
+         * Until this existed, ADR-0060 §5 made the answer the client's and
+         * nobody else's while leaving them **no way to know they had been
+         * asked** — the `requested` row sat in a table waiting for somebody
+         * who never opened the screen.
+         *
+         * Operations, not finance: this is a decision about who may run your
+         * trips, and it belongs to whoever administers the account rather than
+         * to accounts payable.
+         */
+        if ($contract->wasRecentlyCreated) {
+            $fleet = (string) (Operator::query()->whereKey($operatorId)->value('name') ?? '');
+
+            app(ClientRecipient::class)->operations($contract, fn () => new ClientEventNotification(
+                NotificationType::CLIENT_CONTRACT_REQUESTED,
+                facts: [__('mail.client.fact_fleet') => $fleet],
+                url: '/fleets',
+                replacements: ['fleet' => $fleet],
+            ));
+        }
+
+        return $contract;
     }
 
     /**
@@ -123,6 +176,8 @@ class ClientOnboardingService
             'status' => OperatorClient::ACTIVE,
             'started_on' => now()->toDateString(),
         ]);
+
+        $this->announceContract($contract, NotificationType::CLIENT_CONTRACT_APPROVED);
 
         return $contract;
     }
@@ -138,7 +193,42 @@ class ClientOnboardingService
             'ended_on' => now()->toDateString(),
         ]);
 
+        $this->announceContract($contract, NotificationType::CLIENT_CONTRACT_ENDED);
+
         return $contract;
+    }
+
+    /**
+     * Confirms a contract decision to the client's administrators.
+     *
+     * A confirmation of something they just did, which usually earns nothing —
+     * `Modules/Notifications`' README argues that notifying somebody of their
+     * own click is the fatigue AGENTS.md warns about.
+     *
+     * It earns its place here because **the actor and the client are not
+     * always the same party.** A contract can be ended by the fleet or by head
+     * office as well as by the client, and in those cases this is the only
+     * notice the client gets that somebody stopped serving them. Sending it in
+     * every case rather than guessing which one this is keeps that guarantee
+     * simple, at the cost of one confirmation the reader was expecting.
+     */
+    private function announceContract(OperatorClient $contract, NotificationType $type): void
+    {
+        $fleet = (string) ($contract->operator->name ?? '');
+
+        app(ClientRecipient::class)->operations($contract, fn () => new ClientEventNotification(
+            $type,
+            facts: array_filter([
+                __('mail.client.fact_fleet') => $fleet,
+                $type === NotificationType::CLIENT_CONTRACT_ENDED
+                    ? __('mail.client.fact_until')
+                    : __('mail.client.fact_since') => (string) ($type === NotificationType::CLIENT_CONTRACT_ENDED
+                        ? $contract->ended_on
+                        : $contract->started_on),
+            ]),
+            url: '/fleets',
+            replacements: ['fleet' => $fleet],
+        ));
     }
 
     /**

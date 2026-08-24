@@ -22,6 +22,9 @@ const BookingsPage = page(() => import('../pages/BookingsPage'), 'BookingsPage')
 const CompaniesPage = page(() => import('../pages/CompaniesPage'), 'CompaniesPage')
 const CustomersPage = page(() => import('../pages/CustomersPage'), 'CustomersPage')
 const FleetCompaniesPage = page(() => import('../pages/FleetCompaniesPage'), 'FleetCompaniesPage')
+const CorporateClientsPage = page(() => import('../pages/CorporateClientsPage'), 'CorporateClientsPage')
+const PlansPage = page(() => import('../pages/PlansPage'), 'PlansPage')
+const DriverContractsPage = page(() => import('../pages/DriverContractsPage'), 'DriverContractsPage')
 const FleetRecordPage = page(() => import('../pages/fleets/FleetRecordPage'), 'FleetRecordPage')
 const DashboardPage = page(() => import('../pages/DashboardPage'), 'DashboardPage')
 const DispatchPage = page(() => import('../pages/DispatchPage'), 'DispatchPage')
@@ -32,6 +35,11 @@ const DriverApplicationsPage = page(
 const DriversPage = page(() => import('../pages/DriversPage'), 'DriversPage')
 const InvoicesPage = page(() => import('../pages/InvoicesPage'), 'InvoicesPage')
 const LoginPage = page(() => import('../pages/LoginPage'), 'LoginPage')
+const AcceptInvitePage = page(() => import('../pages/AcceptInvitePage'), 'AcceptInvitePage')
+const NotificationPreferencesPage = page(
+  () => import('../pages/NotificationPreferencesPage'),
+  'NotificationPreferencesPage',
+)
 const MfaEnrolmentPage = page(() => import('../pages/MfaEnrolmentPage'), 'MfaEnrolmentPage')
 const NotificationsPage = page(() => import('../pages/NotificationsPage'), 'NotificationsPage')
 const OrderRequestsPage = page(() => import('../pages/OrderRequestsPage'), 'OrderRequestsPage')
@@ -100,6 +108,17 @@ export const router = createBrowserRouter([
       </Standalone>
     ),
   },
+  // Public, and standalone like /login: the reader has an account and no way
+  // into it, so the shell's navigation would be a wall of links that all
+  // answer 403. Mail plan M2.
+  {
+    path: '/invite/:token',
+    element: (
+      <Standalone>
+        <AcceptInvitePage />
+      </Standalone>
+    ),
+  },
   // Outside the AppShell branch on purpose (ADR-0008 decision 3). A user
   // who must enrol can reach nothing else — the shell's navigation would be
   // a wall of links that all answer 403 — so this route deliberately has no
@@ -134,6 +153,31 @@ export const router = createBrowserRouter([
       // expected to carry — OperatorPolicy gates on the account's LEVEL, and
       // a level is not something a role can be given. The safer side to err
       // on, and the server refuses regardless.
+      // ADR-0062. Head office's client directory, behind the level gate for
+      // the same reason `fleets` is: `OperatorClientPolicy` and the company
+      // scope both key on `access_level`, and a level is not something a role
+      // can be given.
+      // ADR-0055 §5. Deliberately NOT behind RequireNavAccess: both a fleet
+      // and head office reach it, and the **server** decides which queue
+      // arrives. A level gate here would have to know that, which is the
+      // rule living in two places.
+      { path: 'driver-contracts', element: <DriverContractsPage /> },
+      {
+        path: 'plans',
+        element: (
+          <RequireNavAccess id="plans">
+            <PlansPage />
+          </RequireNavAccess>
+        ),
+      },
+      {
+        path: 'clients',
+        element: (
+          <RequireNavAccess id="clients">
+            <CorporateClientsPage />
+          </RequireNavAccess>
+        ),
+      },
       {
         path: 'fleets',
         element: (
@@ -224,6 +268,11 @@ export const router = createBrowserRouter([
       // Roles: a custom role holding `settings.manage` is invisible to a
       // slug list, so the page gates on whether the API answers.
       { path: 'system-settings', element: <SystemSettingsPage /> },
+      // The destination of the "Choose which emails you get" link in every
+      // email footer. Inside the shell rather than standalone: the reader has
+      // an account and is signed in, and the surrounding navigation is what
+      // lets them go somewhere useful afterwards.
+      { path: 'settings/notifications', element: <NotificationPreferencesPage /> },
       // ADR-0018. Behind RequireNavAccess like Staff, not unguarded like
       // Roles: `customers.view` is seeded on real roles rather than being a
       // permission a custom role is expected to carry, and the register is

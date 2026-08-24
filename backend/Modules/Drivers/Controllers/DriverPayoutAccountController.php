@@ -12,6 +12,8 @@ use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverPayoutAccount;
 use Modules\Drivers\Requests\StorePayoutAccountRequest;
 use Modules\Drivers\Resources\DriverPayoutAccountResource;
+use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Notifications\SecurityEventNotification;
 
 /**
  * The driver's own payout destination (ADR-0042).
@@ -65,10 +67,45 @@ class DriverPayoutAccountController extends Controller
             return $this->notADriver();
         }
 
+        $existed = DriverPayoutAccount::query()->where('driver_id', $driver->getKey())->exists();
+
         $account = DriverPayoutAccount::updateOrCreate(
             ['driver_id' => $driver->getKey()],
             $request->validated(),
         );
+
+        /*
+         * Where this driver's money goes just moved, so the driver hears about
+         * it (mail plan D15).
+         *
+         * Only on a change, never on first setup: telling somebody "your
+         * payout account changed" seconds after they created one is the
+         * notification fatigue AGENTS.md warns about, and it teaches them to
+         * ignore the message on the day it is not them.
+         *
+         * **The account number is not in the email.** Neither the old one nor
+         * the new one, not even masked. This message exists for the case where
+         * an attacker is reading the mailbox, and an email that quotes the
+         * detail it is warning about hands that detail straight to them.
+         */
+        if ($existed) {
+            /*
+             * The driver's own account, resolved through `$driver`, not
+             * `$request->user()`.
+             *
+             * `$request->user()` is typed `Customer|User` across this
+             * application's two guards, and `Customer` has no `notify()`.
+             * Larastan caught it; at runtime it would have been a fatal on the
+             * one path where a customer somehow reached here. Going through
+             * the driver is also simply more correct: the warning belongs to
+             * whoever owns the payout account, which is the driver, not
+             * whoever happens to be holding the request.
+             */
+            $driver->user?->notify(new SecurityEventNotification(
+                NotificationType::DRIVER_PAYOUT_ACCOUNT_CHANGED,
+                [__('mail.security.fact_when') => now()->isoFormat('D MMMM YYYY, HH:mm')],
+            ));
+        }
 
         return ApiResponse::success(
             ['payout_account' => new DriverPayoutAccountResource($account)],

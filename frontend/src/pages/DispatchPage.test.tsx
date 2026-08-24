@@ -30,6 +30,9 @@ function booking(overrides: Partial<Booking> = {}): Booking {
     // ADR-0051: required on the wire — `BookingResource` sends it
     // unconditionally, and null is the "no preference" case.
     vehicle_category: null,
+    // ADR-0064: the dispatch board only ever receives driver services.
+    service_type: 'ride',
+    details: null,
     origin: 'Kampala',
     destination: 'Entebbe',
     scheduled_for: null,

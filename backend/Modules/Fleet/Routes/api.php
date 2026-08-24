@@ -8,6 +8,7 @@ use Modules\Fleet\Controllers\KangaruOverviewController;
 use Modules\Fleet\Controllers\OnDutyDriverController;
 use Modules\Fleet\Controllers\OperatorAccountController;
 use Modules\Fleet\Controllers\OperatorController;
+use Modules\Fleet\Controllers\PlanController;
 use Modules\Fleet\Controllers\VehicleAllocationController;
 use Modules\Fleet\Controllers\ZoneController;
 
@@ -34,6 +35,12 @@ Route::get('operators/{operator}/accounts', [OperatorAccountController::class, '
 // one endpoint.
 Route::get('kangaru/overview', [KangaruOverviewController::class, 'show'])
     ->name('kangaru.overview');
+
+// What a fleet pays to be on Kangaru (ADR-0058). Reading the catalogue is open
+// — a fleet is entitled to know what it could move to, and the list carries no
+// other fleet's information. Moving a fleet between plans is head office's.
+Route::get('plans', [PlanController::class, 'index'])->name('plans.index');
+Route::put('operators/{operator}/plan', [PlanController::class, 'assign'])->name('operators.plan.assign');
 
 // `Modules/Fleet`'s first routes (ADR-0009). Nested under nothing: an
 // allocation is about one vehicle and one client but belongs to neither

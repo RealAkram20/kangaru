@@ -2,6 +2,7 @@
 
 namespace App\Concerns;
 
+use App\Enums\AccessLevel;
 use App\Models\Customer;
 use App\Models\User;
 use App\Support\Tenancy\TenantContext;
@@ -197,7 +198,44 @@ trait BelongsToTenant
             $query->withoutGlobalScope(TenantScope::class);
         }
 
+        /*
+         * Head office, on the models that have opted in (ADR-0062).
+         *
+         * `isPlatformLevel()` means **fleet** since ADR-0055, so a Kangaru
+         * actor falls past the branch above into `TenantScope` failing closed
+         * — `where 1 = 0` — and 404s on every single-resource URL. `K6` hit
+         * exactly this on the *listing* and amended it in `CompanyService`;
+         * the binding was the other half and was left, so head office could
+         * see its client directory and could not open or edit one row of it.
+         * Third sighting on this branch of a listing patched without its URL.
+         *
+         * **Opt-in per model rather than blanket**, because the blanket
+         * version is a real widening: head office would resolve any
+         * tenant-scoped record by id — trips, bookings, invoices — and
+         * ADR-0062 §2 draws the line precisely there. The directory is
+         * Kangaru's; the operations are the fleet's, reached by acting as
+         * somebody in it. Resolution is still not authorization, and the
+         * policy runs afterwards either way.
+         */
+        if ($actor instanceof User
+            && $actor->access_level === AccessLevel::KANGARU
+            && $this->headOfficeResolvesByRoute()) {
+            $query->withoutGlobalScope(TenantScope::class);
+        }
+
         /** @var static|null */
         return $this->resolveRouteBindingQuery($query, $value, $field)->first();
+    }
+
+    /**
+     * Whether head office may resolve this model by id (ADR-0062 §2).
+     *
+     * `false` here so that adding the trait to a new model never silently
+     * opens it to Kangaru: a model becomes part of the directory by saying so,
+     * which is one line and a decision, rather than by omission.
+     */
+    protected function headOfficeResolvesByRoute(): bool
+    {
+        return false;
     }
 }

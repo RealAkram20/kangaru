@@ -7,6 +7,8 @@ use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Modules\Clients\Models\ClientRoute;
+use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Notifications\SecurityEventNotification;
 
 /**
  * Creating and editing accounts.
@@ -95,7 +97,13 @@ class UserAdminService
      */
     public function update(User $subject, array $attributes, User $actor): User
     {
-        return DB::transaction(function () use ($subject, $attributes, $actor) {
+        // Captured before `fill()`, because after it the old value is gone and
+        // the whole point of the address warning is that it reaches the
+        // address the account **used to** have.
+        $addressBefore = (string) $subject->email;
+        $statusBefore = $subject->status;
+
+        $updated = DB::transaction(function () use ($subject, $attributes, $actor) {
             $subject->fill(array_intersect_key(
                 $attributes,
                 array_flip(['name', 'email', 'phone', 'role', 'capabilities', 'books_without_approval']),
@@ -124,6 +132,53 @@ class UserAdminService
 
             return $subject;
         });
+
+        $this->announceSecurityChanges($updated, $addressBefore, $statusBefore);
+
+        return $updated;
+    }
+
+    /**
+     * The three changes here that the account holder has to hear about.
+     *
+     * Outside the transaction on purpose. These are notifications about
+     * something that has already happened and been committed; raising one
+     * inside would mean a mail failure could roll back a suspension somebody
+     * decided on, which inverts which of the two matters.
+     */
+    private function announceSecurityChanges(User $subject, string $addressBefore, ?UserStatus $statusBefore): void
+    {
+        if ($subject->status !== $statusBefore) {
+            $subject->notify(new SecurityEventNotification(
+                $subject->status === UserStatus::SUSPENDED
+                    ? NotificationType::ACCOUNT_SUSPENDED
+                    : NotificationType::ACCOUNT_REACTIVATED,
+                [__('mail.security.fact_when') => now()->isoFormat('D MMMM YYYY, HH:mm')],
+            ));
+        }
+
+        $addressAfter = (string) $subject->email;
+
+        if ($addressAfter === $addressBefore || $addressBefore === '') {
+            return;
+        }
+
+        $facts = [__('mail.security.fact_when') => now()->isoFormat('D MMMM YYYY, HH:mm')];
+
+        // Sent twice, and the second copy is the one that matters.
+        //
+        // Somebody who has taken an account and changed its address has
+        // redirected every future warning to themselves. The copy addressed to
+        // the **old** mailbox is the last message the real owner will ever
+        // receive about this account, so it is not optional and it is not a
+        // nicety. The new address gets one too, because the legitimate case
+        // deserves a confirmation where it will actually be read.
+        $subject->notify(new SecurityEventNotification(NotificationType::ACCOUNT_EMAIL_CHANGED, $facts));
+        $subject->notify(new SecurityEventNotification(
+            NotificationType::ACCOUNT_EMAIL_CHANGED,
+            $facts,
+            $addressBefore,
+        ));
     }
 
     /**

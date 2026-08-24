@@ -2,9 +2,11 @@
 
 namespace Modules\Billing\Services;
 
+use App\Models\OperatorClient;
 use App\Models\User;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Modules\Billing\Enums\DocumentType;
 use Modules\Billing\Models\Invoice;
 use Modules\Billing\Models\InvoiceLine;
@@ -15,6 +17,10 @@ use Modules\Billing\Pricing\RateCardNotConfiguredException;
 use Modules\Billing\Pricing\RateCardResolver;
 use Modules\Billing\Pricing\TripPricingEngine;
 use Modules\Billing\Repositories\InvoiceRepository;
+use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Mail\ClientRecipient;
+use Modules\Notifications\Mail\MailMoney;
+use Modules\Notifications\Notifications\ClientEventNotification;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Services\TripStateMachine;
@@ -242,7 +248,86 @@ class InvoiceService
         // every other one.
         $this->trips->transition($trip, TripStatus::INVOICE_GENERATED, $actor);
 
-        return $invoice->load('lines');
+        $invoice->load('lines');
+
+        $this->announce($invoice);
+
+        return $invoice;
+    }
+
+    /**
+     * Tells the client their invoice is ready (mail plan C7).
+     *
+     * ## To the billing address, not to whoever books the cars
+     *
+     * `ClientRecipient::finance()` resolves it: the contract's
+     * `billing_email` where there is one, the client's administrators
+     * otherwise. A transport officer has no purchase-order process and no
+     * reason to forward what reads as a receipt for a trip they already took,
+     * which is how an invoice sent to them goes unpaid.
+     *
+     * ## The PDF and the link, both
+     *
+     * The owner's decision. Finance staff forward the file and attach it to a
+     * payment request; auditors follow the link to the live record, which is
+     * the reproducible one.
+     *
+     * ## Best effort, and outside the transaction
+     *
+     * Called after the invoice is committed. An invoice is a financial
+     * document and it must not fail to exist because a PDF renderer threw or
+     * a mail server was unreachable — the record is the thing, the email is
+     * how somebody hears about it. A failure is logged and the delivery row
+     * says so.
+     */
+    private function announce(Invoice $invoice): void
+    {
+        $contract = OperatorClient::query()
+            ->where('tenant_id', $invoice->tenant_id)
+            ->where('operator_id', $invoice->operator_id)
+            ->first();
+
+        if ($contract === null) {
+            return;
+        }
+
+        try {
+            $pdf = app(InvoicePdf::class);
+
+            $attachment = [[
+                'name' => $pdf->filename($invoice),
+                // Base64: this notification is queued and its payload is JSON,
+                // which refuses raw PDF bytes as malformed UTF-8.
+                'base64' => base64_encode($pdf->render($invoice)),
+                'mime' => 'application/pdf',
+            ]];
+        } catch (\Throwable $e) {
+            // The email still goes, carrying the link alone. A missing
+            // attachment is a degraded message; a missing message is a client
+            // who does not know they have been billed.
+            Log::warning('invoice.pdf_failed', [
+                'invoice' => $invoice->invoice_number,
+                'error' => $e->getMessage(),
+            ]);
+
+            $attachment = [];
+        }
+
+        app(ClientRecipient::class)->finance($contract, fn (?string $to) => new ClientEventNotification(
+            NotificationType::CLIENT_INVOICE_ISSUED,
+            facts: [
+                __('mail.client.fact_number') => (string) $invoice->invoice_number,
+                __('mail.client.fact_total') => MailMoney::format(
+                    (int) $invoice->total_minor->getMinorAmount()->toInt(),
+                    (string) $invoice->currency,
+                ),
+                __('mail.client.fact_issued') => $invoice->issued_at->isoFormat('D MMMM YYYY'),
+            ],
+            url: '/invoices/'.$invoice->getKey(),
+            attachments: $attachment,
+            sendTo: $to,
+            replacements: ['number' => (string) $invoice->invoice_number],
+        ));
     }
 
     private function writeLine(Invoice $invoice, PricedLine $line, int $lineNumber): void

@@ -2,6 +2,7 @@
 
 namespace Modules\Drivers\Policies;
 
+use App\Enums\AccessLevel;
 use App\Enums\Permission;
 use App\Models\User;
 use Modules\Administration\Policies\UserPolicy;
@@ -21,7 +22,28 @@ class DriverPolicy
 
     public function view(User $user, Driver $driver): bool
     {
-        return $this->viewAny($user);
+        return $this->viewAny($user) && $this->employedByTheSameFleet($user, $driver);
+    }
+
+    /**
+     * Whose driver it is — see `VehiclePolicy::ownedByTheSameFleet()` for the
+     * full account; this is the same defect on the same day in the same shape.
+     *
+     * Sharper here for one reason: a driver is a person. The rows a rival
+     * could reach carry a name, a phone number and a licence number, and the
+     * `update` path could change the employment status of somebody else's
+     * employee.
+     *
+     * Head office unaffected, and for the same reason — it employs no driver,
+     * and acting as a fleet's person makes `$user` that person.
+     */
+    private function employedByTheSameFleet(User $user, Driver $driver): bool
+    {
+        if ($user->access_level !== AccessLevel::FLEET) {
+            return true;
+        }
+
+        return $user->operator_id !== null && $user->operator_id === $driver->operator_id;
     }
 
     /**
@@ -50,12 +72,12 @@ class DriverPolicy
 
     public function update(User $user, Driver $driver): bool
     {
-        return $this->create($user);
+        return $this->create($user) && $this->employedByTheSameFleet($user, $driver);
     }
 
     public function delete(User $user, Driver $driver): bool
     {
-        return $this->create($user);
+        return $this->create($user) && $this->employedByTheSameFleet($user, $driver);
     }
 
     /**

@@ -373,14 +373,42 @@ class User extends Authenticatable
         // rather than merely discouraged — `users_access_level_matches_columns`
         // refuses to store a `client` row without a client.
         return match ($actor->access_level) {
-            // Their own fleet's people, plus every client's — a fleet
-            // administrator manages the clients they serve. F2 narrows the
-            // second half to the clients this fleet actually contracts with;
-            // today one fleet serves all of them, so this is behaviour for
-            // behaviour what it replaced.
+            /*
+             * Their own fleet's people, plus the people of the clients they
+             * actually serve.
+             *
+             * **The second half is the narrowing this branch has been
+             * promising.** It read `orWhereNotNull('users.tenant_id')` — every
+             * client's staff, for every fleet — under a comment saying *"F2
+             * narrows the second half to the clients this fleet actually
+             * contracts with; today one fleet serves all of them, so this is
+             * behaviour for behaviour what it replaced."*
+             *
+             * That premise expired on 23 August, when a second fleet was
+             * onboarded. From that moment a rival fleet's dispatcher could
+             * read the name, email and phone of every employee of every client
+             * on the platform — the disclosure ADR-0060 §4 refuses, reached
+             * through the staff list rather than through the client register I
+             * had already narrowed.
+             *
+             * It is the same shape as the comment two paragraphs up warns
+             * about: *"nothing leaks today because there is one fleet, which
+             * is exactly the kind of gap that ships."* It shipped. A guard
+             * deferred to a condition nobody is watching is a guard that
+             * arrives after the thing it was for.
+             *
+             * `servedBy` is `active` contracts only, so a fleet that has
+             * merely *asked* to serve a client reads none of their people —
+             * asking grants no read (ADR-0060 §4).
+             */
             AccessLevel::FLEET => $query->where(function (Builder $scoped) use ($actor): void {
                 $scoped->where('users.operator_id', $actor->operator_id)
-                    ->orWhereNotNull('users.tenant_id');
+                    ->orWhereIn(
+                        'users.tenant_id',
+                        OperatorClient::query()
+                            ->servedBy((int) $actor->operator_id)
+                            ->select('tenant_id'),
+                    );
             }),
             // Head office administers head office. Reaching into a fleet or a
             // client is ADR-0056's act-as, which arrives as that person and is

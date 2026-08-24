@@ -2,6 +2,7 @@
 
 namespace Modules\Drivers\Services;
 
+use App\Enums\Permission;
 use App\Models\User;
 use App\Support\Tenancy\TenantScope;
 use Illuminate\Support\Facades\DB;
@@ -10,6 +11,11 @@ use Modules\Drivers\Enums\SettlementRequestStatus;
 use Modules\Drivers\Models\Driver;
 use Modules\Drivers\Models\DriverLedgerEntry;
 use Modules\Drivers\Models\DriverSettlementRequest;
+use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Mail\MailMoney;
+use Modules\Notifications\Mail\OfficeRecipient;
+use Modules\Notifications\Notifications\DriverEventNotification;
+use Modules\Notifications\Notifications\OfficeEventNotification;
 use Modules\Trips\Models\Trip;
 
 /**
@@ -48,7 +54,7 @@ class DriverSettlementRequestService
         string $currency = 'UGX',
         ?Trip $trip = null,
     ): DriverSettlementRequest {
-        return DB::transaction(function () use ($driver, $kind, $amountMinor, $note, $currency, $trip) {
+        $request = DB::transaction(function () use ($driver, $kind, $amountMinor, $note, $currency, $trip) {
             $open = DriverSettlementRequest::query()
                 ->where('driver_id', $driver->getKey())
                 ->where('kind', $kind->value)
@@ -92,6 +98,18 @@ class DriverSettlementRequestService
                 'note' => $note,
             ]);
         });
+
+        // The driver is waiting on an answer, so somebody who can give one is
+        // told. Outside the transaction: a request that exists and was not
+        // announced is recoverable, one announced but not written is not.
+        $this->tellTheOffice(
+            $driver,
+            NotificationType::FLEET_SETTLEMENT_REQUESTED,
+            Permission::DRIVERS_MANAGE,
+            '/settlement-requests',
+        );
+
+        return $request;
     }
 
     /**
@@ -149,6 +167,8 @@ class DriverSettlementRequestService
                 'ledger_entry_id' => $entry->getKey(),
             ])->save();
 
+            $this->tellTheDriver($locked, $driver, NotificationType::DRIVER_SETTLEMENT_CONFIRMED);
+
             return $locked;
         });
     }
@@ -184,8 +204,74 @@ class DriverSettlementRequestService
                 'decline_reason' => $reason,
             ])->save();
 
+            $this->tellTheDriver(
+                $locked,
+                $locked->driver()->first(),
+                NotificationType::DRIVER_SETTLEMENT_DECLINED,
+                $reason,
+            );
+
             return $locked;
         });
+    }
+
+    /**
+     * Tells the driver's own fleet office, and nobody else's.
+     *
+     * `OfficeRecipient::fleet()` carries the guard: the recipient list is
+     * narrowed to `$driver->operator_id`, so an alert naming one fleet's
+     * driver cannot reach a competitor's desk. That is the mail plan §6 rule,
+     * and a recipient list is where it is easiest to break without anything
+     * looking wrong.
+     */
+    private function tellTheOffice(
+        Driver $driver,
+        NotificationType $type,
+        Permission $permission,
+        string $url,
+    ): void {
+        $name = (string) ($driver->user->name ?? $driver->full_name ?? '');
+
+        foreach (app(OfficeRecipient::class)->fleet($driver->operator_id, $permission) as $staff) {
+            $staff->notify(new OfficeEventNotification(
+                $type,
+                facts: array_filter([__('mail.office.fact_driver') => $name]),
+                url: $url,
+                replacements: ['driver' => $name],
+            ));
+        }
+    }
+
+    /**
+     * Tells the driver what the office decided about their money.
+     *
+     * ADR-0032 §3 already argued that a declined settlement with no reason is
+     * how somebody stops using a feature. This carries the reason where there
+     * is one, and the amount either way: "your settlement is confirmed" without
+     * the figure is a message the reader has to go and check, which is the
+     * opposite of what a notification is for.
+     *
+     * A driver row with no account is possible (the office can file for
+     * somebody who has not been given a login), so the send is conditional
+     * rather than assumed.
+     */
+    private function tellTheDriver(
+        DriverSettlementRequest $request,
+        ?Driver $driver,
+        NotificationType $type,
+        ?string $reason = null,
+    ): void {
+        $driver?->user?->notify(new DriverEventNotification(
+            $type,
+            [
+                __('mail.driver.fact_amount') => MailMoney::format(
+                    (int) $request->amount_minor,
+                    (string) $request->currency,
+                ),
+                __('mail.driver.fact_when') => now()->isoFormat('D MMMM YYYY'),
+            ],
+            reason: $reason,
+        ));
     }
 
     /**

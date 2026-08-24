@@ -20,6 +20,7 @@ use Modules\Administration\Services\AuthService;
 use Modules\Administration\Services\InvalidCredentialsException;
 use Modules\Administration\Services\InvalidMfaChallengeException;
 use Modules\Administration\Services\InvalidMfaCodeException;
+use Modules\Administration\Services\KnownDeviceService;
 use Modules\Administration\Services\MfaAlreadyEnrolledException;
 use Modules\Administration\Services\MfaService;
 
@@ -28,6 +29,7 @@ class AuthController extends Controller
     public function __construct(
         private readonly AuthService $authService,
         private readonly MfaService $mfa,
+        private readonly KnownDeviceService $devices,
     ) {}
 
     public function login(LoginRequest $request): JsonResponse
@@ -63,6 +65,22 @@ class AuthController extends Controller
                 202,
             );
         }
+
+        /*
+         * Recorded here rather than in `AuthService::login()`, and after the
+         * MFA branch above rather than before it (mail plan A5).
+         *
+         * After, because a password that is correct but still owes a second
+         * factor has not signed anybody in. Warning at that point would email
+         * the account holder every time an attacker guessed the password and
+         * was stopped by the factor, which is the factor working, and would
+         * make the message mean two different things.
+         *
+         * Here rather than in the service because the service takes a
+         * `LoginRequest` for its credentials and has no business also knowing
+         * about user agents and IP addresses.
+         */
+        $this->devices->remember($result['user'], $request);
 
         return ApiResponse::success([
             'user' => new UserResource($result['user']->load(['tenant', 'operator'])),
