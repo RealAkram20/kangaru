@@ -177,6 +177,11 @@ unconfigured, so enabling it first only produces a door that answers 409.
 
 ### DNS — SPF and DKIM are done, DMARC is not
 
+> **The records themselves live in `docs/mail-dns.md`, ready to paste.** That
+> file also covers what changes if the email provider ever moves, which is the
+> case this summary does not.
+
+
 Checked 24 August 2026 on `kangaruride.com`:
 
 | | |
