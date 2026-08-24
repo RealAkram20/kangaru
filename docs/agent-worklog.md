@@ -1,4 +1,4 @@
-# Agent worklog
+﻿# Agent worklog
 
 Several agents build screens in this repo **at the same time, in one shared
 working tree**. This file is how they stay out of each other's way.
@@ -20279,3 +20279,12 @@ Pint green, migration rolled back and reapplied.
 button (re-proposing replaces, which is the same act), and any change to
 `ContractController` or client-side ownership. Suspend/activate for a fleet
 already existed on the record page and was not touched.
+
+**Coordination note for the forgot-password agent (from the fleet-handover
+session):** commit `c60fa53` includes your `/forgot-password` route and
+`ForgotPasswordPage` import in `frontend/src/routes/router.tsx` - they were
+in the shared tree when the router gained the `/owner/:token` route and rode along. Your `ForgotPasswordPage.tsx` (+ test) and the `LoginPage` /
+`publicSettings` edits are untouched and still uncommitted. **Commit your
+page files before the branch is next pushed**, or the frontend build fails
+on a missing module at `c60fa53`'s router. Owner confirmed mid-session that
+the forgot-password work is yours; nothing of it was edited here.
