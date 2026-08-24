@@ -3,7 +3,9 @@
 namespace Modules\Administration\Models;
 
 use App\Concerns\Auditable;
+use App\Enums\AccessLevel;
 use App\Enums\Permission;
+use App\Enums\RoleAudience;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -26,6 +28,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property string $name
  * @property string|null $description
  * @property bool $is_system
+ * @property RoleAudience $audience Which level of account this role was
+ *                                  composed for. A property of the role, not a scope on it — the
+ *                                  catalogue stays platform-wide (ADR-0004).
  * @property bool $requires_mfa Whether holders of this role must use a
  *                              second factor (ADR-0008). A per-role flag rather than two hardcoded
  *                              slugs, because a custom role holding `invoices.manage` moves money
@@ -37,7 +42,7 @@ class Role extends Model
 {
     use Auditable;
 
-    protected $fillable = ['slug', 'name', 'description', 'is_system', 'permissions', 'requires_mfa'];
+    protected $fillable = ['slug', 'name', 'description', 'is_system', 'audience', 'permissions', 'requires_mfa'];
 
     protected function casts(): array
     {
@@ -45,7 +50,34 @@ class Role extends Model
             'permissions' => 'array',
             'is_system' => 'boolean',
             'requires_mfa' => 'boolean',
+            'audience' => RoleAudience::class,
         ];
+    }
+
+    /**
+     * The roles an account at this level may be offered.
+     *
+     * The **level** gate, and it is only half of the answer — ADR-0004's
+     * escalation rule is the other half and is applied separately, because
+     * the two ask different questions. This one asks whether a role belongs
+     * in this person's world at all; that one asks whether this particular
+     * administrator may hand it out. Answering the first with the second is
+     * what left `corporate_admin` in a fleet owner's picker whenever the
+     * permission subsets happened to line up.
+     *
+     * An applicant has no audience and therefore no roles, which is an empty
+     * picker rather than an unfiltered one.
+     *
+     * @param  Builder<Role>  $query
+     * @return Builder<Role>
+     */
+    public function scopeForLevel(Builder $query, AccessLevel $level): Builder
+    {
+        $audience = RoleAudience::forLevel($level);
+
+        return $audience === null
+            ? $query->whereRaw('1 = 0')
+            : $query->where('audience', $audience->value);
     }
 
     public function getRouteKeyName(): string

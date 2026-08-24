@@ -2,6 +2,7 @@
 
 namespace Modules\Administration\Services;
 
+use App\Enums\AccessLevel;
 use App\Enums\UserStatus;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -46,11 +47,19 @@ class UserAdminService
      */
     private function insert(array $attributes, User $actor): User
     {
-        $tenantId = $actor->isPlatformLevel()
-            ? ($attributes['tenant_id'] ?? null)
-            : $actor->tenant_id;
+        // Head office employs head office (ADR-0065). A Kangaru actor names
+        // no fleet and no client, and the account they create names neither
+        // either — which is the one column shape that cannot be derived, and
+        // is therefore declared below rather than inferred.
+        $kangaru = $actor->access_level === AccessLevel::KANGARU;
 
-        return User::create([
+        $tenantId = match (true) {
+            $kangaru => null,
+            $actor->isPlatformLevel() => $attributes['tenant_id'] ?? null,
+            default => $actor->tenant_id,
+        };
+
+        $user = new User([
             'name' => $attributes['name'],
             'email' => $attributes['email'],
             'phone' => $attributes['phone'] ?? null,
@@ -77,17 +86,36 @@ class UserAdminService
             //
             // A colleague pinned to a client is that client's and has no fleet.
             // Everyone else joins whichever fleet the administrator making the
-            // appointment belongs to.
-            //
-            // **A Kangaru actor throws here, deliberately.** They have no fleet
-            // to pass on, so this produces two nulls and the guard refuses
-            // them. Creating head office staff is the "serious act" ADR-0006
-            // describes, made more so by ADR-0056 — it wants its own path, with
-            // `access_level` named out loud by somebody who meant it, and that
-            // path arrives with S1. Until then a loud 500 beats a quiet
-            // promotion, and the exception says exactly that.
-            'operator_id' => $tenantId === null ? $actor->operator_id : null,
+            // appointment belongs to — and a Kangaru actor has none to pass on,
+            // which is the case handled immediately below.
+            'operator_id' => $kangaru ? null : ($tenantId === null ? $actor->operator_id : null),
         ]);
+
+        /*
+         * The one level that cannot be derived, said out loud by somebody who
+         * meant it (ADR-0055 §4).
+         *
+         * This used to throw. Two nulls are Kangaru, `User::levelFor()` refuses
+         * to guess that, and the comment here said the proper path "arrives
+         * with S1" — which shipped `php artisan kangaru:create-staff` and left
+         * the endpoint erroring, so the Kangaru staff screen could list people
+         * and never add one.
+         *
+         * It is assigned rather than sent: `access_level` is deliberately
+         * absent from `User::$fillable`, so head office cannot be reached by a
+         * request payload naming it. The only way to this line is to already
+         * be head office, which is what makes it the "serious act" ADR-0006
+         * describes.
+         *
+         * The console command stays. It is the way in when there is no way in.
+         */
+        if ($kangaru) {
+            $user->access_level = AccessLevel::KANGARU;
+        }
+
+        $user->save();
+
+        return $user;
     }
 
     /**

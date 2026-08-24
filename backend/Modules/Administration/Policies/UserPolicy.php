@@ -4,6 +4,7 @@ namespace Modules\Administration\Policies;
 
 use App\Enums\AccessLevel;
 use App\Enums\Permission;
+use App\Enums\RoleAudience;
 use App\Models\OperatorClient;
 use App\Models\User;
 use Modules\Administration\Models\Role;
@@ -79,7 +80,7 @@ class UserPolicy
     }
 
     /**
-     * Whether `$user` may put someone into `$role` — the subset rule above.
+     * Whether `$user` may put someone into `$role`.
      *
      * Called for both creation and role changes, so it cannot be satisfied
      * by creating a user in a safe role and promoting them a second later.
@@ -87,10 +88,32 @@ class UserPolicy
      * A slug with no matching row grants nothing and is refused rather than
      * treated as empty: assigning a role that does not exist would leave an
      * account holding no permissions for reasons nobody could see.
+     *
+     * ## Two gates, not one
+     *
+     * **The subset rule** (ADR-0004) — nobody grants a permission they do not
+     * hold themselves.
+     *
+     * **The audience rule** — a role may only be given to the level of
+     * account it was composed for. Until the `audience` column existed the
+     * subset rule was quietly doing both jobs and only by luck: a fleet owner
+     * never saw `corporate_admin` because that particular permission set
+     * happened not to be a subset of theirs, not because anything said a
+     * client's role did not belong in a fleet's picker.
+     *
+     * `$for` is the level the **subject** will hold, which is not always the
+     * actor's own: a fleet administrator adding somebody at a client it serves
+     * is creating a `client` account and must pick a client role for them. It
+     * defaults to the actor's level, which is the console's case — the staff
+     * screen names no client and creates colleagues alongside itself.
      */
-    public function assignRole(User $user, ?Role $role): bool
+    public function assignRole(User $user, ?Role $role, ?AccessLevel $for = null): bool
     {
         if (! $this->create($user) || $role === null) {
+            return false;
+        }
+
+        if ($role->audience !== RoleAudience::forLevel($for ?? $user->access_level)) {
             return false;
         }
 

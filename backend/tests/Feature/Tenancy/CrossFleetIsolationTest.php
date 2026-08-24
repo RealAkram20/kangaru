@@ -561,3 +561,77 @@ it('still lets a fleet administrator manage their own colleague and a served cli
         ])
         ->assertCreated();
 });
+
+it('lets a fleet owner add a colleague to their own fleet', function () {
+    // `R2`, and the owner's original request: until `fleet_owner` carried
+    // `staff.*`, the second fleet on the platform had exactly one usable
+    // account and no way to make another. Najjemba's owner is this test.
+    $owner = User::factory()->create([
+        'operator_id' => $this->rival->id,
+        'role' => UserRole::FLEET_OWNER,
+    ]);
+
+    $this->actingAs($owner, 'sanctum')
+        ->postJson('/api/v1/users', [
+            'name' => 'Sarah Nabirye',
+            'email' => 'sarah.nabirye@rival.test',
+            'phone' => '+256700000210',
+            'role' => UserRole::DISPATCHER->value,
+            'password' => 'correct-horse-battery-staple',
+        ])
+        ->assertCreated();
+
+    $hired = User::query()->where('email', 'sarah.nabirye@rival.test')->sole();
+
+    // The fleet is the assertion. A colleague created into the wrong fleet —
+    // or into none, which is head office — is the silent promotion ADR-0055 §4
+    // exists to make impossible.
+    expect($hired->operator_id)->toBe($this->rival->id)
+        ->and($hired->tenant_id)->toBeNull()
+        ->and($hired->access_level)->toBe(AccessLevel::FLEET);
+});
+
+it('offers a fleet owner only the roles written for a fleet', function () {
+    $owner = User::factory()->create([
+        'operator_id' => $this->rival->id,
+        'role' => UserRole::FLEET_OWNER,
+    ]);
+
+    $offered = array_column(
+        $this->actingAs($owner, 'sanctum')->getJson('/api/v1/users')->json('meta.assignable_roles'),
+        'value',
+    );
+
+    // Two gates, and this asserts both. The audience keeps a bank's roles out;
+    // the escalation subset keeps out the fleet roles carrying more than an
+    // owner holds. `super_admin` fails both, which is the point — a fleet's
+    // top account cannot mint one.
+    expect($offered)->not->toContain('corporate_admin', 'corporate_employee', 'super_admin')
+        ->and($offered)->toContain('dispatcher', 'driver');
+});
+
+it('refuses a fleet owner a colleague at another fleet, even by naming one', function () {
+    $owner = User::factory()->create([
+        'operator_id' => $this->rival->id,
+        'role' => UserRole::FLEET_OWNER,
+    ]);
+
+    // There is no `operator_id` field on this endpoint at all — the fleet is
+    // taken from the actor, never from the payload — so the interesting
+    // question is whether naming one anyway changes anything. It must not:
+    // an ignored field that looked honoured would be the quietest way to
+    // plant an account in a competitor.
+    $this->actingAs($owner, 'sanctum')
+        ->postJson('/api/v1/users', [
+            'name' => 'Planted At Shanitah',
+            'email' => 'planted@shanitah.test',
+            'phone' => '+256700000211',
+            'role' => UserRole::DISPATCHER->value,
+            'password' => 'correct-horse-battery-staple',
+            'operator_id' => $this->shanitah->id,
+        ])
+        ->assertCreated();
+
+    expect(User::query()->where('email', 'planted@shanitah.test')->sole()->operator_id)
+        ->toBe($this->rival->id);
+});

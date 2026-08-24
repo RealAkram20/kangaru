@@ -2,7 +2,9 @@
 
 namespace Modules\Administration\Requests;
 
+use App\Enums\AccessLevel;
 use App\Enums\ClientCapability;
+use App\Enums\RoleAudience;
 use App\Models\OperatorClient;
 use App\Models\User;
 use App\Support\Auth\PasswordPolicy;
@@ -116,10 +118,22 @@ class StoreUserRequest extends FormRequest
                 }
             }
 
-            if (! $policy->assignRole($actor, $role)) {
+            // The level the new account will hold, which decides which
+            // audience of role it may be given. Naming a client makes them
+            // that client's person; naming none makes them the actor's own
+            // kind — the rule `UserAdminService::insert()` applies to the
+            // columns, said here so the role is judged against the same
+            // answer rather than against the actor's level.
+            $subjectLevel = $this->filled('tenant_id')
+                ? AccessLevel::CLIENT
+                : $actor->access_level;
+
+            if (! $policy->assignRole($actor, $role, $subjectLevel)) {
                 $validator->errors()->add(
                     'role',
-                    'You cannot create an account with that role: it carries permissions you do not hold yourself.',
+                    $role->audience === RoleAudience::forLevel($subjectLevel)
+                        ? 'You cannot create an account with that role: it carries permissions you do not hold yourself.'
+                        : 'That role is for a '.$role->audience->label().' account, not this one.',
                 );
             }
 
@@ -151,7 +165,25 @@ class StoreUserRequest extends FormRequest
     {
         $tenantId = $this->input('tenant_id');
 
-        if ($tenantId === null || ! $actor->isPlatformLevel()) {
+        if ($tenantId === null) {
+            return;
+        }
+
+        // Head office employs head office (ADR-0065), so the field means
+        // nothing here. Refused rather than ignored: `UserAdminService` would
+        // drop it and return 201, and an administrator who named a client and
+        // got a head-office account back has been told the opposite of what
+        // happened.
+        if ($actor->access_level === AccessLevel::KANGARU) {
+            $validator->errors()->add(
+                'tenant_id',
+                'A Kangaru account belongs to no client. To add somebody at a fleet or a client, log in as them.',
+            );
+
+            return;
+        }
+
+        if (! $actor->isPlatformLevel()) {
             return;
         }
 

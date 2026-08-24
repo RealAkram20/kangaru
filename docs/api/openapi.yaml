@@ -1130,6 +1130,27 @@ paths:
                         type: array
                         items: { type: string }
                       can_manage: { type: boolean }
+                      audiences:
+                        type: array
+                        description: >
+                          The three audiences with their labels, so the editor's
+                          picker and the listing's filter keep no copy of the
+                          list — the same reason the permission catalogue is
+                          served rather than hardcoded.
+                        items:
+                          type: object
+                          required: [value, label]
+                          additionalProperties: false
+                          properties:
+                            value: { type: string, enum: [kangaru, fleet, client] }
+                            label: { type: string }
+                      can_manage_audience:
+                        type: boolean
+                        description: >
+                          Whether this actor may change which kind of account a
+                          role is for. Kangaru head office only; the console
+                          reads this rather than holding its own copy of the
+                          rule, and omits the field from its payload when false.
                       mfa_enforced:
                         type: boolean
                         description: >
@@ -1165,6 +1186,16 @@ paths:
                 name: { type: string, maxLength: 120 }
                 slug: { type: string, maxLength: 120, pattern: '^[a-z][a-z0-9_]*$' }
                 description: { type: ['string', 'null'], maxLength: 255 }
+                audience:
+                  type: string
+                  enum: [kangaru, fleet, client]
+                  description: >
+                    Which level of account the role is for. Read only from
+                    Kangaru head office; everybody else composes for their own
+                    level and this field is ignored rather than refused,
+                    because a role must have an audience — one belonging to
+                    nobody would sit in the catalogue looking healthy and
+                    appear in no picker at all.
                 permissions:
                   type: array
                   minItems: 1
@@ -1194,6 +1225,15 @@ paths:
                   type: array
                   minItems: 1
                   items: { type: string }
+                audience:
+                  type: string
+                  enum: [kangaru, fleet, client]
+                  description: >
+                    Which level of account the role is for. Kangaru head office
+                    only, on the same argument as requires_mfa: moving a role
+                    between audiences decides what appears in another
+                    organisation's picker, which is a decision about the
+                    platform rather than about the fleet making it.
                 requires_mfa:
                   type: boolean
                   description: >
@@ -8803,13 +8843,28 @@ components:
 
     Role:
       type: object
-      required: [slug, name, description, is_system, permissions, requires_mfa, created_at]
+      required: [slug, name, description, is_system, audience, permissions, requires_mfa, created_at]
       additionalProperties: false
       properties:
         slug: { type: string }
         name: { type: string }
         description: { type: ['string', 'null'] }
         is_system: { type: boolean }
+        audience:
+          type: string
+          enum: [kangaru, fleet, client]
+          description: >
+            Which level of account this role was composed for. A property of
+            the role, not a scope on it — the catalogue stays platform-wide
+            (ADR-0004) and every organisation still picks from one list. It is
+            what keeps a client's role out of a fleet's picker: before it, the
+            only thing separating them was whether the permission sets happened
+            to be subsets of one another, which is a coincidence rather than a
+            boundary. Writable by Kangaru head office only; everybody else
+            composes for their own level.
+        audience_label:
+          type: string
+          description: What the console calls the audience — Kangaru, Fleet or Client.
         permissions:
           type: array
           items: { type: string }

@@ -23,6 +23,11 @@ class RoleResource extends JsonResource
             'name' => $this->name,
             'description' => $this->description,
             'is_system' => $this->is_system,
+            // Which level of account this role was composed for. The console
+            // shows it as a column and filters on it; the server is what
+            // actually keeps a client role out of a fleet's picker.
+            'audience' => $this->audience->value,
+            'audience_label' => $this->audience->label(),
             'permissions' => $this->permissions ?? [],
             // ADR-0061. Editable since the second factor became a
             // setting; before that this column was reachable only from

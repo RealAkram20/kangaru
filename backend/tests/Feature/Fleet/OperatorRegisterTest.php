@@ -25,17 +25,6 @@ use Modules\Fleet\Services\OperatorService;
  * **The refusals are the deliverable, not the endpoints.** A test that head
  * office can onboard a fleet proves nothing about who else can.
  */
-function headOffice(): User
-{
-    return User::factory()->create([
-        'role' => UserRole::SUPER_ADMIN,
-        'status' => UserStatus::ACTIVE,
-        'tenant_id' => null,
-        'operator_id' => null,
-        'access_level' => AccessLevel::KANGARU,
-    ]);
-}
-
 function fleetSuperAdmin(): User
 {
     return User::factory()->create([

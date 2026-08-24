@@ -259,6 +259,19 @@ gate and ADR-0004's escalation rule is what keeps a Corporate Admin away
 from it — a tenant administrator's new colleagues are always their own
 tenant's, whatever the request body says.
 
+**And head office can now create head office.** `UserAdminService::insert()`
+used to *throw* for a `kangaru` actor: they name neither a fleet nor a client,
+`User::levelFor()` refuses to infer that shape (ADR-0055 §4), and the comment
+said the proper path would "arrive with S1". S1 shipped
+`php artisan kangaru:create-staff` and left the endpoint erroring, so the
+Kangaru staff screen could list people and never add one. The level is now
+**assigned** on the model before save, by a code path only a head-office actor
+reaches — never accepted from the payload, because `access_level` is
+deliberately absent from `User::$fillable`. Naming a client in that request is
+refused rather than ignored: dropping the field and answering 201 would tell
+an administrator the opposite of what happened. The console command stays; it
+is the way in when there is no way in.
+
 **The audit log's platform reader now has a name.** `AuditLog::forActor()`
 replaces the hand-rolled `allTenants()` branch, and `meta.scope` still
 reports `platform` or `tenant` so the UI can say which trail is on screen.
@@ -428,7 +441,21 @@ Named here so a half-built thing is not mistaken for a finished one.
   `/roles` route itself is deliberately not behind `RequireNavAccess` for
   exactly this reason, so such a holder reaches the page by URL and the
   server serves them — but the menu will not offer it.
-- **Per-tenant roles.** Custom roles are platform-wide and Super Admin
-  only, by decision. A tenant cannot compose a permission set for itself.
+- **Per-organisation roles.** Custom roles are platform-wide and composed by
+  head office, by decision. A fleet or a client cannot compose a permission
+  set for itself.
+
+  The *symptom* that made this look like a gap is fixed separately, and the
+  two should not be confused. Every role now carries an `audience` —
+  `kangaru`, `fleet` or `client` — saying which level of account it was
+  written for, so a fleet owner's picker offers no client role and vice versa.
+  That is a property **of the role**, not a scope on it: one catalogue, still
+  platform-wide, still ADR-0004's. What is deferred is *ownership* — a role
+  only one fleet can see and only that fleet can edit — and it stays deferred
+  because no fleet has asked for one.
+
+  Before the column, the only thing keeping `corporate_admin` out of a fleet
+  picker was the escalation subset happening not to contain it. A coincidence
+  is not a boundary, and it was about to stop being true.
 - **Bulk staff operations** — no CSV import, no bulk suspend. Onboarding is
   one account at a time.
