@@ -157,7 +157,7 @@ paths:
               additionalProperties: false
               properties:
                 current_password: { type: string }
-                password: { type: string, minLength: 8 }
+                password: { type: string, minLength: 6 }
                 password_confirmation: { type: string }
       responses:
         '200':
@@ -266,7 +266,7 @@ paths:
               properties:
                 email: { type: string, format: email, maxLength: 190 }
                 code: { type: string, minLength: 6, maxLength: 6 }
-                password: { type: string, minLength: 8 }
+                password: { type: string, minLength: 6 }
                 password_confirmation: { type: string }
       responses:
         '200':
@@ -519,9 +519,12 @@ paths:
     post:
       summary: >
         Sets the password and burns the link (mail plan M2). Unauthenticated,
-        throttled 5/min/IP, single use. The password floor is the same 8 a
-        reset sets, because an invitation that accepted a weaker one would be
-        the weakest door into a brand new account.
+        throttled 5/min/IP, single use. The password floor is
+        `App\Support\Auth\PasswordPolicy`'s, which every door on the platform
+        now shares — an invitation accepting a weaker password than the rest
+        would be the weakest door into a brand new account, and a stricter one
+        meant the office minted credentials nobody could re-set to the same
+        length.
       description: >
         Answers a message rather than a session. Signing the caller in here
         would skip the second factor ADR-0008 requires of a Super Admin or a
@@ -542,7 +545,7 @@ paths:
               required: [password, password_confirmation]
               additionalProperties: false
               properties:
-                password: { type: string, minLength: 8 }
+                password: { type: string, minLength: 6 }
                 password_confirmation: { type: string }
       responses:
         '200':
@@ -781,7 +784,7 @@ paths:
                 email: { type: string, format: email }
                 phone: { type: string, maxLength: 32 }
                 role: { type: string }
-                password: { type: string, minLength: 12 }
+                password: { type: string, minLength: 6 }
                 tenant_id: { type: integer, description: Super Admin only. }
                 capabilities:
                   type: array
@@ -1682,7 +1685,7 @@ paths:
                   maxLength: 32
                   description: A contact field the dispatcher dials — never a verification channel (no SMS).
                 email: { type: string, format: email, maxLength: 190 }
-                password: { type: string, minLength: 8, maxLength: 255 }
+                password: { type: string, minLength: 6, maxLength: 255 }
       responses:
         '201':
           $ref: '#/components/responses/CustomerAuthenticatedResponse'
@@ -2415,7 +2418,7 @@ paths:
                   additionalProperties: false
                   properties:
                     email: { type: string, format: email, maxLength: 255 }
-                    password: { type: string, minLength: 12 }
+                    password: { type: string, minLength: 6 }
                     role: { type: string, description: 'Role slug. Defaults to driver.' }
                     name: { type: string, maxLength: 255, description: "Defaults to the driver profile's name." }
                 - type: object
@@ -2483,16 +2486,17 @@ paths:
                 email: { type: string, format: email, maxLength: 190 }
                 password:
                   type: string
-                  minLength: 8
+                  minLength: 6
                   description: >
                     The applicant's own choice, hashed at submission and
                     carried to the account at approval — never re-typed,
                     never emailed, never known to the approver (§3).
-                    Eight, matching `PATCH /auth/password` and
-                    `POST /auth/password/reset` — the doors this password
-                    walks through next. Accounts the office mints
-                    (`POST /users`, `POST /drivers/{driver}/account`) still
-                    hold twelve: those are typed by staff at a desk.
+                    The floor is `App\Support\Auth\PasswordPolicy`'s, and
+                    since 24 August 2026 it is the same at every door — the
+                    ones this password walks through next (`PATCH
+                    /auth/password`, `POST /auth/password/reset`) and the ones
+                    the office mints at (`POST /users`, `POST
+                    /drivers/{driver}/account`), which used to hold twelve.
                 password_confirmation: { type: string }
                 terms_accepted:
                   description: >

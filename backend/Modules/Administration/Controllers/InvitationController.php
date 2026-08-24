@@ -5,9 +5,9 @@ namespace Modules\Administration\Controllers;
 use App\Enums\ErrorCode;
 use App\Http\Controllers\Controller;
 use App\Support\Api\ApiResponse;
+use App\Support\Auth\PasswordPolicy;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rules\Password;
 use Modules\Administration\Models\Invitation;
 use Modules\Administration\Services\InvitationService;
 
@@ -88,7 +88,7 @@ class InvitationController extends Controller
             // The same floor a reset sets, and it has to be: an invitation
             // that accepted a weaker password than a reset would be the
             // weakest door into a brand new account.
-            'password' => ['required', 'string', 'confirmed', Password::min(8)],
+            'password' => ['required', 'string', 'confirmed', PasswordPolicy::rule()],
         ]);
 
         $invitation = $this->invitations->find($token);

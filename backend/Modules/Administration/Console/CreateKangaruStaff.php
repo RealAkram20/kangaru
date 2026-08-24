@@ -7,10 +7,10 @@ use App\Enums\Permission;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Models\User;
+use App\Support\Auth\PasswordPolicy;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\Rules\Password;
 
 /**
  * Creates a Kangaru account — head office (ADR-0055 §4, ADR-0056 §6).
@@ -82,7 +82,7 @@ class CreateKangaruStaff extends Command
             [
                 'name' => ['required', 'string', 'max:120'],
                 'email' => ['required', 'email', 'max:190', 'unique:users,email'],
-                'password' => ['required', Password::defaults()],
+                'password' => ['required', PasswordPolicy::rule()],
                 'role' => ['required', 'string', 'exists:roles,slug'],
             ],
         );

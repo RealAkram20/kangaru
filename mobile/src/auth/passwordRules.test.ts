@@ -26,13 +26,14 @@ describe('passwordProblem', () => {
    * The number itself, asserted as a literal and only here.
    *
    * The relative test below pins the *comparison*; this pins the *value*
-   * against `ChangePasswordRequest`'s `Password::min(8)`. Written as a literal
-   * on purpose — a test phrased in terms of the constant it is checking passes
+   * against `App\Support\Auth\PasswordPolicy::MINIMUM_LENGTH`, which every
+   * request class on the server now validates against. Written as a literal on
+   * purpose — a test phrased in terms of the constant it is checking passes
    * whatever the constant becomes, which is exactly the drift that would let a
    * screen promise a floor the server does not hold.
    */
-  it('holds the eight the server holds', () => {
-    expect(MINIMUM_PASSWORD_LENGTH).toBe(8);
+  it('holds the six the server holds', () => {
+    expect(MINIMUM_PASSWORD_LENGTH).toBe(6);
   });
 
   /**

@@ -5,9 +5,9 @@ namespace Modules\Administration\Controllers;
 use App\Enums\ErrorCode;
 use App\Http\Controllers\Controller;
 use App\Support\Api\ApiResponse;
+use App\Support\Auth\PasswordPolicy;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rules\Password;
 use Modules\Administration\Services\PasswordResetService;
 
 /**
@@ -63,7 +63,7 @@ class PasswordResetController extends Controller
             // The same floor as ChangePasswordRequest, and it has to be: a
             // reset that set a shorter password than a change could would be
             // the weakest door in.
-            'password' => ['required', 'string', 'confirmed', Password::min(8)],
+            'password' => ['required', 'string', 'confirmed', PasswordPolicy::rule()],
         ]);
 
         $done = $this->resets->reset(
