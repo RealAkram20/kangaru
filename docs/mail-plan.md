@@ -1,5 +1,13 @@
 # The mail plan
 
+> **Complete, M0 through M6, 24 August 2026.** Every package in §9 is built,
+> tested and committed. What is deliberately not built is listed at the bottom
+> of each package's worklog entry and summarised in §12 below.
+>
+> Start at §12 if you are picking this up: it says what exists, what is still
+> blocked and why, and what nobody should rebuild.
+
+
 Every email the platform sends, who receives it, and what has to be built
 before any of it leaves the building.
 
@@ -478,3 +486,58 @@ this plan touches, and which every package will need a minimal diff on:
 - `docs/api/openapi.yaml`
 
 Nobody rewrites another agent's template. New emails are new files.
+
+---
+
+## 12 · What was built, and what was not
+
+### Built
+
+| | Package | What landed |
+|---|---|---|
+| **M0** | The one path | `SettingsMailChannel`, `mail_deliveries`, four gates. The framework mailer was `log`; three notification types had been writing to a log file since they shipped. |
+| **M1** | The shell | One blade layout plus a plain text partner, `MailRenderer`, `mail:preview`. Three contrast failures found by rendering it, none catchable by a test. |
+| **M2** | The invitation | A fleet owner and a corporate client admin can sign in. Before it, both were active accounts nobody could open. |
+| **M3** | Security | Nine warnings, the email menu, `known_devices`. `recoveryCodesAreLow()` had existed since ADR-0010 with nothing calling it. |
+| **M4** | Drivers | Ten emails and `drivers:remind-expiring-documents`, which AGENTS.md named and nothing had built. |
+| **M5** | Clients | Invoices to the billing address, with the PDF and the link. C11 closed a hole ADR-0060 §5 left open. |
+| **M6** | Admins | Seven office alerts, the preferences screen, and `fleets_without_an_account` as an alert rather than a number. |
+
+### Still blocked, and why
+
+**C9 and C10, the credit limit emails.** `operator_clients.credit_limit_minor`
+exists. *Outstanding balance* does not: there is no invoice status column and
+no payment record, so the figure has no honest source. Unchanged since this
+plan was written. They do not ship with an invented number.
+
+### Not built, with reasons
+
+| | Why |
+|---|---|
+| D10 trip cancelled after acceptance | No driver-facing cancellation event. `trip.offer_withdrawn` covers the offer stage only. |
+| D11 weekly earnings summary | A money digest is a screen-rules §1 question and no figure has been verified producible. |
+| D20 time off answered | `AvailabilityStatus` has three cases and **`AvailabilityService` has no method that moves between them.** |
+| D21 referral reward | `ReferralService` reads `rewardMinor()` and **nothing anywhere pays a reward.** |
+| F10 nobody took the offer | The exhausted-dispatch case is spread across `advance()`, `retryUnoffered()` and a config window. Wants a domain event that does not exist. |
+| F11 odometer against GPS | Same shape: `DistanceGrade` is computed but nothing raises an event on a poor grade. |
+| F15 daily digest | Waits on `operators.timezone`, which does not exist. 07:00 in whose morning? |
+
+D20 and D21 are the two worth somebody's decision: both are an enum and a
+config value with no service behind them, which is the same shape
+`recoveryCodesAreLow()` had before M3. **An unwired feature is only honest if
+something says it is unwired**, and neither of those says so.
+
+### One migration this plan did not do
+
+The notifications that predate it — booking decisions, trip progress, document
+reviews, closure and support answers — still hold their copy in PHP rather than
+in `lang/en/mail.php`. `MailKeysTest` names them explicitly as bespoke. Moving
+them is a separate pass, deliberately: rewriting other agents' sentences is the
+collision the worklog exists to prevent.
+
+### The one operational thing before any of this sends
+
+`mailConfigured()` is **false** on the development database and
+`auth.password_reset_enabled` is **false**. Nothing leaves the building until
+somebody puts the SMTP credentials into Settings → Email and presses the test
+send. Everything else is built and waiting on that.
