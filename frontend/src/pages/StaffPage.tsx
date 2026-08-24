@@ -49,6 +49,8 @@ export function StaffPage() {
   const [capabilities, setCapabilities] = useState<CapabilityOption[]>([])
   const [routes, setRoutes] = useState<RouteOption[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [refused, setRefused] = useState(false)
+  const [canInvite, setCanInvite] = useState(false)
   const [query, setQuery] = useState('')
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<StaffUser | null>(null)
@@ -59,23 +61,40 @@ export function StaffPage() {
       roles: AssignableRole[]
       capabilities: CapabilityOption[]
       routes: RouteOption[]
+      canInvite: boolean
     }) => {
       setStaff(result.staff)
       setRoles(result.roles)
       setCapabilities(result.capabilities)
       setRoutes(result.routes)
+      setCanInvite(result.canInvite)
       setError(null)
     },
     [],
   )
 
-  const load = useCallback(
-    () =>
-      fetchStaff()
-        .then(apply)
-        .catch((failure: unknown) => setError(apiError(failure, 'Could not load your staff list.').message)),
-    [apply],
-  )
+  /**
+   * A refusal is not an error.
+   *
+   * The route no longer gates on a role slug — head office composes roles
+   * carrying `staff.manage` and no slug list can know their names — so this
+   * page is reachable by anybody and answers for itself. Somebody without the
+   * permission gets a locked door rather than a red banner about a request
+   * they did not knowingly make. Same shape as the role catalogue beside it.
+   */
+  const fail = useCallback((failure: unknown) => {
+    const problem = apiError(failure, 'Could not load your staff list.')
+
+    if (problem.code === 'FORBIDDEN') {
+      setRefused(true)
+
+      return
+    }
+
+    setError(problem.message)
+  }, [])
+
+  const load = useCallback(() => fetchStaff().then(apply).catch(fail), [apply, fail])
 
   useEffect(() => {
     let cancelled = false
@@ -85,13 +104,13 @@ export function StaffPage() {
         if (!cancelled) apply(result)
       })
       .catch((failure: unknown) => {
-        if (!cancelled) setError(apiError(failure, 'Could not load your staff list.').message)
+        if (!cancelled) fail(failure)
       })
 
     return () => {
       cancelled = true
     }
-  }, [apply])
+  }, [apply, fail])
 
   const setStatus = async (person: StaffUser, status: 'active' | 'suspended') => {
     setError(null)
@@ -233,6 +252,18 @@ export function StaffPage() {
     )
   }, [staff, query])
 
+  if (refused) {
+    return (
+      <Card>
+        <EmptyState
+          icon="lock"
+          title="Staff administration is not available to your account"
+          description="Ask an administrator for staff management."
+        />
+      </Card>
+    )
+  }
+
   return (
     <PageFill>
       {error && (
@@ -281,6 +312,7 @@ export function StaffPage() {
           roles={roles}
           capabilities={capabilities}
           routes={routes}
+          canInvite={canInvite}
           onClose={() => setCreating(false)}
           onSaved={async () => {
             setCreating(false)
@@ -295,6 +327,7 @@ export function StaffPage() {
           roles={roles}
           capabilities={capabilities}
           routes={routes}
+          canInvite={canInvite}
           onClose={() => setEditing(null)}
           onSaved={async () => {
             setEditing(null)
@@ -311,6 +344,7 @@ async function fetchStaff(): Promise<{
   roles: AssignableRole[]
   capabilities: CapabilityOption[]
   routes: RouteOption[]
+  canInvite: boolean
 }> {
   const response = await apiClient.get<ApiSuccess<StaffUser[], StaffMeta>>('/users')
 
@@ -318,6 +352,11 @@ async function fetchStaff(): Promise<{
     staff: response.data.data,
     roles: response.data.meta?.assignable_roles ?? [],
     capabilities: response.data.meta?.capabilities ?? [],
+    // Whether the platform can actually deliver an invitation. False on an
+    // API older than the feature, and false whenever mail is switched off —
+    // in both cases the dialog offers the password path only, rather than an
+    // option that would create an account nobody can reach.
+    canInvite: response.data.meta?.can_invite ?? false,
     // Empty for a platform account, which belongs to no client and so has
     // no routes to put anybody on. The dialog hides the panel rather than
     // showing an empty one.
@@ -337,6 +376,7 @@ function StaffDialog({
   roles,
   capabilities,
   routes,
+  canInvite,
   onClose,
   onSaved,
 }: {
@@ -344,6 +384,8 @@ function StaffDialog({
   roles: AssignableRole[]
   capabilities: CapabilityOption[]
   routes: RouteOption[]
+  /** Whether the platform can deliver an invitation — the server's answer. */
+  canInvite: boolean
   onClose: () => void
   onSaved: () => Promise<void>
 }) {
@@ -354,6 +396,10 @@ function StaffDialog({
     phone: person?.phone ?? '',
     role: person?.role ?? roles[0]?.value ?? '',
     password: '',
+    // Defaults off, so the field an administrator already knows is the one
+    // they see. Turning it on is a deliberate act, and it is only offered
+    // where the platform can keep the promise.
+    invite: false,
   })
   // The client's switches for this person (App\Enums\ClientCapability).
   // Offered only for a client's roles — the server refuses them on a
@@ -398,7 +444,14 @@ function StaffDialog({
       // absent field it reads as "leave them on it".
       const roster = offersRoutes ? { route_ids: riding } : {}
       if (isNew) {
-        await apiClient.post('/users', { ...form, ...switches, ...roster })
+        // `password` is omitted rather than sent empty when an invitation is
+        // going out: the server drops the requirement for an invite but still
+        // holds a *present* password to the length floor, so an empty string
+        // would be refused for a field the administrator never filled in.
+        const { invite, password, ...rest } = form
+        const wayIn = invite ? { invite: true } : { password }
+
+        await apiClient.post('/users', { ...rest, ...wayIn, ...switches, ...roster })
       } else {
         // PATCH, and only what an administrator may change. No password:
         // there is no endpoint for setting somebody else's.
@@ -429,7 +482,19 @@ function StaffDialog({
       // One line, and only for the case that needs one. The edit form said
       // "changes are recorded in the audit log", which is true of every
       // write in the platform and told nobody anything.
-      description={isNew ? 'They sign in with the password you set here.' : undefined}
+      //
+      // It follows the choice below it, because the two paths end somewhere
+      // different and a sentence that named the wrong one would be the screen
+      // telling the administrator the opposite of what is about to happen.
+      // Caught in a browser with the box ticked, where the dialog still
+      // promised a password nobody was going to set.
+      description={
+        isNew
+          ? form.invite
+            ? 'They get an email with a link to set their own password.'
+            : 'They sign in with the password you set here.'
+          : undefined
+      }
       onClose={onClose}
       width={560}
       footer={
@@ -560,7 +625,27 @@ function StaffDialog({
           </fieldset>
         )}
 
-        {isNew && (
+        {isNew && canInvite && (
+          /*
+            How this person gets in. Offered only when the platform can
+            actually send the email — `meta.can_invite` is the server's answer
+            to that, and with mail off the choice is not rendered at all
+            rather than shown and refused on save.
+
+            An invitation is the better default where it works: the
+            administrator never handles a password, and there is no secret to
+            read out over a phone. The other path stays because mail is a
+            setting somebody can switch off.
+          */
+          <Checkbox
+            id="s-invite"
+            label="Email them a link to set their own password"
+            checked={form.invite}
+            onChange={(e) => setForm((f) => ({ ...f, invite: e.target.checked }))}
+          />
+        )}
+
+        {isNew && !form.invite && (
           /*
             The length half of this hint is gone — the meter's checklist states
             the floor, from the shared constant, rather than a number typed

@@ -46,8 +46,20 @@ const DISPATCH_ROLES: Role[] = [
   'depot_manager',
 ]
 
-/** Modules\Administration\Policies\UserPolicy::ADMINISTRATORS. */
-const USER_ADMINISTRATORS: Role[] = ['super_admin', 'corporate_admin']
+/**
+ * The seeded roles holding `staff.view` / `staff.manage`.
+ *
+ * `fleet_owner` joined them when a fleet gained the right to run its own
+ * people: it held fourteen permissions and not one of them concerned staff,
+ * so the second fleet on the platform had exactly one usable account and no
+ * way to make another.
+ *
+ * **This list is a convenience, and since then it is not even the whole
+ * truth.** Head office composes fleet-audience and client-audience roles that
+ * carry `staff.manage`, and no slug list can know their names — which is why
+ * the `/staff` route no longer gates on one. See the comment there.
+ */
+const USER_ADMINISTRATORS: Role[] = ['super_admin', 'corporate_admin', 'fleet_owner']
 
 /** InvoicePolicy::READERS and RateCardPolicy::RATE_VIEWERS — identical sets. */
 const BILLING_READERS: Role[] = ['super_admin', 'finance', 'operations_manager', 'corporate_admin']

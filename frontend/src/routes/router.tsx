@@ -311,20 +311,26 @@ export const router = createBrowserRouter([
           </RequireNavAccess>
         ),
       },
-      {
-        path: 'staff',
-        element: (
-          <RequireNavAccess id="staff">
-            <StaffPage />
-          </RequireNavAccess>
-        ),
-      },
-      // Deliberately unguarded, unlike Staff. RequireNavAccess decides by
-      // role slug, and this page exists to create roles no slug list can
-      // know about — a custom role holding `roles.manage` would be turned
-      // away from the one screen built for it. The page gates on whether
-      // the API answers instead, which is the rule itself rather than a
-      // copy of it.
+      // Unguarded, and it used to be the counter-example the comment below
+      // pointed at. What changed is the premise, not the rule.
+      //
+      // A slug list was the whole truth while `staff.manage` was held by
+      // exactly two seeded roles. It is not any more: head office composes
+      // fleet-audience and client-audience roles carrying it — a "Fleet HR"
+      // that hires but does not dispatch is the request this feature exists
+      // to answer — and RequireNavAccess, which decides by role slug, would
+      // turn every one of them away from the one screen built for it. That is
+      // precisely the argument already written under `/roles`.
+      //
+      // The page gates on whether the API answers, which is the rule itself
+      // rather than a copy of it, and `UserPolicy` is unchanged either way:
+      // menu visibility was never authorization.
+      { path: 'staff', element: <StaffPage /> },
+      // Deliberately unguarded. RequireNavAccess decides by role slug, and
+      // this page exists to create roles no slug list can know about — a
+      // custom role holding `roles.manage` would be turned away from the one
+      // screen built for it. The page gates on whether the API answers
+      // instead, which is the rule itself rather than a copy of it.
       { path: 'roles', element: <RolesPage /> },
       // Unguarded for the same reason as Roles: `audit.view` is a
       // permission, and a custom role holding it is invisible to

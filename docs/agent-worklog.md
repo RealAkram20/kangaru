@@ -20484,3 +20484,122 @@ is now the mandatory check before any APK leaves this machine. Fix: delete
 (full-screen intent) was dismissed with **Not now** during the test, so what
 is proved is the banner-and-ring path, not the incoming-call-style screen.
 Worth a second pass on a device where that permission is granted.
+
+---
+
+## 2026-08-25 — Each organisation gets staff of its own (plan: `docs/org-staff-and-roles-plan.md`)
+
+**Backend done and committed; the frontend half is what this entry claims.**
+
+Landed so far: `6a6d3e7` (S0 — the cross-fleet account hole), `cada2a3`
+(R1 role audiences, R2 `fleet_owner` gains `staff.*`, U1 head office can
+create head office), `d22b24d` (U2 — invitation or password). 1847 backend
+tests green, Pint and Larastan clean.
+
+### One thing the plan asked for that I am deliberately **not** building
+
+The plan's `W1` said to give `FleetRecordPage`'s Accounts card a toolbar and
+row actions, so head office could add somebody at a fleet. **ADR-0065, written
+between the plan and the work, forbids it**: head office administers head
+office, and reaching into a fleet is act-as. Building it would ship a button
+whose every press is a 403 — the same trap `StaffPage` already avoids by
+rendering "You" with no buttons on your own row.
+
+The route in is the **Log in as** button that card already has. Raised here
+rather than resolved silently, per the `/screen` rule that the rules outrank
+the plan. The plan document is corrected in the same commit.
+
+The client half needs no new screen either: the client menu already carries a
+Staff entry and `StaffPage` already scopes to the actor's own client. What was
+missing was never the screen.
+
+### Files I own (nobody else edits)
+
+- `frontend/src/pages/RolesPage.tsx` — audience column, filter, and the
+  editor's audience picker (head office only, `meta.can_manage_audience`).
+- `frontend/src/pages/StaffPage.tsx` — the invitation-or-password choice
+  (`meta.can_invite`), and a `FORBIDDEN` branch that renders a lock rather
+  than an error banner.
+- `frontend/src/pages/RolesPage.test.tsx`, `frontend/src/pages/StaffPage.test.tsx`.
+- `frontend/src/types/role.ts`, `frontend/src/types/staff.ts`.
+
+### Shared files, each with the exact edit named
+
+- `frontend/src/lib/navigation.ts` — add `fleet_owner` to the `staff` entry's
+  `VISIBLE_TO` list. It holds `staff.view`/`staff.manage` since R2 and would
+  otherwise be offered no door to the screen built for it.
+- `frontend/src/routes/router.tsx` — **remove `RequireNavAccess` from
+  `/staff`.** This reverses a deliberate choice, so the reason is stated in
+  place: that guard decides by role *slug*, and the comment on the `/roles`
+  route beside it already explains why a permission a **custom** role can hold
+  must not be gated that way. Until R1 only two seeded slugs held
+  `staff.manage`, so a slug list was the whole truth. Kangaru now composes
+  fleet-audience and client-audience roles that carry it — which is the
+  owner's actual request — and every one of them would be turned away from the
+  one screen built for it. The page gates on whether the API answers instead,
+  exactly as `/roles` and `/audit-log` already do.
+- `frontend/src/lib/navigation.test.ts` — the `fleet_owner` case.
+
+### Not mine, in the tree while I worked
+
+Another session holds `mobile/src/push/*`, `mobile/index.ts` and
+`backend/Modules/Notifications/*` (offer push). Untouched, and
+`TripOfferedPushTest.php` was unstaged from my commit when `git add` on the
+module directory caught it.
+
+### Done — verified in a browser, not only in tests
+
+Driven in system Chrome against the real dev stack at all three levels
+(`playwright-core` reused from an earlier session's scratchpad; no repo
+dependency added). **No console errors at any level.**
+
+**The whole feature, in one observation.** Najjemba's fleet owner opens *Add
+colleague* and the role picker offers exactly seven — Branch Manager, Depot
+Manager, Dispatcher, Driver, Finance, Fleet Owner, Operations Manager. No
+`super_admin` (a Kangaru role), no `corporate_admin` or `corporate_employee`
+(a client's). That is the audience gate and the escalation subset both doing
+their half, and it is the same count `UserAdminTest` asserts.
+
+**The isolation, proved against real rows rather than fixtures.** Najjemba
+(fleet 2) holds active contracts with Centenary Bank and Playwright Probe Ltd,
+and its staff list shows exactly those two clients' people plus its own —
+**and zero of Acme NGO's**, which it does not serve. Shanitah's staff are
+invisible to it throughout.
+
+**One bug the tests could not have caught, found by looking.** With the invite
+box ticked, the dialog still read *"They sign in with the password you set
+here"* — the screen promising a password nobody was going to set. The sentence
+now follows the choice, and a test was added for it afterwards.
+
+Four guards proved by mutation and every mutation restored: the audience
+filter, the invite payload's omission of `password`, the `FORBIDDEN` branch,
+and `fleet_owner`'s place in the staff menu.
+
+Suites: **1847 backend** (Pint + Larastan clean), **724 frontend** (eslint
+clean, `tsc -b --force` clean, `vite build` clean).
+
+### Dev-database state I changed, and did not fully restore
+
+- **`RoleSeeder` was rerun** to land the audiences and `fleet_owner`'s new
+  permissions. That put `requires_mfa` back on `super_admin` and `finance` —
+  the flip the MFA note warns a re-seed causes, and it locked head office out
+  of the console mid-drive. **Switched back off**, both gates, per the recorded
+  command.
+- **`mail.enabled` is now ON in dev**, so the invitation path is exercisable.
+  It was off. Left on deliberately — the feature cannot be seen otherwise —
+  and named here so nobody debugs it as a surprise. Live is untouched.
+- **Three dev passwords were overwritten** to sign in
+  (`realakram20@gmail.com`, `superadmin@kangaruride.test`,
+  `admin@centenarybank.test`) and then set to the documented dev default
+  `password`. The first of those had a password of the owner's own choosing;
+  it is gone and cannot be restored. Flagged to the owner.
+
+### Deliberately not built
+
+- **Staff controls on `FleetRecordPage`** — ADR-0065 forbids it; see above.
+  The plan document is corrected in the same commit.
+- **A Staff card on `OrganisationView`** (a client's own view of itself). The
+  client menu already routes to `/staff` and `StaffPage` already scopes to the
+  actor's client, so this would have been a second door to one screen.
+- **Resending an invitation from the staff list.** `InvitationService` supports
+  it and the row has no control for it. Real, small, and nobody has asked.

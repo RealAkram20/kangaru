@@ -237,8 +237,20 @@ Reuse, do not invent. `StaffPage.tsx` is the pattern for all three levels —
 one dual-purpose dialog, `meta.assignable_roles` from the server, banner and
 per-field errors together, `Suspend` as an inline row action.
 
-- **Fleet:** the "Accounts" card on `FleetRecordPage.tsx:187` already lists a
-  fleet's people for act-as. Give it the toolbar and row actions it lacks.
+- **Fleet:** ~~the "Accounts" card on `FleetRecordPage.tsx:187` already lists a
+  fleet's people for act-as. Give it the toolbar and row actions it lacks.~~
+
+  **Struck, and not built.** ADR-0065 was written after this plan and forbids
+  it: head office administers head office, and `FleetRecordPage` is a Kangaru
+  screen. The endpoint would refuse every press, so the button would be a trap
+  — the thing `StaffPage` already avoids by rendering "You" and no buttons on
+  your own row. The route in is the **Log in as** button that card already
+  carries.
+
+  A fleet's own people are managed on the fleet's own `/staff`, which needed no
+  new screen — only `fleet_owner` gaining `staff.*` (R2) and a menu entry that
+  offers the door. Recorded rather than quietly resolved, per the rule that the
+  rules outrank the plan.
 - **Client:** append a `Staff` card to `pages/companies/OrganisationView.tsx`,
   the client's own view of itself. **Not** to `CorporateClientsPage` — ADR-0062
   keeps head office out of a client's people, and the route in is act-as.
