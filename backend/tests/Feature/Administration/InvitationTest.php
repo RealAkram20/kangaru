@@ -4,9 +4,12 @@ use App\Enums\AccessLevel;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Models\Operator;
+use App\Models\Tenant;
 use App\Models\User;
+use App\Support\Tenancy\TenantContext;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Notification;
 use Modules\Administration\Models\Invitation;
 use Modules\Administration\Services\InvitationService;
 use Modules\Administration\Services\SettingsService;
@@ -47,6 +50,29 @@ function mailOn(): void
         'from_address' => 'operations@kangaruride.test',
         'from_name' => 'KangaruRide',
     ]);
+}
+
+/**
+ * A client's administrator, and the client they administer.
+ *
+ * Local rather than reaching for `UserAdminTest`'s `staffFixture()`: Pest
+ * loads each test file in its own pass, so a helper defined in another file
+ * is only there by accident of ordering.
+ *
+ * @return array{tenant: Tenant, admin: User}
+ */
+function clientAdministrator(): array
+{
+    $tenant = Tenant::factory()->create();
+    app(TenantContext::class)->set($tenant->id);
+
+    $admin = User::factory()->create([
+        'tenant_id' => $tenant->id,
+        'role' => UserRole::CORPORATE_ADMIN,
+        'status' => UserStatus::ACTIVE,
+    ]);
+
+    return compact('tenant', 'admin');
 }
 
 function invitee(): User
@@ -245,4 +271,104 @@ it('names the inviter in the email, and never puts the token in the stored paylo
         // `context()` becomes a stored row and push `data` for every other type
         // in this enum. A live credential belongs in neither.
         ->and(json_encode($notification->context()))->not->toContain('the-plaintext-token');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Inviting a colleague, rather than inventing a password for them
+|--------------------------------------------------------------------------
+|
+| `U2`. `StoreUserRequest`'s docblock used to justify the typed password by
+| saying no invite flow existed — *"a half-built invite that emails a link to
+| nowhere is worse than an honest 'tell them this password'."* It exists now,
+| and this is the staff endpoint using it.
+|
+| Both paths are kept on purpose: mail is a setting and it is off on
+| production, so an invitation-only endpoint would mean nobody can be added.
+*/
+
+it('creates a colleague with no known password and emails them a link', function () {
+    Notification::fake();
+    mailOn();
+
+    ['admin' => $admin] = clientAdministrator();
+
+    $this->actingAs($admin, 'sanctum')->postJson('/api/v1/users', [
+        'name' => 'Grace Nakimuli',
+        'email' => 'grace.nakimuli@centenary-bank.test',
+        'phone' => '+256700000301',
+        'role' => 'corporate_employee',
+        'invite' => true,
+    ])->assertStatus(201);
+
+    $created = User::query()->where('email', 'grace.nakimuli@centenary-bank.test')->sole();
+
+    // One live invitation, addressed to them, issued by the administrator who
+    // added them — `invited_by` is what tells a support conversation who let
+    // this person in.
+    $invitation = Invitation::query()->where('user_id', $created->id)->sole();
+
+    expect($invitation->invited_by)->toBe($admin->id)
+        ->and($invitation->accepted_at)->toBeNull();
+
+    Notification::assertSentTo($created, AccountInvitedNotification::class);
+});
+
+it('refuses an invitation when mail is switched off, rather than creating an unreachable account', function () {
+    Notification::fake();
+
+    // `mail.enabled` defaults false, which is production's state today.
+    ['admin' => $admin] = clientAdministrator();
+
+    $this->actingAs($admin, 'sanctum')->postJson('/api/v1/users', [
+        'name' => 'Nobody Can Reach Me',
+        'email' => 'unreachable@centenary-bank.test',
+        'phone' => '+256700000302',
+        'role' => 'corporate_employee',
+        'invite' => true,
+    ])->assertStatus(422)->assertJsonValidationErrors('invite');
+
+    // The account must not exist. Creating it and failing to send is exactly
+    // the state this suite's own docblock describes: an account nobody could
+    // sign into, with every test passing.
+    expect(User::query()->where('email', 'unreachable@centenary-bank.test')->exists())->toBeFalse();
+});
+
+it('still lets an administrator set an initial password instead', function () {
+    Notification::fake();
+
+    ['admin' => $admin] = clientAdministrator();
+
+    $this->actingAs($admin, 'sanctum')->postJson('/api/v1/users', [
+        'name' => 'Peter Ochieng',
+        'email' => 'peter.ochieng@centenary-bank.test',
+        'phone' => '+256700000303',
+        'role' => 'corporate_employee',
+        'password' => 'a-long-enough-password',
+    ])->assertStatus(201);
+
+    // No invitation, and the password works. The path that survives with mail
+    // off is the reason both were kept.
+    $created = User::query()->where('email', 'peter.ochieng@centenary-bank.test')->sole();
+
+    expect(Invitation::query()->where('user_id', $created->id)->exists())->toBeFalse();
+
+    $this->postJson('/api/v1/auth/login', [
+        'email' => 'peter.ochieng@centenary-bank.test',
+        'password' => 'a-long-enough-password',
+    ])->assertOk();
+});
+
+it('refuses an account with neither a password nor an invitation', function () {
+    ['admin' => $admin] = clientAdministrator();
+
+    // The two paths are the only two. Without this, dropping `invite` from a
+    // payload would create an account whose password is 32 random characters
+    // nobody has and no link reaches — reachable by nobody, silently.
+    $this->actingAs($admin, 'sanctum')->postJson('/api/v1/users', [
+        'name' => 'No Way In',
+        'email' => 'no-way-in@centenary-bank.test',
+        'phone' => '+256700000304',
+        'role' => 'corporate_employee',
+    ])->assertStatus(422)->assertJsonValidationErrors('password');
 });

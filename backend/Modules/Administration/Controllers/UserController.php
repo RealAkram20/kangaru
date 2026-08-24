@@ -16,6 +16,7 @@ use Modules\Administration\Requests\StoreUserRequest;
 use Modules\Administration\Requests\UpdateUserRequest;
 use Modules\Administration\Requests\UserIndexRequest;
 use Modules\Administration\Resources\UserResource;
+use Modules\Administration\Services\SettingsService;
 use Modules\Administration\Services\UserAdminService;
 use Modules\Clients\Models\ClientRoute;
 
@@ -78,6 +79,13 @@ class UserController extends Controller
                 // exists, and never learns to build the list itself. Empty
                 // for a platform account, which has no routes of its own.
                 'routes' => $this->assignableRoutes(),
+                // Whether an invitation can actually be delivered. `mail` is a
+                // platform setting and it is off on production today, so the
+                // console offers the choice only when the platform can keep
+                // it — an Invite button that silently creates an unreachable
+                // account is the hole the invitations table was built to
+                // close, reopened from the other end.
+                'can_invite' => app(SettingsService::class)->mailConfigured(),
             ],
         );
     }

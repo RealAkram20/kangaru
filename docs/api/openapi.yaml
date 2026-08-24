@@ -730,7 +730,7 @@ paths:
                     items: { $ref: '#/components/schemas/User' }
                   meta:
                     type: object
-                    required: [assignable_roles, capabilities, routes]
+                    required: [assignable_roles, capabilities, routes, can_invite]
                     additionalProperties: false
                     properties:
                       routes:
@@ -767,25 +767,56 @@ paths:
                             slug: { $ref: '#/components/schemas/ClientCapability' }
                             label: { type: string }
                             description: { type: string }
+                      can_invite:
+                        type: boolean
+                        description: >
+                          Whether an invitation can actually be delivered, i.e.
+                          whether mail is switched on and configured. The console
+                          offers the choice between emailing a link and setting an
+                          initial password only when this is true: an Invite button
+                          that silently creates an account nobody can sign into is
+                          the hole the invitations table was built to close,
+                          reopened from the other end.
         default:
           $ref: '#/components/responses/Error'
     post:
-      summary: Creates an account.
+      summary: Creates an account, reached either by an emailed invitation or by an initial password.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [name, email, phone, role, password]
+              required: [name, email, phone, role]
               additionalProperties: false
               properties:
                 name: { type: string, maxLength: 255 }
                 email: { type: string, format: email }
                 phone: { type: string, maxLength: 32 }
                 role: { type: string }
-                password: { type: string, minLength: 6 }
-                tenant_id: { type: integer, description: Super Admin only. }
+                password:
+                  type: string
+                  minLength: 6
+                  description: >
+                    Required unless invite is true, in which case the account is
+                    created with a random password nobody ever sees and the new
+                    colleague sets their own from the emailed link.
+                invite:
+                  type: boolean
+                  description: >
+                    Email a sign-in link instead of setting a password here. Both
+                    paths exist by decision: mail is a platform setting that may be
+                    off, and an invitation-only endpoint would then mean nobody can
+                    be added at all. Refused with a 422 when mail is not configured,
+                    rather than creating an account no invitation can reach.
+                tenant_id:
+                  type: integer
+                  description: >
+                    The client this colleague belongs to. Read only from a
+                    fleet-level actor, and only for a client that fleet actively
+                    serves (ADR-0065); a client administrator's colleagues are
+                    always their own client's and the field is not consulted. Head
+                    office is refused it outright — head office employs head office.
                 capabilities:
                   type: array
                   items: { $ref: '#/components/schemas/ClientCapability' }

@@ -13,6 +13,7 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Modules\Administration\Models\Role;
 use Modules\Administration\Policies\UserPolicy;
+use Modules\Administration\Services\SettingsService;
 
 /**
  * Onboarding a colleague.
@@ -68,7 +69,20 @@ class StoreUserRequest extends FormRequest
             // Laravel's defaults plus a length floor. AGENTS.md leaves
             // hashing to the framework but says nothing about strength, so
             // this is the conservative reading rather than an invention.
-            'password' => ['required', 'string', PasswordPolicy::rule()],
+            //
+            // Required **unless** an invitation is being sent, in which case
+            // the account is created with a random one nobody ever sees and
+            // the new colleague sets their own from the emailed link.
+            'password' => [
+                Rule::requiredIf(fn () => ! $this->boolean('invite')),
+                'string',
+                PasswordPolicy::rule(),
+            ],
+            // Whether to email a link instead of setting a password here.
+            // Both paths, by the owner's decision of 25 August: mail is a
+            // platform setting that may be off, and an invitation-only
+            // endpoint would then mean nobody can be added at all.
+            'invite' => ['sometimes', 'boolean'],
             // Read only for a fleet-level actor — a client administrator's
             // colleagues are always their own client's, forced in
             // `UserAdminService`, and the field is not consulted for them.
@@ -138,7 +152,36 @@ class StoreUserRequest extends FormRequest
             }
 
             $this->refuseAnUnservedClient($validator, $actor);
+            $this->refuseAnInvitationNothingCanSend($validator);
         });
+    }
+
+    /**
+     * An invitation the platform cannot deliver is refused, not queued.
+     *
+     * `mail.enabled` is a setting and it is off on production today. Creating
+     * the account anyway would leave a colleague nobody can sign in as and
+     * nobody was told about — the exact hole the invitations table was built
+     * to close, reopened from the other end: *"a fleet owner and a corporate
+     * client admin were accounts nobody could sign into, and every test in the
+     * suite passed."*
+     *
+     * The console asks the server whether this is available (`meta.can_invite`)
+     * and hides the option when it is not, so reaching this message means
+     * somebody called the API directly or the setting changed mid-session.
+     */
+    private function refuseAnInvitationNothingCanSend(Validator $validator): void
+    {
+        if (! $this->boolean('invite')) {
+            return;
+        }
+
+        if (! app(SettingsService::class)->mailConfigured()) {
+            $validator->errors()->add(
+                'invite',
+                'Email is not switched on, so an invitation cannot be sent. Set an initial password instead.',
+            );
+        }
     }
 
     /**

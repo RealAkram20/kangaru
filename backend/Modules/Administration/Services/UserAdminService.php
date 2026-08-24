@@ -6,6 +6,7 @@ use App\Enums\AccessLevel;
 use App\Enums\UserStatus;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Modules\Clients\Models\ClientRoute;
 use Modules\Notifications\Enums\NotificationType;
@@ -26,12 +27,14 @@ use Modules\Notifications\Notifications\SecurityEventNotification;
  */
 class UserAdminService
 {
+    public function __construct(private readonly InvitationService $invitations) {}
+
     /**
      * @param  array<string, mixed>  $attributes  already validated
      */
     public function create(array $attributes, User $actor): User
     {
-        return DB::transaction(function () use ($attributes, $actor) {
+        $user = DB::transaction(function () use ($attributes, $actor) {
             $user = $this->insert($attributes, $actor);
 
             if (array_key_exists('route_ids', $attributes)) {
@@ -40,6 +43,29 @@ class UserAdminService
 
             return $user;
         });
+
+        /*
+         * The emailed way in, for an account created with no password anybody
+         * knows.
+         *
+         * Outside the transaction, like `announceSecurityChanges()` below and
+         * for the same reason: the colleague has been created and committed,
+         * and a mail failure must not roll that back. The invitation can be
+         * resent; an account that vanished because SMTP was slow cannot be
+         * explained to anybody.
+         *
+         * This is the machinery `ClientOnboardingService::firstAdministrator()`
+         * and `OperatorService::onboard()` already use for the *first* account
+         * at an organisation. Until now every colleague after that one needed
+         * an administrator to invent a password and read it out — which
+         * `StoreUserRequest` used to justify by saying no invite flow existed.
+         * It does now.
+         */
+        if (($attributes['invite'] ?? false) === true) {
+            $this->invitations->invite($user, $actor);
+        }
+
+        return $user;
     }
 
     /**
@@ -63,7 +89,12 @@ class UserAdminService
             'name' => $attributes['name'],
             'email' => $attributes['email'],
             'phone' => $attributes['phone'] ?? null,
-            'password' => $attributes['password'],
+            // Random and discarded when an invitation is being sent: the
+            // column is not nullable, and an account reachable by a password
+            // nobody chose is reachable by nobody. The same 32 characters
+            // `ClientOnboardingService` and `OperatorService` already throw
+            // away for the first account at an organisation.
+            'password' => $attributes['password'] ?? Str::password(32),
             'role' => $attributes['role'],
             'capabilities' => $attributes['capabilities'] ?? null,
             'books_without_approval' => (bool) ($attributes['books_without_approval'] ?? false),
