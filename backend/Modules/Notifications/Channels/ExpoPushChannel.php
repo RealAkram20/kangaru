@@ -154,12 +154,23 @@ class ExpoPushChannel
     }
 
     /**
-     * Deletes tokens Expo says are dead.
+     * Deletes tokens Expo says are dead, and says so about every other error.
      *
      * A `DeviceNotRegistered` receipt means the app was uninstalled or the
      * token was reissued. Left in place, that row fails on every send
      * forever — and, worse, makes `last_seen_at` monitoring useless, because
      * a driver would appear to have a device when they do not.
+     *
+     * **Every other error ticket is logged, and this line is paid for.** The
+     * HTTP call to Expo returns 200 whether or not anything can be delivered;
+     * the failure arrives inside the ticket. For weeks every push on the
+     * platform died with `InvalidCredentials` — no FCM service key on EAS —
+     * and nothing anywhere said so, because this method read the receipts
+     * and reacted only to the one error it knew. The same silence as the
+     * empty-token guard above, one layer further in. `warning`, because
+     * `SENTRY_LOG_LEVEL` is `warning` and a log below it never leaves the
+     * machine. Once per send, not per token: a fleet of dead credentials is
+     * one fact, not a hundred.
      *
      * Receipts come back positionally, in the order the tickets were sent.
      *
@@ -169,19 +180,30 @@ class ExpoPushChannel
     private function pruneDeadTokens(array $receipts, array $tokens): void
     {
         $dead = [];
+        $failed = [];
 
         foreach (array_values($receipts) as $index => $receipt) {
             if (! is_array($receipt) || ($receipt['status'] ?? null) !== 'error') {
                 continue;
             }
 
-            if (($receipt['details']['error'] ?? null) === 'DeviceNotRegistered' && isset($tokens[$index])) {
+            $error = $receipt['details']['error'] ?? 'unknown';
+
+            if ($error === 'DeviceNotRegistered' && isset($tokens[$index])) {
                 $dead[] = $tokens[$index];
+
+                continue;
             }
+
+            $failed[$error] = ($failed[$error] ?? 0) + 1;
         }
 
         if ($dead !== []) {
             DeviceToken::query()->whereIn('token', $dead)->delete();
+        }
+
+        foreach ($failed as $error => $count) {
+            Log::warning('push.ticket_error', ['error' => $error, 'count' => $count]);
         }
     }
 }

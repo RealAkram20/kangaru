@@ -308,6 +308,47 @@ it('drops a token the push service says is dead', function () {
     expect(DeviceToken::query()->where('user_id', $user->id)->count())->toBe(0);
 });
 
+it('says so when the push service refuses the send itself', function () {
+    /*
+     * The other silence, one layer past the empty-token guard. Expo answers
+     * 200 whether or not anything can be delivered; the failure arrives
+     * inside the ticket. Every push this platform ever sent died with
+     * `InvalidCredentials` — no FCM service key on EAS — and nothing said
+     * so, because the receipt loop reacted only to `DeviceNotRegistered`.
+     * Found 24 August 2026 by probing the live pipeline by hand, which is
+     * exactly the visit this warning exists to replace.
+     *
+     * The whole argument list spelled out, per the lesson two tests up.
+     */
+    Log::spy();
+    Http::fake([
+        'exp.host/*' => Http::response([
+            'data' => [[
+                'status' => 'error',
+                'message' => "Unable to retrieve the FCM server key for the recipient's app.",
+                'details' => ['error' => 'InvalidCredentials'],
+            ]],
+        ]),
+    ]);
+
+    [$user] = driverWithDevice();
+    $offer = DispatchOffer::factory()->create();
+    $offer->load('orderRequest');
+
+    $user->notify(TripOfferedNotification::for($offer));
+
+    // The token survives: it is not dead, the credential is. Deleting it
+    // would make the fix (uploading the key) invisible until every driver
+    // reinstalled.
+    expect(DeviceToken::query()->where('user_id', $user->id)->count())->toBe(1);
+
+    Log::shouldHaveReceived('warning')
+        ->withArgs(fn (string $message, array $context = []) => $message === 'push.ticket_error'
+            && $context['error'] === 'InvalidCredentials'
+            && $context['count'] === 1)
+        ->once();
+});
+
 it('sends an offer by push and in-app, and never by mail', function () {
     // An offer expires in well under a minute. An email about one would
     // arrive as an apology. The in-app row is what a driver who refused the

@@ -20312,3 +20312,29 @@ Two things other agents should know:
    `queue:restart` + `queue:retry all`; both stuck ownership notifications
    then processed. After adding an enum case a queued payload carries,
    restart the worker.
+
+---
+
+### 2026-08-24 — Why no driver has ever heard a push: no FCM key on EAS, and the channel swallowed the receipt that said so
+
+Owner: heads-up notifications for offers do not appear with the app in the
+background. Traced end to end on the live pipeline, by hand:
+
+- Registration is fine — `device_tokens` holds fresh Expo tokens for the
+  driver, re-registered today.
+- Delivery is dead for **every push ever sent**: Expo's ticket answers
+  `InvalidCredentials` — *"Unable to retrieve the FCM server key"*. The EAS
+  project has no FCM V1 service account key (the credentials screen says
+  "None assigned yet"). Firebase project is `kangaru-c698b`; the owner is
+  fetching the service-account JSON now, upload via `eas credentials` next.
+- Why nothing said so: `ExpoPushChannel::pruneDeadTokens` read the receipts
+  and reacted only to `DeviceNotRegistered`; every other ticket error was
+  dropped unlogged, and the HTTP call itself returns 200. The 5s offer poll
+  masked it in-app.
+
+**Fixed the silence** (files: `ExpoPushChannel.php`,
+`TripOfferedPushTest.php` — claimed and released in this entry): non-DNR
+ticket errors now log `push.ticket_error` at warning (Sentry's floor), once
+per error kind per send. Test proved by mutation (guard emptied → red),
+restored, 20/20 green, Pint clean. The token deliberately survives an
+`InvalidCredentials` receipt — the credential is broken, not the handset.
