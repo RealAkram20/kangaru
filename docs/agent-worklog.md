@@ -20382,3 +20382,62 @@ clients."* Traced on the live pipeline:
 - Separately: every push ever sent died at Expo with `InvalidCredentials`
   (no FCM V1 key on EAS) — see the previous entry. Fix in flight with the
   owner.
+
+---
+
+### 2026-08-24 — Local dispatch proven end to end, in the app, on the emulator
+
+**Status: verification, no product code changed.** Owner asked for the order
+flow to be tested locally against the emulator. Driven through the real UI,
+not asserted.
+
+**Result: the pipeline is correct.** Walk-in order posted to
+`POST /public/order-requests` on the local API → `DispatchOfferService`
+created an offer → the offer card rendered on the emulator ("New ride
+request · Pickup: Garden City, Kampala · 3.9 km away") → **Accept** tapped in
+the app → trip 99 `driver_en_route`, and the app moved to *Pickup passenger*.
+Also proven by API only, twice (trips 98, 99).
+
+**Why nothing had ever reached the emulator — three separate causes, none a
+dispatch bug:**
+
+1. **The emulator was running the *production* APK** (built tonight, points at
+   `api.kangaruride.com`). A local order can never reach it. Fixed by
+   building `dist/kangaruride-driver-LOCALTEST.apk` — same keystore, same
+   versionCode, `EXPO_PUBLIC_API_BASE_URL` = the LAN address.
+   `android/app/src/main/AndroidManifest.xml` needed
+   `usesCleartextTraffic="true"` (targetSdk 36 blocks `http://` by default);
+   `android/` is gitignored so that stays a test-build-only change, and
+   `.env.production` was restored after the build.
+2. **The demo driver (15) is occupied by trip 97** (`assigned`, corporate,
+   created 12:41 today). `AvailabilityService` excludes a driver on an
+   occupying trip — correct. Testing used `driver.free@kangaruride.test`
+   (driver 17). Dev passwords set to `kampala-9` on users 8 and 10.
+3. **Presence needs a real fix.** The app says so honestly — *"Waiting for a
+   location fix — you may not get jobs yet"* — and stays undispatchable until
+   a position lands. `adb emu geo fix <lon> <lat>` after granting location.
+
+**Corporate/fleet orders are not broken either, and do not ring.** A fleet
+assignment *becomes a trip*; there is no 45-second auction. Trip 97 is
+visible at the top of `GET /trips` as `assigned` — which is the corporate
+path working. `GET /me/trips` is **history** (completed/cancelled only), so
+looking there for an active job finds nothing by design.
+
+**Walk-in contracts were activated for all 20 local dev drivers** through the
+real service chain, since the `14a1a0e` gate had emptied the local pool too.
+
+**Two observations, not fixed, for whoever owns these:**
+
+- **An offer's `estimated_fare` is null unless the order carries *dropoff*
+  coordinates.** `DispatchOfferResource::estimatedFare()` passes them to
+  `WalkInFareService::quote()`. My test order had pickup coordinates only, so
+  the app honestly rendered `—` for both fare and journey. **If the public
+  order form does not geocode the drop-off, every walk-in offer reaches
+  drivers with no fare on it** — worth confirming against the real form.
+  Inferred from the code path; not re-proved, because the driver was on a
+  trip by then and could take no second offer.
+- `ReactNativeJS: Tried to show an alert while not attached to an Activity`,
+  followed by Expo's "Something went wrong" screen. **Caused by my own
+  `adb pm grant` mid-session** (Android restarts a process when a permission
+  changes), not by an offer. Recorded because the alert path is not
+  Activity-safe, which a real permission change from Settings would also hit.
