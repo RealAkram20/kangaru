@@ -46,7 +46,24 @@ import { useIsCompact } from '../lib/useMediaQuery'
 type Invitation = {
   name: string
   email: string
+  /** Present on an ownership transfer: the fleet being handed over. */
+  company?: string
   expires_at: string
+}
+
+/**
+ * The two links this page answers. An invitation opens an account that
+ * already exists; an ownership transfer creates one and hands a fleet over
+ * — but to the reader both are "choose a password", so one page serves
+ * both and only the endpoint differs.
+ */
+const ENDPOINTS = {
+  invitation: '/invitations',
+  'owner-transfer': '/owner-transfers',
+} as const
+
+interface Props {
+  kind?: keyof typeof ENDPOINTS
 }
 
 type LoadState =
@@ -80,7 +97,16 @@ function messageFor(error: unknown): string {
   return message ?? 'Something went wrong. Try the link again.'
 }
 
-export function AcceptInvitePage() {
+/**
+ * The `/owner/:token` route's component. A named, prop-less wrapper because
+ * `routes/page.ts` types every lazy page as taking no props — and a second
+ * export here keeps the two links one page, which is the point.
+ */
+export function AcceptOwnerTransferPage() {
+  return <AcceptInvitePage kind="owner-transfer" />
+}
+
+export function AcceptInvitePage({ kind = 'invitation' }: Props = {}) {
   const { token = '' } = useParams()
   const { user } = useAuth()
   const navigate = useNavigate()
@@ -96,7 +122,7 @@ export function AcceptInvitePage() {
     let cancelled = false
 
     apiClient
-      .get(`/invitations/${encodeURIComponent(token)}`)
+      .get(`${ENDPOINTS[kind]}/${encodeURIComponent(token)}`)
       .then((response) => {
         if (cancelled) return
         setState({ status: 'ready', invitation: response.data.data as Invitation })
@@ -109,7 +135,7 @@ export function AcceptInvitePage() {
     return () => {
       cancelled = true
     }
-  }, [token])
+  }, [token, kind])
 
   // Somebody already signed in does not need an invitation, and accepting one
   // while holding a session would close that session out from under them.
@@ -131,7 +157,7 @@ export function AcceptInvitePage() {
     setSubmitting(true)
 
     try {
-      await apiClient.post(`/invitations/${encodeURIComponent(token)}/accept`, {
+      await apiClient.post(`${ENDPOINTS[kind]}/${encodeURIComponent(token)}/accept`, {
         password,
         password_confirmation: confirmation,
       })
@@ -252,6 +278,14 @@ export function AcceptInvitePage() {
                   marginBottom: 'var(--space-6)',
                 }}
               >
+                {/* A handover names the fleet first: "you are taking over
+                    this fleet" is the thing the reader has to recognise. */}
+                {state.invitation.company !== undefined && (
+                  <>
+                    <span style={{ color: 'var(--text-heading)' }}>{state.invitation.company}</span>
+                    {' — '}
+                  </>
+                )}
                 {state.invitation.name} · {state.invitation.email}
               </p>
 

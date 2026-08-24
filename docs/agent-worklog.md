@@ -20178,3 +20178,104 @@ status in the dialog (record page's confirmed suspend/reinstate owns it),
 and any row-level Edit on the fleets list (the row already opens the
 record). Fleet+Clients backend 292 passed; frontend suite 703 passed;
 spec lint, censuses and Pint green.
+
+### 2026-08-24 - Fleet ownership transfer by email, and the plan at onboarding
+
+**Status: in progress.** Owner: *"i should be able to edit the email too and
+the new email will be sent a welcome email to set the new pasword. if the
+email not comfirmed then we keep the old email ... because changing the email
+is changing the ownership"*, and *"when creating we can not chose the plan"*.
+
+Design: a pending `ownership_transfers` row per operator (nothing else exists
+until confirmation), its own token + mail-only notification to the address
+that has no account yet (`Notification::route`, the applicant path through
+`SettingsMailChannel`). Acceptance creates the new FLEET_OWNER with the chosen
+password and suspends the previous owner account(s) in one transaction -
+attribution stays with the person who acted, which is why the account is not
+renamed in place. Unconfirmed or expired: nothing changed.
+
+**Files owned - do not edit:**
+
+- `backend/Modules/Fleet/Models/OwnershipTransfer.php` (new)
+- `backend/Modules/Fleet/Services/OwnershipTransferService.php` (new)
+- `backend/Modules/Fleet/Controllers/OwnershipTransferController.php` (new)
+- `backend/Modules/Fleet/Requests/ProposeOwnerRequest.php` (new)
+- `backend/Modules/Notifications/Notifications/FleetOwnershipInvitedNotification.php` (new)
+- `backend/database/migrations/*_a_fleet_can_change_hands_once_the_new_owner_confirms.php` (new)
+- `backend/tests/Feature/Fleet/OwnershipTransferTest.php` (new)
+- `frontend/src/pages/fleets/TransferOwnershipDialog.tsx` (+ test, new)
+
+**Shared files, minimal named edits:**
+
+- `backend/Modules/Fleet/Routes/api.php` + `public.php` - four routes
+- `backend/Modules/Fleet/Resources/OperatorResource.php` - `pending_owner`
+- `backend/Modules/Fleet/Requests/StoreOperatorRequest.php` - optional `plan_id`
+- `backend/Modules/Fleet/Services/OperatorService.php` - pass `plan_id`
+- `backend/Modules/Notifications/Enums/NotificationType.php` - two cases
+- `backend/lang/en/mail.php` - ownership block
+- `backend/tests/Feature/Ci/RoutePolicyCensusTest.php` - census rows + counts
+- `docs/api/openapi.yaml` - four routes + `pending_owner` + `plan_id`
+- `frontend/src/pages/fleets/FleetRecordPage.tsx` - transfer button + pending
+- `frontend/src/pages/fleets/OnboardFleetDialog.tsx` - plan picker
+- `frontend/src/pages/AcceptInvitePage.tsx` - endpoint parameter + company line
+- `frontend/src/routes/router.tsx` - public `/owner/:token`
+- `frontend/src/types/operator.ts` - `pending_owner`
+
+---
+
+### 2026-08-24 — Console forgot-password: the flow existed everywhere except the console
+
+**Status: in progress.** Owner: *"we do not have forgot password for the
+system operators, driver and other parties should be automatic. right now i
+have forgot the password but there is no way i can reset it."*
+
+The backend flow (ADR-0028 §2: emailed 6-digit code, oracle-refusing 202,
+throttled) and the driver app's `ForgotPasswordScreen` both exist; the web
+console's login page simply never got the link or the pages. Also done in
+this session, on the live server with the owner's confirmation: the owner's
+locked-out account reset by shell, and `auth.password_reset_enabled` switched
+on as the platform default — mail is configured there now, so the driver
+app's flow went live with the flag.
+
+**Files owned — do not edit:**
+
+- `frontend/src/pages/ForgotPasswordPage.tsx` (new) — the two steps: ask for
+  a code, then code + new password (PasswordMeter, same floor as every door).
+- `frontend/src/pages/ForgotPasswordPage.test.tsx` (new)
+
+**Shared files, minimal named edits:**
+
+- `frontend/src/lib/publicSettings.ts` — add the `auth` group
+  (`password_reset_enabled`, fail-closed `false`) to the type and defaults.
+- `frontend/src/pages/LoginPage.tsx` (+ test) — a "Forgot password?" link,
+  rendered only when the public settings say the method is on (ADR-0028 §4:
+  the client reads the flag before showing the flow).
+- `frontend/src/routes/router.tsx` — public standalone `/forgot-password`.
+
+Not touching `backend/Modules/Fleet/**` or `Notifications/**` — an agent has
+uncommitted work there right now. No backend changes needed: endpoints,
+throttles and contract entries all pre-exist.
+
+#### Closed
+
+Built as claimed, plus three touches the claim did not name: `app/Models/
+Operator.php` gained the `pendingOwnershipTransfer` relation (small,
+additive); `MailKeysTest` gained the invited type on its bespoke list (its
+copy lives in the notification class + `mail.ownership.*`, not the office
+family its `platform.` prefix suggests); and `OnboardFleetDialog`'s four
+fields gained `htmlFor`/`id` - the labels were never associated with their
+controls, found because the browser run could not address them either.
+
+Proven end to end in the real app: onboard with the plan picker (preselects
+the default), transfer proposed -> pending banner with Withdraw, accept page
+names the fleet, password set, **the new owner signed in with it**, old
+owner suspended, banner gone. Throwaway fleet removed; dev DB back to 2
+fleets. Route censuses updated (240 routes, 20 public, 220 guarded, 206
+staff+tenant). Backend sweep 618 passed, frontend suite 714, Larastan and
+Pint green, migration rolled back and reapplied.
+
+**Deliberately not built:** transferring to an *existing* account's email
+(refused with a field error - two people answering to one name), a resend
+button (re-proposing replaces, which is the same act), and any change to
+`ContractController` or client-side ownership. Suspend/activate for a fleet
+already existed on the record page and was not touched.

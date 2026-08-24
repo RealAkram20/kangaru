@@ -17,6 +17,7 @@ import { Dialog } from '../../components/feedback/Dialog'
 import { RouteFallback } from '../../components/feedback/RouteFallback'
 import { ActAsDialog } from './ActAsDialog'
 import { EditFleetDialog } from './EditFleetDialog'
+import { TransferOwnershipDialog } from './TransferOwnershipDialog'
 
 /**
  * One fleet company (ADR-0055, ADR-0059).
@@ -66,6 +67,7 @@ export function FleetRecordPage() {
   const [error, setError] = useState<string | null>(null)
   const [actingAs, setActingAs] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [transferring, setTransferring] = useState(false)
   const [confirmSuspend, setConfirmSuspend] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -87,6 +89,18 @@ export function FleetRecordPage() {
   useEffect(() => {
     load()
   }, [load])
+
+  async function withdrawTransfer() {
+    setSaving(true)
+    try {
+      const response = await apiClient.delete<ApiSuccess<Operator>>(`/operators/${id}/owner`)
+      setFleet(response.data.data)
+    } catch (caught) {
+      setError(apiError(caught, 'Could not withdraw the transfer.').message)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   async function setStatus(status: Operator['status']) {
     setSaving(true)
@@ -148,10 +162,37 @@ export function FleetRecordPage() {
         </StatGrid>
       </Card>
 
+      {/* The handover nobody has confirmed yet. Rendered where it will be
+          seen — above the people it is about — with its expiry visible, so
+          one that lapsed reads as lapsed rather than as silence. */}
+      {fleet.pending_owner && (
+        <Alert
+          title="Ownership transfer pending"
+          action={
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={saving}
+              onClick={() => void withdrawTransfer()}
+            >
+              Withdraw
+            </Button>
+          }
+        >
+          {fleet.pending_owner.name} · {fleet.pending_owner.email} — invitation expires{' '}
+          {formatTimestamp(fleet.pending_owner.expires_at)}
+        </Alert>
+      )}
+
       <Card
         title="Accounts"
         subtitle="Who support can act as here"
         padding="none"
+        actions={
+          <Button variant="secondary" onClick={() => setTransferring(true)}>
+            Transfer ownership
+          </Button>
+        }
       >
         <DataTable<User>
           columns={ACCOUNT_COLUMNS}
@@ -168,6 +209,17 @@ export function FleetRecordPage() {
           onClose={() => setEditing(false)}
           onDone={(saved) => {
             setEditing(false)
+            setFleet(saved)
+          }}
+        />
+      )}
+
+      {transferring && (
+        <TransferOwnershipDialog
+          fleet={fleet}
+          onClose={() => setTransferring(false)}
+          onDone={(saved) => {
+            setTransferring(false)
             setFleet(saved)
           }}
         />

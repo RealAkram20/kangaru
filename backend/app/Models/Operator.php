@@ -5,7 +5,9 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Modules\Drivers\Models\Driver;
+use Modules\Fleet\Models\OwnershipTransfer;
 use Modules\Vehicles\Models\Vehicle;
 use RuntimeException;
 
@@ -149,6 +151,22 @@ class Operator extends Model
     public function vehicles(): HasMany
     {
         return $this->hasMany(Vehicle::class);
+    }
+
+    /**
+     * The handover nobody has confirmed yet, if there is one.
+     *
+     * `whereNull('accepted_at')` and nothing about expiry: a lapsed proposal
+     * still renders on the record page — with its date visibly in the past —
+     * because "it expired and nobody noticed" is exactly what head office
+     * needs to see to send a fresh one. A completed transfer stops being
+     * pending the moment it completes.
+     *
+     * @return HasOne<OwnershipTransfer, $this>
+     */
+    public function pendingOwnershipTransfer(): HasOne
+    {
+        return $this->hasOne(OwnershipTransfer::class)->whereNull('accepted_at');
     }
 
     /**

@@ -49,7 +49,10 @@ class OperatorController extends Controller
     {
         $this->authorize('view', $operator);
 
-        $operator->load('plan')
+        // `pendingOwnershipTransfer` here and not on the index: the record
+        // page is where a handover is arranged and watched, and the register
+        // list has no cell for it.
+        $operator->load(['plan', 'pendingOwnershipTransfer'])
             ->loadCount(['users', 'drivers', 'vehicles', 'contracts as clients_count']);
 
         return ApiResponse::success(new OperatorResource($operator));
@@ -62,7 +65,7 @@ class OperatorController extends Controller
     {
         $this->authorize('create', Operator::class);
 
-        /** @var array{name: string, slug?: string|null, owner_name: string, owner_email: string} $input */
+        /** @var array{name: string, slug?: string|null, owner_name: string, owner_email: string, plan_id?: int|null} $input */
         $input = $request->validated();
 
         $actor = $request->user();

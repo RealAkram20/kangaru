@@ -67,7 +67,25 @@ a plan commercial (price, period, limits, Kangaru's invoice to a fleet) is
 `PUT /operators/{operator}/plan` **alone** — `PATCH /operators/{operator}`
 accepted `plan_id` once, and the bare `update()` behind it skipped
 `PlanAllowance`'s downgrade refusal (ADR-0058 §4), so the field was removed
-rather than guarded twice.
+rather than guarded twice. The plan may also be chosen at onboarding
+(`POST /operators` takes an optional `plan_id`), with no allowance check — a
+fleet being born has nothing to exceed a limit with.
+
+**Ownership transfer** (owner's decision, 24 August: *"changing the email is
+changing the ownership"*). `PUT /operators/{operator}/owner` proposes a new
+owner by name and email; the address — which must belong to **no** existing
+account — gets a mail-only invitation to choose a password, and until they do
+nothing changes: no account exists, the sitting owner keeps every access, and
+`DELETE .../owner` withdraws the proposal without a trace. Acceptance
+(`POST /owner-transfers/{token}/accept`, public like the invitation and for
+its reason) creates the new `FLEET_OWNER` and suspends the previous one in a
+single transaction — create first, then suspend, so the account count never
+passes through zero (ADR-0059 §5). It is deliberately **not**
+`UserAdminService::update()` writing `email`: renaming an account in place
+would re-attribute the old owner's audit rows, dispatches and invoices to the
+new person's name, and the history must keep saying who acted.
+`OwnershipTransfer` is the pending row; `OwnershipTransferService` is the
+only thing that ever holds the plaintext token.
 
 ### A new permission does nothing until `RoleSeeder` runs — and re-running it has a side effect
 

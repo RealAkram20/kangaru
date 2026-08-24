@@ -296,6 +296,15 @@ function routeCensus(): array
         'PATCH api/v1/operators/{operator}' => 'A',
         // ADR-0056 acts as a person, not an organisation, so Log in as needs somebody to name.
         'GET api/v1/operators/{operator}/accounts' => 'A',
+        // A fleet changing hands (owner's decision, 24 August). The authed
+        // pair is head office naming or withdrawing the next owner; the
+        // public pair is the accept page — the reader has no account until
+        // they finish it, so like the invitation it is a 'D' with the same
+        // measured throttle asymmetry.
+        'PUT api/v1/operators/{operator}/owner' => 'A',
+        'DELETE api/v1/operators/{operator}/owner' => 'A',
+        'GET api/v1/owner-transfers/{token}' => 'D',
+        'POST api/v1/owner-transfers/{token}/accept' => 'D',
         // Head office's own dashboard: counts only, never a row (ADR-0055 §2).
         // ADR-0058. The catalogue is open to any signed-in account; moving a
         // fleet between plans is head office's.
@@ -499,7 +508,10 @@ it('has a census row for every API route and a route for every census row', func
     // destination of the footer link in every email since M1, which until
     // now 404'd.
     // 236: the mail DNS check.
-    expect(count($router))->toBe(236);
+    // 240: the fleet handover, 2026-08-24 — head office's propose/withdraw
+    // pair (authenticated) and the public accept pair, which exists because
+    // the new owner has no account until they finish it.
+    expect(count($router))->toBe(240);
 });
 
 it('uses only the four idioms, and files sixteen routes as public', function () {
@@ -519,7 +531,9 @@ it('uses only the four idioms, and files sixteen routes as public', function () 
      * so there is nothing to enumerate by changing a path segment.
      */
     // 16 -> 18: mail plan M2's two invitation routes.
-    expect($idioms['D'])->toBe(18);
+    // 18 -> 20: the fleet handover's accept pair, throttled like the
+    // invitation's and for its reasons.
+    expect($idioms['D'])->toBe(20);
     expect($idioms['B'])->toBe(3);
 });
 
@@ -548,7 +562,8 @@ it('authenticates every route that is not filed as public, and throttles every o
     // ADR-0027 §5's 5/min/IP. `$guarded` is unchanged because all three are
     // public by design, not by omission.
     // 16 -> 18: the two invitation routes, both throttled at 5/min/IP.
-    expect($public)->toBe(18);
+    // 18 -> 20: the fleet handover's accept pair.
+    expect($public)->toBe(20);
     // 181: the two ADR-0045 stop routes, both authenticated.
     // 183: the two application-document reads, both authenticated. They serve
     // somebody's identity document, so being counted here is the point.
@@ -562,7 +577,9 @@ it('authenticates every route that is not filed as public, and throttles every o
     // 217: the two mail-preference routes, both authenticated. Nobody
     // reads or writes anybody else's; the route takes no id.
     // 218: the mail DNS check, authenticated.
-    expect($guarded)->toBe(218);
+    // 220: the fleet handover's propose/withdraw pair, both authenticated —
+    // naming who owns a fleet is the register's most consequential write.
+    expect($guarded)->toBe(220);
 });
 
 it('binds the actor\'s tenant on every staff route, so TenantScope has something to scope by', function () {
@@ -612,5 +629,7 @@ it('binds the actor\'s tenant on every staff route, so TenantScope has something
     // the actor's tenant like the fleet register does.
     // 203: the two mail-preference routes, staff-guarded like `me/devices`.
     // 204: the mail DNS check.
-    expect($staff)->toBe(204);
+    // 206: the fleet handover's propose/withdraw pair — staff-guarded, and
+    // tenant-bound like every other operators route.
+    expect($staff)->toBe(206);
 });

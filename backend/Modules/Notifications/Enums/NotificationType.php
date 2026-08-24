@@ -198,6 +198,17 @@ enum NotificationType: string
      */
     case PLATFORM_FLEET_HAS_NO_ACCOUNT = 'platform.fleet.no_account';
 
+    /**
+     * A fleet is being handed to somebody who has no account yet (owner's
+     * decision, 24 August). The welcome email with the set-a-password link —
+     * sent to a bare address by `Notification::route`, like an applicant's,
+     * because the account is minted only when they confirm.
+     */
+    case PLATFORM_FLEET_OWNERSHIP_INVITED = 'platform.fleet.ownership_invited';
+
+    /** Head office: the handover completed — the new owner set their password. */
+    case PLATFORM_FLEET_OWNERSHIP_TRANSFERRED = 'platform.fleet.ownership_transferred';
+
     /** Head office: a driver wants to run walk-in work (ADR-0055 §5). */
     case PLATFORM_WALK_IN_CONTRACT_REQUESTED = 'platform.walk_in_contract.requested';
 
@@ -341,6 +352,8 @@ enum NotificationType: string
             self::FLEET_PLAN_LIMIT_REACHED => 'Plan limit reached',
             self::PLATFORM_FLEET_ONBOARDED => 'New fleet',
             self::PLATFORM_FLEET_HAS_NO_ACCOUNT => 'Fleet has no account',
+            self::PLATFORM_FLEET_OWNERSHIP_INVITED => 'Invitation to own a fleet',
+            self::PLATFORM_FLEET_OWNERSHIP_TRANSFERRED => 'Fleet changed hands',
             self::PLATFORM_WALK_IN_CONTRACT_REQUESTED => 'Walk-in contract requested',
             self::CLIENT_INVOICE_ISSUED => 'Invoice issued',
             self::CLIENT_CREDIT_NOTE_ISSUED => 'Credit note issued',
@@ -501,10 +514,17 @@ enum NotificationType: string
             self::FLEET_PLAN_LIMIT_REACHED,
             self::PLATFORM_FLEET_ONBOARDED,
             self::PLATFORM_FLEET_HAS_NO_ACCOUNT,
+            self::PLATFORM_FLEET_OWNERSHIP_TRANSFERRED,
             self::PLATFORM_WALK_IN_CONTRACT_REQUESTED => [
                 NotificationChannel::DATABASE,
                 NotificationChannel::MAIL,
             ],
+            /*
+             * Mail alone, for `ACCOUNT_INVITED`'s reason taken further: the
+             * recipient has no account at all yet, so there is no inbox to
+             * write a row into and no handset registered to push to.
+             */
+            self::PLATFORM_FLEET_OWNERSHIP_INVITED => [NotificationChannel::MAIL],
             /*
              * Mail and the in-app row for the whole client family. No push:
              * a corporate administrator works at a desk, and none of this is
@@ -744,6 +764,14 @@ enum NotificationType: string
              */
             self::ACCOUNT_INVITED,
             self::ACCOUNT_INVITATION_EXPIRING => true,
+
+            /*
+             * The same argument one case up: the reader cannot have set a
+             * preference — they have no account until they open this — and a
+             * mailbox rule cannot be allowed to leave a fleet's handover
+             * hanging with nobody told.
+             */
+            self::PLATFORM_FLEET_OWNERSHIP_INVITED => true,
 
             self::ACCOUNT_ACCESSED_BY_SUPPORT => true,
 

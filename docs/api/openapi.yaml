@@ -5597,6 +5597,12 @@ paths:
                   description: Generated from the name when absent. Unique across the platform.
                 owner_name: { type: string, maxLength: 255 }
                 owner_email: { type: string, format: email }
+                plan_id:
+                  type: integer
+                  description: >
+                    Chosen at onboarding, or absent for the default plan
+                    (ADR-0058 §1). No allowance check — a fleet being born
+                    has nothing to exceed a limit with.
       responses:
         '201':
           $ref: '#/components/responses/OperatorResponse'
@@ -5640,6 +5646,127 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/OperatorResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/operators/{operator}/owner:
+    parameters:
+      - { name: operator, in: path, required: true, schema: { type: integer } }
+    put:
+      summary: >
+        Proposes the fleet's next owner (owner's decision, 24 August).
+        Head office only, and pending by design: the address gets a welcome
+        email to choose a password, and **nothing about the fleet changes
+        until they do**. Replaces any earlier proposal, which kills its link.
+      description: >
+        Not a field on the fleet's PATCH, because changing the email is
+        changing the ownership — a different act from correcting a name. The
+        email must not belong to any existing account: an address that
+        already signs in has an identity here, and handing a fleet to an
+        existing account is an act this platform does not offer. 422 under
+        `email` when it is taken.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email]
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                email: { type: string, format: email }
+      responses:
+        '200':
+          $ref: '#/components/responses/OperatorResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: >
+        Withdraws the pending proposal. The row is the whole of the pending
+        state, so deleting it is the whole of the withdrawal — the emailed
+        link stops working and the sitting owner was never touched.
+      responses:
+        '200':
+          $ref: '#/components/responses/OperatorResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/owner-transfers/{token}:
+    get:
+      summary: >
+        Whose fleet a handover link takes over (owner's decision, 24 August).
+        Unauthenticated: the reader has no account until they finish this.
+        Throttled 20/min/IP for the invitation read's measured reason.
+      description: >
+        200 with the new owner's name, address, the fleet and the expiry, so
+        the accept page can say "you are taking over this fleet" rather than
+        presenting a bare password form. 404 NOT_FOUND for an unknown token,
+        409 INVITATION_ALREADY_USED for one already accepted, 410
+        INVITATION_EXPIRED for one that lapsed — three answers because they
+        send the reader to three different places, exactly as the invitation
+        argues.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 64 }
+      responses:
+        '200':
+          description: The handover this link completes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string, nullable: true }
+                  data:
+                    type: object
+                    required: [name, email, company, expires_at]
+                    additionalProperties: false
+                    properties:
+                      name: { type: string }
+                      email: { type: string, format: email }
+                      company: { type: string, description: The fleet being handed over. }
+                      expires_at: { type: string, format: date-time }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/owner-transfers/{token}/accept:
+    post:
+      summary: >
+        The handover itself. Unauthenticated, throttled 5/min/IP, single use.
+        Creates the new owner's account with the password they chose and
+        suspends the sitting owner's, in one transaction — the fleet is never
+        ownerless in between (ADR-0059 §5).
+      description: >
+        Answers a message rather than a session, for the invitation's
+        reasons. The password floor is `PasswordPolicy`'s, shared by every
+        door. 410 also covers an address that stopped being free while the
+        link sat unread — the fix in every 410 case is the same person, so
+        the answer is the same sentence.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password, password_confirmation]
+              additionalProperties: false
+              properties:
+                password: { type: string, minLength: 6 }
+                password_confirmation: { type: string }
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOnly'
         default:
           $ref: '#/components/responses/Error'
 
@@ -9334,6 +9461,18 @@ components:
             id: { type: integer }
             name: { type: string }
             is_default: { type: boolean }
+        pending_owner:
+          type: ['object', 'null']
+          description: >
+            The handover nobody has confirmed yet, when the relation was
+            loaded. Name, address and expiry only — the token exists only
+            inside the email it was sent in. Null when nothing is pending.
+          required: [name, email, expires_at]
+          additionalProperties: false
+          properties:
+            name: { type: string }
+            email: { type: string, format: email }
+            expires_at: { type: string, format: date-time }
         users_count: { type: integer, description: Staff and drivers both — every account whose fleet this is. }
         drivers_count: { type: integer }
         vehicles_count: { type: integer }

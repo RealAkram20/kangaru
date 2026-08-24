@@ -51,20 +51,22 @@ class OperatorService
      * with nobody in it is not a lesser version of this feature; it is the
      * failure mode.
      *
-     * @param  array{name: string, slug?: string|null, owner_name: string, owner_email: string}  $input
+     * @param  array{name: string, slug?: string|null, owner_name: string, owner_email: string, plan_id?: int|null}  $input
      */
     public function onboard(array $input, ?User $invitedBy = null): Operator
     {
-        // The plan is not named here. `Operator::booted()` assigns the
-        // default and throws when none is flagged (ADR-0058 §1) — on the
-        // model rather than here, so a seeder or a fixture cannot make an
-        // unpriced fleet by taking a different path.
+        // The plan may be chosen at onboarding (owner's ask, 24 August).
+        // When it is not, `Operator::booted()` assigns the default and
+        // throws when none is flagged (ADR-0058 §1) — on the model rather
+        // than here, so a seeder or a fixture cannot make an unpriced fleet
+        // by taking a different path.
         return DB::transaction(function () use ($input, $invitedBy): Operator {
-            $operator = Operator::create([
+            $operator = Operator::create(array_filter([
                 'name' => $input['name'],
                 'slug' => $this->slugFor($input['name'], $input['slug'] ?? null),
                 'status' => 'active',
-            ]);
+                'plan_id' => $input['plan_id'] ?? null,
+            ], fn (mixed $value) => $value !== null));
 
             // `access_level` is declared, never inferred (ADR-0055 §4), and
             // the database trigger refuses the row if it disagrees with the

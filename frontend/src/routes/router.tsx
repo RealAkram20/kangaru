@@ -35,7 +35,12 @@ const DriverApplicationsPage = page(
 const DriversPage = page(() => import('../pages/DriversPage'), 'DriversPage')
 const InvoicesPage = page(() => import('../pages/InvoicesPage'), 'InvoicesPage')
 const LoginPage = page(() => import('../pages/LoginPage'), 'LoginPage')
+const ForgotPasswordPage = page(
+  () => import('../pages/ForgotPasswordPage'),
+  'ForgotPasswordPage',
+)
 const AcceptInvitePage = page(() => import('../pages/AcceptInvitePage'), 'AcceptInvitePage')
+const AcceptOwnerTransferPage = page(() => import('../pages/AcceptInvitePage'), 'AcceptOwnerTransferPage')
 const NotificationPreferencesPage = page(
   () => import('../pages/NotificationPreferencesPage'),
   'NotificationPreferencesPage',
@@ -108,6 +113,16 @@ export const router = createBrowserRouter([
       </Standalone>
     ),
   },
+  // Public and standalone for the same reason as /login: the reader's whole
+  // problem is that they cannot authenticate (ADR-0028 §2).
+  {
+    path: '/forgot-password',
+    element: (
+      <Standalone>
+        <ForgotPasswordPage />
+      </Standalone>
+    ),
+  },
   // Public, and standalone like /login: the reader has an account and no way
   // into it, so the shell's navigation would be a wall of links that all
   // answer 403. Mail plan M2.
@@ -116,6 +131,17 @@ export const router = createBrowserRouter([
     element: (
       <Standalone>
         <AcceptInvitePage />
+      </Standalone>
+    ),
+  },
+  // The fleet handover's accept page (owner's decision, 24 August). The same
+  // page as the invitation — to the reader both are "choose a password" —
+  // pointed at the transfer's own endpoints, which also name the fleet.
+  {
+    path: '/owner/:token',
+    element: (
+      <Standalone>
+        <AcceptOwnerTransferPage />
       </Standalone>
     ),
   },

@@ -11,6 +11,12 @@ export interface Operator {
    * plan is a configuration error the API refuses, not a state to render.
    */
   plan?: { id: number; name: string; is_default: boolean }
+  /**
+   * The handover nobody has confirmed yet (owner's decision, 24 August).
+   * Absent when the relation was not loaded; null when nothing is pending.
+   * Never the token — that exists only inside the email it was sent in.
+   */
+  pending_owner?: { name: string; email: string; expires_at: string } | null
   /** Staff and drivers both — every account whose fleet this is. */
   users_count?: number
   drivers_count?: number
