@@ -11,6 +11,7 @@ use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
+use Modules\Fleet\Enums\TransferOutcome;
 use Modules\Fleet\Models\OwnershipTransfer;
 use Modules\Notifications\Enums\NotificationType;
 use Modules\Notifications\Mail\OfficeRecipient;
@@ -94,39 +95,57 @@ class OwnershipTransferService
      * transaction, so the fleet is never ownerless in between (ADR-0059 §5
      * reads that direction too: create first, then suspend).
      */
-    public function accept(OwnershipTransfer $transfer, string $password): bool
+    public function accept(OwnershipTransfer $transfer, string $password): TransferOutcome
     {
         if (! $transfer->isUsable()) {
-            return false;
+            return TransferOutcome::LAPSED;
         }
 
         $operator = $transfer->operator;
 
         if ($operator === null) {
-            return false;
+            return TransferOutcome::LAPSED;
         }
 
-        // The address was free when the transfer was proposed and the unique
-        // rule said so; a week may have passed. Refused rather than crashed
-        // on the unique index — head office re-proposes with the story known.
-        if (User::query()->where('email', $transfer->email)->exists()) {
-            return false;
+        /*
+         * The address may have acquired an account since the invitation was
+         * sent, and that is the ordinary case rather than the exception: a
+         * driver application mints one at submission time (ADR-0055,
+         * amendment), so the person head office invited on Monday can be an
+         * account holder by Tuesday.
+         *
+         * This used to `return false`, which the controller reported as *"that
+         * invitation has expired"* — a sentence that was false, unactionable,
+         * and reached a real incoming fleet owner four hours after her link
+         * was issued.
+         *
+         * An account that is free to move is now **promoted** rather than
+         * refused. One that belongs to another organisation is refused by
+         * name, because moving a person between organisations is the write
+         * ADR-0065 exists to prevent.
+         */
+        $existing = User::query()->where('email', $transfer->email)->first();
+
+        if ($existing !== null && ! self::mayTakeOver($existing, $operator)) {
+            return TransferOutcome::ADDRESS_ELSEWHERE;
         }
 
         /** @var array{new: User, previous: array<int, User>} $outcome */
-        $outcome = DB::transaction(function () use ($transfer, $operator, $password): array {
-            $owner = User::create([
-                'name' => $transfer->name,
-                'email' => $transfer->email,
-                // The password the new owner just chose — the only credential
-                // this flow ever mints, and nobody else knows it.
-                'password' => $password,
-                'role' => UserRole::FLEET_OWNER,
-                'status' => UserStatus::ACTIVE,
-                'tenant_id' => null,
-                'operator_id' => $operator->id,
-                'access_level' => AccessLevel::FLEET,
-            ]);
+        $outcome = DB::transaction(function () use ($transfer, $operator, $password, $existing): array {
+            $owner = $existing === null
+                ? User::create([
+                    'name' => $transfer->name,
+                    'email' => $transfer->email,
+                    // The password the new owner just chose — the only credential
+                    // this flow ever mints, and nobody else knows it.
+                    'password' => $password,
+                    'role' => UserRole::FLEET_OWNER,
+                    'status' => UserStatus::ACTIVE,
+                    'tenant_id' => null,
+                    'operator_id' => $operator->id,
+                    'access_level' => AccessLevel::FLEET,
+                ])
+                : $this->promote($existing, $operator, $password);
 
             /*
              * The outgoing side. Suspended, never deleted — their trips,
@@ -187,7 +206,99 @@ class OwnershipTransferService
             ));
         }
 
-        return true;
+        return TransferOutcome::ACCEPTED;
+    }
+
+    /**
+     * Whether an existing account may become this fleet's owner.
+     *
+     * **Free to move**, and only that:
+     *
+     * - an **applicant** — somebody who filled in the public driver form and
+     *   has an account keyed to nothing but their own application (ADR-0055,
+     *   amendment). They belong to no organisation, so nothing is taken from
+     *   anyone by their joining one.
+     * - somebody **already at this fleet** — promoting a branch manager to
+     *   owner moves nobody anywhere.
+     *
+     * Everything else is refused: another fleet's staff, a client's staff, and
+     * head office. Letting a handover reach those would move a person between
+     * organisations on the strength of an emailed link, which is the write
+     * ADR-0065 spent a whole release closing on the read side.
+     *
+     * A suspended account is deliberately still eligible when it is otherwise
+     * free to move — reinstating somebody by handing them a fleet is a
+     * decision head office made when it typed their address, and refusing it
+     * would leave no way to undo a suspension through this door.
+     *
+     * Returns the sentence to show, or null when the account may take over.
+     * Public and static because `ProposeOwnerRequest` asks the same question
+     * at the moment head office types the address — one rule, two moments,
+     * because a week can pass in between and the world can move.
+     */
+    public static function ineligibleReason(User $candidate, Operator $operator): ?string
+    {
+        if ($candidate->access_level === AccessLevel::FLEET
+            && $candidate->operator_id === $operator->getKey()) {
+            // Somebody already at this fleet, which is the promote-a-branch-
+            // manager case — unless they are the person the fleet already
+            // belongs to, where there is nothing to hand over and the only
+            // effect would be resetting their password through a door built
+            // for something else.
+            return $candidate->roleSlug() === UserRole::FLEET_OWNER->value
+                && $candidate->status === UserStatus::ACTIVE
+                ? 'They already own this fleet.'
+                : null;
+        }
+
+        if ($candidate->access_level === AccessLevel::APPLICANT) {
+            return null;
+        }
+
+        return 'That address belongs to an account at another organisation, so it cannot take this fleet over. Use another address.';
+    }
+
+    /** Whether an existing account may become this fleet's owner. */
+    private static function mayTakeOver(User $candidate, Operator $operator): bool
+    {
+        return self::ineligibleReason($candidate, $operator) === null;
+    }
+
+    /**
+     * Hands the fleet to an account that already exists.
+     *
+     * The account keeps **its own name**. Head office typed a name into the
+     * invitation to say who they meant; it is not a licence to rewrite a
+     * person's own record, and the two are the same person by construction.
+     *
+     * It does gain a password, which is the point of the accept form and is
+     * worth naming plainly: this door sets the password of an existing
+     * account. What makes that sound is the same thing that makes any
+     * invitation sound — the token went to that address — narrowed further by
+     * `mayTakeOver()`, so the reachable set is an applicant or this fleet's
+     * own staff, never a stranger's account at another organisation.
+     */
+    private function promote(User $candidate, Operator $operator, string $password): User
+    {
+        // `role` is `@property-read` on the model deliberately — role changes
+        // go through `fill()`, which is how `UserAdminService` writes them
+        // too. The rest are assigned directly, like the status/`deactivated_at`
+        // pair beside it, so the whole promotion is one save and one audit row.
+        $candidate->fill([
+            'role' => UserRole::FLEET_OWNER->value,
+            'password' => $password,
+        ]);
+        $candidate->status = UserStatus::ACTIVE;
+        $candidate->deactivated_at = null;
+        $candidate->tenant_id = null;
+        $candidate->operator_id = $operator->getKey();
+        // Assigned rather than inferred, like every other write of this column
+        // (ADR-0055 §4). An applicant becoming a fleet's owner is exactly the
+        // level change the guard exists to make deliberate.
+        $candidate->access_level = AccessLevel::FLEET;
+        $candidate->save();
+
+        return $candidate;
     }
 
     /** SHA-256, lookupable — the invitation table's own argument. */

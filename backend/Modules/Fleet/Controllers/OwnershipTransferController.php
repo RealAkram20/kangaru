@@ -10,6 +10,7 @@ use App\Support\Api\ApiResponse;
 use App\Support\Auth\PasswordPolicy;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Modules\Fleet\Enums\TransferOutcome;
 use Modules\Fleet\Models\OwnershipTransfer;
 use Modules\Fleet\Requests\ProposeOwnerRequest;
 use Modules\Fleet\Resources\OperatorResource;
@@ -121,14 +122,17 @@ class OwnershipTransferController extends Controller
             return $this->alreadyAccepted();
         }
 
-        if (! $this->transfers->accept($transfer, $validated['password'])) {
-            // Lapsed between the two requests, or the address stopped being
-            // free. Either way the fix is the same person: ask head office
-            // to send a fresh one.
-            return $this->expired();
-        }
-
-        return ApiResponse::success(null, 'Your password is set. Sign in with it.');
+        // Three outcomes, three sentences. This was one boolean and one
+        // sentence — "that invitation has expired" — which on 25 August told
+        // an incoming fleet owner her four-hour-old link had lapsed when the
+        // truth was that she had filed a driver application overnight and
+        // acquired an account. Nothing in the platform could have told her,
+        // and head office withdrew and re-sent into the same wall.
+        return match ($this->transfers->accept($transfer, $validated['password'])) {
+            TransferOutcome::ACCEPTED => ApiResponse::success(null, 'Your password is set. Sign in with it.'),
+            TransferOutcome::LAPSED => $this->expired(),
+            TransferOutcome::ADDRESS_ELSEWHERE => $this->addressElsewhere(),
+        };
     }
 
     private function unknown(): JsonResponse
@@ -146,6 +150,26 @@ class OwnershipTransferController extends Controller
         return ApiResponse::error(
             ErrorCode::INVITATION_ALREADY_USED,
             'This invitation has already been used. Sign in with the password you chose.',
+            [],
+            409,
+        );
+    }
+
+    /**
+     * The address belongs to an account at another organisation.
+     *
+     * Distinct from expiry because the reader's next move is different: no new
+     * link will help, and the person who can act is head office with a
+     * different address. Named without saying *whose* account it is — the
+     * reader is not signed in, and "this address is a client's staff member"
+     * is a fact about somebody else.
+     */
+    private function addressElsewhere(): JsonResponse
+    {
+        return ApiResponse::error(
+            ErrorCode::OWNER_ADDRESS_IN_USE,
+            'That address already belongs to an account elsewhere on Kangaru, so it cannot take over this fleet. '
+            .'Ask the person who arranged the handover to use another address.',
             [],
             409,
         );

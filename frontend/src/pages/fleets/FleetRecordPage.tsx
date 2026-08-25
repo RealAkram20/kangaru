@@ -90,6 +90,39 @@ export function FleetRecordPage() {
     load()
   }, [load])
 
+  /**
+   * Sends the same person a fresh link.
+   *
+   * `PUT /operators/{id}/owner` replaces the pending row rather than adding
+   * one, so this issues a new token, restarts the seven days, and kills the
+   * old link — which is what "resend" has to mean for a single-use
+   * credential.
+   *
+   * Asked for after a handover went wrong on live: the only control here was
+   * Withdraw, so the way to re-send was to withdraw and retype the address
+   * into the transfer dialog, and that path refused the very address it had
+   * accepted the day before.
+   */
+  async function resendTransfer() {
+    if (!fleet?.pending_owner) return
+
+    setSaving(true)
+    setError(null)
+    try {
+      const response = await apiClient.put<ApiSuccess<Operator>>(`/operators/${id}/owner`, {
+        name: fleet.pending_owner.name,
+        email: fleet.pending_owner.email,
+      })
+      setFleet(response.data.data)
+    } catch (caught) {
+      // The server's own sentence, verbatim: it is the only thing that knows
+      // whether the address has since been claimed, and by what.
+      setError(apiError(caught, 'Could not send that invitation again.').message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function withdrawTransfer() {
     setSaving(true)
     try {
@@ -169,14 +202,25 @@ export function FleetRecordPage() {
         <Alert
           title="Ownership transfer pending"
           action={
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={saving}
-              onClick={() => void withdrawTransfer()}
-            >
-              Withdraw
-            </Button>
+            <span style={{ display: 'inline-flex', gap: 'var(--space-2)' }}>
+              <Button
+                size="sm"
+                variant="secondary"
+                iconLeft="send"
+                disabled={saving}
+                onClick={() => void resendTransfer()}
+              >
+                Resend
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={saving}
+                onClick={() => void withdrawTransfer()}
+              >
+                Withdraw
+              </Button>
+            </span>
           }
         >
           {fleet.pending_owner.name} · {fleet.pending_owner.email} — invitation expires{' '}
