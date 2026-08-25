@@ -20603,3 +20603,38 @@ clean, `tsc -b --force` clean, `vite build` clean).
   actor's client, so this would have been a second door to one screen.
 - **Resending an invitation from the staff list.** `InvitationService` supports
   it and the row has no control for it. Real, small, and nobody has asked.
+
+### Deployed to production, 25 August ~12:00 UTC — `ee23113d`
+
+Backup first (`kangaruride-20260825T115256Z.sql.gz`), then checkout,
+`SOURCE_COMMIT`, rebuild, **and the role seeder** — which is the step this
+release could not have skipped: `roles.audience` would have been backfilled by
+the migration but `fleet_owner` would not have gained `staff.*`, so the feature
+would have looked shipped and done nothing.
+
+Verified, in this order:
+
+- `APP_BUILD` = `ee23113d`; eight containers healthy; the audience migration
+  `Ran`; ten scheduled jobs; one scheduler and one queue worker; upload limits
+  12M/16M; `https://api.kangaruride.com/up` → 200.
+- All ten roles carry an audience. `fleet_owner` is at **30** permissions and
+  holds `staff.manage`, so Najjemba's owner can now add their own people.
+- **ADR-0065 proved through the router on the running server**, not through the
+  policy: Shanitah's fleet-level `super_admin` — which does hold
+  `staff.manage` — gets **403** on `GET` and `PATCH /users/{Najjemba's owner}`,
+  the rename did not land, and **200** on its own account. That last one is the
+  positive control; three refusals would pass against a policy that refused
+  everybody. The verification token was created for this and deleted after.
+- The console bundle is the new one, checked by fetching it rather than
+  assuming: `StaffPage-CgkChZUB.js` carries the invitation control and the
+  locked-door state, `RolesPage-kVVGsbYt.js` the audience filter and column.
+  Worth doing — a green build shipping a stale bundle has happened here before.
+
+**Mail is on in production** (Titan, `help@kangaruride.com`,
+`mailConfigured: YES`), so the invitation path is live rather than inert, and
+so is password reset.
+
+**Live is ahead of `main`.** These five commits sit on
+`feat/driver-app-screens-and-earnings` and PR #18 is still open. The deploy
+takes a sha, not a branch, so production is correct — but `main` does not yet
+describe what is running.
