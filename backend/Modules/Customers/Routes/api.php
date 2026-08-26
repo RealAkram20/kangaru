@@ -30,8 +30,20 @@ Route::prefix('customer')->group(function () {
         ->middleware('throttle:5,1')
         ->name('customer.auth.login');
 
-    Route::middleware('auth:customer')->group(function () {
+    // `walk-in-or-support`, not `auth:customer` (ADR-0066 section 3). The
+    // walk-in's own token answers first and almost always; a staff token is
+    // accepted only while a live acting-as session names this customer as its
+    // subject, and is refused with a plain 401 otherwise. Stacking a second
+    // middleware after `auth:customer` could not have expressed it - the first
+    // would have rejected the staff token before the second ever ran.
+    Route::middleware('walk-in-or-support')->group(function () {
+        // Denied while acting as (ADR-0066 section 4), and the reason is
+        // mechanical rather than moral: this revokes `currentAccessToken()`,
+        // which under a session is the support agent's own staff token. A
+        // support agent pressing sign-out here would sign themselves out of
+        // the console and revoke the credential the session runs on.
         Route::post('/auth/logout', [CustomerAuthController::class, 'logout'])
+            ->middleware('not-acting-as')
             ->name('customer.auth.logout');
         Route::get('/auth/me', [CustomerAuthController::class, 'me'])
             ->name('customer.auth.me');

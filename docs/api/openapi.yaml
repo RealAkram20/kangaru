@@ -186,10 +186,16 @@ paths:
                   data:
                     nullable: true
                     type: object
-                    required: [subject_name, expires_at]
+                    required: [subject_name, subject_kind, expires_at]
                     additionalProperties: false
                     properties:
                       subject_name: { type: string }
+                      # Which surface this session belongs on (ADR-0066). A
+                      # walk-in's console is the order flow, not the staff
+                      # shell, and the console cannot work it out for itself -
+                      # auth/me answers as the actor during a walk-in session,
+                      # because there is no staff user to swap to.
+                      subject_kind: { enum: [user, customer] }
                       expires_at: { $ref: '#/components/schemas/Timestamp' }
         default:
           $ref: '#/components/responses/Error'
@@ -197,6 +203,17 @@ paths:
       summary: >
         Begins a support session: the caller acts as another user for thirty
         minutes. Every action taken is recorded against both names.
+      description: >
+        The subject may be a staff, fleet or client account (ADR-0056) or a
+        walk-in customer (ADR-0066). subject_type says which table subject_id
+        names, and defaults to user - the ids overlap, so sending the wrong one
+        would resolve an entirely different person.
+
+
+        A walk-in session behaves differently once open: the agent works on the
+        customer surface (/api/v1/customer/*) with their own staff token, and
+        the staff console answers 403 for everything but auth/me, auth/logout
+        and these two act-as routes.
       requestBody:
         required: true
         content:
@@ -206,6 +223,7 @@ paths:
               required: [subject_id, reason]
               additionalProperties: false
               properties:
+                subject_type: { enum: [user, customer] }
                 subject_id: { type: integer }
                 reason: { type: string, minLength: 8, maxLength: 255 }
       responses:
@@ -8079,12 +8097,15 @@ components:
               message: { type: string }
               data:
                 type: object
-                required: [id, subject_id, subject_name, expires_at]
+                required: [id, subject_id, subject_name, subject_kind, expires_at]
                 additionalProperties: false
                 properties:
                   id: { type: integer }
+                  # In the table subject_kind names. The two id spaces overlap,
+                  # so this pair has to be read together (ADR-0066).
                   subject_id: { type: integer }
                   subject_name: { type: string }
+                  subject_kind: { enum: [user, customer] }
                   expires_at: { $ref: '#/components/schemas/Timestamp' }
 
     RoleResponse:

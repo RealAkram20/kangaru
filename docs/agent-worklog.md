@@ -20684,7 +20684,7 @@ Two things found by running it rather than by reading it:
   the controller therefore guards nothing; it stays for readability and both
   files say so, rather than leaving a reader to assume it is load-bearing.
 
-#### Commit 2 — the walk-in (ADR-0066, in progress)
+#### Commit 2 — the walk-in (ADR-0066, done)
 
 Harder, and the reason is structural rather than an oversight: ADR-0013 made a
 walk-in a `Customer` on its own guard, and `ActAsSubject` says outright that
@@ -20733,7 +20733,17 @@ written into ADR-0066's Consequences as the first thing to revisit.
   `pages/fleets/`)
 - `frontend/src/pages/CorporateClientsPage.test.tsx`
 - `docs/adr/0066-acting-as-a-walk-in-client.md`
-- the walk-in middleware and its tests, named in the commit
+- `backend/app/Http/Middleware/AuthenticateWalkInOrSupport.php`
+- `backend/tests/Feature/Administration/ActingAsWalkInTest.php`
+- `frontend/src/components/security/ActAsWalkInDialog.tsx` and its test
+- `frontend/src/components/security/ActingAsChrome.tsx`
+
+**Verified:** the whole backend suite (1872 tests), the whole frontend suite
+(735), `tsc -b --force`, eslint, pint and phpstan. **Not** driven in a browser
+— the dev stack was down and bringing Apache, the php-cgi pool and Vite up
+beside another agent's session was not worth the collision. The three things
+worth seeing with eyes are the banner on `/order`, the console's 403 reading as
+a state rather than a fault, and the walk-in dialog's warning.
 
 #### Shared files, each with the exact edit named
 

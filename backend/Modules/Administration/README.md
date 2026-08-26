@@ -326,7 +326,33 @@ cannot distinguish from the person's own hand.** So that is what was built:
   purpose is to prove it was the person.
 - It **never mints a client-app token**. A driver token handed to a support
   agent would let them register a push device and take a real job off a driver
-  on the road.
+  on the road. This is what keeps a session revocable: end it and the reach
+  ends with it, with nothing left in a browser to replay.
+
+### And a walk-in, since ADR-0066
+
+The morph on `impersonation_sessions` always had room for a `Customer`; the
+middleware did not. Now it does, and the four decisions that make it safe are
+worth reading before touching any of them:
+
+- `AuthenticateWalkInOrSupport` replaces `auth:customer` on the customer group.
+  It answers the walk-in's own token first and falls through to a staff token
+  **only** while a live session names that customer. A staff token with no
+  session is refused exactly as before, which is the conditional form of the
+  claim `CustomerGuardIsolationTest` used to make unconditionally.
+- It implements `AuthenticatesRequests`, which declares nothing and is
+  load-bearing: it is the anchor `bootstrap/app.php` hangs `EnforceTokenScope`
+  and friends off. Drop it and the token-scope check stops running on that
+  surface — silently, with nothing failing.
+- **The staff console is shut** while a walk-in is held, against a four-route
+  allow-list in `ActAsSubject`. `ADR-0056 §1` sets the actor's own reach aside;
+  for a `User` subject the swap does that by itself, and a `Customer` has no
+  staff identity to be swapped for. Without this it would be the one session
+  that kept its own powers.
+- **Reach is otherwise full** — the owner's decision, 26 August. Support can
+  cancel a walk-in's ride and order for them. `customer.auth.logout` is denied
+  and the reason is mechanical: it revokes `currentAccessToken()`, which under
+  a session is the agent's own staff token.
 
 ### What keeps the grant narrow
 
@@ -340,11 +366,21 @@ carrying a permission they do not hold themselves, so the exclusion made the
 permission **ungrantable by any screen**. Ungrantable is not stricter; it is
 broken. A fleet Super Admin holds the permission and cannot use it.
 
-### Not built, and it matters
+### The notification to the person acted upon (§5) — built
 
-The **notification to the person acted upon** (§5). Their own audit trail shows
-it, and the banner shows the agent — but nobody tells the driver or the client
-afterwards. Named here rather than left to be discovered.
+This section used to say it was not. `AccountAccessedBySupportNotification`
+reaches a **driver** in their inbox and by email, and since ADR-0066 a
+**walk-in** by email — routed by address rather than to the model, because
+`Customer` is not `Notifiable` and has no in-app inbox to write a row to.
+
+Not sent to a fleet's dispatcher or a client's transport officer, and that is
+§5's own line rather than an omission: they act in a corporate capacity and
+their organisation reads the same event in its own log. An individual's account
+is their livelihood and nobody reads anything on their behalf.
+
+Failure to notify never fails the session. A support agent locked out because a
+mail host is down helps nobody, and the audit row — the load-bearing half — is
+already written.
 
 ## What's explicitly deferred
 

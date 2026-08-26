@@ -24,6 +24,13 @@ use Modules\Customers\Services\CustomerRegistry;
  * no editing somebody else's profile. The same line `Modules/Administration`
  * draws for staff accounts, drawn again for members of the public, and for
  * a stronger reason.
+ *
+ * ADR-0066 added the one exception, and it is somewhere else on purpose: a
+ * support session, opened through `/support/act-as`, which expires by itself,
+ * emails the customer that it happened, and puts the agent's name beside the
+ * customer's on every row it writes. Nothing on *these* routes changed, and
+ * that is the distinction — not whether support can reach a walk-in, but
+ * whether the trail can tell it apart from the person themselves.
  */
 class CustomerRegisterController extends Controller
 {

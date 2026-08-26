@@ -3,6 +3,7 @@
 use App\Enums\ErrorCode;
 use App\Http\Middleware\ActAsSubject;
 use App\Http\Middleware\AssignRequestId;
+use App\Http\Middleware\AuthenticateWalkInOrSupport;
 use App\Http\Middleware\BindSubjectTenant;
 use App\Http\Middleware\EnforceTokenScope;
 use App\Http\Middleware\EnsureMfaEnrolled;
@@ -172,6 +173,11 @@ return Application::configure(basePath: dirname(__DIR__))
             // ADR-0056 §3. Attached to the routes it guards rather than
             // matching their names, so the guard travels with the route.
             'not-acting-as' => RefuseWhileActingAs::class,
+            // ADR-0066 §3. The `customer` guard plus one named exception, in
+            // one class because the two answers have to be tried in order —
+            // `auth:customer` followed by anything would reject the staff
+            // token before the second middleware ran.
+            'walk-in-or-support' => AuthenticateWalkInOrSupport::class,
         ]);
 
         // Laravel's default middleware priority runs SubstituteBindings

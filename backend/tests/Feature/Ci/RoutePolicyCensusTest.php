@@ -471,7 +471,22 @@ function hasMiddleware(RouteDefinition $route, array $needles): bool
 }
 
 const MW_AUTH_STAFF = ['auth:sanctum'];
-const MW_AUTH_CUSTOMER = ['auth:customer'];
+/**
+ * The walk-in guard, both spellings.
+ *
+ * `walk-in-or-support` replaced `auth:customer` on the customer group in
+ * ADR-0066: it answers the customer token first and falls through to a staff
+ * token **only** while a live acting-as session names that customer, which is
+ * a thing `auth:customer` cannot express because it would have rejected the
+ * staff token before anything else ran.
+ *
+ * Both names are listed rather than one swapped for the other. This census
+ * asks "is anything authenticating this route", and a customer route that
+ * reverted to the plain guard tomorrow would still be authenticated — it
+ * should not fail here for having done so. What that change *would* break is
+ * `ActingAsWalkInTest`, which is the file that ought to notice.
+ */
+const MW_AUTH_CUSTOMER = ['auth:customer', 'walk-in-or-support', 'App\Http\Middleware\AuthenticateWalkInOrSupport'];
 const MW_THROTTLE = ['throttle:', 'Illuminate\Routing\Middleware\ThrottleRequests'];
 const MW_TENANT = ['tenant', 'App\Http\Middleware\IdentifyTenant'];
 

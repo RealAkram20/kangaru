@@ -4,6 +4,16 @@ import { Icon } from '../core/Icon'
 export interface ActingAsSession {
   /** The person whose account is being held. */
   subject_name: string
+  /**
+   * Which of the two principals the subject is (ADR-0066).
+   *
+   * `customer` means a walk-in, and it changes where the session *lives*: the
+   * agent works on the order flow, and the staff console answers 403 for
+   * everything but this banner and the way out of it. The console cannot work
+   * this out for itself — `auth/me` answers as the actor during a walk-in
+   * session, because there is no staff user to have been swapped for.
+   */
+  subject_kind: 'user' | 'customer'
   /** ISO-8601. When the session lapses on its own (ADR-0056 §5). */
   expires_at: string
 }

@@ -5,10 +5,12 @@ namespace Modules\Administration\Services;
 use App\Enums\AccessLevel;
 use App\Enums\Permission;
 use App\Models\AuditLog;
+use App\Models\Customer;
 use App\Models\ImpersonationSession;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Validation\ValidationException;
 use Modules\Drivers\Models\Driver;
 use Modules\Notifications\Notifications\AccountAccessedBySupportNotification;
@@ -26,9 +28,13 @@ use Throwable;
 class ImpersonationService
 {
     /**
+     * @param  User|Customer  $subject  A staff, fleet or client account (ADR-0056),
+     *                                  or a walk-in (ADR-0066 §1). The morph on
+     *                                  `impersonation_sessions` was written for both.
+     *
      * @throws AuthorizationException|ValidationException
      */
-    public function begin(User $actor, User $subject, string $reason, ?string $ip = null): ImpersonationSession
+    public function begin(User $actor, User|Customer $subject, string $reason, ?string $ip = null): ImpersonationSession
     {
         $this->assertMayAct($actor, $subject);
 
@@ -53,7 +59,11 @@ class ImpersonationService
             // fill `impersonator_id`, so auditing the session's own creation
             // would attribute it to itself.
             AuditLog::create([
-                'tenant_id' => $subject->tenant_id,
+                // Null for a walk-in, who belongs to no client (ADR-0013 §1).
+                // The row is still written and still names the actor — a
+                // session that opened against a member of the public is
+                // exactly as much of an act as one against a bank's officer.
+                'tenant_id' => $subject instanceof User ? $subject->tenant_id : null,
                 'user_id' => $actor->getKey(),
                 'auditable_type' => $session->getMorphClass(),
                 'auditable_id' => $session->getKey(),
@@ -92,18 +102,50 @@ class ImpersonationService
      * Failure to notify never fails the session. A support agent locked out
      * because a mail host is down helps nobody, and the audit row — the part
      * that is actually load-bearing — is already written.
+     *
+     * ## The walk-in half (ADR-0066 §6)
+     *
+     * §5 named two populations and this method served one of them. A walk-in
+     * is the more individual of the two by any reading — no employer reads
+     * their log, no account manager was copied in — so leaving them out was
+     * the wrong half to have shipped.
+     *
+     * Routed by address rather than sent to the model, which is the applicant
+     * path `SettingsMailChannel` already documents: `Customer` is not
+     * `Notifiable`, has no in-app inbox for the database channel to write to,
+     * and giving it one is a notifications feature this does not need. The
+     * mail channel already accepts an anonymous recipient and the database
+     * channel already drops a non-`User` silently, so the message arrives and
+     * nothing else has to change.
      */
-    private function tellTheSubject(ImpersonationSession $session, User $actor, User $subject): void
+    private function tellTheSubject(ImpersonationSession $session, User $actor, User|Customer $subject): void
     {
-
-        if (! Driver::query()->where('user_id', $subject->getKey())->exists()) {
-            return;
-        }
+        $notification = AccountAccessedBySupportNotification::for(
+            $session,
+            $subject->name,
+            $actor->name,
+        );
 
         try {
-            $subject->notify(
-                AccountAccessedBySupportNotification::for($session, $subject->name, $actor->name)
-            );
+            if ($subject instanceof Customer) {
+                $email = trim((string) $subject->email);
+
+                // A Google-only walk-in has an address; one created at the
+                // desk may not. Nothing to send to is not a failure.
+                if ($email === '') {
+                    return;
+                }
+
+                Notification::route('mail', $email)->notify($notification);
+
+                return;
+            }
+
+            if (! Driver::query()->where('user_id', $subject->getKey())->exists()) {
+                return;
+            }
+
+            $subject->notify($notification);
         } catch (Throwable $e) {
             report($e);
         }
@@ -135,7 +177,7 @@ class ImpersonationService
     /**
      * @throws AuthorizationException|ValidationException
      */
-    private function assertMayAct(User $actor, User $subject): void
+    private function assertMayAct(User $actor, User|Customer $subject): void
     {
         // Kangaru **and** the permission. ADR-0056 §6: `support.act-as` "is not
         // implied by any other" — not by being head office, not by being a
@@ -152,20 +194,28 @@ class ImpersonationService
             );
         }
 
-        if ($subject->is($actor)) {
-            throw ValidationException::withMessages([
-                'subject_id' => ['You are already yourself.'],
-            ]);
-        }
+        // Both of the next two are about being a `User`, and neither is being
+        // relaxed for a walk-in — they are inapplicable (ADR-0066 §1). A
+        // `Customer` is never an actor, so it can be neither this actor nor a
+        // head-office account, and there is no hop for a session to chain
+        // through. Written as a narrowing rather than as two null checks so
+        // that the reason is visible: nothing was skipped here.
+        if ($subject instanceof User) {
+            if ($subject->is($actor)) {
+                throw ValidationException::withMessages([
+                    'subject_id' => ['You are already yourself.'],
+                ]);
+            }
 
-        // **No chaining** (ADR-0056 §1). Acting as another head-office account
-        // is how a support agent would reach `support.act-as` itself and then
-        // become anybody a second time, with the trail naming the wrong person
-        // at every hop.
-        if ($subject->access_level === AccessLevel::KANGARU) {
-            throw ValidationException::withMessages([
-                'subject_id' => ['A Kangaru account cannot be acted as. Sessions do not chain.'],
-            ]);
+            // **No chaining** (ADR-0056 §1). Acting as another head-office
+            // account is how a support agent would reach `support.act-as`
+            // itself and then become anybody a second time, with the trail
+            // naming the wrong person at every hop.
+            if ($subject->access_level === AccessLevel::KANGARU) {
+                throw ValidationException::withMessages([
+                    'subject_id' => ['A Kangaru account cannot be acted as. Sessions do not chain.'],
+                ]);
+            }
         }
 
         // One at a time. Two live sessions would make "who is this request"

@@ -14,6 +14,7 @@ import { EmptyState } from '../components/feedback/EmptyState'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
 import { PageFill } from '../components/layout/PageFill'
+import { ActAsWalkInDialog } from '../components/security/ActAsWalkInDialog'
 import { Select } from '../components/forms/Select'
 
 /**
@@ -61,6 +62,7 @@ export function CustomersPage() {
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('')
   const [open, setOpen] = useState<CustomerProfile | null>(null)
+  const [actingAs, setActingAs] = useState<CustomerProfile | null>(null)
 
   const load = useCallback(
     () =>
@@ -111,10 +113,21 @@ export function CustomersPage() {
         key: 'id',
         card: 'meta',
         header: '',
+        // **Log in as** is new (ADR-0066) and everything around it is not.
+        // This screen is read-only but for suspension, deliberately: an
+        // administrator silently changing a member of the public's
+        // credentials is the one act an audit trail cannot tell apart from
+        // impersonation. That line is unchanged - what has arrived is a way to
+        // help that is *not* silent, and that is the point of it.
         render: (row) => (
-          <Button size="sm" variant="secondary" onClick={() => setOpen(row)}>
-            Open
-          </Button>
+          <span style={{ display: 'inline-flex', gap: 'var(--space-2)', justifyContent: 'flex-end' }}>
+            <Button size="sm" variant="secondary" onClick={() => setOpen(row)}>
+              Open
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => setActingAs(row)}>
+              Log in as
+            </Button>
+          </span>
         ),
       },
     ],
@@ -189,6 +202,13 @@ export function CustomersPage() {
             await load()
             setOpen(null)
           }}
+        />
+      )}
+
+      {actingAs && (
+        <ActAsWalkInDialog
+          customer={{ id: actingAs.id, name: actingAs.name }}
+          onClose={() => setActingAs(null)}
         />
       )}
     </PageFill>
