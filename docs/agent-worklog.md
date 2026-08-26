@@ -20638,3 +20638,215 @@ so is password reset.
 `feat/driver-app-screens-and-earnings` and PR #18 is still open. The deploy
 takes a sha, not a branch, so production is correct — but `main` does not yet
 describe what is running.
+
+---
+
+### 2026-08-26 — Support can become a corporate client, and a walk-in
+
+The owner's ask: *"we want to be sign as for Corporate client and other walking
+clients as well because we need to be able to help in case of assistance
+required."*
+
+ADR-0056 already quotes them naming four populations — *"any fleet, corporate
+client, walk-in client and drivers"* — and only one of the four had a way in.
+This is the other three, in two commits, because they are two different sizes
+of problem.
+
+**Two commits, deliberately.** The client half is a button and an endpoint; the
+walk-in half crosses the guard split ADR-0013 built a tripwire test around.
+Reviewing them together would have hidden the second inside the first.
+
+#### Commit 1 — the corporate client (`129bc6f`, done)
+
+The backend already accepted any non-Kangaru subject, so nothing about the
+session changed. What was missing was a roster to pick a name from and a place
+to press.
+
+`GET companies/{company}/accounts`, gated on a **new** `CompanyPolicy::actAsSomebody`
+rather than on `view`. That is the one decision in this commit worth reading:
+the fleet twin rides on `view`, which under `OperatorPolicy` already means head
+office alone, but `CompanyPolicy::view` is `companies.view` — which a client's
+**own** administrator holds for their own profile. Reusing it would have handed
+every head-office reader with a directory grant a roster of named employees at
+every client on the platform, for no reason ADR-0062 recognises.
+
+Two things found by running it rather than by reading it:
+
+- **The dialog's labels were attached to nothing.** `FormField` treats
+  `htmlFor` as optional and renders a `<label>` pointing nowhere when it is
+  omitted, so the field looked labelled and still annotated `aria-required` —
+  and the picker that decides whose identity you assume had no accessible
+  **name**. Present since the fleet dialog shipped; found because the test
+  queried by label, which is the query that would have caught it then.
+- **The "wrong access level shares this tenant" test cannot be written.**
+  `users_access_level_matches_columns` rejects the fixture with SQLSTATE 45000
+  through `saveQuietly` and a raw update alike. The `access_level` clause in
+  the controller therefore guards nothing; it stays for readability and both
+  files say so, rather than leaving a reader to assume it is load-bearing.
+
+#### Commit 2 — the walk-in (ADR-0066, in progress)
+
+Harder, and the reason is structural rather than an oversight: ADR-0013 made a
+walk-in a `Customer` on its own guard, and `ActAsSubject` says outright that
+*"the walk-in half of the morph is not implemented."*
+
+**The owner was asked and chose full reach minus the identity acts** — support
+can cancel a stuck ride and order on a walk-in's behalf, not only watch. The
+read-only option was recommended and declined; ADR-0066's Alternatives records
+both sides. What that costs is written into its Consequences without softening:
+a support agent can dispatch a real car to a real address on a member of the
+public's account, and `impersonator_id` beside the row is the only thing that
+makes it survivable.
+
+Five decisions, each with a test:
+
+1. The session's morph takes a `Customer`. Two of the four refusals become
+   *inapplicable* rather than relaxed — a `Customer` is never an actor, so it
+   can be neither yourself nor a head-office account to chain through. Written
+   as a narrowing so the reason stays visible.
+2. A staff token reaches `/customer/*` only under a live session whose subject
+   is a `Customer`. No customer token is minted, so ending the session ends the
+   reach with nothing left in a browser.
+3. `POST /customer/auth/logout` is denied, and the reason is mechanical: it
+   revokes `currentAccessToken()`, which under a session is the **support
+   agent's own staff token**. Pressing it would sign them out of the console
+   and revoke the credential the session runs on.
+4. **While a walk-in session is live, the staff console is closed** to
+   everything but four routes. ADR-0056 §1 sets the actor's own reach aside for
+   the duration; for a `User` subject the swap makes that structural, and for a
+   `Customer` there is nothing to swap to — so without this it would silently
+   be the one session that kept its own powers.
+5. The walk-in is told by email. §5 asked for drivers **and** walk-in
+   customers; the shipped service did drivers only.
+
+**Rating a driver is left reachable and I want that on the record.** It is the
+one act on the customer surface that is somebody's testimony rather than their
+transaction, and a star attributed to a customer who did not write it follows a
+driver. It is outside "the identity acts" as the owner drew them, so it stays —
+written into ADR-0066's Consequences as the first thing to revisit.
+
+#### Files owned (nobody else edits)
+
+- `backend/Modules/Clients/Controllers/ClientAccountController.php`
+- `backend/tests/Feature/Clients/ClientAccountsTest.php`
+- `frontend/src/components/security/ActAsDialog.tsx` (moved here from
+  `pages/fleets/`)
+- `frontend/src/pages/CorporateClientsPage.test.tsx`
+- `docs/adr/0066-acting-as-a-walk-in-client.md`
+- the walk-in middleware and its tests, named in the commit
+
+#### Shared files, each with the exact edit named
+
+- `backend/Modules/Clients/Policies/CompanyPolicy.php` — one added method,
+  `actAsSomebody`
+- `backend/Modules/Clients/Routes/api.php` — one added route
+- `backend/tests/Feature/Ci/RoutePolicyCensusTest.php` — one row per new route,
+  and the three counters
+- `docs/api/openapi.yaml` — one path block per new route
+- `frontend/src/pages/fleets/FleetRecordPage.tsx` — import path and props only
+- `frontend/src/pages/CorporateClientsPage.tsx` — one row action and its dialog
+
+#### Not mine, in the tree while I worked
+
+`backend/Modules/Notifications/*`, `backend/Modules/Administration/Requests/StoreUserRequest.php`,
+`backend/Modules/Administration/Services/UserAdminService.php` and everything
+under `mobile/src/push/` were already modified and uncommitted. Left alone;
+nothing here stages them.
+
+#### A trap worth writing down
+
+Piping `pest` through `head`/`tail` leaves the run orphaned on Windows — the
+tool returns when the pipe closes, the PHP process does not. Two orphans raced
+the shared `kangaruride_testing` database and produced deadlocks and
+"table already exists" that read exactly like a broken migration. Redirect to a
+file and read the file. Same shape as the jest/`grep -q` wedge already in
+memory.
+
+---
+
+## 2026-08-26 — The same bug, a second door: an address that already has an account
+
+**Reported by the owner twice in two days, and the second time is the one that
+matters.** On the 25th a fleet handover said *"that invitation has expired"*
+when the address had simply acquired an account. I fixed the handover. On the
+26th a fleet tried to hire one of its own driver applicants as an Operations
+Manager and got *"the email has already been taken"*.
+
+**I fixed the case, not the class.** That is the whole lesson of this entry. A
+driver application mints a real account at submission time (ADR-0055,
+amendment), so an address that was free yesterday has an account today — and
+**every** "add a person" door on this platform refused it with a bare
+uniqueness message. There were two such doors. I fixed one and did not go
+looking for the other.
+
+### What changed
+
+`UserAdminService::joinableReason()` is the rule, beside
+`OwnershipTransferService::ineligibleReason()`. Deliberately not shared code:
+they answer different questions (*may this account take a **fleet** over* has a
+different answer for the sitting owner) over the same underlying rule — an
+account **free to move** joins, one belonging to another organisation does not.
+
+- **Free to move**: an applicant, or somebody already at this organisation.
+- **Refused**: another fleet's staff, a client's staff, head office. ADR-0065
+  from the hiring side — absorbing a competitor's dispatcher would move a
+  person between organisations on one administrator's say-so.
+- **Attaching requires the invitation path.** This is the difference from the
+  handover, and it is the security half. There the token had gone to the
+  address and the holder chose their own password. Here an administrator is
+  doing the adding, and an applicant's account holds their own driver
+  application — licence and ID among it. A password typed by a fleet office
+  would be a way into that. The refusal says what to do instead.
+- A pending driver application is **left alone**. It is somebody's submitted
+  work; a reviewer can act on it. Rejecting it here would destroy a record on
+  an assumption about why the person is being hired.
+
+Guards proved by mutation, both restored: remove the invitation requirement and
+the consent test fails; make everybody joinable and the cross-fleet test fails.
+
+### Two things I got wrong, recorded because they are the useful part
+
+- **The stale docblock I said I had deleted was still there.** The U2 commit
+  message claims `StoreUserRequest`'s "no invite flow exists" docblock was
+  removed. It was not. It survived a commit that said otherwise, which is its
+  own small lesson about believing a commit message over the file.
+- **A mutation showed one of my own assertions was not biting.** Removing the
+  explicit `access_level` from the handover's `promote()` did not fail the
+  test, because the model derives it from `operator_id` anyway. The line
+  documents intent; the model is what enforces it. Said plainly rather than
+  dressed up as a proof.
+
+### Not mine, in the tree while I worked
+
+`129bc6f` (head office acting as somebody at a corporate client) landed on top
+of my `92587d2` mid-session.
+
+- **It left `CrossTenantAnswers404Test` red.** Its new route
+  `companies.accounts.index` was missing from the census and from three
+  hand-maintained counts (44 → 45). Fixed here, minimally, because the suite
+  gates everything; the entry names the commit it came from.
+- **`ActAsSubject` and friends are mid-mutation right now** — four static
+  analysis errors including a call to `allowsWhileHoldingAWalkIn()`, which does
+  not exist yet. **Left alone**, per the rule about finding a file
+  mid-mutation. My commit contains none of those files, so the deploy carries
+  none of it. Static analysis is clean over my own files and over `Modules/Fleet`.
+
+### The Sentry question the owner asked, answered
+
+Two of the three issues in Sentry are **not from production**. The literal
+error text is
+`Table 'kangaruride_testing.migrations' doesn't exist` — my own machine's *test*
+database, whose schema was wiped when XAMPP MySQL crashed mid-session. The
+`[2002] No connection` beside it is the same crash. Both reached Sentry because
+this repo's local `.env` carries a DSN with `SENTRY_ENVIRONMENT=local`, and
+that DSN points at the **React Native** project, which is why Laravel stack
+traces are filed under `REACT-NATIVE-*`.
+
+**And the finding underneath it: production reports nothing to Sentry at all.**
+`SENTRY_LARAVEL_DSN` is unset in the live `.env` and `config('sentry.dsn')` is
+empty in the running container. Backend errors on live have been invisible.
+Needs the right project's DSN from the owner; not something to guess at.
+
+The third issue is real and live: `NativeDatabase.prepareAsync` in the driver
+app — expo-sqlite, which backs the GPS ping buffer and the offline outbox.
+Untouched here.

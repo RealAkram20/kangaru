@@ -91,6 +91,11 @@ function tenantBoundRoutes(): array
         'bookings.candidate-vehicles.index' => ['GET', '/api/v1/bookings/{booking}/candidate-vehicles'],
         'bookings.recommendation.index' => ['GET', '/api/v1/bookings/{booking}/recommendation'],
         'bookings.reject' => ['POST', '/api/v1/bookings/{booking}/rejection'],
+        // Added by 129bc6f (acting as somebody at a corporate client) and
+        // missing from this census, which is what left the suite red. The
+        // route binds a Company, so it belongs here like every other
+        // `{company}` route in the list.
+        'companies.accounts.index' => ['GET', '/api/v1/companies/{company}/accounts'],
         'companies.show' => ['GET', '/api/v1/companies/{company}'],
         // `update` before `destroy`: the owning-client pass below runs the
         // whole table against one fixture, and a soft-deleted company would
@@ -300,8 +305,9 @@ it('binds a tenant-owned model on exactly the routes this file lists', function 
 
     expect(tenantBoundRoutesByReflection())->toBe($visibleToReflection);
     // 41: `trips.place-suggestions.index`, the §10 geocoder follow-up
-    // (2026-08-22).
-    expect(count($expected))->toBe(44);
+    // (2026-08-22). 45: `companies.accounts.index`, from 129bc6f — head
+    // office acting as somebody at a corporate client (2026-08-26).
+    expect(count($expected))->toBe(45);
 });
 
 it('answers 404, never 403, when another client names a tenant-owned record', function () {
@@ -336,7 +342,7 @@ it('answers 404, never 403, when another client names a tenant-owned record', fu
     }
 
     // 41: place-suggestions (2026-08-22).
-    expect($checked)->toBe(44);
+    expect($checked)->toBe(45);
 });
 
 it('answers something other than 404 to the owning client on every one of those routes, so the 404s above are not vacuous', function () {
@@ -374,5 +380,5 @@ it('answers something other than 404 to the owning client on every one of those 
     }
 
     // 41: place-suggestions (2026-08-22).
-    expect($checked)->toBe(44);
+    expect($checked)->toBe(45);
 });

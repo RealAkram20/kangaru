@@ -14,16 +14,23 @@ use Illuminate\Validation\Rule;
 use Modules\Administration\Models\Role;
 use Modules\Administration\Policies\UserPolicy;
 use Modules\Administration\Services\SettingsService;
+use Modules\Administration\Services\UserAdminService;
 
 /**
  * Onboarding a colleague.
  *
- * The administrator sets an initial password rather than the platform
- * emailing an invitation link. An invite flow needs a signed, expiring
- * token and a public accept-invite page, neither of which exists — and a
- * half-built invite that emails a link to nowhere is worse than an honest
- * "tell them this password and have them change it". The change-password
- * endpoint that completes the loop ships alongside this.
+ * Two ways in, and the administrator chooses: an emailed invitation link, or
+ * an initial password typed here. This docblock used to say an invite flow
+ * "needs a signed, expiring token and a public accept-invite page, neither of
+ * which exists" — true when it was written, and false since the invitations
+ * table shipped on 24 August. It survived one commit that claimed to delete
+ * it, which is its own small lesson about believing a commit message.
+ *
+ * The address does **not** have to be free. An account that is free to move —
+ * a driver applicant, or somebody already here — joins instead of being
+ * refused, and attaching one requires the invitation path so the person
+ * consents rather than an administrator setting a password on an account that
+ * is already somebody's. See `refuseAnAddressThatCannotJoin()`.
  */
 class StoreUserRequest extends FormRequest
 {
@@ -40,11 +47,11 @@ class StoreUserRequest extends FormRequest
     {
         return [
             'name' => ['required', 'string', 'max:255'],
-            // Unique across the platform, not per tenant: the login form
-            // asks for an email and nothing else, so two tenants sharing an
-            // address would make authentication ambiguous. The database
-            // already enforces it; this turns a 500 into a 422.
-            'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')],
+            // Not `unique`. An address that already has an account may be
+            // joinable — see `refuseAnAddressThatCannotJoin()` — and a bare
+            // uniqueness rule is what made a fleet unable to hire its own
+            // driver applicant, saying only "the email has already been taken".
+            'email' => ['required', 'email', 'max:255'],
             // Required here although the column is nullable: every account
             // made from this screen onwards has a number, because a booking
             // raised for this person is dispatched against it. The accounts
@@ -153,7 +160,53 @@ class StoreUserRequest extends FormRequest
 
             $this->refuseAnUnservedClient($validator, $actor);
             $this->refuseAnInvitationNothingCanSend($validator);
+            $this->refuseAnAddressThatCannotJoin($validator, $actor);
         });
+    }
+
+    /**
+     * An address that already has an account: joined, or refused by name.
+     *
+     * A driver application mints an account at submission time (ADR-0055,
+     * amendment), so the person a fleet wants to hire on Tuesday may already
+     * hold one from applying on Monday. `unique` turned that into *"the email
+     * has already been taken"* — true, useless, and the same wall the fleet
+     * handover hit the day before.
+     *
+     * Two conditions, and they answer different questions.
+     *
+     * **May this account be here at all** is `joinableReason()`: an applicant
+     * or somebody already at this organisation, never another organisation's.
+     *
+     * **May this administrator do it without their consent** is the invitation.
+     * Creating a fresh account with a typed password is fine — nobody owns it
+     * yet. Folding in an account that already exists is not: an applicant's
+     * account holds their own driver application, licence and ID, and a
+     * password typed by a fleet office would be a way into it. The link goes
+     * to the address, so the person is the one who decides.
+     */
+    private function refuseAnAddressThatCannotJoin(Validator $validator, User $actor): void
+    {
+        $existing = User::query()->where('email', (string) $this->input('email'))->first();
+
+        if ($existing === null) {
+            return;
+        }
+
+        $reason = app(UserAdminService::class)->joinableReason($existing, $actor);
+
+        if ($reason !== null) {
+            $validator->errors()->add('email', $reason);
+
+            return;
+        }
+
+        if (! $this->boolean('invite')) {
+            $validator->errors()->add(
+                'email',
+                'That address already has an account. Tick "Email them a link to set their own password" to add them — an existing password is theirs to keep.',
+            );
+        }
     }
 
     /**

@@ -35,7 +35,16 @@ class UserAdminService
     public function create(array $attributes, User $actor): User
     {
         $user = DB::transaction(function () use ($attributes, $actor) {
-            $user = $this->insert($attributes, $actor);
+            // An address that already has an account joins rather than being
+            // refused — see `joinableReason()`. `StoreUserRequest` has already
+            // decided this is allowed; the query is repeated here because the
+            // service is what writes, and a week can pass between validating
+            // and saving in every other flow that learned this lesson.
+            $existing = User::query()->where('email', $attributes['email'])->first();
+
+            $user = $existing !== null
+                ? $this->attach($existing, $attributes, $actor)
+                : $this->insert($attributes, $actor);
 
             if (array_key_exists('route_ids', $attributes)) {
                 $this->replaceRoutes($user, $attributes['route_ids'], $actor);
@@ -66,6 +75,95 @@ class UserAdminService
         }
 
         return $user;
+    }
+
+    /**
+     * Why an existing account cannot be added here, or null when it can.
+     *
+     * ## The pattern this exists to stop repeating
+     *
+     * A driver application mints a real account at submission time (ADR-0055,
+     * amendment), so an address that was free on Monday has an account on
+     * Tuesday. Every "add a person" door on the platform refused that address
+     * with a unique-index message, and each door had to learn the same lesson
+     * separately: the fleet handover on 25 August, and this one the day after,
+     * where a fleet tried to hire an applicant as their Operations Manager and
+     * was told only *"the email has already been taken"*.
+     *
+     * The same shape as `OwnershipTransferService::ineligibleReason()`, and
+     * deliberately not shared code with it: that one answers "may this account
+     * take a **fleet** over", which is a different question with a different
+     * answer for the sitting owner. What is shared is the rule underneath —
+     * an account **free to move** joins, one belonging to another
+     * organisation does not.
+     *
+     * Free to move means an **applicant** — somebody whose account is keyed to
+     * nothing but their own driver application and who belongs to no
+     * organisation — or somebody **already here**, where nothing moves at all.
+     *
+     * Anyone else is refused, and that is ADR-0065's rule seen from the hiring
+     * side: absorbing another fleet's dispatcher, or a client's staff member,
+     * would move a person between organisations on one administrator's say-so.
+     */
+    public function joinableReason(User $candidate, User $actor): ?string
+    {
+        $sameOrganisation = $actor->access_level === AccessLevel::KANGARU
+            ? $candidate->access_level === AccessLevel::KANGARU
+            : ($candidate->operator_id !== null && $candidate->operator_id === $actor->operator_id)
+                || ($candidate->tenant_id !== null && $candidate->tenant_id === $actor->tenant_id);
+
+        if ($sameOrganisation || $candidate->access_level === AccessLevel::APPLICANT) {
+            return null;
+        }
+
+        return 'That address already belongs to an account at another organisation, so it cannot be added here. Use a different address.';
+    }
+
+    /**
+     * Folds an account that already exists into this organisation and role.
+     *
+     * The account is **kept**, not duplicated: same id, same person, their own
+     * name, whatever history they already have. What changes is where they
+     * work and what they may do.
+     *
+     * Their password is **not** touched, which is the difference between this
+     * and the fleet handover. There the token had been emailed to the address
+     * and the holder chose the password themselves; here an administrator is
+     * doing the adding, and letting them set a password on somebody's existing
+     * account would hand a fleet office the keys to an applicant's own record
+     * — their uploaded licence and ID among it. `StoreUserRequest` requires
+     * the invitation path for exactly this reason, so the person consents by
+     * following a link sent to their own address.
+     *
+     * A pending driver application is left alone. It is somebody's submitted
+     * work and this is not the place to decide its fate; a reviewer sees it
+     * and can act. Silently rejecting it here would destroy a record on an
+     * assumption about why the person is being hired.
+     *
+     * @param  array<string, mixed>  $attributes  already validated
+     */
+    private function attach(User $candidate, array $attributes, User $actor): User
+    {
+        $candidate->fill(array_intersect_key(
+            $attributes,
+            array_flip(['name', 'phone', 'role', 'capabilities', 'books_without_approval']),
+        ));
+
+        $candidate->status = UserStatus::ACTIVE;
+        $candidate->deactivated_at = null;
+
+        if ($actor->access_level === AccessLevel::KANGARU) {
+            $candidate->tenant_id = null;
+            $candidate->operator_id = null;
+            $candidate->access_level = AccessLevel::KANGARU;
+        } else {
+            $candidate->tenant_id = $actor->tenant_id;
+            $candidate->operator_id = $actor->tenant_id === null ? $actor->operator_id : null;
+        }
+
+        $candidate->save();
+
+        return $candidate;
     }
 
     /**

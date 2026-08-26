@@ -372,3 +372,128 @@ it('refuses an account with neither a password nor an invitation', function () {
         'role' => 'corporate_employee',
     ])->assertStatus(422)->assertJsonValidationErrors('password');
 });
+
+/*
+|--------------------------------------------------------------------------
+| Hiring somebody who already has an account
+|--------------------------------------------------------------------------
+|
+| The second time this platform met the same fact. A driver application mints
+| an account at submission time (ADR-0055, amendment), so an address that was
+| free yesterday has an account today — and every "add a person" door refused
+| it with a bare uniqueness message. The fleet handover learned it on 25
+| August; this door learned it on the 26th, when a fleet tried to hire one of
+| its own driver applicants as an Operations Manager and was told only "the
+| email has already been taken".
+*/
+
+/** Somebody who has applied to drive: an account keyed to nothing but that. */
+function driverApplicantAccount(string $email = 'evelyn@applicant.test'): User
+{
+    $applicant = new User([
+        'name' => 'Nambuya Evelyn',
+        'email' => $email,
+        'password' => 'set-when-they-applied',
+        'phone' => '+256706881920',
+        'role' => UserRole::DRIVER,
+        'status' => UserStatus::ACTIVE,
+    ]);
+
+    $applicant->access_level = AccessLevel::APPLICANT;
+    $applicant->save();
+
+    return $applicant;
+}
+
+it('hires a driver applicant into a fleet without minting a second account', function () {
+    Notification::fake();
+    mailOn();
+
+    $applicant = driverApplicantAccount();
+
+    $owner = User::factory()->create([
+        'operator_id' => Operator::SHANITAH,
+        'role' => UserRole::FLEET_OWNER,
+    ]);
+
+    $this->actingAs($owner, 'sanctum')->postJson('/api/v1/users', [
+        'name' => 'Nambuya Evelyn',
+        'email' => 'evelyn@applicant.test',
+        'phone' => '+256706881920',
+        'role' => UserRole::OPERATIONS_MANAGER->value,
+        'invite' => true,
+    ])->assertStatus(201);
+
+    expect(User::query()->where('email', 'evelyn@applicant.test')->count())->toBe(1);
+
+    $hired = $applicant->fresh();
+
+    expect($hired->id)->toBe($applicant->id)
+        ->and($hired->operator_id)->toBe(Operator::SHANITAH)
+        ->and($hired->access_level)->toBe(AccessLevel::FLEET)
+        ->and($hired->roleSlug())->toBe(UserRole::OPERATIONS_MANAGER->value);
+
+    // They are invited, not handed a password somebody else chose.
+    Notification::assertSentTo($hired, AccountInvitedNotification::class);
+});
+
+it('will not let an administrator set a password on an account that already exists', function () {
+    Notification::fake();
+    mailOn();
+
+    driverApplicantAccount();
+
+    $owner = User::factory()->create([
+        'operator_id' => Operator::SHANITAH,
+        'role' => UserRole::FLEET_OWNER,
+    ]);
+
+    /*
+     * The difference between this and the fleet handover, and it is the whole
+     * reason attaching is gated on the invitation. There the token had gone to
+     * the address and the holder chose their own password. Here a fleet office
+     * is doing the adding, and an applicant's account holds their own driver
+     * application — licence and ID among it. A password typed by somebody else
+     * would be a way into that.
+     */
+    $this->actingAs($owner, 'sanctum')->postJson('/api/v1/users', [
+        'name' => 'Nambuya Evelyn',
+        'email' => 'evelyn@applicant.test',
+        'phone' => '+256706881920',
+        'role' => UserRole::OPERATIONS_MANAGER->value,
+        'password' => 'chosen-by-somebody-else',
+    ])->assertStatus(422)->assertJsonValidationErrors('email');
+});
+
+it("refuses to absorb another fleet's staff", function () {
+    mailOn();
+
+    $rival = Operator::create([
+        'name' => 'Rival Transport Ltd',
+        'slug' => 'rival-hiring-test',
+        'status' => 'active',
+    ]);
+
+    $theirs = User::factory()->create([
+        'operator_id' => $rival->id,
+        'role' => UserRole::DISPATCHER,
+        'email' => 'their.dispatcher@rival.test',
+    ]);
+
+    $owner = User::factory()->create([
+        'operator_id' => Operator::SHANITAH,
+        'role' => UserRole::FLEET_OWNER,
+    ]);
+
+    // ADR-0065 from the hiring side: absorbing a competitor's dispatcher would
+    // move a person between organisations on one administrator's say-so.
+    $this->actingAs($owner, 'sanctum')->postJson('/api/v1/users', [
+        'name' => 'Poached',
+        'email' => 'their.dispatcher@rival.test',
+        'phone' => '+256700000777',
+        'role' => UserRole::DISPATCHER->value,
+        'invite' => true,
+    ])->assertStatus(422)->assertJsonValidationErrors('email');
+
+    expect($theirs->fresh()->operator_id)->toBe($rival->id);
+});
