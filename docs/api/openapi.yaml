@@ -2107,6 +2107,44 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/companies/{company}/accounts:
+    parameters:
+      - { name: company, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: Who head office can act as at this corporate client.
+      description: >
+        The client-side twin of /api/v1/operators/{operator}/accounts, and it
+        exists for the same one reason: ADR-0056 acts as a person, not an
+        organisation, so Log in as needs somebody to name.
+
+
+        Gated harder than the fleet twin. companies.view is a permission a
+        client's own administrator holds for their own profile, so it cannot be
+        the gate on a roster of that client's employees. This needs
+        access_level kangaru AND support.act-as - the one grant that can use
+        the list is the one that is shown it. A client reading its own
+        colleagues has /api/v1/users, correctly scoped (ADR-0065).
+
+
+        Client-level accounts only.
+      responses:
+        '200':
+          description: Accounts at this client, by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/User' }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/companies/{company}/fleets:
     parameters:
       - { name: company, in: path, required: true, schema: { type: integer } }

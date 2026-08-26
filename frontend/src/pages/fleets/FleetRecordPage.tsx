@@ -15,7 +15,7 @@ import { StatGrid } from '../../components/data/StatGrid'
 import { Alert } from '../../components/feedback/Alert'
 import { Dialog } from '../../components/feedback/Dialog'
 import { RouteFallback } from '../../components/feedback/RouteFallback'
-import { ActAsDialog } from './ActAsDialog'
+import { ActAsDialog } from '../../components/security/ActAsDialog'
 import { EditFleetDialog } from './EditFleetDialog'
 import { TransferOwnershipDialog } from './TransferOwnershipDialog'
 
@@ -245,7 +245,14 @@ export function FleetRecordPage() {
         />
       </Card>
 
-      {actingAs && <ActAsDialog fleet={fleet} onClose={() => setActingAs(false)} />}
+      {actingAs && (
+        <ActAsDialog
+          title={fleet.name}
+          accountsUrl={`/operators/${fleet.id}/accounts`}
+          emptyDescription="Onboarding creates a fleet’s first account with the fleet, so this is worth reporting."
+          onClose={() => setActingAs(false)}
+        />
+      )}
 
       {editing && (
         <EditFleetDialog

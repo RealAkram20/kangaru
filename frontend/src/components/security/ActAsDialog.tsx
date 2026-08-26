@@ -3,17 +3,16 @@ import { apiClient } from '../../lib/apiClient'
 import { apiError, fieldErrors } from '../../lib/apiError'
 import type { ApiSuccess } from '../../types/api'
 import type { User } from '../../types/auth'
-import type { Operator } from '../../types/operator'
-import { Button } from '../../components/core/Button'
-import { Alert } from '../../components/feedback/Alert'
-import { Dialog } from '../../components/feedback/Dialog'
-import { EmptyState } from '../../components/feedback/EmptyState'
-import { FormField } from '../../components/forms/FormField'
-import { Input } from '../../components/forms/Input'
-import { Select } from '../../components/forms/Select'
+import { Button } from '../core/Button'
+import { Alert } from '../feedback/Alert'
+import { Dialog } from '../feedback/Dialog'
+import { EmptyState } from '../feedback/EmptyState'
+import { FormField } from '../forms/FormField'
+import { Input } from '../forms/Input'
+import { Select } from '../forms/Select'
 
 /**
- * Becoming somebody at a fleet, for support (ADR-0056).
+ * Becoming somebody at an organisation, for support (ADR-0056).
  *
  * ## Why this is a dialog and not a button
  *
@@ -27,13 +26,33 @@ import { Select } from '../../components/forms/Select'
  * The session lasts thirty minutes, the subject is told, and every action is
  * recorded against both names. The page says so once, in the confirm button,
  * rather than in a paragraph nobody reads twice (screen-rules §9).
+ *
+ * ## Why it lives here rather than under `pages/fleets`
+ *
+ * It was a fleet dialog until head office needed the same thing at a corporate
+ * client, and the owner's description in ADR-0056 always named both — *"can log
+ * in as to any fleet, corporate client, walk-in client and drivers."* Nothing
+ * in the form was ever fleet-shaped: it fetches a roster from a URL and posts a
+ * subject and a reason. Copying it per organisation kind is how the two copies
+ * drift, and the half that drifts is the wording about what is being recorded.
+ *
+ * So the caller supplies the **heading** and the **roster URL**, and nothing
+ * else. It deliberately does not accept the endpoint's shape, a success
+ * callback or a redirect: starting a session changes who the whole console is,
+ * so there is exactly one thing to do afterwards and it is not the caller's to
+ * choose.
  */
 interface Props {
-  fleet: Operator
+  /** Names the organisation in the heading — "Log in as somebody at {title}". */
+  title: string
+  /** Where this organisation's people are listed. Answers `ApiSuccess<User[]>`. */
+  accountsUrl: string
+  /** What to say when the roster comes back empty, in this organisation's own words. */
+  emptyDescription?: string
   onClose: () => void
 }
 
-export function ActAsDialog({ fleet, onClose }: Props) {
+export function ActAsDialog({ title, accountsUrl, emptyDescription, onClose }: Props) {
   const [accounts, setAccounts] = useState<User[] | null>(null)
   const [subjectId, setSubjectId] = useState('')
   const [reason, setReason] = useState('')
@@ -43,13 +62,13 @@ export function ActAsDialog({ fleet, onClose }: Props) {
 
   useEffect(() => {
     apiClient
-      .get<ApiSuccess<User[]>>(`/operators/${fleet.id}/accounts`)
+      .get<ApiSuccess<User[]>>(accountsUrl)
       .then((response) => setAccounts(response.data.data))
       .catch(() => {
         setAccounts([])
-        setError('Could not load this fleet’s accounts.')
+        setError('Could not load this organisation’s accounts.')
       })
-  }, [fleet.id])
+  }, [accountsUrl])
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
@@ -79,7 +98,7 @@ export function ActAsDialog({ fleet, onClose }: Props) {
 
   return (
     <Dialog
-      title={`Log in as somebody at ${fleet.name}`}
+      title={`Log in as somebody at ${title}`}
       onClose={onClose}
       tone="warning"
       footer={
@@ -94,21 +113,35 @@ export function ActAsDialog({ fleet, onClose }: Props) {
       }
     >
       {empty ? (
-        // ADR-0059 §5 makes this state unreachable through onboarding, which
-        // creates the first account in the same transaction. It is rendered
-        // anyway, because an unreachable state that renders nothing is how a
-        // support agent ends up staring at a dialog that does not work.
+        // For a fleet, ADR-0059 §5 makes this state unreachable through
+        // onboarding, which creates the first account in the same transaction;
+        // ADR-0062 §3 does the same for a client. It is rendered anyway,
+        // because an unreachable state that renders nothing is how a support
+        // agent ends up staring at a dialog that does not work.
         <EmptyState
           icon="user-x"
-          title="No accounts at this fleet"
-          description="Support reaches a fleet through a person, so there is nobody to become here."
+          title="Nobody to become here"
+          description={
+            emptyDescription ?? 'Support reaches an organisation through a person, and this one has no accounts.'
+          }
         />
       ) : (
         <form id="act-as" onSubmit={submit} style={{ display: 'grid', gap: 'var(--space-4)' }}>
           {error && <Alert tone="error">{error}</Alert>}
 
-          <FormField label="Act as" required error={fields.subject_id}>
+          {/*
+            `htmlFor` and a matching `id`, which this dialog went without until
+            it was queried by label in a test. `FormField` treats `htmlFor` as
+            optional and renders a `<label>` pointing at nothing when it is
+            omitted — the field still looks labelled and still annotates
+            `aria-required`, so nothing visibly breaks, but the control has no
+            accessible **name**. A screen reader announces the picker that
+            decides whose identity is about to be assumed as an unlabelled
+            combo box.
+          */}
+          <FormField label="Act as" htmlFor="act-as-subject" required error={fields.subject_id}>
             <Select
+              id="act-as-subject"
               value={subjectId}
               onChange={(event) => setSubjectId(event.target.value)}
               required
@@ -126,11 +159,13 @@ export function ActAsDialog({ fleet, onClose }: Props) {
 
           <FormField
             label="Reason"
+            htmlFor="act-as-reason"
             required
             error={fields.reason}
             hint="Recorded in the audit log against both names."
           >
             <Input
+              id="act-as-reason"
               value={reason}
               onChange={(event) => setReason(event.target.value)}
               required

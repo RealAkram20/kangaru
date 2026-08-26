@@ -143,6 +143,11 @@ function routeCensus(): array
         'GET api/v1/companies/{company}' => 'A',
         'DELETE api/v1/companies/{company}' => 'A',
         'PATCH api/v1/companies/{company}' => 'A',
+        // ADR-0056 acts as a person, not an organisation, so Log in as needs
+        // somebody to name. `CompanyPolicy::actAsSomebody`, which gates on the
+        // level *and* `support.act-as` rather than on `companies.view` - the
+        // roster is disclosed only to the one grant that can use it.
+        'GET api/v1/companies/{company}/accounts' => 'A',
         // Which fleets serve a client (owner's decision, 24 Aug). Head office
         // alone - `CompanyPolicy::assignFleets` gates on the level, not on a
         // permission, so a custom role cannot be granted it.
@@ -511,7 +516,10 @@ it('has a census row for every API route and a route for every census row', func
     // 240: the fleet handover, 2026-08-24 — head office's propose/withdraw
     // pair (authenticated) and the public accept pair, which exists because
     // the new owner has no account until they finish it.
-    expect(count($router))->toBe(240);
+    // 241: the corporate client's roster (ADR-0056, 2026-08-26). Head office
+    // could act as somebody at a fleet and not at a client, which is half of
+    // the one sentence the ADR quotes the owner on.
+    expect(count($router))->toBe(241);
 });
 
 it('uses only the four idioms, and files sixteen routes as public', function () {
@@ -579,7 +587,9 @@ it('authenticates every route that is not filed as public, and throttles every o
     // 218: the mail DNS check, authenticated.
     // 220: the fleet handover's propose/withdraw pair, both authenticated —
     // naming who owns a fleet is the register's most consequential write.
-    expect($guarded)->toBe(220);
+    // 221: the corporate client's roster, authenticated — and gated harder
+    // than the fleet twin, on `support.act-as` rather than `companies.view`.
+    expect($guarded)->toBe(221);
 });
 
 it('binds the actor\'s tenant on every staff route, so TenantScope has something to scope by', function () {
@@ -631,5 +641,7 @@ it('binds the actor\'s tenant on every staff route, so TenantScope has something
     // 204: the mail DNS check.
     // 206: the fleet handover's propose/withdraw pair — staff-guarded, and
     // tenant-bound like every other operators route.
-    expect($staff)->toBe(206);
+    // 207: the corporate client's roster, staff-guarded and tenant-bound like
+    // every other companies route.
+    expect($staff)->toBe(207);
 });
