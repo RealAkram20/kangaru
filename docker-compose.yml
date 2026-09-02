@@ -140,6 +140,15 @@ services:
       <<: *app-env
       # migrate --force + storage:link, here and nowhere else. Never --seed.
       RELEASE_TASKS: "true"
+      # php-fpm workers are bounded to what the CPU limit can actually run
+      # (APP_CPUS). The serversideup image defaults this to 20, which on a
+      # one- or two-core limit lets a burst spawn more workers than there are
+      # cores to run them: they thrash, request latency climbs past
+      # Cloudflare's timeout, and *some* users get 52x while the container's
+      # own health check — one light request every 15s — stays green, so
+      # nothing restarts. Twelve fits two cores and 1 GiB (12 x ~80 MiB) with
+      # room to spare. Raise it together with APP_CPUS, never past it.
+      PHP_FPM_PM_MAX_CHILDREN: ${PHP_FPM_PM_MAX_CHILDREN:-12}
     expose:
       - "8080"
     volumes:
