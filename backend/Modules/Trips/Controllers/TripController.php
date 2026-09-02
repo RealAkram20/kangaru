@@ -10,6 +10,7 @@ use App\Support\Api\ApiResponse;
 use App\Support\Database\SearchTerm;
 use App\Support\Tenancy\ClientOptions;
 use Illuminate\Http\JsonResponse;
+use Modules\Bookings\Models\Booking;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Requests\StoreTripRequest;
@@ -129,11 +130,36 @@ class TripController extends Controller
         // `ledgerEntries` is bounded the same way and for the same reason —
         // it is what `TripResource::driverEarningsFor()` reads to tell a
         // driver their share of the job, and it is unbounded per row.
+        $trip->load(['vehicle', 'driver', 'orderRequest', 'ledgerEntries', 'stops']);
+
+        /*
+         * The booking, set by hand rather than eager-loaded — and it has to
+         * be, on the endpoint whose main reader is a driver.
+         *
+         * `TenantScope` fails closed, so `->load('booking')` inside a
+         * driver's request resolves to **null**: a driver belongs to no
+         * client. `DriverLedgerController::serviceTypesFor()` records hitting
+         * the same wall on `orderRequest` and going round it through the
+         * query builder.
+         *
+         * No leak: `authorize('view', $trip)` has already passed, and this
+         * reads the booking of *that* trip and nothing else. What it carries
+         * into the resource is the pickup pin — without it a corporate
+         * driver's screen says "the order was taken without a pin on it"
+         * over a job that had one.
+         *
+         * Only on `show`, exactly like `orderRequest` above: one trip pays
+         * for one query, and a dispatch board would have paid for fifty.
+         */
+        if ($trip->booking_id !== null) {
+            $trip->setRelation('booking', Booking::allTenants()->find($trip->booking_id));
+        }
+
         return ApiResponse::success(
             // `stops` rides with the bounded relations: one trip pays for
             // one itinerary, and the driver's in-progress screen is a
             // `show()` reader (ADR-0045).
-            new TripResource($trip->load(['vehicle', 'driver', 'orderRequest', 'ledgerEntries', 'stops'])),
+            new TripResource($trip),
         );
     }
 

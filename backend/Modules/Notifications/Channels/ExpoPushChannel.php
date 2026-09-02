@@ -122,6 +122,62 @@ class ExpoPushChannel
             'sound' => 'default',
         ];
 
+        /*
+         * **The invisible twin that wakes the app** (see
+         * `KangaruNotification::pushWakeOptions`).
+         *
+         * No title and no body, because that — not a flag — is what makes a
+         * push headless, and headless is the only shape Android hands to the
+         * app's JavaScript when the driver is not looking at the screen. The
+         * `data` is identical, so the app reads the offer out of either one
+         * with the same code.
+         *
+         * Null for almost every notification on the platform, and null is the
+         * cheap path: nothing extra is built and nothing extra is sent.
+         */
+        $wakeOptions = $notification->pushWakeOptions();
+
+        $wake = $wakeOptions === null
+            ? null
+            : ['data' => $notification->context()] + $wakeOptions + [
+                'priority' => 'high',
+                // iOS: the flag that makes APNs deliver a payload with nothing
+                // to show. Without it a body-less push is simply dropped.
+                '_contentAvailable' => true,
+            ];
+
+        /*
+         * **Both messages, and the token behind each of them.**
+         *
+         * Expo returns receipts *positionally*, so `pruneDeadTokens` has always
+         * matched them against `$tokens` by index. The moment a second message
+         * per handset was added that stopped being true — index 3 of the
+         * receipts is no longer index 3 of the fleet — and the consequence is
+         * not a missing log line: it is **deleting the wrong driver's device
+         * token** on a `DeviceNotRegistered`, which silently stops that driver
+         * receiving jobs.
+         *
+         * So the parallel list is built here rather than derived later.
+         *
+         * The visible message goes first, deliberately. It is the one that
+         * rings, and a driver should hear the job at the earliest possible
+         * moment rather than after a round trip through the app.
+         */
+        $envelopes = [];
+        $envelopeTokens = [];
+
+        foreach ($tokens as $token) {
+            $envelopes[] = ['to' => $token] + $message;
+            $envelopeTokens[] = $token;
+        }
+
+        if ($wake !== null) {
+            foreach ($tokens as $token) {
+                $envelopes[] = ['to' => $token] + $wake;
+                $envelopeTokens[] = $token;
+            }
+        }
+
         try {
             // **Three seconds, cut from five, because this now runs inline.**
             //
@@ -138,12 +194,9 @@ class ExpoPushChannel
             // `GET /me/offers` still has the job. ADR-0025 §3.
             $response = Http::timeout(3)
                 ->acceptJson()
-                ->post(self::ENDPOINT, array_map(
-                    fn (string $token) => ['to' => $token] + $message,
-                    $tokens,
-                ));
+                ->post(self::ENDPOINT, $envelopes);
 
-            $this->pruneDeadTokens($response->json('data') ?? [], $tokens);
+            $this->pruneDeadTokens($response->json('data') ?? [], $envelopeTokens);
         } catch (\Throwable $e) {
             Log::warning('push.send_failed', [
                 'user_id' => $notifiable->id,
@@ -174,10 +227,17 @@ class ExpoPushChannel
      *
      * Receipts come back positionally, in the order the tickets were sent.
      *
+     * **`$sentTo` is one entry per *message*, not per handset**, and it is
+     * named for that rather than called `$tokens`. A handset can receive two
+     * messages for one notification — the visible push and the invisible one
+     * that wakes the app — so the same token legitimately appears twice, and
+     * an index into this list is an index into the tickets, never into the
+     * fleet. Getting that wrong deletes a different driver's device token.
+     *
      * @param  array<int, mixed>  $receipts
-     * @param  array<int, string>  $tokens
+     * @param  array<int, string>  $sentTo
      */
-    private function pruneDeadTokens(array $receipts, array $tokens): void
+    private function pruneDeadTokens(array $receipts, array $sentTo): void
     {
         $dead = [];
         $failed = [];
@@ -189,8 +249,8 @@ class ExpoPushChannel
 
             $error = $receipt['details']['error'] ?? 'unknown';
 
-            if ($error === 'DeviceNotRegistered' && isset($tokens[$index])) {
-                $dead[] = $tokens[$index];
+            if ($error === 'DeviceNotRegistered' && isset($sentTo[$index])) {
+                $dead[] = $sentTo[$index];
 
                 continue;
             }

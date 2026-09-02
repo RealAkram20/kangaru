@@ -57,6 +57,11 @@ use Modules\Vehicles\Models\Vehicle;
  * @property bool $distance_variance_flagged
  * @property int $unplanned_stop_count How many stops were added mid-run rather
  *                                     than planned (ADR-0045 §4) — surfaced, never billed.
+ *                                     Extensions are excluded: they are billed.
+ * @property CarbonInterface|null $dropoff_reached_at When the vehicle reached the
+ *                                                    destination the trip was agreed for. Null until it does, and on
+ *                                                    every trip that ends there — the two were one act until extensions
+ *                                                    separated them.
  * @property string|null $billed_distance_km The resolver's figure (ADR-0045). Nothing
  *                                           prices from it yet — Phase 1 of `docs/measured-distance-plan.md` runs in shadow.
  * @property DistanceGrade|null $distance_grade
@@ -206,6 +211,7 @@ class Trip extends Model
             'gps_distance_km' => 'decimal:2',
             'distance_variance_flagged' => 'boolean',
             'unplanned_stop_count' => 'integer',
+            'dropoff_reached_at' => 'datetime',
             'billed_distance_km' => 'decimal:2',
             'distance_grade' => DistanceGrade::class,
             'distance_resolved_at' => 'datetime',

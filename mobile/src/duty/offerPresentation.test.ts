@@ -32,6 +32,11 @@ function offer(overrides: Partial<DispatchOffer> = {}): DispatchOffer {
     pickup: { label: 'Geoprix Engineering Limited, Seeta', latitude: 0.3476, longitude: 32.5825 },
     dropoff: { label: 'Acacia Mall, 14-18 Cooper Rd', latitude: 0.3676, longitude: 32.5825 },
     service_type: 'delivery',
+    // Null on a walk-in, which is what these fixtures are — a
+    // corporate offer is the other channel (ADR-0068).
+    client: null,
+    scheduled_for: null,
+    scheduled_for_label: null,
     reference: 'KR-ABC234',
     pickup_distance_km: 4.6,
     trip_distance_km: 8.24,

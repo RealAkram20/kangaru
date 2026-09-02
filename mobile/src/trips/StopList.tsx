@@ -31,68 +31,103 @@ import { inRunOrder } from './stops';
 export function StopList({
   stops,
   destination,
+  extensions = [],
+  nextId,
   canArrive,
   busy,
   onArrive,
 }: {
   stops: readonly TripStop[];
-  /** The trip's own drop-off — the terminal row, after every stop. */
+  /** The trip's own drop-off — the terminal row, after every *stop*. */
   destination: string;
+  /**
+   * Places the passenger asked to be taken on to, **after** the drop-off.
+   *
+   * A separate prop rather than more rows in `stops`, because they belong on
+   * the other side of the destination and a single ordered list cannot say
+   * that. Rendering them among the stops pointed a driver at an extension
+   * before the place they were hired to reach — found on a handset, not in a
+   * test.
+   */
+  extensions?: readonly TripStop[];
+  /**
+   * The leg the driver is heading for, or null when that is the drop-off
+   * itself.
+   *
+   * **Passed in rather than worked out here.** This list used to take the
+   * first pending stop, which stopped being the right answer once extensions
+   * shared the table: they sort by `sequence` like a stop but belong after
+   * the destination. `nextPlace` is the one place that decision is made, and
+   * the map pin, the drop-off row and this list all read it — so they cannot
+   * point three ways, which they did on a handset.
+   */
+  nextId: number | null;
   /** False while paused: arriving is the pause, so there is nowhere to arrive from. */
   canArrive: boolean;
   busy: boolean;
   onArrive: (stop: TripStop) => void;
 }) {
   const ordered = inRunOrder(stops);
-  const nextId = ordered.find((stop) => stop.status === 'pending')?.id ?? null;
+
+  /**
+   * One row, used for both halves of the journey.
+   *
+   * **Extensions were rendered by a second, simpler loop and it trapped a
+   * driver.** They had no Arrived control, so an accepted extension could
+   * never be marked done — and `End trip` refuses while one is outstanding.
+   * The owner hit it: *"i can not end the trip"*, with no way forward on the
+   * screen at all. One row for both is what makes that impossible to
+   * reintroduce.
+   */
+  const leg = (stop: TripStop, label: string) => {
+    const isNext = stop.id === nextId;
+
+    return (
+      <View key={stop.id} style={styles.row}>
+        <View style={[styles.glyph, isNext && styles.glyphNext]}>
+          {stop.status === 'done' ? (
+            <CheckIcon color={colors.textMuted} size={16} strokeWidth={2} />
+          ) : (
+            <MapPinIcon
+              color={isNext || stop.status === 'arrived' ? colors.primaryText : colors.textMuted}
+              size={16}
+              strokeWidth={2}
+            />
+          )}
+        </View>
+
+        <View style={styles.text}>
+          <Text
+            style={[styles.label, stop.status === 'done' && styles.labelDone]}
+            numberOfLines={2}
+          >
+            {label}
+          </Text>
+          {caption(stop, isNext) !== null && (
+            <Text style={styles.caption}>{caption(stop, isNext)}</Text>
+          )}
+        </View>
+
+        {isNext && canArrive && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Arrived at ${stop.label}`}
+            disabled={busy}
+            onPress={() => onArrive(stop)}
+            style={({ pressed }) => [styles.arrive, pressed && styles.arrivePressed]}
+          >
+            <Text style={styles.arriveLabel}>Arrived</Text>
+          </Pressable>
+        )}
+      </View>
+    );
+  };
 
   return (
     <View style={styles.card}>
       <Text style={styles.title}>Route</Text>
 
-      {ordered.map((stop) => {
-        const isNext = stop.id === nextId;
-
-        return (
-          <View key={stop.id} style={styles.row}>
-            <View style={[styles.glyph, isNext && styles.glyphNext]}>
-              {stop.status === 'done' ? (
-                <CheckIcon color={colors.textMuted} size={16} strokeWidth={2} />
-              ) : (
-                <MapPinIcon
-                  color={isNext || stop.status === 'arrived' ? colors.primaryText : colors.textMuted}
-                  size={16}
-                  strokeWidth={2}
-                />
-              )}
-            </View>
-
-            <View style={styles.text}>
-              <Text
-                style={[styles.label, stop.status === 'done' && styles.labelDone]}
-                numberOfLines={2}
-              >
-                {stop.sequence}. {stop.label}
-              </Text>
-              {stopCaption(stop, isNext) !== null && (
-                <Text style={styles.caption}>{stopCaption(stop, isNext)}</Text>
-              )}
-            </View>
-
-            {isNext && canArrive && (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Arrived at ${stop.label}`}
-                disabled={busy}
-                onPress={() => onArrive(stop)}
-                style={({ pressed }) => [styles.arrive, pressed && styles.arrivePressed]}
-              >
-                <Text style={styles.arriveLabel}>Arrived</Text>
-              </Pressable>
-            )}
-          </View>
-        );
-      })}
+      {ordered.map((stop) => leg(stop, `${stop.sequence}. ${stop.label}`))}
 
       <View style={styles.row}>
         <View style={styles.glyph}>
@@ -102,18 +137,31 @@ export function StopList({
           <Text style={styles.label} numberOfLines={2}>
             {destination}
           </Text>
-          <Text style={styles.caption}>Final drop-off</Text>
+          <Text style={styles.caption}>
+            {extensions.length > 0 ? 'Agreed drop-off' : 'Final drop-off'}
+          </Text>
         </View>
       </View>
+
+      {/*
+        After the drop-off, because that is where they happen — and through
+        the same row, so they carry the same Arrived control. The caption
+        above changes with them: "Final" stops being true the moment the
+        passenger has asked to be carried on.
+
+        No `sequence` in the label. It is 1-based over the whole table, so an
+        extension on a walk-in reads "1." while sitting *below* the
+        destination — a number that contradicts its own position.
+      */}
+      {extensions.map((extension) => leg(extension, extension.label))}
     </View>
   );
 }
-
 /**
  * The status, in words. Null on a later pending stop — its turn will come,
  * and a column of identical captions is noise, not information.
  */
-function stopCaption(stop: TripStop, isNext: boolean): string | null {
+function caption(stop: TripStop, isNext: boolean): string | null {
   if (stop.status === 'done') {
     return 'Visited';
   }

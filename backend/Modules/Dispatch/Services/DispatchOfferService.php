@@ -7,8 +7,10 @@ use App\Support\Observability\Trace;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Modules\Bookings\Enums\BookingStatus;
 use Modules\Bookings\Enums\OrderRequestServiceType;
 use Modules\Bookings\Enums\OrderRequestStatus;
+use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Models\OrderRequest;
 use Modules\Dispatch\Enums\DispatchOfferStatus;
 use Modules\Dispatch\Models\DispatchOffer;
@@ -59,6 +61,16 @@ class DispatchOfferService
 {
     public function __construct(
         private readonly WalkInRecommender $recommender,
+        /**
+         * The corporate side's ranking (ADR-0068).
+         *
+         * A second recommender rather than one that knows both: they answer
+         * different questions from different tables — a walk-in is ranked on
+         * where a driver is standing, a booking on what a client contracted
+         * for — and the two have never shared a line of scoring. What they
+         * share is this service, which is the right place for the seam.
+         */
+        private readonly DispatchRecommender $bookings,
         private readonly TripService $trips,
         private readonly TripStateMachine $stateMachine,
     ) {}
@@ -194,12 +206,55 @@ class DispatchOfferService
             }
 
             $request = $locked->orderRequest;
+            $booking = $locked->booking_id === null
+                ? null
+                // Locked for the same reason the walk-in's owner is re-read
+                // above: two drivers can be holding offers for one booking
+                // (a rotation wave overlapping a decline), and the loser must
+                // find the job already taken rather than write a second trip
+                // over it.
+                //
+                // **`allTenants()`, and without it this cannot work at all.**
+                // `TenantScope` fails closed: with no tenant bound it
+                // excludes every row (`whereRaw('1 = 0')`), and the request
+                // this runs in belongs to a *driver*, who is in no client.
+                // Scoped, the lookup finds nothing, the guard below reads
+                // that as "the job is gone", and every corporate accept
+                // answers 409 OFFER_NO_LONGER_OPEN. Found by accepting
+                // through the driver's own endpoint in a test rather than
+                // calling this service directly, where the dispatcher's
+                // tenant was still bound and it appeared to work.
+                //
+                // This is the opt-out `TenantScope`'s own docblock requires,
+                // and it comes with the obligation that docblock attaches:
+                // the tenant is set manually, from the booking, when the
+                // trip is written below.
+                : Booking::allTenants()->whereKey($locked->booking_id)->lockForUpdate()->first();
 
-            if ($request === null || $request->trip_id !== null) {
+            if ($request !== null && $request->trip_id !== null) {
                 // Two drivers raced and this one lost — or the desk
                 // fulfilled the order by hand while it was out. Either way
                 // the job is gone, and the app says it was taken rather than
                 // showing a failure.
+                $this->close($locked, DispatchOfferStatus::SUPERSEDED);
+
+                throw new OfferNoLongerOpenException($locked);
+            }
+
+            if ($booking !== null && ! $booking->status->canTransitionTo(BookingStatus::ASSIGNED)) {
+                // The desk cancelled it, or assigned it by hand to somebody
+                // reachable by phone, while it was ringing. Exactly the
+                // walk-in's answer above and for the same reason: the driver
+                // is told the job is gone, not that they did something wrong.
+                $this->close($locked, DispatchOfferStatus::SUPERSEDED);
+
+                throw new OfferNoLongerOpenException($locked);
+            }
+
+            if ($request === null && $booking === null) {
+                // Neither owner survives. `DispatchOffer::booted()` refuses
+                // to write a row in this shape, so reaching it means the job
+                // was deleted underneath a live offer.
                 $this->close($locked, DispatchOfferStatus::SUPERSEDED);
 
                 throw new OfferNoLongerOpenException($locked);
@@ -219,12 +274,42 @@ class DispatchOfferService
             // few seconds, this throws and the whole transaction rolls back
             // — offer included, so the driver is told plainly rather than
             // holding an accepted offer for a trip that does not exist.
-            $trip = $this->trips->create([
+            $trip = $this->trips->create($booking === null ? [
                 'customer_id' => $request->customer_id,
                 'vehicle_id' => $locked->vehicle_id,
                 'driver_id' => $locked->driver_id,
                 'origin' => $request->pickup_location ?? 'Pickup',
                 'destination' => $request->dropoff_location ?? 'As directed',
+            ] : [
+                // The desk's job (ADR-0068). The same attributes
+                // `DispatchService::assign` used to write itself, moved here
+                // because the trip is now born from the driver's answer
+                // rather than from the dispatcher's press — and written in
+                // one place either way, so a corporate trip cannot acquire a
+                // second shape depending on which door it came through.
+                //
+                // The reason travels on the offer rather than being read off
+                // the booking, and that is what makes it correct across a
+                // rotation: it belongs to the pair a *person* chose, so a
+                // later wave — filtered to contracted and main-fleet
+                // vehicles, and needing no override — carries null, which is
+                // the truth about that pair.
+                'allocation_override_reason' => $locked->allocation_override_reason,
+                'booking_id' => $booking->id,
+                // **Explicit, and it has to be.** `BelongsToTenant` fills
+                // this from the ambient `TenantContext`, which was right
+                // while the desk was the one pressing the button — the
+                // dispatcher's request carries the client. This trip is now
+                // written inside the *driver's* request, and a driver
+                // belongs to no client, so the ambient tenant is null and a
+                // corporate trip would be born owned by nobody. Taken from
+                // the booking for the same reason `operator_id` is taken
+                // from the driver: it is the source that is always right.
+                'tenant_id' => $booking->tenant_id,
+                'vehicle_id' => $locked->vehicle_id,
+                'driver_id' => $locked->driver_id,
+                'origin' => $booking->origin,
+                'destination' => $booking->destination,
             ], $actor);
 
             // The driver has already said yes; the trip must not sit in
@@ -258,7 +343,18 @@ class DispatchOfferService
             // which comes through `DispatchService::assign`, not here — still
             // stops at `accepted`, because a driver saying yes to Tuesday is
             // not a driver setting off now.
-            $trip = $this->stateMachine->transition($trip, TripStatus::DRIVER_EN_ROUTE, $actor);
+            //
+            // **Walk-ins only, and the paragraph above already said why.**
+            // "A corporate trip assigned by a dispatcher for four o'clock
+            // still stops at `accepted`, because a driver saying yes to
+            // Tuesday is not a driver setting off now." That sentence was
+            // written when such a trip could not reach this method at all;
+            // ADR-0068 brought it here, and the rule it describes did not
+            // change with the door. A desk-assigned job waits for the
+            // driver's own "On my way".
+            if ($booking === null) {
+                $trip = $this->stateMachine->transition($trip, TripStatus::DRIVER_EN_ROUTE, $actor);
+            }
 
             $locked->update([
                 'status' => DispatchOfferStatus::ACCEPTED,
@@ -277,7 +373,11 @@ class DispatchOfferService
             // what stops them being live. The rows are needed either way to
             // reach each driver's handset.
             $losers = DispatchOffer::query()
-                ->where('order_request_id', $request->id)
+                ->when(
+                    $booking === null,
+                    fn ($q) => $q->where('order_request_id', $request->id),
+                    fn ($q) => $q->where('booking_id', $booking->id),
+                )
                 ->whereKeyNot($locked->id)
                 ->live()
                 ->with('driver.user')
@@ -295,13 +395,24 @@ class DispatchOfferService
             // handed the job straight back, and start ringing again.
             $this->withdraw($losers);
 
-            $request->forceFill([
-                'trip_id' => $trip->id,
-                // The status ADR-0012 defined for "this became real-world
-                // work". It now says which work, which is the whole of
-                // ADR-0024 §4.
-                'status' => OrderRequestStatus::CONVERTED,
-            ])->save();
+            if ($booking === null) {
+                $request->forceFill([
+                    'trip_id' => $trip->id,
+                    // The status ADR-0012 defined for "this became real-world
+                    // work". It now says which work, which is the whole of
+                    // ADR-0024 §4.
+                    'status' => OrderRequestStatus::CONVERTED,
+                ])->save();
+            } else {
+                // The booking reaches `assigned` here rather than when the
+                // desk pressed the button (ADR-0068). That press now starts
+                // a search; this is the moment a vehicle and a driver are
+                // really committed to the client's work, and it is the same
+                // moment `trips` gains the row — one transaction, so the
+                // board can never show an assigned booking with no trip.
+                $booking->status = BookingStatus::ASSIGNED;
+                $booking->save();
+            }
 
             return $trip;
         }), ['offer_id' => $offer->id]);
@@ -339,6 +450,22 @@ class DispatchOfferService
 
         if ($request !== null) {
             $this->dispatch($request->refresh());
+        }
+
+        // The desk's job moves on the same way (ADR-0068). The owner's
+        // ruling on 29 August was that a declined assignment rolls to the
+        // next driver rather than going back to the board — so a decline
+        // here means exactly what it means for a walk-in, and waiting out
+        // the clock first would waste the one signal the driver gave.
+        // Unscoped for `accept()`'s reason: a decline arrives on the
+        // driver's own request, and the booking belongs to a client the
+        // driver is not in.
+        $booking = $offer->booking_id === null
+            ? null
+            : Booking::allTenants()->whereKey($offer->booking_id)->first();
+
+        if ($booking !== null) {
+            $this->dispatchBooking($booking);
         }
     }
 
@@ -402,6 +529,27 @@ class DispatchOfferService
                 // throw here strands every request behind it.
                 Log::warning('dispatch.advance_failed', [
                     'order_request_id' => $request->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        // The desk's jobs, rolled by the same tick (ADR-0068). A separate
+        // loop rather than a shared abstraction over the two owners: they
+        // differ in the one place that matters — which recommender chooses
+        // the next wave — and a `match` on an owner column inside a single
+        // loop would hide that behind a variable name.
+        $bookingIds = $lapsed->pluck('booking_id')->filter()->unique();
+
+        // `allTenants()` again, and here the caller makes it plainest of
+        // all: this runs from `dispatch:advance-offers` on the scheduler,
+        // which has no request and no tenant bound to anything.
+        foreach (Booking::allTenants()->whereIn('id', $bookingIds)->get() as $booking) {
+            try {
+                $this->dispatchBooking($booking);
+            } catch (\Throwable $e) {
+                Log::warning('dispatch.advance_failed', [
+                    'booking_id' => $booking->id,
                     'error' => $e->getMessage(),
                 ]);
             }
@@ -703,8 +851,228 @@ class DispatchOfferService
         return DispatchOffer::query()
             ->where('driver_id', $driver->id)
             ->live()
-            ->with(['orderRequest', 'vehicle'])
+            // `booking.tenant` alongside the walk-in's own owner: the offer
+            // screen names the client a corporate job is for, and without
+            // the eager load that is one query per offer on the hottest
+            // endpoint the driver app has (it polls every five seconds).
+            ->with(['orderRequest', 'booking.tenant', 'vehicle'])
             ->orderBy('expires_at')
             ->get();
+    }
+
+    /**
+     * Rings the driver the desk chose (ADR-0068).
+     *
+     * The first round of a desk assignment, and the only round anybody
+     * picked by hand: `DispatchService::assign` has already decided that
+     * this driver and this vehicle may take this booking — allocation rules,
+     * leave, availability and the service type all checked — so this does
+     * not rank anything. It puts the desk's choice in front of the driver
+     * and starts the clock.
+     *
+     * Idempotent while an offer is live, exactly as {@see dispatch()} is: a
+     * dispatcher pressing Assign twice, or two dispatchers pressing it at
+     * once, gets the offer already ringing rather than a second one on the
+     * same booking.
+     */
+    public function offerBookingToChosen(
+        Booking $booking,
+        int $vehicleId,
+        int $driverId,
+        ?string $overrideReason = null,
+    ): DispatchOffer {
+        return Trace::span('dispatch.offer_booking', 'ring the chosen driver', function () use ($booking, $vehicleId, $driverId, $overrideReason) {
+            $this->settleLapsedForBooking($booking);
+
+            $live = DispatchOffer::query()
+                ->where('booking_id', $booking->id)
+                ->live()
+                ->first();
+
+            if ($live !== null) {
+                return $live;
+            }
+
+            $round = 1 + (int) DispatchOffer::query()
+                ->where('booking_id', $booking->id)
+                ->max('round');
+
+            $now = now();
+
+            $offer = DispatchOffer::create([
+                'booking_id' => $booking->id,
+                'driver_id' => $driverId,
+                'vehicle_id' => $vehicleId,
+                'status' => DispatchOfferStatus::OFFERED,
+                'round' => $round,
+                'rank' => 1,
+                // No score, deliberately. ADR-0020 §4 wants a ranking an
+                // operator can audit; there was no ranking here, and writing
+                // a number would invent one. The reason line says what
+                // actually happened instead.
+                'score' => null,
+                'pickup_distance_km' => null,
+                'reasons' => ['Chosen by the dispatcher'],
+                // ADR-0009's audit, held here until there is a trip to put
+                // it on. The migration explains why it cannot go straight to
+                // `trips` any more.
+                'allocation_override_reason' => $overrideReason,
+                'offered_at' => $now,
+                'expires_at' => $now->copy()->addSeconds((int) config('dispatch.offer_ttl_seconds')),
+            ]);
+
+            $this->ring($offer);
+
+            return $offer;
+        }, ['booking_id' => $booking->id]);
+    }
+
+    /**
+     * Finds the next driver for a booking whose offer came back (ADR-0068).
+     *
+     * The rotation half. Where {@see offerBookingToChosen} carries out one
+     * person's decision, this makes the platform's — and it is bounded the
+     * same three ways a walk-in's search is: a live offer wins, the round
+     * cap ends it, and a driver already asked is never asked twice.
+     *
+     * When it returns empty the booking is simply unassigned again, which is
+     * where the desk left it. That is the terminus the owner's ruling
+     * implies: roll to the next driver, and when there is no next driver,
+     * the job is a human's to place.
+     *
+     * @return Collection<int, DispatchOffer>
+     */
+    public function dispatchBooking(Booking $booking): Collection
+    {
+        return Trace::span('dispatch.search_booking', 'find another driver', function () use ($booking) {
+            $this->settleLapsedForBooking($booking);
+
+            // Somebody accepted, or the desk withdrew it. Either way this
+            // booking is no longer looking.
+            if (! $booking->status->canTransitionTo(BookingStatus::ASSIGNED)) {
+                return collect();
+            }
+
+            // A self-drive rental never reaches a driver (ADR-0064 §4).
+            // Refused here as well as at the door, for the reason `search()`
+            // gives: this is a way into `dispatch_offers`, and a guard on
+            // one door is not a guard.
+            if (! $booking->service_type->dispatchesToDriver()) {
+                return collect();
+            }
+
+            $live = DispatchOffer::query()
+                ->where('booking_id', $booking->id)
+                ->live()
+                ->get();
+
+            if ($live->isNotEmpty()) {
+                return $live;
+            }
+
+            $round = (int) DispatchOffer::query()
+                ->where('booking_id', $booking->id)
+                ->max('round');
+
+            if ($round >= (int) config('dispatch.offer_max_rounds')) {
+                return collect();
+            }
+
+            return $this->offerWaveForBooking($booking, $round + 1);
+        }, ['booking_id' => $booking->id]);
+    }
+
+    /**
+     * One rotation wave for a booking.
+     *
+     * `offerableForFleet` rather than `offerableFor`: the scheduler has no
+     * actor, and the fleet running the job is on the booking. See
+     * `DispatchRecommender::forBookingInFleet` for why the two doors agree.
+     *
+     * @return Collection<int, DispatchOffer>
+     */
+    private function offerWaveForBooking(Booking $booking, int $round): Collection
+    {
+        $alreadyAsked = DispatchOffer::query()
+            ->where('booking_id', $booking->id)
+            ->pluck('driver_id')
+            ->all();
+
+        $candidates = $this->bookings
+            ->offerableForFleet($booking, $booking->operator_id)
+            ->reject(fn (DispatchSuggestion $s) => in_array($s->driver->id, $alreadyAsked, true))
+            ->take((int) config('dispatch.offer_wave_size'));
+
+        if ($candidates->isEmpty()) {
+            return collect();
+        }
+
+        $now = now();
+        $expiresAt = $now->copy()->addSeconds((int) config('dispatch.offer_ttl_seconds'));
+
+        $offers = $candidates->values()->map(fn (DispatchSuggestion $s, int $index) => DispatchOffer::create([
+            'booking_id' => $booking->id,
+            'driver_id' => $s->driver->id,
+            'vehicle_id' => $s->vehicle->id,
+            'status' => DispatchOfferStatus::OFFERED,
+            'round' => $round,
+            'rank' => $index + 1,
+            'score' => $s->score,
+            'pickup_distance_km' => $s->pickupDistanceKm,
+            'reasons' => $s->reasons,
+            'offered_at' => $now,
+            'expires_at' => $expiresAt,
+        ]));
+
+        $offers->each(fn (DispatchOffer $offer) => $this->ring($offer));
+
+        return $offers;
+    }
+
+    /**
+     * `settleLapsedFor`, for the desk's side of the table.
+     *
+     * Two methods rather than one taking a column name: a string column name
+     * threaded through a query builder is exactly the shape that survives a
+     * rename silently, on the table ADR-0024 §5's correctness rests on.
+     */
+    private function settleLapsedForBooking(Booking $booking): void
+    {
+        DispatchOffer::query()
+            ->where('booking_id', $booking->id)
+            ->lapsed()
+            ->update(['status' => DispatchOfferStatus::EXPIRED]);
+    }
+
+    /**
+     * Stops every phone still ringing for this booking.
+     *
+     * For the desk taking a job back — a cancellation, or a hand-assignment
+     * to a driver who has no app and answers the telephone instead. The
+     * status write happens here and the withdrawal after it, which is the
+     * order `withdraw()`'s docblock explains at length: a handset told to
+     * stop, re-fetching `GET /me/offers` against un-updated rows, is handed
+     * the job straight back and starts ringing again.
+     */
+    public function withdrawForBooking(Booking $booking): void
+    {
+        $live = DispatchOffer::query()
+            ->where('booking_id', $booking->id)
+            ->live()
+            ->with('driver.user')
+            ->get();
+
+        if ($live->isEmpty()) {
+            return;
+        }
+
+        DispatchOffer::query()
+            ->whereKey($live->modelKeys())
+            ->update([
+                'status' => DispatchOfferStatus::SUPERSEDED,
+                'responded_at' => now(),
+            ]);
+
+        $this->withdraw($live);
     }
 }

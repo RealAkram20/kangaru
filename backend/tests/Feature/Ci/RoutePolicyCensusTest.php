@@ -177,6 +177,11 @@ function routeCensus(): array
         'GET api/v1/customer/order-requests/{orderRequest}' => 'C',
         'GET api/v1/customer/rides/active' => 'C',
         'POST api/v1/customer/rides/active/cancellation' => 'C',
+        // C like the rest of `rides/active`: the token's own customer_id is
+        // the scope and there is no id in the request to tamper with. The
+        // passenger only ever *proposes* — the driver answers on the staff
+        // surface, which is where the policy lives.
+        'POST api/v1/customer/rides/active/extension' => 'C',
         'POST api/v1/customer/trips/{trip}/rating' => 'C',   // customer_id compared in the controller; binding fixed 2026-08-20 (F5 closed)
         'GET api/v1/customers' => 'A',
         'GET api/v1/customers/{customer}' => 'A',
@@ -386,6 +391,21 @@ function routeCensus(): array
         // `viewStopCandidates` policy and 409 gate, answering from a
         // server-side geocoder proxy instead of the register.
         'GET api/v1/trips/{trip}/place-suggestions' => 'A',
+        // The extension: a passenger travelling past the drop-off they
+        // agreed to. All four A on `TripPolicy::addStop` — the trip's own
+        // driver, or an office holding `trips.transition.any` — and all four
+        // 409 outside the journey statuses, exactly like the stop routes they
+        // sit beside. The two answers additionally 404 on anything that is
+        // not this trip's unanswered extension, in one masked sentence.
+        //
+        // The *proposing* half is not here: a passenger asks through
+        // `customer/rides/active/extension`, where the token's own
+        // `customer_id` is the authorization and there is no policy to get
+        // wrong.
+        'POST api/v1/trips/{trip}/dropoff-arrival' => 'A',
+        'POST api/v1/trips/{trip}/extensions' => 'A',
+        'POST api/v1/trips/{trip}/extensions/{extension}/acceptance' => 'A',
+        'POST api/v1/trips/{trip}/extensions/{extension}/decline' => 'A',
 
         // ── Billing ─────────────────────────────────────────────────────
         'GET api/v1/invoices' => 'A',
@@ -534,7 +554,11 @@ it('has a census row for every API route and a route for every census row', func
     // 241: the corporate client's roster (ADR-0056, 2026-08-26). Head office
     // could act as somebody at a fleet and not at a client, which is half of
     // the one sentence the ADR quotes the owner on.
-    expect(count($router))->toBe(241);
+    // 245: the extension's four routes — mark the agreed drop-off reached,
+    // add an extension, and the driver's accept/decline of one a passenger
+    // asked for. A fifth, the passenger's own proposal, sits on the customer
+    // surface and is counted with the rest of `customer/`.
+    expect(count($router))->toBe(246);
 });
 
 it('uses only the four idioms, and files sixteen routes as public', function () {
@@ -604,7 +628,9 @@ it('authenticates every route that is not filed as public, and throttles every o
     // naming who owns a fleet is the register's most consequential write.
     // 221: the corporate client's roster, authenticated — and gated harder
     // than the fleet twin, on `support.act-as` rather than `companies.view`.
-    expect($guarded)->toBe(221);
+    // 225: the extension's four routes, all authenticated. Where a trip is
+    // going and what it will cost is not a public question.
+    expect($guarded)->toBe(226);
 });
 
 it('binds the actor\'s tenant on every staff route, so TenantScope has something to scope by', function () {
@@ -658,5 +684,10 @@ it('binds the actor\'s tenant on every staff route, so TenantScope has something
     // tenant-bound like every other operators route.
     // 207: the corporate client's roster, staff-guarded and tenant-bound like
     // every other companies route.
-    expect($staff)->toBe(207);
+    // 211: the extension's four routes — the drop-off arrival that divides
+    // the journey in two, the add, and the driver's accept/decline. Staff
+    // routes and tenant-bound like the stop routes they sit beside, and for
+    // the same reason: a driver's request binds a null tenant, which is the
+    // fail-closed state, and a walk-in's stops have no tenant either.
+    expect($staff)->toBe(211);
 });

@@ -20,6 +20,10 @@ use Modules\Reports\Enums\ExportFormat;
 use Modules\Reports\Enums\ExportStatus;
 use Modules\Reports\Enums\ReportType;
 use Modules\Reports\Models\ReportExport;
+use Modules\Trips\Enums\TripStopKind;
+use Modules\Trips\Enums\TripStopSource;
+use Modules\Trips\Enums\TripStopStatus;
+use Modules\Trips\Models\TripStop;
 use Tests\Support\BillingFixtures;
 use Tests\Support\GpsFixtures;
 
@@ -149,6 +153,15 @@ function tenantBoundRoutes(): array
         'trips.distance.index' => ['GET', '/api/v1/trips/{trip}/distance'],
         'trips.distance.clear' => ['POST', '/api/v1/trips/{trip}/distance/clearance'],
         'trips.stops.store' => ['POST', '/api/v1/trips/{trip}/stops'],
+        // The extension (2026-08-28). Bound to the trip exactly as the stop
+        // route beside it, so another client naming a trip that is not
+        // theirs gets the same 404. The two answer routes additionally bind
+        // `{extension}`, but the trip is what carries the tenancy — a stop
+        // inherits its trip's tenant, and a walk-in's has none.
+        'trips.dropoff-arrival.store' => ['POST', '/api/v1/trips/{trip}/dropoff-arrival'],
+        'trips.extensions.store' => ['POST', '/api/v1/trips/{trip}/extensions'],
+        'trips.extensions.acceptance.store' => ['POST', '/api/v1/trips/{trip}/extensions/{extension}/acceptance'],
+        'trips.extensions.decline.store' => ['POST', '/api/v1/trips/{trip}/extensions/{declinableExtension}/decline'],
         'trips.transitions.store' => ['POST', '/api/v1/trips/{trip}/transitions'],
     ];
 }
@@ -233,6 +246,28 @@ function twoClientsOneOfEverything(): array
     // Trips/contract drift recorded as W1-c-F14, not this test's subject.
     GpsFixtures::straightLine($b['tenant']->id, $trip->id, 2, 100.0);
 
+    // An unanswered extension per answer route, and the reason there are
+    // two: the owning pass walks this table in order against one fixture,
+    // and *both* answers consume the row they name — accepting first would
+    // leave the decline naming a row that is no longer proposed, which
+    // 404s for a reason that has nothing to do with tenancy. The same trap
+    // this file already documents for `update` before `destroy`.
+    //
+    // Written straight to the table: the service would refuse an extension
+    // on a completed trip, and what this census proves is the binding.
+    $proposeExtension = fn (int $sequence) => TripStop::query()->create([
+        'tenant_id' => $b['tenant']->id,
+        'trip_id' => $trip->id,
+        'sequence' => $sequence,
+        'label' => 'On to Kampala Road',
+        'kind' => TripStopKind::EXTENSION,
+        'source' => TripStopSource::ADDED_BY_CLIENT,
+        'status' => TripStopStatus::PROPOSED,
+    ]);
+
+    $extension = $proposeExtension(1);
+    $declinableExtension = $proposeExtension(2);
+
     $invoice = Invoice::allTenants()->where('trip_id', $trip->id)->firstOrFail();
     $booking = Booking::factory()->forTenant($b['tenant'])->create();
     $company = Company::factory()->forTenant($b['tenant'])->create();
@@ -282,6 +317,8 @@ function twoClientsOneOfEverything(): array
             'rateCard' => $b['card']->id,
             'export' => $export->id,
             'trip' => $trip->id,
+            'extension' => $extension->id,
+            'declinableExtension' => $declinableExtension->id,
         ],
     ];
 }
@@ -307,7 +344,9 @@ it('binds a tenant-owned model on exactly the routes this file lists', function 
     // 41: `trips.place-suggestions.index`, the §10 geocoder follow-up
     // (2026-08-22). 45: `companies.accounts.index`, from 129bc6f — head
     // office acting as somebody at a corporate client (2026-08-26).
-    expect(count($expected))->toBe(45);
+    // 49: the extension's four routes (2026-08-28). The accept/decline
+    // pair binds a TripStop as well, which is tenant-owned like its trip.
+    expect(count($expected))->toBe(49);
 });
 
 it('answers 404, never 403, when another client names a tenant-owned record', function () {
@@ -342,7 +381,8 @@ it('answers 404, never 403, when another client names a tenant-owned record', fu
     }
 
     // 41: place-suggestions (2026-08-22).
-    expect($checked)->toBe(45);
+    // 49: the extension's four routes (2026-08-28).
+    expect($checked)->toBe(49);
 });
 
 it('answers something other than 404 to the owning client on every one of those routes, so the 404s above are not vacuous', function () {
@@ -380,5 +420,6 @@ it('answers something other than 404 to the owning client on every one of those 
     }
 
     // 41: place-suggestions (2026-08-22).
-    expect($checked)->toBe(45);
+    // 49: the extension's four routes (2026-08-28).
+    expect($checked)->toBe(49);
 });

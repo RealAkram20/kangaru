@@ -50,3 +50,6 @@ storage/logs/*
 storage/framework/cache/*
 storage/framework/sessions/*
 storage/framework/views/*
+
+# graphify code graph - regenerable in seconds, do not commit (added 2026-08-29)
+graphify-out/

@@ -1619,6 +1619,27 @@ paths:
         apply. 409 AUTOMATIC_DISPATCH_DISABLED when the flag is off,
         409 NO_DISPATCH_CANDIDATE when nothing is free.
       responses:
+        '202':
+          description: >
+            The driver's phone is ringing (ADR-0068). The request was
+            accepted and an offer is out; **no trip exists yet**, and one may
+            never — the driver can decline, and a decline or a ring-out rolls
+            the booking to the next candidate.
+
+
+            This is the ordinary outcome. A 201 means the opposite: the
+            driver has no app account, so nothing could ring and they were
+            assigned outright with the desk to telephone them.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DispatchOffer' }
         '201':
           $ref: '#/components/responses/TripResponse'
         default:
@@ -1627,7 +1648,8 @@ paths:
   /api/v1/bookings/{booking}/assignment:
     post:
       summary: >
-        Assigns a vehicle and driver to a booking, producing its trip.
+        Puts a booking in front of a driver — 202 and a ringing offer, or
+        201 and a trip when the driver has no app (ADR-0068).
         Every failure is a 409 with a code the client branches on —
         VEHICLE_UNAVAILABLE, DRIVER_UNAVAILABLE or INVALID_BOOKING_TRANSITION.
       parameters:
@@ -1651,6 +1673,27 @@ paths:
                     non-exclusive allocation — recorded on the trip and
                     audited (ADR-0009).
       responses:
+        '202':
+          description: >
+            The driver's phone is ringing (ADR-0068). The request was
+            accepted and an offer is out; **no trip exists yet**, and one may
+            never — the driver can decline, and a decline or a ring-out rolls
+            the booking to the next candidate.
+
+
+            This is the ordinary outcome. A 201 means the opposite: the
+            driver has no app account, so nothing could ring and they were
+            assigned outright with the desk to telephone them.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DispatchOffer' }
         '201':
           $ref: '#/components/responses/TripResponse'
         default:
@@ -3442,6 +3485,62 @@ paths:
                     anyOf:
                       - { $ref: '#/components/schemas/CustomerRide' }
                       - { enum: [null] }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/customer/rides/active/extension:
+    post:
+      summary: The passenger asks to be taken further than the agreed drop-off.
+      description: >
+        No identifier, for the same reason cancellation takes none: the ride
+        is whichever one is active for this token.
+
+
+        **A request, not an instruction.** This is the one of the three ways
+        to extend a trip that does not take effect on its own. A driver or a
+        dispatcher adding an extension is recording a decision already taken;
+        a passenger tapping in the back seat is asking, and it changes where
+        the driver is going and what they are owed. The row lands `proposed`,
+        which is not routed through, not billed, and does not hold the trip
+        open at completion, until the driver answers it through
+        `trips/{trip}/extensions/{extension}/acceptance`.
+
+
+        No `client_place_id`: that register belongs to a corporate client and
+        ADR-0045 §10 releases it to one driver on one live run, never to a
+        passenger. A pin is optional — a place the geocoder could not find is
+        still worth telling the driver — and an extension with no pin is
+        carried and billed on the trace, it simply does not steer the
+        reference route.
+
+
+        404 when there is no ride in progress to extend, in the same words the
+        cancellation uses.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [label]
+              additionalProperties: false
+              properties:
+                label: { type: string, maxLength: 160 }
+                latitude: { type: ['number', 'null'], minimum: -90, maximum: 90 }
+                longitude: { type: ['number', 'null'], minimum: -180, maximum: 180 }
+      responses:
+        '201':
+          description: The request, waiting on the driver.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/TripStop' }
         default:
           $ref: '#/components/responses/Error'
 
@@ -7050,6 +7149,173 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/trips/{trip}/dropoff-arrival:
+    post:
+      summary: Marks the agreed drop-off as reached, without ending the trip.
+      description: >
+        The boundary the extension feature hangs off. Until extensions,
+        arriving at the drop-off and finishing the trip were one act; an
+        extension separates them, so this records the first half on its own.
+
+
+        It is not a trip status: the state machine's graph is shared by every
+        kind of work the platform carries, and this is a fact about one
+        journey. Two things read it — the driver's map, which routes to the
+        agreed destination before it is set and to the accepted extensions
+        afterwards, and completion.
+
+
+        Idempotent. A driver who taps twice, or retries into a dead zone, does
+        not move the timestamp: the first arrival is the true one, and a later
+        write would change which side of the boundary an extension was added
+        on.
+
+
+        A trip that nobody extends never calls this, and nothing about it
+        changes. Only while the trip is running: anything else answers 409
+        TRIP_NOT_ACTIVE.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: The trip, with `dropoff_reached_at` set.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/Trip' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}/extensions:
+    post:
+      summary: Records that the passenger is going further than the agreed drop-off.
+      description: >
+        The same table and the same request shape as a stop, and a different
+        act: a stop is a pause on the way to a destination nobody changed and
+        is never billed, while an extension moves the end of the journey and
+        the fare follows the longer distance. The reference route is drawn
+        through accepted extensions, which is what stops the resolver capping
+        a correct trace and leaving the extra kilometres unpaid.
+
+
+        The driver or the office adds one outright — they are recording a
+        decision already taken in the car — and it is accepted on creation.
+        A passenger *proposes* one through
+        `POST /customer/rides/active/extension`, and the driver answers it.
+
+
+        Only while the trip is running: anything else answers 409
+        TRIP_NOT_ACTIVE.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                client_place_id: { type: ['integer', 'null'] }
+                label: { type: ['string', 'null'], maxLength: 160 }
+                latitude: { type: ['number', 'null'], minimum: -90, maximum: 90 }
+                longitude: { type: ['number', 'null'], minimum: -180, maximum: 180 }
+      responses:
+        '201':
+          description: The extension, appended to the journey.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/TripStop' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}/extensions/{extension}/acceptance:
+    post:
+      summary: The driver agrees to carry an extension a passenger asked for.
+      description: >
+        `acceptance` rather than `accept`, matching
+        `me/offers/{offer}/acceptance`: the driver is creating an agreement,
+        so a handset speaks one vocabulary for both things it answers.
+
+
+        Only an extension on this trip that is still `proposed` can be
+        answered — anything else is a masked 404, which covers another trip's
+        row, a plain stop, and one already answered without saying which. A
+        second tap on Accept therefore does not produce a second agreement.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+        - { name: extension, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: The extension, now pending and part of the journey.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/TripStop' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}/extensions/{extension}/decline:
+    post:
+      summary: The driver refuses an extension a passenger asked for.
+      description: >
+        Lands the row on `skipped` with a reason — §6's existing answer for
+        something that was on the run and did not happen. The row stays: a
+        passenger asking to be taken somewhere and being refused is exactly
+        what the desk gets asked about, and deleting it would leave the office
+        with nothing to look at.
+
+
+        The reason is optional. A driver declining at the roadside is not
+        filling in a form, and a required sentence would collect a
+        keyboard-mash; the service writes a plain default when none is given.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+        - { name: extension, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason: { type: ['string', 'null'], maxLength: 200 }
+      responses:
+        '200':
+          description: The extension, skipped, with the reason it carries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/TripStop' }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/trips/{trip}/stop-candidates:
     get:
       summary: The add-a-drop-off search over the client's place register (ADR-0045 §10).
@@ -9292,6 +9558,9 @@ components:
         - dropoff
         - service_type
         - reference
+        - client
+        - scheduled_for
+        - scheduled_for_label
         - pickup_distance_km
         - trip_distance_km
         - reasons
@@ -9316,6 +9585,43 @@ components:
         dropoff: { $ref: '#/components/schemas/OfferPlace' }
         service_type: { type: ['string', 'null'] }
         reference: { type: ['string', 'null'] }
+        client:
+          description: >
+            The client this job belongs to, on a desk assignment (ADR-0068).
+
+
+            Null on a walk-in, which belongs to no client — so its presence is
+            also how a client tells the two kinds of offer apart, without a
+            second flag to do it.
+
+
+            A company name, never a passenger's. ADR-0024 §7 withholds who is
+            travelling until the driver has accepted, and that applies to both
+            channels equally.
+          type: ['string', 'null']
+        scheduled_for:
+          description: >
+            When the desk booked this for, on a desk assignment. Null on a
+            walk-in, which is always now.
+
+
+            The fact that decides whether a driver can say yes: accepting
+            "now" and accepting "Tuesday at four" are different answers to
+            the same ringing phone.
+          type: ['string', 'null']
+          format: date-time
+        scheduled_for_label:
+          description: >
+            The same moment written out in the fleet's own timezone, for a
+            client that must not do the arithmetic itself.
+
+
+            The driver app renders this rather than `scheduled_for`: the
+            server runs in UTC, so an hour computed on a handset rolls at the
+            wrong moment, and Hermes ships an `Intl` whose locale data differs
+            by platform and build — two phones in one fleet would show one job
+            at two different times.
+          type: ['string', 'null']
         pickup_distance_km:
           description: >
             How far the driver is from the pickup. Straight-line, not road
@@ -9897,13 +10203,21 @@ components:
           oneOf:
             - type: 'null'
             - type: object
-              required: [id, registration_number, make, model]
+              required: [id, registration_number, make, model, category]
               additionalProperties: false
               properties:
                 id: { type: integer }
                 registration_number: { type: string }
                 make: { type: string }
                 model: { type: string }
+                category:
+                  type: ['string', 'null']
+                  description: >
+                    The vehicle's category key, so the office can ask which
+                    drivers are free on a boda without loading the fleet
+                    beside the roster. A key, not a label: categories are
+                    operator-defined and renameable, and the name is resolved
+                    from the category list.
         status: { enum: [active, suspended, inactive] }
         vehicle_id:
           description: >
@@ -10034,13 +10348,22 @@ components:
           oneOf:
             - type: 'null'
             - type: object
-              required: [id, registration_number, make, model]
+              required: [id, registration_number, make, model, category]
               additionalProperties: false
               properties:
                 id: { type: integer }
                 registration_number: { type: string }
                 make: { type: string }
                 model: { type: string }
+                category:
+                  description: >
+                    The vehicle's category **key** (ADR-0050), so the office can
+                    ask "who is free on a boda" without loading the fleet beside
+                    the roster. The key and not the office's name for it: a
+                    category is renameable, and a client filtering on a label
+                    would stop matching the moment a clerk edited one. Null for a
+                    vehicle with no category set.
+                  type: ['string', 'null']
         account:
           description: >
             The account this driver signs in with, or null if they cannot sign
@@ -10948,6 +11271,7 @@ components:
         - scheduled_for
         - is_immediate
         - status
+        - is_ringing
         - approved_by_user_id
         - approved_at
         - decision_reason
@@ -11028,6 +11352,18 @@ components:
         scheduled_for: { $ref: '#/components/schemas/NullableTimestamp' }
         is_immediate: { type: boolean }
         status: { $ref: '#/components/schemas/BookingStatus' }
+        is_ringing:
+          description: >
+            Whether a driver's phone is ringing for this booking right now
+            (ADR-0068).
+
+
+            Derived from live offers, never stored. The board needs it
+            because a desk assignment no longer takes effect at the press:
+            without it an unanswered booking looks exactly like an untouched
+            one, and the next dispatcher assigns over a phone that is already
+            ringing.
+          type: boolean
         approved_by_user_id: { type: ['integer', 'null'] }
         approved_by:
           anyOf:
@@ -12114,6 +12450,7 @@ components:
         - gps_distance_km
         - distance_variance_flagged
         - unplanned_stop_count
+        - dropoff_reached_at
         - cancellation_charge_applicable
         - started_at
         - completed_at
@@ -12180,7 +12517,19 @@ components:
           description: >
             How many stops were added mid-run rather than planned (ADR-0045
             §4). A note, not a charge — the client sees that the run deviated
-            and where; nobody bills for the deviation.
+            and where; nobody bills for the deviation. Extensions are excluded:
+            they are billed, and a counter that means "not billed" must not
+            carry them.
+        dropoff_reached_at:
+          allOf:
+            - $ref: '#/components/schemas/NullableTimestamp'
+          description: >
+            When the vehicle reached the destination the trip was agreed for.
+            Null until it does, and on every trip that simply ended there —
+            arriving and finishing were one act until extensions separated
+            them. The driver's screen reads it to know which half of the
+            journey it is rendering, and the map routes to the agreed drop-off
+            before it is set and to the accepted extensions afterwards.
         service_type:
           description: >
             What kind of job this was — `ride`, `delivery` or `self_drive`, from
@@ -12428,10 +12777,12 @@ components:
         - label
         - latitude
         - longitude
+        - kind
         - source
         - status
         - arrived_at
         - departed_at
+        - accepted_at
         - skip_reason
         - client_place_id
       additionalProperties: false
@@ -12448,17 +12799,40 @@ components:
             in a dead zone, or free text with no pin) renders as prose, never
             as a pin at 0°,0°.
         longitude: { type: ['number', 'null'] }
+        kind:
+          enum: [stop, extension]
+          description: >
+            Whether this row paused the journey or moved its end. A `stop` is
+            ADR-0045 §4's subject — recorded, shown, never billed. An
+            `extension` is the passenger travelling past the drop-off they
+            agreed to: the reference route is drawn through it and the fare
+            follows the longer distance. A client that rendered the two alike
+            would be showing a passenger a fare it could not explain.
         source:
           enum: [planned, added_by_driver, added_by_dispatch, added_by_client]
-          description: Who put this stop on the run (§4). Only added_by_driver counts toward unplanned_stop_count.
+          description: >
+            Who put this row on the run (§4). Only added_by_driver counts
+            toward unplanned_stop_count, and only when `kind` is `stop` — that
+            counter is a note rather than a charge, and an extension is a
+            charge.
         status:
-          enum: [pending, arrived, done, skipped]
+          enum: [proposed, pending, arrived, done, skipped]
           description: >
             Moved only by the transitions §2 reuses — a `waiting` carrying
             `stop_id` marks the arrival, the resume marks the departure.
-            `skipped` is §6's first-class case; no surface writes it yet.
+            `skipped` is §6's first-class case, and is also where a declined
+            extension lands, with a reason. `proposed` appears only on an
+            extension a passenger asked for and the driver has not answered:
+            it is not routed through, not billed, and does not hold the trip
+            open at completion.
         arrived_at: { $ref: '#/components/schemas/NullableTimestamp' }
         departed_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        accepted_at:
+          allOf:
+            - $ref: '#/components/schemas/NullableTimestamp'
+          description: >
+            When the driver agreed to an extension. Null on a `proposed` one
+            and on every ordinary stop.
         skip_reason: { type: ['string', 'null'] }
         client_place_id: { type: ['integer', 'null'] }
 

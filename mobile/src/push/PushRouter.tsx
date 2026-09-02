@@ -1,12 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
-import { fetchOffers } from '../api/endpoints';
 import { useAuth } from '../auth/AuthProvider';
 import { offerRingtone } from '../duty/offerRingtone';
 import { openTrip } from '../navigation/navigationRef';
-import { hideCallNotification, showCallNotification } from './callNotification';
+import { hideCallNotification } from './callNotification';
 import { loadNotifications } from './expoNotifications';
+import { dismissPlainPush, raiseOfferCall } from './offerCall';
 import { intentFrom, type PushIntent } from './routing';
 
 /**
@@ -119,74 +119,22 @@ export function PushRouter() {
     /**
      * Builds the incoming-call screen for an offer (ADR-0049 §3).
      *
-     * **Fetched, not read off the push.** `TripOfferedNotification::context()`
-     * carries three fields — the id, the window and the pickup distance — and
-     * the call screen needs the pickup address and the fare as well. Those are
-     * deliberately not in the payload: it reaches a lock screen, and ADR-0025
-     * §5 keeps that surface to what a driver needs to judge a job.
+     * **Moved to `offerCall.ts`, not deleted.** The same three steps now run
+     * from two places: here, when a push reaches a living app, and from
+     * `offerPushTask`, when the OS has started a JavaScript context for a push
+     * and there is no React tree at all. The rule they share — ask the
+     * platform, raise the call, withdraw the plain push — is subtle enough
+     * that two copies of it would drift, and the drift would only ever show on
+     * a locked handset in somebody's pocket.
      *
-     * So this asks `GET /me/offers` for the job the push named. Which is the
-     * same rule the invalidation above follows, and it buys the same thing:
-     * an offer another driver took while the phone was ringing simply is not
-     * in the answer, and no call screen is raised for it.
+     * What stays here is the one thing the shared version cannot know: whether
+     * this effect has been torn down since the network call began. A component
+     * that unmounted must not put a notification up behind itself.
      */
-    const raiseCall = async (offerId: number) => {
-      try {
-        const live = await fetchOffers(api);
-        const match = live.find((candidate) => candidate.id === offerId);
-
-        if (match !== undefined && !cancelled) {
-          await showCallNotification(match);
-
-          /*
-           * **One job, one notification.**
-           *
-           * Two arrive for every offer: the push Android posted from
-           * `offers.v2`, and the call notification just raised above. Since
-           * the ring moved onto the call channel they would now *both* ring,
-           * and a driver would be looking at two rows for one job — one that
-           * can be answered and one that cannot.
-           *
-           * So the plain push is withdrawn the moment the answerable one is
-           * up. Cancelling stops its sound with it, and the overlap is the
-           * few milliseconds between Android posting it and this listener
-           * running — the same event, so there is no waiting in between.
-           *
-           * **The push is still the floor and is still worth sending.** This
-           * only runs when the app is alive to hear the notification. On a
-           * handset whose foreground service an OEM battery manager has
-           * killed, nothing here executes, nothing is dismissed, and the push
-           * rings on its own exactly as it did before (ADR-0046 §6).
-           */
-          void dismissOffer(offerId);
-        }
-      } catch {
-        // A dead zone between the push arriving and this request. The driver
-        // keeps the ringtone and the heads-up banner that `offers.v2` already
-        // delivered — stage one, doing exactly the job ADR-0046 §6 built it
-        // for.
-      }
-    };
+    const raiseCall = (offerId: number) => raiseOfferCall(api, offerId, () => cancelled);
 
     /** Clears the notification for an offer that is over, if one is showing. */
-    const dismissOffer = async (offerId: number) => {
-      const Notifications = await loadNotifications();
-
-      // Presented notifications carry the same `data` the push arrived with,
-      // so the one to clear is found by the offer it names rather than by an
-      // identifier we would otherwise have to store across a process death.
-      const showing = (await Notifications?.getPresentedNotificationsAsync()) ?? [];
-
-      await Promise.all(
-        showing
-          .filter(
-            (item) => intentFrom(item.request.content.data).kind !== 'ignore' &&
-              (item.request.content.data as { offer_id?: unknown }).offer_id?.toString() ===
-                offerId.toString(),
-          )
-          .map((item) => Notifications?.dismissNotificationAsync(item.request.identifier)),
-      );
-    };
+    const dismissOffer = dismissPlainPush;
 
     const subscribe = async () => {
       const Notifications = await loadNotifications();

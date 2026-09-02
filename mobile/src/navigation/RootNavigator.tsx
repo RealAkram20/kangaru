@@ -664,6 +664,33 @@ function TabsNavigator() {
           title: 'Profile',
           tabBarIcon: ({ color }) => <UserIcon color={color} size={24} strokeWidth={2} />,
         }}
+        /*
+          **Pressing Profile shows Profile.** Reported by the owner: *"now when
+          I click on the profile it sends us to the notifications."*
+          Reproduced on a handset.
+
+          `Notifications` is a screen on *this* stack, but nothing reaches it
+          from Profile — the bell in `HomeScreen`'s header does
+          `getParent()?.navigate('Profile', { screen: 'Notifications' })`, and
+          the drawer row lands in the same place. That is a push onto a tab the
+          driver was never in, and React Navigation then does what it is
+          supposed to: it remembers. So the tab kept restoring an inbox the
+          driver opened from Home half an hour earlier, and the account they
+          were actually reaching for was one Back press away with nothing
+          saying so.
+
+          Only this tab needs it, and that is the tell rather than an
+          inconsistency: Profile is the only stack another tab pushes into.
+
+          `preventDefault` is deliberately not used. The default press is what
+          switches tab and what pops an already-open stack to its top, and
+          suppressing it to navigate by hand loses both.
+        */
+        listeners={({ navigation }) => ({
+          tabPress: () => {
+            navigation.navigate('Profile', { screen: 'ProfileHome' });
+          },
+        })}
       />
     </Tabs.Navigator>
   );

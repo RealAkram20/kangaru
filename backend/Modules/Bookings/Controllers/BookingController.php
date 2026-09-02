@@ -19,6 +19,7 @@ use Modules\Bookings\Requests\StoreBookingRequest;
 use Modules\Bookings\Resources\BookingResource;
 use Modules\Bookings\Services\BookingService;
 use Modules\Bookings\Services\InvalidBookingTransitionException;
+use Modules\Dispatch\Enums\DispatchOfferStatus;
 
 class BookingController extends Controller
 {
@@ -102,6 +103,21 @@ class BookingController extends Controller
                     ->whereIn('status', [BookingStatus::PENDING->value, BookingStatus::APPROVED->value])
                     ->whereIn('service_type', OrderRequestServiceType::dispatchableToDriver())
             )
+            // Is a phone ringing for this one right now (ADR-0068)?
+            //
+            // Loaded as an aggregate rather than left to `BookingResource`'s
+            // fallback, because this listing is a page of rows and the board
+            // re-fetches it every few seconds — the shape an N+1 does the
+            // most damage in.
+            //
+            // The predicate is spelled out rather than calling the model's
+            // `live()` scope: inside a relation-existence closure the builder
+            // is typed against the base Model, so a model scope is not
+            // visible to it. `retryUnoffered()` records learning the same
+            // thing.
+            ->withExists(['offers as offers_live_exists' => fn ($q) => $q
+                ->where('status', DispatchOfferStatus::OFFERED)
+                ->where('expires_at', '>', now())])
             // Soonest scheduled pickup first, immediate bookings ahead of
             // them — a dispatch queue ordered by creation time would bury
             // an urgent "now" request behind next week's airport runs.

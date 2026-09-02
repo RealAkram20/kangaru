@@ -3,7 +3,7 @@ import { useAuth } from '../auth/useAuth'
 import { apiClient } from '../lib/apiClient'
 import { apiError } from '../lib/apiError'
 import { canManageFleet } from '../lib/fleet'
-import { categoryLabel, useVehicleCategories } from '../lib/vehicleCategories'
+import { categoryLabel, categoryOptions, useVehicleCategories } from '../lib/vehicleCategories'
 import type { ApiSuccess } from '../types/api'
 import type { Vehicle } from '../types/vehicle'
 import { Badge } from '../components/core/Badge'
@@ -13,6 +13,7 @@ import { DataTable, type DataColumn } from '../components/data/DataTable'
 import { Alert } from '../components/feedback/Alert'
 import { Dialog } from '../components/feedback/Dialog'
 import { Input } from '../components/forms/Input'
+import { Select } from '../components/forms/Select'
 import { PageFill } from '../components/layout/PageFill'
 import { VehicleCategoriesPanel } from './vehicles/VehicleCategoriesPanel'
 import { VehicleFormDialog } from './vehicles/VehicleFormDialog'
@@ -52,6 +53,8 @@ export function VehiclesPage() {
   const [vehicles, setVehicles] = useState<Vehicle[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  // '' is every category, which is what a fleet office wants on open.
+  const [category, setCategory] = useState('')
   /**
    * Three states in one value: a `Vehicle` is an edit, `'new'` is a
    * registration, `null` is closed. A separate boolean beside an object is
@@ -131,14 +134,21 @@ export function VehiclesPage() {
   const filtered = useMemo(() => {
     if (!vehicles) return []
     const q = query.trim().toLowerCase()
-    if (!q) return vehicles
-    return vehicles.filter(
+
+    // Category narrows first and text narrows within it, so "every boda" is
+    // one choice rather than a word somebody has to know how to spell.
+    const byCategory =
+      category === '' ? vehicles : vehicles.filter((v) => v.category === category)
+
+    if (!q) return byCategory
+
+    return byCategory.filter(
       (v) =>
         v.registration_number.toLowerCase().includes(q) ||
         v.make.toLowerCase().includes(q) ||
         v.model.toLowerCase().includes(q),
     )
-  }, [vehicles, query])
+  }, [vehicles, query, category])
 
   const showingVehicles = surface === 'vehicles'
 
@@ -150,8 +160,13 @@ export function VehiclesPage() {
           title={showingVehicles ? 'Vehicles' : 'Vehicle categories'}
           subtitle={
             showingVehicles
-              ? vehicles
-                ? `${vehicles.length} total`
+              ? // A filtered table under "31 total" reads as a table that lost 30
+                // rows. With a filter on, the count says what is on screen and
+                // what it was cut from.
+                vehicles
+                ? filtered.length === vehicles.length
+                  ? `${vehicles.length} total`
+                  : `${filtered.length} of ${vehicles.length}`
                 : undefined
               : 'What a rate card prices a vehicle as'
           }
@@ -159,6 +174,11 @@ export function VehiclesPage() {
             <span
               style={{
                 display: 'inline-flex',
+                // Claims the header's free space rather than being sized by its
+                // own contents: the title needs a fraction of what it was given,
+                // and without this the chooser pushed the action button onto a
+                // second line on a full-width desktop.
+                flexGrow: 1,
                 gap: 'var(--space-3)',
                 alignItems: 'center',
                 // The filter gives way before the action does: on a narrow
@@ -195,12 +215,32 @@ export function VehiclesPage() {
 
               {showingVehicles && (
                 <>
+                  {/*
+                    Before the text box, because it is the coarser cut: a fleet
+                    office asks "what have we got in boda" far more often than
+                    it looks for one plate.
+                  */}
+                  <Select
+                    aria-label="Filter by category"
+                    // The empty value is a real choice here, not an unfilled
+                    // field: "All categories" is where the screen opens and
+                    // where it goes back to.
+                    placeholder="All categories"
+                    options={categoryOptions(categories ?? [], category)}
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                    style={{ width: 'min(190px, 100%)' }}
+                  />
                   <Input
                     iconLeft="search"
                     placeholder="Filter by reg. number, make or model"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    style={{ width: 'min(260px, 100%)' }}
+                    // Takes what is left after the chooser and the action, rather
+                    // than a fixed width that pushed "New driver" onto a second
+                    // line. `minWidth: 0` because a flex item's default floor is
+                    // its content.
+                    style={{ flex: '1 1 150px', minWidth: 0, maxWidth: 260 }}
                   />
                   {canManage && (
                     <Button iconLeft="plus" onClick={() => setEditing('new')}>

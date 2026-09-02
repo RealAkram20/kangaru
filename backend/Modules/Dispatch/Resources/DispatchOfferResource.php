@@ -4,6 +4,7 @@ namespace Modules\Dispatch\Resources;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Modules\Administration\Services\SettingsService;
 use Modules\Billing\Pricing\RateCardNotConfiguredException;
 use Modules\Billing\Services\WalkInFareService;
 use Modules\Bookings\Models\OrderRequest;
@@ -56,6 +57,24 @@ class DispatchOfferResource extends JsonResource
     {
         $order = $this->orderRequest;
 
+        /*
+         * The desk's side of the same table (ADR-0068).
+         *
+         * Every field below that reads `$order?->` now has a booking to fall
+         * back on, and the ones that cannot are null rather than absent —
+         * the driver app renders one shape and hides what is missing
+         * (`docs/screen-rules.md` §1: a figure the app could not produce is
+         * an em dash, not a zero).
+         *
+         * What a corporate offer has that a walk-in does not: a client, and
+         * a time it was booked for. What it lacks: a fare estimate, a
+         * drop-off coordinate, and — before the driver accepts — anything
+         * identifying the passenger, which is ADR-0024 §7 and applies to
+         * both channels equally. A company name identifies no passenger and
+         * is the one fact a driver most needs to decide.
+         */
+        $booking = $this->booking;
+
         return [
             'id' => $this->id,
             'status' => $this->status->value,
@@ -71,17 +90,52 @@ class DispatchOfferResource extends JsonResource
             'expires_in_seconds' => max(0, (int) now()->diffInSeconds($this->expires_at, false)),
 
             'pickup' => [
-                'label' => $order?->pickup_location,
-                'latitude' => $order?->pickup_latitude,
-                'longitude' => $order?->pickup_longitude,
+                'label' => $order?->pickup_location ?? $booking?->origin,
+                'latitude' => $order?->pickup_latitude ?? $booking?->origin_latitude,
+                'longitude' => $order?->pickup_longitude ?? $booking?->origin_longitude,
             ],
             'dropoff' => [
-                'label' => $order?->dropoff_location,
+                'label' => $order?->dropoff_location ?? $booking?->destination,
+                // A booking stores no drop-off coordinate — only the far
+                // end's name — so this stays null rather than being
+                // geocoded here. Guessing a point from a place name on the
+                // way to a driver's screen is the kind of invented number
+                // ADR-0020 refuses.
                 'latitude' => $order?->dropoff_latitude,
                 'longitude' => $order?->dropoff_longitude,
             ],
-            'service_type' => $order?->service_type->value,
-            'reference' => $order?->reference,
+            'service_type' => $order?->service_type->value ?? $booking?->service_type->value,
+
+            // A walk-in's own reference, or the booking number the desk and
+            // the client both already say out loud on the telephone.
+            'reference' => $order?->reference ?? ($booking === null ? null : '#'.$booking->id),
+
+            // Corporate only, null on a walk-in. The client is who the
+            // driver is working for this hour, and `scheduled_for` is the
+            // difference between "now" and "Tuesday at four" — the single
+            // fact that decides whether a driver can say yes.
+            'client' => $booking?->tenant?->name,
+            'scheduled_for' => $booking?->scheduled_for?->toIso8601String(),
+
+            /*
+             * The same moment, already written out in the fleet's own
+             * timezone — and the driver app renders **this**, not the
+             * timestamp above.
+             *
+             * `mobile/src/trips/history.ts` records why in as many words:
+             * `config/app.php` is UTC, so an hour computed on the handset
+             * rolls at the wrong moment, and Hermes ships an `Intl` whose
+             * locale data differs by platform and build, so two phones in
+             * one fleet render one job at two different times. The server is
+             * the only place that can answer this once.
+             *
+             * The timestamp stays for a client that wants to do its own
+             * arithmetic — a countdown, a sort — which is a different job
+             * from displaying it.
+             */
+            'scheduled_for_label' => $booking?->scheduled_for
+                ?->setTimezone($this->fleetTimezone())
+                ->format('D j M, h:i A'),
 
             // How far the driver is from the pickup, and the sentences
             // behind the ranking. Served because ADR-0020 §4 requires a
@@ -117,6 +171,21 @@ class DispatchOfferResource extends JsonResource
             'vehicle_id' => $this->vehicle_id,
             'vehicle_registration' => $this->whenLoaded('vehicle', fn () => $this->vehicle?->registration_number),
         ];
+    }
+
+    /**
+     * Where the fleet's day is measured (ADR-0068).
+     *
+     * `settings.regional.timezone`, administrator-settable, defaulting to
+     * Kampala — the same source and the same default
+     * `DriverEarningsService::timezone()` uses, deliberately, so a driver's
+     * offer and a driver's earnings cannot disagree about what day it is.
+     */
+    private function fleetTimezone(): string
+    {
+        $configured = app(SettingsService::class)->get('regional', 'timezone');
+
+        return is_string($configured) && $configured !== '' ? $configured : 'Africa/Kampala';
     }
 
     /**

@@ -175,7 +175,18 @@ it('opens the inbox on the Profile stack when the bell is tapped', async () => {
   // removed — and not a bare `navigate('Notifications')` either, which would
   // look right in a diff and throw on a handset: the route is not on this
   // stack.
-  expect(parentNavigate).toHaveBeenCalledWith('Profile', { screen: 'Notifications' });
+  //
+  // **`initial: false` is asserted, not incidental** — the same guard
+  // `DrawerContent.test.tsx` puts on its own three calls. Without it the
+  // Profile stack is created as `["Notifications"]` at index 0, with
+  // `ProfileHome` never in it: nothing to pop, so the Profile tab appears
+  // dead and Android's back gesture leaves the app. The drawer was fixed for
+  // this and **this call site was missed**, which is how it returned as the
+  // owner's "we are stuck, sometimes".
+  expect(parentNavigate).toHaveBeenCalledWith('Profile', {
+    screen: 'Notifications',
+    initial: false,
+  });
   expect(navigate).not.toHaveBeenCalled();
 });
 

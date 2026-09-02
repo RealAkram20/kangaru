@@ -1,3 +1,5 @@
+import type { NavigatorScreenParams } from '@react-navigation/native';
+
 import type { TripStatus } from '../api/types';
 
 /**
@@ -317,5 +319,16 @@ export type RootTabParams = {
   Home: undefined;
   Earnings: undefined;
   Wallet: undefined;
-  Profile: undefined;
+  /**
+   * The only tab another tab pushes into, and the only one that needs to say
+   * so in its type.
+   *
+   * `HomeScreen`'s bell and the drawer's Notifications row both call
+   * `navigate('Profile', { screen: 'Notifications' })` — a screen on this
+   * stack that nothing inside Profile reaches. Typed `undefined`, that call
+   * was unchecked, and the tab button could not be written to land anywhere
+   * in particular. The result on a handset: pressing Profile restored an
+   * inbox the driver had opened from Home half an hour before.
+   */
+  Profile: NavigatorScreenParams<ProfileStackParams>;
 };

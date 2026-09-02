@@ -42,6 +42,21 @@ class SendDriverTripAssignedNotification
             return;
         }
 
+        // **A driver who was asked is not told (ADR-0068).**
+        //
+        // Since the desk's assignment rings, a booking-backed trip is
+        // usually born from the driver's own Accept — and announcing "New
+        // trip assigned to you" a second later is the fatigue AGENTS.md
+        // warns about, in the form the walk-in guard above already refuses.
+        //
+        // Keyed on the offers rather than on "does this driver have an
+        // account", although today those two agree: the agreement is a
+        // property of the current call sites, and this class has already
+        // been wrong once about what could reach it.
+        if ($event->trip->booking->offers()->exists()) {
+            return;
+        }
+
         Notification::send($driverUser, DriverTripAssignedNotification::for($event->trip));
     }
 }

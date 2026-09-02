@@ -166,6 +166,224 @@ file: **re-read before acting, and say what you saw rather than fixing it.**
 
 ---
 
+### 2026-08-28 — The extension: a passenger who travels past the agreed drop-off
+
+**Status:** done. 1886 backend tests, 1225 mobile tests, `tsc --noEmit`,
+eslint, Pint, PHPStan level 8. Seven guards proved by mutation and restored
+(0 markers left). **Rendered on a handset against the local API**, which is
+where all three of the bugs below were found — none had a failing test.
+
+Verified end to end on the emulator: a passenger's request reaches the driver
+as a card naming the place; Accept round-trips and stamps `accepted_at`; the
+card clears; the route reads *Mukono Town (Agreed drop-off) -> Kabalagala
+(Going on)*; `Arrived at drop-off` hands the journey over, re-frames the map
+and removes itself; and End trip is refused, on the screen, naming the leg
+still to run.
+**Source:** owner's request — *"mark it a drop off (Before) then extension
+(after the first designation)"*. Backend decisions were put to the owner and
+answered: one trip with a longer distance (not a second fare), all three
+actors may add, any time before completion, all trip kinds, extensions live in
+`trip_stops`, and a passenger's request needs the driver's consent.
+
+**No trip status is claimed.** The ownership table is unchanged. This rides on
+`TripInProgressScreen`'s three statuses, whose entry above is marked complete —
+my diff there is an insertion, not a rewrite.
+
+**What already existed and is being built on, not rebuilt:** `TripStop` and
+the whole ADR-0045 stop machinery, `AddDropoffScreen` and its register +
+geocoder search, `addTripStop`, `Screen` / `Notice` / `Button` / `IconField`,
+`DetailRow` / `RouteRail`, `useTrip`, `driverActions`, the outbox.
+
+**Files owned — do not edit:**
+
+- `mobile/src/trips/extensions.ts` + `extensions.test.ts`
+- `mobile/src/trips/ExtensionRequestCard.tsx`
+- backend: `Modules/Trips/Controllers/TripExtensionController.php`,
+  `TripDropoffArrivalController.php`, `Enums/TripStopKind.php`,
+  `Requests/DeclineTripExtensionRequest.php`,
+  `Modules/Customers/Requests/StoreRideExtensionRequest.php`,
+  `Modules/Notifications/Notifications/TripExtensionRequestedNotification.php`,
+  `tests/Feature/Trips/TripExtensionTest.php`, and the
+  `2026_08_28_090000_a_stop_can_be_an_extension_of_the_journey` migration
+
+**Files shared — the exact edits, none of them a rewrite:**
+
+- `mobile/src/screens/TripInProgressScreen.tsx` — two insertions: the pending
+  request card near the top, and an `Arrived at drop-off` button above
+  `End trip`. No existing control changes behaviour.
+- `mobile/src/ui/components.tsx` — **added `SegmentedTabs`**, purely additive.
+- `mobile/src/screens/AddDropoffScreen.tsx` — a kind toggle above the search,
+  and the submit path chooses
+  `addTripExtension` over `addTripStop` on a walk-in. **This changes what an
+  existing button means and it was put to the owner**, who chose it: on a
+  walk-in the place a passenger asks for mid-run is an extension and is
+  billed. Corporate circuits still create stops. See the decision below.
+- `mobile/src/api/endpoints.ts` — three added functions.
+- `mobile/src/api/types.ts` — `TripStop.kind`, `TripStop.accepted_at`,
+  `TripStop.status` gains `proposed`, `Trip.dropoff_reached_at`.
+- `mobile/src/trips/StopList.tsx` — one added `extensions` prop, rendered
+  after the destination row. No existing behaviour changes.
+- `mobile/src/screens/TripInProgressScreen.test.tsx` — mocks for the two
+  direct-posting acts (42 tests failed on `useAuth` alone), two label
+  assertions updated with the reason, and six added cases.
+- `backend/app/Support/Auth/ClientScope.php` — four route names.
+- `backend/tests/Feature/Auth/TokenScopeTest.php` and
+  `Tenancy/DriverOwnershipIsolationTest.php` — one case and one pinned count.
+- `mobile/src/trips/queries.ts` — **not touched in the end.**
+- backend shared files: `TripStopService`, `TripStop`, `TripStopSource`,
+  `TripStopStatus`, `RouteReference`, `TripRouteController`,
+  `TransitionTripRequest`, `Trip`, `TripResource`, `TripStopResource`,
+  `NotificationType`, `CustomerRideController`, both route files, the two CI
+  census tests, `openapi.yaml`, and ADR-0045 (amended — see below).
+
+**Decisions taken, with the rule behind each:**
+
+- **ADR-0045 §4 is amended, not quietly contradicted.** Its "recorded and
+  shown, never billed and never hidden" was true of every row in `trip_stops`
+  until now. The owner chose to keep extensions in that table, so the ADR and
+  `TripStopSource`'s docblock now say the promise covers `kind = stop`.
+- **`kind` is a new column, not a fifth `source`.** `source` answers *who*,
+  and all three actors can add an extension; folding them together would have
+  lost the answer the consent rule depends on.
+- **`unplanned_stop_count` excludes extensions.** That counter means
+  "deviated and nobody billed for it"; an extension is billed.
+- **The reference route runs through accepted extensions.** Without it
+  `ROUTE_CAPPED` caps the billed distance at the journey the passenger did not
+  take — driven and unpaid, plus a variance for the office to investigate.
+  This is the single load-bearing line of the whole feature.
+- **A passenger's request lands `proposed` and the driver answers it.** It
+  changes where a driver is going and what they are owed.
+- **It is not dressed as a job offer.** No `offers.call.v2`, no ringtone, and
+  the payload says `extension_id` rather than `offer_id` — the app reads
+  `offer_id` as "raise the incoming-call screen", and a passenger asking a
+  question out loud must not take over a locked phone.
+- **A proposal does not hold the trip open at completion.** A back-seat tap
+  must not be able to prevent a driver finishing their shift.
+- **The driver chooses stop or extension on the search screen** (owner,
+  mid-build). My first build inferred it from the trip kind and the owner
+  asked for a toggle instead, which is the better decision: the inference is
+  right almost every time and cannot be *corrected* by the one person who
+  knows. A walk-in passenger sometimes asks the car to wait somewhere on the
+  way; a corporate driver sometimes genuinely carries somebody past the
+  contracted route. Getting it wrong is money in both directions.
+  `addsExtension` survives as the **default**, so the common case is still one
+  tap. `SegmentedTabs` was added to `ui/components.tsx` for it — the second
+  occurrence of `EarningsScreen`'s Day/Week/Month shape, which AGENTS.md says
+  becomes the component. `PeriodTabs` is deliberately **not** refactored onto
+  it: that is another agent's screen and a rewrite is not a minimal diff.
+- **The extension outranks the drop-off mark on the screen** (owner, mid-build:
+  *"extensions are more important than drop-off"*). Extending is the act with
+  money and a waiting passenger behind it; marking the drop-off is bookkeeping
+  that orders the journey. So the extend control sits above `Arrived at
+  drop-off`, and nothing about extending is gated behind marking.
+
+**Three bugs that only rendering found, and none of them had a failing test.**
+This is the entry's most useful part: all three passed 1,200 mobile tests,
+1,885 backend tests, tsc, eslint, Pint and PHPStan, and all three would have
+shipped.
+
+1. **Every extension route was 403 to the driver app.** `ClientScope` is a
+   fail-closed allow-list (ADR-0022) and the four routes were not on it, so
+   the first press of Accept on a handset answered *"This app is not allowed
+   to use that part of the API"* — with a passenger in the car waiting. No
+   backend test can see it: they mint an unscoped console token, which is
+   what the comment above that array already says, and this is the **eighth**
+   time. `TokenScopeTest` now asks `ClientScope` by name for all four.
+2. **The journey was ordered backwards.** An extension sorts into
+   `trip_stops` by `sequence` like a stop, so the route list, the "next
+   drop-off" row *and the map pin* all aimed at the extension while the
+   destination the passenger hired the car for was still ahead. The backend
+   already ordered it correctly, so handset and server disagreed. `nextPlace`
+   holds the server's boundary; `StopList` gained an `extensions` prop that
+   renders after the destination row, whose caption becomes "Agreed drop-off".
+3. **End trip reported success over a refusal.** The office refuses a
+   completion while an agreed extension is still to run — but this screen
+   queues through the outbox and navigates on the *queue* succeeding, so the
+   driver saw **"Great job! Ride completed"** with the passenger still
+   aboard, and the 422 arrived later as a line in Updates & sync. `end()` now
+   refuses before queueing and names the place. This is the same failure the
+   file's own Pause/Resume comment describes from go-live day.
+
+**The sync banner is silenced — owner's decision, 2026-08-28, and it is a
+safety net so it is written down here rather than buried in a diff.**
+
+The owner saw the red *"1 item needs your attention"* strip and asked for it
+quiet. What they were actually looking at was the corpse of bug 3 above — a
+parked End-trip write from before the guard existed — so the immediate cause
+is gone either way. They were shown the alternatives (clear the stuck item;
+keep it only for writes worth money; silence it entirely) and the cost of the
+last one, and chose it.
+
+What that costs, stated so nobody rediscovers it as a mystery:
+
+- **AGENTS.md's "show sync state clearly" is no longer met by any screen.**
+- A driver whose completion never reached the office has **no on-screen sign
+  of it**. `SyncBanner`'s removed docblock said why that matters: a queue that
+  hides itself is indistinguishable from one that has lost the work, and a
+  driver who cannot tell will re-enter the reading on paper.
+
+**Only the strip went.** `SyncProvider` still queues, drains, parks and
+reports a parked item to Sentry, and Profile → Updates & sync still lists
+every held and parked item with a Discard on each. Five tests that pinned the
+removed wording were deleted rather than left asserting nothing; two replaced
+them — that it stays quiet through *every* queue state, and that the storage
+failure still speaks.
+
+**The storage failure was kept, and that was my judgement rather than an
+instruction.** It is not a sync status: when the phone's own storage will not
+open every trip button is about to refuse, and without that sentence it reads
+as a broken app. Flagged to the owner as a one-line change if it should go too.
+
+**The Profile tab bug, reported mid-session and fixed: it is the
+`initial: false` one, back through a call site the first fix missed.**
+
+Owner: *"we are stuck, sometimes"* and *"now when I click on the profile it
+sends us to the notifications."* Two faces of one defect. `HomeScreen`'s bell
+did `getParent()?.navigate('Profile', { screen: 'Notifications' })` with no
+`initial: false`, so the Profile stack was created as `["Notifications"]` at
+index 0 with `ProfileHome` never in it — nothing to pop, so the tab looked
+dead and Android's back gesture left the app. *Sometimes*, because it only
+bites when the driver has not opened Profile since launch.
+
+**`DrawerContent.go` was fixed for exactly this** and `nestedNavigate.test.tsx`
+documents the mechanism; the bell was simply never updated. Swept the tree
+for the same shape and found a third: `TripDetailScreen`'s Help pill
+(`{ screen: 'Support' }`). Both now carry the flag and both assert it, the way
+`DrawerContent.test.tsx` already did.
+
+Separately, the Profile **tab button** now lands on `ProfileHome`. `initial:
+false` fixes the stack; it does not stop the tab restoring the inbox on top of
+it, which is what the owner actually saw.
+
+**A test of mine passed against a deliberately broken fix, and that is the
+part worth reading.** The first version pressed Profile while Profile was
+already focused — and re-pressing a focused tab pops its stack all by itself,
+so removing the listener changed nothing. Caught by mutating the listener
+away. Rewritten to walk the reported path (on Home, press Profile), it now
+fails without the fix. A second assertion in it claimed the screen above is
+kept behind Profile; it is popped. Corrected rather than left as a wrong
+explanation in the file.
+
+**Not built, deliberately:**
+
+- **The console and the customer ride screen.** Dispatcher-adds and the
+  passenger's own propose/see-the-answer UI are unbuilt; the API for both
+  exists and is documented.
+- **What an extension means against a corporate rate card.** The mechanism is
+  trip-kind agnostic and distance is distance, but whether a contracted trip
+  should extend at the card's per-km, at another rate, or need approval is a
+  commercial decision, not a code one.
+- **No way to skip an extension the driver cannot reach.** `skipped` exists
+  and the server writes it on a decline, but no surface offers it for an
+  *accepted* extension — so a road closure means ringing the office. ADR-0045
+  §6 already notes no surface writes `skipped`; this widens that gap rather
+  than closing it, and it is the one I would build next.
+- **No auto-marking of the drop-off.** Adding an extension does not stamp
+  `dropoff_reached_at`; a driver may be told about the next place while still
+  short of the first one.
+
+---
+
 ### Template for the next entry
 
 ```
@@ -20860,3 +21078,437 @@ Needs the right project's DSN from the owner; not something to guess at.
 The third issue is real and live: `NativeDatabase.prepareAsync` in the driver
 app — expo-sqlite, which backs the GPS ping buffer and the offline outbox.
 Untouched here.
+
+## 2026-08-29 — The office can ask a fleet by category, and a booking says what became of it
+
+Two owner asks, one session: *"let use have our Boda driver be part of shanitah
+and can work on the coporate clients"*, and *"we need to make sure we have a
+filter for the drivers and Vehicle so that we can see vehicles by categories so
+we can know which driver are availble per category"*.
+
+### The boda half needed no code
+
+Driver 15 and vehicle 19 (UDD 005D) were **already** Shanitah's — operator 1.
+The blocker was a contract, not a roster: automatic dispatch commits a
+*contracted* vehicle or nothing (ADR-0009), and the boda was contracted to
+nobody. Non-exclusive allocations for tenants 1, 2 and 4 (`POST /allocations`,
+rows 5–7) fixed it, and Acme NGO booking 98 auto-assigned to the boda as trip
+110 — a client that had zero contracted vehicles an hour earlier. **Data, not a
+deploy**; a fresh seed loses it.
+
+### Files I own
+
+- `frontend/src/pages/VehiclesPage.test.tsx` — new; the register had none.
+- `backend/tests/Feature/Drivers/DriverVehicleCategoryTest.php` — new.
+
+### Shared files, each with the exact edit named
+
+- `backend/Modules/Drivers/Resources/DriverResource.php` — `category` added to
+  the flat vehicle summary, allow-listed beside the other four keys rather than
+  spread from the model (`docs/screen-rules.md` §2).
+- `docs/api/openapi.yaml` — the same field on **both** driver vehicle summaries.
+  `CandidateDriver` spreads `DriverResource`, so it drifts with it; the
+  contract test only caught the `Driver` one, and the other was luck.
+- `frontend/src/types/driver.ts` — `DriverVehicle.category`.
+- `frontend/src/pages/VehiclesPage.tsx`, `DriversPage.tsx` — a category chooser
+  before each search box, and the row count now reads "1 of 20" under a filter.
+- `frontend/src/pages/DispatchPage.tsx` — the vehicle picker printed the stored
+  key (`van`) at a dispatcher. One `useVehicleCategories()` at the board,
+  passed down; `categoryLabel` in both option builders.
+- `frontend/src/dispatch/BookingDispatchNotice.tsx` — see below.
+- `frontend/src/pages/BookingsPage.test.tsx`, `DispatchPage.test.tsx` — mocks
+  and new cases.
+
+### The defect the tests found, which the screen would have found later
+
+`BookingDispatchNotice` POSTed `/bookings/{id}/auto-assignment` **twice**. The
+effect had a `stopped` flag, which stops a *reply writing state* and does
+nothing about a request already sent — and StrictMode double-mounts every
+component in development, which is exactly what the test harness does. A second
+auto-assignment is a second offer, to a second driver, for one job. Guarded
+with a ref keyed on the booking, and the ref — not a flag — is now also what
+decides whether a reply may speak, because a `stopped` flag plus the ref would
+leave the panel on "Finding a driver" for ever after the remount.
+
+Ten existing `expect(post).toHaveBeenCalledTimes(1)` assertions were counting
+every POST on the page; they now count the ones to `/bookings`, which is the
+question they were always asking.
+
+### Proved by mutation, restored after each
+
+Eight guards, each broken deliberately and watched to fail: category filter
+inert (vehicles, drivers), text filter or-ed beside the category instead of
+within it (both), a driver with no vehicle matching every category, the row
+and the dispatch picker printing the stored key, and the count ignoring the
+filter. Two of these passed on the first attempt at the fixtures — a text term
+that only matched inside the category could not tell "narrowed" from "or-ed",
+so both fixtures now put the same word on either side of the category line.
+
+### Verified in a browser
+
+Chrome via playwright-core, signed in as `admin@shanitah.test`: both choosers
+list the nine office categories, "Boda" cuts 20 vehicles to 1 and 19 drivers to
+1, and the driver row reads `UDD 005D  Boda`.
+
+### Deliberately not built
+
+- **"Available" on the drivers list still means the account, not the shift.**
+  Real availability is the dispatch board's; the roster has no on-duty column
+  and inventing one from `status` would be a lie the screen cannot back.
+- **No category filter on the dispatch board's candidate pickers.** They are
+  per-booking, server-scoped and already annotated; the owner's ask was the two
+  listings.
+- Server-side filtering. The fleet is ~20 rows and both lists are already
+  loaded whole; a request per keystroke would cost the operator more than it
+  saves.
+
+### Not mine, in the tree while I worked
+
+`SystemSettingsPage.test.tsx` times out under full-suite load and passes alone.
+Untouched by me; flaky, not a regression.
+
+## 2026-08-29 — Shanitah is the main fleet, and a vehicle goes to its own driver
+
+The owner hit `NO_DISPATCH_CANDIDATE` on a Centenary Bank booking and read it,
+reasonably, as a permissions problem: *"i thought you have added the driver and
+this driver can server this particular fleet."* They could. Three separate
+things were wrong, and the message named none of them.
+
+### What was actually wrong
+
+**All five of Centenary Bank's contracted vehicles were held by open trips.**
+Three since **17 August** (seed trips 3, 4, 9 — flagged in an earlier entry and
+left alone then), one from a dispatch the day before that nobody answered
+(#109), and the boda from the contract proof (#110, `passenger_onboard`). The
+owner asked for all five to be closed; they are cancelled. Offerable candidates
+for booking 99 went **0 → 18**.
+
+### The rule that changed (ADR-0067)
+
+*"shanitah is the main fleet that has got all the access to both walking and
+Coporate, the other just need to request another contract."*
+
+`operators.is_main_fleet`, set on row 1 by migration, read by
+`DispatchRecommender::offerableFor` beside `contracted`. **Eligibility widened;
+the ranking did not** — the 1000-point contract bonus is untouched, so a paying
+client is still served from its own vehicles first. Every other fleet still
+contracts. The three allocations written for the boda on 28 August are kept by
+the owner's decision; they now decide order rather than admission.
+
+### The defect underneath it
+
+`forBooking` paired vehicles to drivers **by position** — vehicle *i* with
+driver *i*. For a depot handing out cars that is fine and is what it was
+written for. For a fleet where drivers keep their vehicles it is a coin toss:
+it could offer the boda to a van driver and the van to the boda rider, and
+`assign()` would commit it, because the endpoint only asks whether each is
+free. Nothing 409s and nothing looks wrong on the board.
+
+Now the driver holding a vehicle gets it; round-robin survives for the ones
+nobody holds. One edge case cost a second pass: keying the pool on *has a
+`vehicle_id`* rather than *holds one of today's* stranded a rider whose own boda
+was in the workshop — in neither group, able to drive nothing. Caught by
+reading the code back, not by a test, and now has one.
+
+### The message
+
+`NO_DISPATCH_CANDIDATE` covered three conditions with three different fixes —
+wait, write a contract, book a bigger vehicle — in one sentence naming none. It
+now distinguishes "nothing is free" from "N vehicles are free and none is
+contracted to this client", with the fix in the sentence.
+
+### Files I own
+
+- `backend/database/migrations/2026_08_29_100000_shanitah_is_the_main_fleet_and_needs_no_contract.php`
+- `backend/tests/Feature/Dispatch/MainFleetDispatchTest.php`
+- `backend/tests/Feature/Dispatch/VehicleGoesToItsOwnDriverTest.php`
+- `docs/adr/0067-the-main-fleet-needs-no-contract.md`
+
+### Shared files, each with the exact edit named
+
+- `app/Models/Operator.php` — `is_main_fleet` cast + `isMainFleet()`.
+  **Deliberately not fillable**: a fleet that could set it on itself would be
+  granting itself the house's standing.
+- `Modules/Dispatch/Services/DispatchSuggestion.php` — `$mainFleet`.
+- `Modules/Dispatch/Services/DispatchRecommender.php` — the filter and the
+  pairing.
+- `Modules/Dispatch/Controllers/DispatchController.php` — ranks once, filters
+  inline so the refusal can say which refusal it is. Its docblock said
+  "`offerableFor`, not `bestFor`" and would have been a lie; rewritten.
+- `tests/Feature/Dispatch/AutomaticDispatchTest.php` — three tests asserted the
+  old rule. **Rewritten, not deleted**: one now asserts the contracted vehicle
+  comes *first* (the half that must not move), one asserts the house is offered
+  when nothing is contracted, and the 409 test uses "no driver at all" as its
+  cause. A fourth was added for the contract wording.
+- `docs/adr/0009-vehicle-allocation-and-dispatch.md` — "Amended by" header.
+
+### Walk-ins were not touched, and that was checked before anything changed
+
+The owner asked for it explicitly. Walk-in dispatch runs through
+`WalkInRecommender` and `DispatchOfferService`; the change is entirely in
+`DispatchRecommender`, whose only caller is `DispatchController`. The two share
+no code — only comments referring to each other. The whole backend suite passes.
+
+### Proved by mutation, restored after each
+
+Eleven: main fleet ineligible (the old rule), every fleet eligible (the leak),
+contract bonus removed, holder ignored, a paired driver back in the pool, an
+undrivable vehicle offered anyway, a holder not needing one of today's vehicles
+(the stranded rider), and both refusal messages pinned in both directions.
+
+### Deliberately not built
+
+- **No console surface for `is_main_fleet`.** Set by migration, changed by
+  somebody looking at the database on purpose. Right while there is one house;
+  wrong as soon as a deployment has to choose its own. In ADR-0067's
+  Consequences.
+- **The odometer report was not reproduced.** The owner reported the driver app
+  still asking with the setting off. Local *and* live `/public/settings` both
+  answer `odometer_enabled: false`, and `driverActions` drops the requirement
+  correctly — so the app is reading its own default. `useOdometerEnabled`
+  returns `data ?? true` and is backed by a persisted cache, so a handset that
+  has not refetched keeps asking. Not changed: the default takes the cheaper
+  mistake on purpose (wrongly off strands a trip behind a 422 read hours later;
+  wrongly on costs a tap). Waiting on which screen.
+- **`owns_vehicle` left alone.** The owner's answer was that ownership is not
+  the point — the vehicles are the fleet's, already handed over, and dispatch
+  should not be assigning them at order time. That is what the pairing change
+  addresses; the flag stays as it is.
+
+## 2026-08-29 — A desk assignment rings the driver, the same as a walk-in
+
+**In progress.** Claimed after the backend was already under way, which is the
+wrong order and is recorded as such — the entry below is a claim from here on,
+not a plan written in advance.
+
+The owner dispatched a delivery from the admin and watched it reach the driver
+as nothing at all: *"the order request did not come in the way it should, the
+notification did not go through, not even the notification page, we just went
+straight to the trip details."* Then, asked what it should do instead: *"we
+need the same experience throughout… the same experience we have for the
+walk-in."*
+
+### What was actually wrong
+
+Nothing was broken. `dispatch_offers` had an `order_request_id` and **no
+`booking_id`**, so a corporate booking was structurally incapable of producing
+an offer. The ring, the full-screen Accept/Decline and the rotation had never
+been available to the desk's own work — a desk assignment created the trip
+outright and sent one deliberately quiet notification
+(`DriverTripAssignedNotification`: no `channelId`, no sound, therefore
+Android's default channel at ordinary importance).
+
+Two owner rulings settle the shape (asked, answered 29 Aug):
+
+- a decline or a ring-out **rolls to the next driver**, not back to the desk;
+- the phone rings **the moment the desk assigns**, not before pickup time.
+
+### Files I own
+
+- `backend/database/migrations/2026_08_29_120000_a_desk_assignment_rings_the_driver.php`
+- `docs/adr/0068-a-desk-assignment-rings-the-driver.md`
+
+### Shared files, each with the exact edit named
+
+- `Modules/Dispatch/Models/DispatchOffer.php` — `booking_id` +
+  `allocation_override_reason` in `$fillable`, `booking()` relation, the
+  one-owner assertion in `booted()`, `pickup()` / `dropoff()`.
+- `Modules/Dispatch/Services/DispatchOfferService.php` — booking branch in
+  `accept()`, `decline()` and `advance()`; new `offerBookingToChosen()`,
+  `dispatchBooking()`, `offerWaveForBooking()`, `settleLapsedForBooking()`,
+  `withdrawForBooking()`; `DispatchRecommender` injected.
+- `Modules/Dispatch/Services/DispatchService.php` — `assign()` returns
+  `Trip|DispatchOffer` and rings instead of writing a trip, except for a
+  driver with no sign-in account.
+- `Modules/Dispatch/Services/DispatchRecommender.php` — `forBooking` body
+  extracted to `rank(Booking, Closure $fleetScope)`; new
+  `forBookingInFleet()` and `offerableForFleet()` for the scheduler, which
+  has no actor.
+- `Modules/Dispatch/Controllers/DispatchController.php` — 202 + offer, or
+  201 + trip, in both `store()` and `autoAssign()`.
+- `Modules/Dispatch/Resources/DispatchOfferResource.php` — falls back to the
+  booking for pickup/drop-off/service/reference; adds `client` and
+  `scheduled_for`.
+- `Modules/Notifications/Notifications/TripOfferedNotification.php` — reads
+  `$offer->pickup()` rather than the order request.
+- `Modules/Notifications/Listeners/SendDriverTripAssignedNotification.php` —
+  returns early when the booking has offers; a driver who was asked is not
+  told.
+- `Modules/Bookings/Models/Booking.php` — `offers()` relation.
+- `mobile/src/api/types.ts` — `client` and `scheduled_for` on `DispatchOffer`.
+
+### Two things worth knowing
+
+- **The trip's tenant had to become explicit.** `BelongsToTenant` fills
+  `tenant_id` from the ambient context, which was the *dispatcher's* request
+  and is now the *driver's* — and a driver belongs to no client. Left alone,
+  every corporate trip born from an accept would have been owned by nobody:
+  ADR-0001's worst-available bug, reached by a route nothing was watching.
+  Taken from `bookings.tenant_id` in `DispatchOfferService::accept`.
+- **The migration's `down()` order is load-bearing on MySQL.** InnoDB adopts
+  the composite `['booking_id','status']` index to back the foreign key and
+  then refuses to drop it (errno 1553). Constraint, then index, then column.
+
+### Not mine, in the tree while I worked
+
+106 modified files from the driver-app screens and earnings branch, untouched.
+
+### Environment, not code
+
+The dev stack was down when this started — **zero `php-cgi` workers** (Apache
+answering 503 on everything), no queue worker, no scheduler. All three
+restarted. MariaDB then crashed twice under test load and was restarted each
+time; one crash left the new migration half-applied (FK and index gone, column
+present), repaired by hand.
+
+### Still to do
+
+Frontend dispatch board ("ringing" derived from live offers), the driver
+app's offer screen for a corporate job, tests, `docs/api/openapi.yaml`, and
+the Dispatch module README.
+
+### Closed — 29 August, all suites green
+
+- **Backend:** 1909 passed (7439 assertions), up from 1900 — nine new in
+  `tests/Feature/Dispatch/DeskAssignmentRingsTest.php`. Pint clean.
+- **Frontend:** 751 passed, `tsc -b --force` clean.
+- **Mobile:** `tsc --noEmit` clean; `OfferScreen` and `offerPresentation`
+  suites pass with two new cases.
+
+### The test that was green and proved nothing
+
+`DispatchAssignmentTest` passed unchanged through this entire change,
+because every driver it builds is a `Driver::factory()` with no `user_id` —
+the phone-less path, which still assigns outright. A suite can be completely
+green about a feature it never exercises once.
+
+Worse, my own first version of the tenant test was the same shape: it called
+`DispatchOfferService::accept()` directly, and the dispatcher's HTTP request
+a moment earlier had left a tenant bound to the container. **Deleting
+`'tenant_id' => $booking->tenant_id` left it green.** Rewriting it to accept
+through `POST /me/offers/{id}/acceptance` — the driver's own request, where
+no tenant is bound — immediately failed with a 409 on every corporate
+accept, which was a real bug: `TenantScope` fails closed, so the booking
+lookup found nothing and the guard read that as "the job is gone".
+
+### Proved by mutation, restored after each
+
+- `'tenant_id' => $booking->tenant_id` removed → *"Failed asserting that null
+  is identical to 4"*. (Green before the test was rewritten; that is the
+  point of the paragraph above.)
+- The `booking->offers()->exists()` early return in
+  `SendDriverTripAssignedNotification` removed → the accepted-driver test
+  fails.
+- `response.status === 202` forced false in `DispatchPage.tsx` → the new
+  ringing test fails.
+
+`grep -rn MUTATION` is clean in `Modules/`, `tests/` and `frontend/src/`.
+
+### Also changed, beyond the original claim
+
+- `Modules/Bookings/Resources/BookingResource.php` — `is_ringing`, derived.
+- `Modules/Bookings/Controllers/BookingController.php` — `withExists` so the
+  board does not N+1 on it.
+- `Modules/Dispatch/Resources/DispatchOfferResource.php` —
+  `scheduled_for_label`, formatted server-side in the fleet's timezone.
+- `database/seeders/DriverAppSeeder.php` — answers the ring on the demo
+  driver's behalf, because an offer expires in under a minute and a seeded
+  ringing phone would be silent before anybody opened the app. The live demo
+  trip therefore sits at `accepted` rather than `assigned`; its test says so.
+- `frontend/src/pages/DispatchPage.tsx` — 202 handling, a "Ringing X" notice,
+  a "Ringing a driver" badge on the queue row, and the 201 branch now reads
+  *"X has no app — call them"* rather than telling a dispatcher to wait for
+  an acceptance that cannot arrive.
+- `mobile/src/screens/OfferScreen.tsx` — client and scheduled time on a
+  desk-assigned job.
+- `docs/api/openapi.yaml` — the 202 on both assignment endpoints, `client`,
+  `scheduled_for`, `scheduled_for_label`, `is_ringing`.
+- `Modules/Dispatch/README.md`.
+
+### Deliberately not built
+
+- **No "who is it ringing" on the board.** The row says a phone is ringing,
+  not whose — `DispatchOfferResource` withholds the driver deliberately
+  (it becomes a lock-screen push), and the desk knows who it just chose. A
+  dispatcher arriving later at a ringing row cannot see the name. Worth
+  doing; needs a desk-side offer read, which is a new endpoint.
+- **No scheduled ring.** The phone rings when the desk assigns, including for
+  a booking a week out — the owner's choice on 29 August, asked explicitly.
+- **Not verified on a handset.** Everything here is proved by test and by
+  contract, not by watching a real phone ring. That is the one check this
+  change most deserves and it has not been done.
+
+### Environment, for whoever is next
+
+MariaDB crashed twice under test load and had to be restarted; one crash left
+this migration half-applied and another wrecked `kangaruride_testing` (its
+`migrations` table gone), which was dropped and recreated. If a suite fails
+with *"No plan is flagged as the default"*, the testing database has lost the
+rows the plans migration inserts — `php artisan migrate:fresh --env=testing`
+restores them.
+
+---
+
+## 2026-08-31 ~19:55 — the offer push goes silent: only the call screen rings (in progress)
+
+**Claiming:** `Modules/Notifications/Notifications/TripOfferedNotification.php`,
+`tests/Feature/Notifications/TripOfferedPushTest.php`, and this file. Nothing
+else. The owner asked (twice — once in an earlier session, again today watching
+the emulator) for the plain "New job — tap to accept" push to go away and for
+the answerable incoming-call notification to be the only offer surface. Today's
+evidence from the emulator: the visible push arrives and rings; the wake push
+arrived ~46 s late (FCM on the AVD, see the FcmRetry note in this file), by
+which time the offers were already declined in-app, so `raiseOfferCall`
+correctly skipped — logcat `offer.call_skipped … no_live_match`. The plain push
+therefore lingered, which is exactly what the owner photographed.
+
+**The change:** `TripOfferedNotification` becomes `pushIsSilent()`, drops the
+companion `pushWakeOptions()` (one headless message *is* the wake-up), keeps
+`collapseId offer-<id>`/ttl/expiration, adds `_contentAvailable`, nulls the
+sound. Server-only: the installed release APK already raises the call screen
+from a headless push, so no rebuild is needed. The floor this removes is
+recorded in the class docblock — a handset whose JS cannot run now gets
+nothing until the app is next opened.
+
+### Done, and proved on the emulator
+
+`TripOfferedNotification` is now `pushIsSilent()` with no companion — one
+headless message per offer, `collapseId offer-<id>` (the withdrawal's key, so
+a withdrawal still replaces an undelivered wake-up), ttl/expiration from the
+window, `sound => null`, `_contentAvailable => true`, no `channelId` because
+nothing is rendered from it. The rewritten tests hold the shape:
+`TripOfferedPushTest` 23/23, proved by mutation (`pushIsSilent` flipped to
+false → 'sends one headless push' fails on the title), Notifications +
+Dispatch suites 168/168, Pint and Larastan clean.
+
+End to end on the Test_Android AVD (release APK v1.0.7 — **no rebuild was
+needed**: the installed app already raises the call screen from a headless
+push): walk-in `KR-6FYPEV` placed at the driver's own coordinates →
+`offer.push_task open_offer 110 background` within a second → NOTIFEE posted
+`offer-call-110` → Accept pressed on the call surface → offer 110 `accepted`,
+trip 114. **No `offers.v2` banner was posted at any point** — the un-answerable
+"New job" card the owner photographed is gone.
+
+### Environment facts that were half the bug
+
+- The wake pushes on the AVD had been arriving ~46 s late and were re-delivered
+  stale (`offer.call_skipped … no_live_match` for offers already declined) —
+  the FcmRetry wedge this file already records; an `adb reboot` cleared it.
+- `USE_FULL_SCREEN_INTENT` was still `default` (deny) on the fresh AVD with a
+  `rejectTime` proving Android had downgraded a call screen; now `allow`.
+- The kadson_dev AVD is PIN-locked with the PIN recorded nowhere; the driver
+  APK was pulled off it and installed on Test_Android instead.
+
+### Deliberately not built
+
+- **No mobile change and no new APK.** The app keeps its whole
+  plain-push-handling path (`dismissPlainPush`, the `shown === false` floor
+  guard) — it is what makes an *old server* still work and costs nothing.
+- **The floor is gone knowingly.** A handset whose JS cannot run
+  (force-stop, OEM battery manager, expo/expo#38223 terminated) now hears
+  nothing until the app next opens. The owner chose this with the trade
+  stated. If the fleet's handsets start missing jobs, the first suspect is
+  this paragraph.
+- `KangaruNotification::pushWakeOptions` and the channel's two-message
+  machinery stay: generic, proven, and the prune-by-index guard now exercises
+  it through a purpose-built notification in the test.

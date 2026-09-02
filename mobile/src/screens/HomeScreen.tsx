@@ -200,8 +200,28 @@ export function HomeScreen({ navigation }: Props) {
               Earnings and Wallet tiles below make, plus the screen inside the
               tab. The drawer's Notifications row lands in the identical place.
             */
+            /*
+              **`initial: false`, and its absence here was a real bug.**
+
+              Navigating into a tab that has not been rendered yet does not
+              push onto its stack — React Navigation builds that stack's
+              *initial state* out of what it was handed. Without this word the
+              Profile stack came into existence as `["Notifications"]` at index
+              0, with `ProfileHome` never in it: nothing to pop, so pressing
+              the Profile tab appeared to do nothing and Android's back gesture
+              left the app.
+
+              `DrawerContent.go` was fixed for exactly this and
+              `nestedNavigate.test.tsx` documents it; **this call site was
+              missed**, which is why it came back as the owner's *"we are
+              stuck, sometimes"* and *"clicking profile sends us to the
+              notifications"*. Sometimes, because it only bites when the driver
+              has not visited Profile since the app started.
+            */
             onPress={() =>
-              navigation.getParent()?.navigate('Profile', { screen: 'Notifications' })
+              navigation
+                .getParent()
+                ?.navigate('Profile', { screen: 'Notifications', initial: false })
             }
             style={styles.topBarButton}
           >

@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Modules\Administration\Services\SettingsService;
 use Modules\Bookings\Models\Booking;
+use Modules\Dispatch\Services\DispatchOfferService;
 use Modules\Dispatch\Services\DispatchService;
 use Modules\Drivers\Enums\DriverApplicationStatus;
 use Modules\Drivers\Enums\DriverDocumentType;
@@ -867,9 +868,11 @@ class DriverAppSeeder extends Seeder
             $this->drive($trip, $dispatcher, $odometer);
         }
 
-        // The trip the app opens on. Left at Assigned so a first test walks
-        // the whole lifecycle — accept, drive, arrive, board, capture the
-        // opening odometer — which is the flow the app exists for.
+        // The trip the app opens on. It sits at `accepted` rather than
+        // `assigned` since ADR-0068 — the desk's assignment rings, and the
+        // seeder had to answer it because an offer expires in under a minute.
+        // Everything after the accept is still there to walk: on my way,
+        // arrive, board, capture the opening odometer.
         Carbon::setTestNow($realNow->copy()->subMinutes(15));
 
         $this->dispatch(
@@ -1188,13 +1191,34 @@ class DriverAppSeeder extends Seeder
          * dispatcher can read it. Seeding around the rule would hide the one
          * ADR-0009 field the console has to be able to display.
          */
-        return app(DispatchService::class)->assign(
+        $result = app(DispatchService::class)->assign(
             $booking,
             $vehicle->id,
             $driver->id,
             $dispatcher,
             'Demo data: the driver is on their own assigned vehicle.',
         );
+
+        if ($result instanceof Trip) {
+            return $result;
+        }
+
+        /*
+         * **The demo driver has an app account, so the desk's assignment
+         * rings (ADR-0068)** and there is no trip until somebody answers.
+         * The seeder answers on their behalf.
+         *
+         * It cannot do anything else: an offer lives for
+         * `dispatch.offer_ttl_seconds` — well under a minute — so a seeded
+         * *ringing* offer would be dead long before anybody opened the app,
+         * and the demo would be a driver with no work at all. Seeded data
+         * has to sit in a state that keeps.
+         *
+         * What the tester loses is the Accept tap, and they can have it back
+         * whenever they like by dispatching a booking from the console with
+         * the app open — which is now the only honest way to see that screen.
+         */
+        return app(DispatchOfferService::class)->accept($result, $driver->user);
     }
 
     /**
@@ -1218,6 +1242,14 @@ class DriverAppSeeder extends Seeder
             TripStatus::DRIVER_ARRIVED,
             TripStatus::PASSENGER_ONBOARD,
         ] as $status) {
+            // Already there. A trip born from an accepted offer arrives at
+            // `accepted` (ADR-0068), and asking the state machine for a
+            // transition onto the status it already holds is refused — the
+            // graph has no self-edges, correctly.
+            if ($trip->status === $status) {
+                continue;
+            }
+
             $trip = $machine->transition($trip, $status, $dispatcher);
         }
 

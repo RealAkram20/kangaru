@@ -9,6 +9,7 @@ use Illuminate\Support\Collection;
 use Modules\Administration\Services\SettingsService;
 use Modules\Billing\Pricing\RateCardNotConfiguredException;
 use Modules\Billing\Services\WalkInFareService;
+use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Models\OrderRequest;
 use Modules\Bookings\Support\OrderDetails;
 use Modules\Drivers\Enums\LedgerEntryKind;
@@ -60,10 +61,27 @@ class TripResource extends JsonResource
             // has them. `origin`/`destination` stay exactly as they were —
             // AGENTS.md allows additive changes but no removals, and every
             // client already reads them.
+            /*
+             * The point, from whichever kind of job this trip came from.
+             *
+             * **The booking half was missing**, and it is why a corporate
+             * driver's screen said *"No map for this trip — the order was
+             * taken without a pin on it"* over a job that had one. Only
+             * `order_requests` was read, so every desk-dispatched trip
+             * reached the app with no coordinates at all, whatever the
+             * booking held. Found on trip #113, 29 August, on an emulator.
+             *
+             * `bookings` carries no drop-off pair — only the far end's name
+             * — so `dropoff` stays walk-in-only rather than being geocoded
+             * here. `PickupMap` needs the pickup alone to draw, so a
+             * corporate trip gets its map; what it does not get is a route
+             * line, and inventing a point from a place name on the way to a
+             * driver's screen is the fabrication ADR-0020 refuses.
+             */
             'pickup' => $this->place(
                 $this->origin,
-                $this->order()?->pickup_latitude,
-                $this->order()?->pickup_longitude,
+                $this->order()?->pickup_latitude ?? $this->job()?->origin_latitude,
+                $this->order()?->pickup_longitude ?? $this->job()?->origin_longitude,
             ),
             'dropoff' => $this->place(
                 $this->destination,
@@ -90,6 +108,19 @@ class TripResource extends JsonResource
             // the column's database default back and would serve null for a
             // count that is honestly zero.
             'unplanned_stop_count' => (int) $this->unplanned_stop_count,
+            /*
+             * When the vehicle reached the destination the trip was agreed
+             * for. Null on every trip that has not got there — and on every
+             * trip that simply ended there, which is all of them until
+             * somebody extends one.
+             *
+             * The driver's screen needs it to know which half of the journey
+             * it is rendering: before, the next thing to do is arrive at the
+             * drop-off; after, it is to run the extensions or finish. Without
+             * it the app would have to infer the boundary from the stop list,
+             * and infer it differently from the server.
+             */
+            'dropoff_reached_at' => $this->dropoff_reached_at?->toIso8601String(),
             /*
              * What kind of job this was — `ride`, `delivery` or `self_drive`.
              *
@@ -516,6 +547,19 @@ class TripResource extends JsonResource
     private function order(): ?OrderRequest
     {
         return $this->relationLoaded('orderRequest') ? $this->orderRequest : null;
+    }
+
+    /**
+     * The booking this trip was dispatched from, when one was.
+     *
+     * Guarded on `relationLoaded` exactly as `order()` is, and for the same
+     * reason: this resource is rendered for a page of trips at a time, and a
+     * relation touched without being loaded is an N+1 that nothing in a test
+     * would notice.
+     */
+    private function job(): ?Booking
+    {
+        return $this->relationLoaded('booking') ? $this->booking : null;
     }
 
     /**

@@ -3,17 +3,37 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { addTripStop } from '../api/endpoints';
+import { addTripExtension, addTripStop } from '../api/endpoints';
 import { refusalMessage } from '../api/errors';
 import type { PlaceSuggestion, TripStopCandidate } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
 import type { TripsStackParams } from '../navigation/types';
+import { addsExtension } from '../trips/extensions';
 import { usePlaceSuggestions, useTrip, useTripStopCandidates } from '../trips/queries';
-import { IconField, Notice, Screen, ScreenHeader } from '../ui/components';
+import { IconField, Notice, Screen, ScreenHeader, SegmentedTabs } from '../ui/components';
 import { CirclePlusIcon, MapPinIcon } from '../ui/icons';
 import { colors, radius, spacing, typography } from '../ui/theme';
 
 type Props = NativeStackScreenProps<TripsStackParams, 'AddDropoff'>;
+
+/** What the driver says this place is. Mirrors `TripStop['kind']`. */
+type TripStopKindChoice = 'stop' | 'extension';
+
+/**
+ * The two answers, in the order a driver reads them.
+ *
+ * "Drop-off" first because it is the older, unbilled meaning and the one a
+ * corporate circuit uses all day; "Extension" second and never pre-selected
+ * by position — the default comes from the trip, not from the layout.
+ *
+ * The words are the ones the rest of the platform uses. Anything softer
+ * ("extra stop", "going on") would leave the driver guessing which of the
+ * two the passenger is charged for.
+ */
+const KIND_OPTIONS: readonly { value: TripStopKindChoice; label: string }[] = [
+  { value: 'stop', label: 'Drop-off' },
+  { value: 'extension', label: 'Extension' },
+];
 
 /**
  * The next drop-off, searched and added mid-run (ADR-0045 §4).
@@ -61,6 +81,24 @@ export function AddDropoffScreen({ route, navigation }: Props) {
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
 
+  /*
+    **Whether this place is billed, chosen by the driver rather than inferred.**
+
+    The first build of this decided it from the trip kind alone, and the owner
+    asked for the toggle instead — rightly: a walk-in passenger sometimes asks
+    the car to wait somewhere on the way, and a corporate driver sometimes
+    genuinely carries somebody past the contracted route. An inference cannot
+    be corrected by the person who knows, and getting it wrong is money in
+    both directions.
+
+    Defaulted, not blank. `addsExtension` gives the answer that is right almost
+    every time — a walk-in's mid-run place is the passenger going further, a
+    circuit's is the next ATM — so the common case stays one tap and the
+    toggle is there for the case that is not.
+  */
+  const [kind, setKind] = useState<TripStopKindChoice | null>(null);
+  const billed = kind === null ? trip !== undefined && addsExtension(trip) : kind === 'extension';
+
   // A walk-in has no register at all, so the question is not asked — the
   // free-text row is that trip's whole flow. A corporate trip asks straight
   // away, empty query included: the driver opens this screen to pick the next
@@ -78,7 +116,26 @@ export function AddDropoffScreen({ route, navigation }: Props) {
     setRefusal(null);
 
     try {
-      await addTripStop(api, tripId, input);
+      /*
+       * **The same tap, two different acts, and the money is the difference.**
+       *
+       * A **stop** is ADR-0045 §4's subject: recorded, shown, never billed,
+       * because the bank contracted the route its five ATMs sit on. An
+       * **extension** is the passenger travelling past the drop-off they
+       * agreed to, and the fare follows the longer distance.
+       *
+       * Until 2026-08-28 this screen only ever sent the first, which on a
+       * walk-in was a live defect rather than a missing feature: a passenger
+       * asking to be carried further produced kilometres `RouteReference`
+       * never drew and `ROUTE_CAPPED` then capped away — driven, and not
+       * paid for.
+       *
+       * `billed` reads the toggle above, so what the driver chose and what
+       * this sends cannot disagree.
+       */
+      const send = billed ? addTripExtension : addTripStop;
+
+      await send(api, tripId, input);
       // The trip payload carries the itinerary, and the route endpoint now
       // targets the new stop — one prefix covers the trip, its route and
       // this screen's own search.
@@ -98,12 +155,28 @@ export function AddDropoffScreen({ route, navigation }: Props) {
   return (
     <Screen>
       <ScreenHeader
-        title="Add a drop-off"
+        // Follows the toggle, not the trip: the title names what this screen
+        // is about to do, and a driver who switches to Extension and still
+        // reads "Add a drop-off" has been told the choice did not take.
+        title={billed ? 'Extend the trip' : 'Add a drop-off'}
         subtitle={trip === undefined ? null : `Trip to ${trip.dropoff.label}`}
         onBack={() => navigation.goBack()}
       />
 
       <View style={styles.search}>
+        {/*
+          Above the field, because it changes what the search is *for* — and
+          what the passenger pays. A driver who typed a place first and found
+          the choice underneath would have to re-read what they had already
+          decided.
+        */}
+        <SegmentedTabs
+          label="What kind of place"
+          value={billed ? 'extension' : 'stop'}
+          onChange={setKind}
+          options={KIND_OPTIONS}
+        />
+
         <IconField
           icon={({ color }) => <MapPinIcon color={color} size={18} strokeWidth={2} />}
           placeholder={corporate ? 'Search saved places, or type it' : 'Type the next drop-off'}

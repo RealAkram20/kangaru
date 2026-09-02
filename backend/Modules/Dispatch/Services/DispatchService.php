@@ -8,6 +8,8 @@ use Illuminate\Support\Facades\Log;
 use Modules\Bookings\Enums\BookingStatus;
 use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Services\InvalidBookingTransitionException;
+use Modules\Dispatch\Models\DispatchOffer;
+use Modules\Drivers\Models\Driver;
 use Modules\Fleet\Services\AllocationLookup;
 use Modules\Fleet\Services\Availability;
 use Modules\Fleet\Services\AvailabilityService;
@@ -33,9 +35,24 @@ class DispatchService
         private readonly TripService $trips,
         private readonly AllocationLookup $allocations,
         private readonly AvailabilityService $availability,
+        private readonly DispatchOfferService $offers,
     ) {}
 
     /**
+     * Puts a booking in front of a driver.
+     *
+     * Returns whichever of the two things actually happened (ADR-0068):
+     *
+     * - a **`DispatchOffer`** — the ordinary case. The driver's phone is
+     *   ringing and no trip exists yet; it is written when they accept.
+     * - a **`Trip`** — the driver has no app account, so they were assigned
+     *   outright and somebody at the desk is about to telephone them.
+     *
+     * A union rather than a flag or two methods: the caller has to render
+     * two different things and cannot be allowed to forget which it got.
+     * `DispatchController::store` answers 202 for the first and 201 for the
+     * second, which is the same distinction stated in HTTP.
+     *
      * @param  string|null  $overrideReason  why a contracted vehicle was not used (ADR-0009)
      *
      * @throws InvalidBookingTransitionException the booking is already assigned, rejected or cancelled
@@ -51,7 +68,7 @@ class DispatchService
         int $driverId,
         User $dispatcher,
         ?string $overrideReason = null,
-    ): Trip {
+    ): Trip|DispatchOffer {
         return DB::transaction(function () use ($booking, $vehicleId, $driverId, $dispatcher, $overrideReason) {
             // Lock and re-read the booking before deciding. The status held
             // on the passed-in model was read outside this transaction and
@@ -96,6 +113,35 @@ class DispatchService
             // mistake the comment in applyAllocationRules() records having
             // already been made once here.
             $this->assertAvailable($locked, $vehicleId, $driverId);
+
+            /*
+             * **The desk asks; it no longer tells (ADR-0068).**
+             *
+             * Every check above still runs, and runs first: the allocation
+             * rules, the leave and workshop refusals, the service type. What
+             * changes is what happens once they pass. A driver with a phone
+             * is *rung* — the same ringing, full-screen, Accept-or-Decline
+             * notification a walk-in produces — and the trip is written when
+             * they answer, in `DispatchOfferService::accept`.
+             *
+             * The owner's words on 29 August, after watching a delivery they
+             * had just dispatched reach a driver as nothing at all: *"we need
+             * the same experience throughout… the same experience we have for
+             * the walk-in."*
+             *
+             * **A driver with no sign-in account is assigned outright**, as
+             * they always were. Fourteen of the twenty drivers on the demo
+             * fleet are in that position (ADR-0016): there is no handset to
+             * ring, so an offer would sit unanswered until it expired and
+             * then roll to somebody else — turning "assign Musa" into "assign
+             * anybody but Musa". The desk reaches them by telephone, which is
+             * what it did before any of this existed.
+             */
+            if (Driver::whereKey($driverId)->value('user_id') !== null) {
+                return $this->offers->offerBookingToChosen(
+                    $locked, $vehicleId, $driverId, $overrideReason,
+                );
+            }
 
             // TripService takes the pessimistic lock on the vehicle and
             // driver rows (TripAssignmentGuard) and throws if either is

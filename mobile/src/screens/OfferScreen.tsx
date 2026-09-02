@@ -30,6 +30,7 @@ import { useCountdown } from '../duty/useCountdown';
 import { Button } from '../ui/components';
 import { DetailRow, GLYPH, RouteRail, Stat, StatRow } from '../ui/facts';
 import {
+  BagIcon,
   BanknoteIcon,
   CarIcon,
   CheckIcon,
@@ -270,6 +271,25 @@ export function OfferScreen({
                 'No published price for this vehicle yet.'
               : fareBasis(estimate)}
           </Text>
+
+          {/*
+            A desk-assigned job, not a walk-in (ADR-0068). `client` is null on
+            a walk-in, so its presence is what separates the two — no second
+            flag, and nothing to keep in step.
+
+            First of the rows, because on a corporate job it outranks
+            everything below it: who the work is for, and whether it is now.
+            A driver saying yes to next Tuesday is answering a different
+            question from one saying yes to a passenger at a kerb.
+          */}
+          {offer.client !== null && (
+            <DetailRow
+              icon={<BagIcon {...GLYPH} />}
+              label="Client"
+              value={offer.client}
+              caption={offer.scheduled_for_label ?? 'For now'}
+            />
+          )}
 
           <DetailRow
             icon={<PaymentGlyph method={offer.payment.payment_method} />}

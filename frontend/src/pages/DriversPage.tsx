@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiClient } from '../lib/apiClient'
 import { apiError, fieldErrors } from '../lib/apiError'
 import { formatDate } from '../lib/format'
+import { categoryLabel, categoryOptions, useVehicleCategories } from '../lib/vehicleCategories'
 import type { ApiSuccess } from '../types/api'
 import type { Driver } from '../types/driver'
 import { Badge } from '../components/core/Badge'
@@ -12,6 +13,7 @@ import { Alert } from '../components/feedback/Alert'
 import { Dialog } from '../components/feedback/Dialog'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { Select } from '../components/forms/Select'
 import { PasswordMeter } from '../components/forms/PasswordMeter'
 import { PageFill } from '../components/layout/PageFill'
 import { DriverDocumentsDialog } from './drivers/DriverDocumentsDialog'
@@ -26,8 +28,12 @@ const STATUS_TONE: Record<Driver['status'], 'success' | 'warning' | 'neutral'> =
 
 export function DriversPage() {
   const [drivers, setDrivers] = useState<Driver[] | null>(null)
+  const { categories } = useVehicleCategories()
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  // '' is every category. A depot's own question is "who is out in what",
+  // so the unfiltered roster stays the opening answer.
+  const [category, setCategory] = useState('')
   const [managing, setManaging] = useState<Driver | null>(null)
   // ADR-0033. Separate state from `managing`: a sign-in and a licence are
   // different questions, and one dialog answering both would be the
@@ -68,11 +74,25 @@ export function DriversPage() {
   const filtered = useMemo(() => {
     if (!drivers) return []
     const q = query.trim().toLowerCase()
-    if (!q) return drivers
-    return drivers.filter(
+
+    /*
+      Category first, and it reads the *vehicle's* category rather than
+      anything on the driver: a driver has no category of their own, only
+      whatever they are holding. That is also why a driver with no vehicle
+      falls out of a category filter instead of matching every one of them —
+      the depot allocates theirs per shift, so "is this rider on a boda" has
+      no answer yet, and answering it anyway is the guess this screen must not
+      make.
+    */
+    const byCategory =
+      category === '' ? drivers : drivers.filter((d) => d.vehicle?.category === category)
+
+    if (!q) return byCategory
+
+    return byCategory.filter(
       (d) => d.name.toLowerCase().includes(q) || d.license_number.toLowerCase().includes(q),
     )
-  }, [drivers, query])
+  }, [drivers, query, category])
 
   const columns: DataColumn<Driver>[] = useMemo(
     () => [
@@ -110,6 +130,17 @@ export function DriversPage() {
                 <Badge tone="neutral" icon="car">
                   Own
                 </Badge>
+              )}
+              {/*
+                What they are out in, in the office's own word for it. Plain
+                secondary text rather than a second badge: "Own" is a fact
+                about the arrangement and earns the emphasis, whereas the
+                category is how the row is *sorted* in somebody's head.
+              */}
+              {row.vehicle?.category != null && (
+                <span style={{ color: 'var(--text-secondary)' }}>
+                  {categoryLabel(categories, row.vehicle.category)}
+                </span>
               )}
             </span>
           ),
@@ -199,7 +230,9 @@ export function DriversPage() {
         ),
       },
     ],
-    [],
+    // `categories` only renames what is already on the row, so a slow list
+    // costs a relabel and never a wrong plate.
+    [categories],
   )
 
   return (
@@ -208,11 +241,25 @@ export function DriversPage() {
       <Card
         fill
         title="Drivers"
-        subtitle={drivers ? `${drivers.length} total` : undefined}
+        // A filtered table under "19 total" reads as a table that lost 18
+        // rows. When a filter is on, the count says what is on screen and what
+        // it was cut from.
+        subtitle={
+          drivers
+            ? filtered.length === drivers.length
+              ? `${drivers.length} total`
+              : `${filtered.length} of ${drivers.length}`
+            : undefined
+        }
         actions={
           <span
             style={{
               display: 'inline-flex',
+              // Claims the header's free space rather than being sized by its
+              // own contents: the title needs a fraction of what it was given,
+              // and without this the chooser pushed the action button onto a
+              // second line on a full-width desktop.
+              flexGrow: 1,
               gap: 'var(--space-2)',
               alignItems: 'center',
               // The filter shrinks before the action does: on a narrow screen
@@ -221,12 +268,32 @@ export function DriversPage() {
               justifyContent: 'flex-end',
             }}
           >
+            {/*
+              Before the text box, because it answers the coarser question a
+              depot actually asks first: which of these people are out on a boda
+              this morning, not which one is called Ada.
+            */}
+            <Select
+              aria-label="Filter by vehicle category"
+              // The empty value is a real choice here, not an unfilled field:
+              // "All categories" is where the screen opens and where it goes
+              // back to.
+              placeholder="All categories"
+              options={categoryOptions(categories ?? [], category)}
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              style={{ width: 'min(190px, 100%)' }}
+            />
             <Input
               iconLeft="search"
               placeholder="Filter by name or license number"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              style={{ width: 'min(260px, 100%)' }}
+              // Takes what is left after the chooser and the action, rather
+              // than a fixed width that pushed "New driver" onto a second
+              // line. `minWidth: 0` because a flex item's default floor is
+              // its content.
+              style={{ flex: '1 1 150px', minWidth: 0, maxWidth: 260 }}
             />
             <Button iconLeft="plus" onClick={() => setEditing('new')}>
               New driver
@@ -245,7 +312,7 @@ export function DriversPage() {
             emptyMessage={
               drivers === null
                 ? 'Loading…'
-                : query
+                : query || category
                   ? 'No drivers match your filter'
                   : 'No drivers yet — use New driver to add the first one'
             }

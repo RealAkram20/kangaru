@@ -93,8 +93,33 @@ class BookingService
     private function decide(Booking $booking, BookingStatus $to, User $actor, ?string $reason): Booking
     {
         $decided = DB::transaction(function () use ($booking, $to, $actor, $reason) {
+            /*
+             * **`forActor`, because the bare query fails closed and 404s.**
+             *
+             * `Booking` carries `TenantScope`, which hides every row when no
+             * tenant is bound — and nothing binds one on `POST /bookings`,
+             * because there is no `{booking}` in the URL for `IdentifyTenant`
+             * to read. A human approving through
+             * `/bookings/{booking}/approval` never saw this: the route model
+             * binds the tenant before this runs.
+             *
+             * So the auto-approval path — `approval_required` switched off,
+             * or a requester with `books_without_approval` — created the
+             * booking and then could not see it a line later. The caller got
+             * `404 NOT_FOUND` for a booking that had just been written, and
+             * the row was left `pending` by the rollback. Found by the owner
+             * reporting *"nothing happens next after clicking create
+             * booking"*.
+             *
+             * `forActor` and not `allTenants`: `BelongsToTenant` is explicit
+             * that a raw `allTenants()` in a service is a review failure, and
+             * that a request path reading past its own tenant asks
+             * `forActor()` — which is also the honest statement here, since
+             * the decision belongs to this actor and must be scoped to what
+             * they may act on.
+             */
             /** @var Booking $locked */
-            $locked = Booking::whereKey($booking->id)->lockForUpdate()->firstOrFail();
+            $locked = Booking::forActor($actor)->whereKey($booking->id)->lockForUpdate()->firstOrFail();
 
             if (! $locked->status->canTransitionTo($to)) {
                 throw new InvalidBookingTransitionException($locked->status, $to);

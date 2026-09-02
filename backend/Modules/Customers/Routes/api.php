@@ -80,6 +80,17 @@ Route::prefix('customer')->group(function () {
         Route::post('/rides/active/cancellation', [CustomerRideController::class, 'cancel'])
             ->name('customer.rides.cancel');
 
+        // Asking to be taken further than the drop-off agreed at booking.
+        // Nested under `active` for the same reason cancellation is: the ride
+        // is whichever one is running, and the passenger supplies no id to
+        // tamper with.
+        //
+        // A **request**, not a change — the driver answers it through
+        // `trips/{trip}/extensions/{extension}/acceptance`. Until they do it
+        // is `PROPOSED`, which nothing routes through and nothing bills.
+        Route::post('/rides/active/extension', [CustomerRideController::class, 'extend'])
+            ->name('customer.rides.extension.store');
+
         // Rating the ride once it is over (ADR-0030 §1). Keyed by trip id
         // unlike the endpoints above, and safely: the controller refuses any
         // trip whose customer_id is not this token's, so an id guessed from

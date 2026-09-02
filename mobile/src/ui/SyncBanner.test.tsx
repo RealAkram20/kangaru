@@ -3,18 +3,29 @@ import { render } from '@testing-library/react-native';
 import { SyncBanner } from './SyncBanner';
 
 /**
- * The one strip in the app whose whole job is telling a driver the truth about
- * where their work is.
+ * The strip is silent now, by the owner's decision (2026-08-28).
  *
- * It had no test at all — every screen mocks it away — which is how it came to
- * say **"Sending 3 updates…"** on the owner's handset over a queue that had
- * not moved and an API that was down. The count climbed from 1 to 3 between
- * two screenshots a minute apart. A driver reading "Sending" concludes the
- * office has their work, and that is precisely the belief this strip exists to
- * prevent.
+ * ## What these tests used to protect, and why they went
  *
- * `docs/screen-rules.md` §1 is the rule: the app does not state what it cannot
- * observe, and *progress* is a value like any other.
+ * Five of them pinned the wording of the queue states — "Sending 3 updates…"
+ * only while the queue was actually moving, "Can't reach the office" rather
+ * than blaming the phone, and a parked item outranking everything else. They
+ * existed because the strip once said **"Sending 3 updates…"** on the owner's
+ * handset over a queue that had not moved and an API that was down, with the
+ * count climbing between two screenshots a minute apart.
+ *
+ * None of those sentences is rendered any more, so the tests were deleted
+ * rather than left asserting nothing. They are in git beside the wording they
+ * guarded, and both come back together if the banner is ever reinstated.
+ *
+ * ## What is still worth protecting
+ *
+ * That the strip stays quiet whatever the queue is doing — the owner asked
+ * for silence, and a banner that reappears on some state nobody thought to
+ * check is the thing they asked to be rid of — and that the **storage
+ * failure still speaks**, because that one is an instruction rather than a
+ * status: every trip button is about to refuse, and without this sentence
+ * that reads as a broken app.
  */
 
 const mockSync = jest.fn();
@@ -32,78 +43,43 @@ function syncState(overrides: Record<string, unknown> = {}) {
     queued: new Map(),
     bufferedPings: 0,
     lastSyncedAt: null,
+    storageFailed: false,
     ...overrides,
   };
 }
 
-it('says nothing at all when there is nothing to say', async () => {
-  // A permanent green tick trains people to ignore the strip that later turns
-  // red, which is the whole reason this renders null.
-  mockSync.mockReturnValue(syncState());
+it('stays silent through every state the queue can be in', async () => {
+  /*
+    One test over all of them rather than five, because the assertion is now
+    the same in every case and the interesting question is only whether some
+    state was forgotten. Each of these rendered a band before 2026-08-28:
+    amber for no connection, grey for work in hand, red for a parked item.
+  */
+  const states = [
+    syncState(),
+    syncState({ online: false }),
+    syncState({ pending: 3 }),
+    syncState({ bufferedPings: 40 }),
+    syncState({ online: true, pending: 3, stalled: true }),
+    syncState({ parked: [{ id: 'a' }] }),
+    syncState({ online: false, pending: 2, bufferedPings: 12, parked: [{ id: 'a' }] }),
+  ];
 
-  const { toJSON } = await render(<SyncBanner />);
+  for (const state of states) {
+    mockSync.mockReturnValue(state);
 
-  expect(toJSON()).toBeNull();
+    const { toJSON } = await render(<SyncBanner />);
+
+    expect(toJSON()).toBeNull();
+  }
 });
 
-it('claims it is sending only while the queue is actually moving', async () => {
-  mockSync.mockReturnValue(syncState({ pending: 3 }));
+it('still says so when the phone itself cannot save anything', async () => {
+  // Not a sync status — an instruction. Every trip button is about to refuse,
+  // and this sentence is what stops that reading as a broken app.
+  mockSync.mockReturnValue(syncState({ storageFailed: true }));
 
   const { getByText } = await render(<SyncBanner />);
 
-  expect(getByText('Sending 3 updates…')).toBeTruthy();
-});
-
-it('stops claiming to send once the queue has stopped moving', async () => {
-  // The owner's screenshot. NetInfo says the phone is online — it has wifi —
-  // and the office is unreachable, which `online` alone cannot distinguish.
-  mockSync.mockReturnValue(syncState({ pending: 3, stalled: true }));
-
-  const { getByText, queryByText } = await render(<SyncBanner />);
-
-  expect(queryByText(/Sending/)).toBeNull();
-  expect(getByText("Can't reach the office. 3 updates saved on this phone, still trying.")).toBeTruthy();
-});
-
-it('does not blame the phone for the office being away', async () => {
-  // The driver can see they have signal. "No connection" would send them
-  // looking for a mast, and would be false.
-  mockSync.mockReturnValue(syncState({ pending: 1, stalled: true }));
-
-  const { queryByText, getByText } = await render(<SyncBanner />);
-
-  expect(queryByText(/No connection/)).toBeNull();
-  // And the reassurance a driver actually needs, which is that the work is
-  // not lost — the same promise the offline wording makes.
-  expect(getByText(/saved on this phone/)).toBeTruthy();
-});
-
-it('keeps saying no connection when there genuinely is none', async () => {
-  mockSync.mockReturnValue(syncState({ online: false, pending: 2 }));
-
-  const { getByText } = await render(<SyncBanner />);
-
-  expect(getByText('No connection. 2 updates saved on this phone, waiting to send.')).toBeTruthy();
-});
-
-it('never says a queue is stalled when the queue is empty', async () => {
-  // An idle queue is not a stalled one. Without this the strip would appear
-  // over every screen the moment a drain found nothing to do.
-  mockSync.mockReturnValue(syncState({ stalled: true }));
-
-  const { toJSON } = await render(<SyncBanner />);
-
-  expect(toJSON()).toBeNull();
-});
-
-it('lets an item that needs a person outrank everything else', async () => {
-  // A parked item is the only thing here a driver must act on, so it keeps
-  // the red band and its own sentence whatever the queue is doing.
-  mockSync.mockReturnValue(
-    syncState({ pending: 3, stalled: true, parked: [{ id: 'a' } as never] }),
-  );
-
-  const { getByText } = await render(<SyncBanner />);
-
-  expect(getByText(/needs your attention/)).toBeTruthy();
+  expect(getByText(/offline storage could not be opened/)).toBeTruthy();
 });

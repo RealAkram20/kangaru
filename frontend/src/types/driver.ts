@@ -51,6 +51,14 @@ export interface DriverVehicle {
   registration_number: string
   make: string
   model: string
+  /**
+   * The vehicle's category *key*, not its label.
+   *
+   * Categories are operator-defined and renameable, so the key is what
+   * survives a rename; `categoryLabel` resolves the name from the live list.
+   * Null when the vehicle has no category set.
+   */
+  category: string | null
 }
 
 export interface DriverAccount {
