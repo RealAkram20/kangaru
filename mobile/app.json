@@ -3,7 +3,7 @@
     "name": "KangaruRide Driver",
     "slug": "kangaru",
     "owner": "realakram20s-team",
-    "version": "1.0.9",
+    "version": "1.0.10",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "kangaruride-driver",

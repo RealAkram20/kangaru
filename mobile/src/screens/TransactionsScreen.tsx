@@ -137,6 +137,12 @@ export function TransactionsScreen({ navigation }: Props) {
         keyExtractor={(entry) => String(entry.id)}
         contentContainerStyle={styles.body}
         showsVerticalScrollIndicator={false}
+        // Only what fills the first screen mounts during the push; the rest
+        // renders once the slide is over, in small batches the JS thread can
+        // fit between frames. Rows are one shape, so a small window has no gaps.
+        initialNumToRender={10}
+        maxToRenderPerBatch={8}
+        windowSize={7}
         renderItem={({ item }) => <StatementRow entry={item} />}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
         ListEmptyComponent={

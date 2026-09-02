@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
 import type { Coordinates } from '../api/types';
+import { useAfterTransition } from '../navigation/useAfterTransition';
 import { boundsFor } from './places';
 import { VEHICLE_SPRITES, type VehicleSprite } from './vehicleSprites';
 import { colors, radius, typography } from '../ui/theme';
@@ -175,6 +176,11 @@ export function PickupMap({
 }) {
   const webRef = useRef<WebView>(null);
 
+  // The map waits for the screen to finish arriving before it mounts
+  // (`useAfterTransition`): a WebView mounting mid-push is the stutter the
+  // owner reported. Answers `true` at once when there is no stack around it.
+  const settled = useAfterTransition();
+
   // The latest dynamic state, held where the load handler can read it without
   // being in the document's dependency list. Written in an effect rather than
   // during render — a ref assigned in the render body is invisible to the
@@ -239,30 +245,33 @@ export function PickupMap({
 
   return (
     <View style={fill ? styles.fill : styles.frame}>
-      <WebView
-        ref={webRef}
-        style={styles.web}
-        originWhitelist={['*']}
-        source={{ html }}
-        // The state again once the page exists. The injection effect above can
-        // fire before the document has parsed — most visibly on Android, where
-        // the WebView also restarts with its process — and an update sent into
-        // a page that is not there yet is silently dropped.
-        onLoadEnd={() =>
-          webRef.current?.injectJavaScript?.(
-            `window.__applyState && window.__applyState(${JSON.stringify(stateRef.current)}); true;`,
-          )
-        }
-        // The screen owns the scroll; the map is a picture as far as touch
-        // goes. A driver is holding a steering wheel — a half-dragged map that
-        // stays where it was dragged shows the wrong place on the next glance.
-        pointerEvents="none"
-        scrollEnabled={false}
-        showsHorizontalScrollIndicator={false}
-        showsVerticalScrollIndicator={false}
-        cacheEnabled
-        androidLayerType="hardware"
-      />
+      {/* The frame keeps its size while empty, so the map landing shifts nothing. */}
+      {settled && (
+        <WebView
+          ref={webRef}
+          style={styles.web}
+          originWhitelist={['*']}
+          source={{ html }}
+          // The state again once the page exists. The injection effect above can
+          // fire before the document has parsed — most visibly on Android, where
+          // the WebView also restarts with its process — and an update sent into
+          // a page that is not there yet is silently dropped.
+          onLoadEnd={() =>
+            webRef.current?.injectJavaScript?.(
+              `window.__applyState && window.__applyState(${JSON.stringify(stateRef.current)}); true;`,
+            )
+          }
+          // The screen owns the scroll; the map is a picture as far as touch
+          // goes. A driver is holding a steering wheel — a half-dragged map that
+          // stays where it was dragged shows the wrong place on the next glance.
+          pointerEvents="none"
+          scrollEnabled={false}
+          showsHorizontalScrollIndicator={false}
+          showsVerticalScrollIndicator={false}
+          cacheEnabled
+          androidLayerType="hardware"
+        />
+      )}
     </View>
   );
 }

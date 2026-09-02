@@ -2,7 +2,6 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  AccessibilityInfo,
   Animated,
   ScrollView,
   StyleSheet,
@@ -13,6 +12,7 @@ import {
 } from 'react-native';
 
 import { colors } from '../ui/theme';
+import { useReducedMotion } from '../ui/useReducedMotion';
 import { CitySkyline } from './CitySkyline';
 
 /**
@@ -53,7 +53,8 @@ export function HeroCarousel({ compact = false }: { compact?: boolean }) {
   const { height } = useWindowDimensions();
   const scrollRef = useRef<ScrollView>(null);
   const [scrollX] = useState(() => new Animated.Value(0));
-  const [reduceMotion, setReduceMotion] = useState(false);
+  // Shared with the stack transitions, so "reduced" means one thing app-wide.
+  const reduceMotion = useReducedMotion();
 
   /**
    * The page width is the carousel's own measured width, never the window's.
@@ -81,23 +82,6 @@ export function HeroCarousel({ compact = false }: { compact?: boolean }) {
   const heroHeight = compact
     ? Math.max(120, Math.min(200, height * 0.21))
     : Math.max(150, Math.min(230, height * 0.26));
-
-  useEffect(() => {
-    let alive = true;
-
-    void AccessibilityInfo.isReduceMotionEnabled().then((on) => {
-      if (alive) {
-        setReduceMotion(on);
-      }
-    });
-
-    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
-
-    return () => {
-      alive = false;
-      sub.remove();
-    };
-  }, []);
 
   useEffect(() => {
     // Reduced motion stops the carousel moving on its own; it does not take

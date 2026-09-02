@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
+import { useAfterTransition } from '../navigation/useAfterTransition';
 import { colors, radius, spacing, typography } from '../ui/theme';
 
 /**
@@ -50,6 +51,11 @@ export function TripMap({
   stale?: boolean;
 }) {
   const webRef = useRef<WebView>(null);
+
+  // The map waits for the screen to finish arriving before it mounts
+  // (`useAfterTransition`): a WebView mounting mid-push is the stutter the
+  // owner reported. Answers `true` at once when there is no stack around it.
+  const settled = useAfterTransition();
 
   // The latest fix, held where the load handler can read it without being in
   // the document's dependency list. Written in an effect rather than during
@@ -117,28 +123,31 @@ export function TripMap({
 
   return (
     <View style={styles.frame}>
-      <WebView
-        ref={webRef}
-        style={styles.web}
-        originWhitelist={['*']}
-        source={{ html }}
-        // The fix again once the page exists: the effect above can fire before
-        // the document has parsed, and an update injected into a page that is
-        // not there yet is silently dropped.
-        onLoadEnd={() =>
-          webRef.current?.injectJavaScript?.(
-            `window.__setPosition && window.__setPosition(${JSON.stringify(positionRef.current)}); true;`,
-          )
-        }
-        // The card owns the tap; the map is a picture as far as touch goes.
-        pointerEvents="none"
-        scrollEnabled={false}
-        showsHorizontalScrollIndicator={false}
-        showsVerticalScrollIndicator={false}
-        // Tiles and the library are the same bytes every time this mounts.
-        cacheEnabled
-        androidLayerType="hardware"
-      />
+      {/* The frame keeps its size while empty, so the map landing shifts nothing. */}
+      {settled && (
+        <WebView
+          ref={webRef}
+          style={styles.web}
+          originWhitelist={['*']}
+          source={{ html }}
+          // The fix again once the page exists: the effect above can fire before
+          // the document has parsed, and an update injected into a page that is
+          // not there yet is silently dropped.
+          onLoadEnd={() =>
+            webRef.current?.injectJavaScript?.(
+              `window.__setPosition && window.__setPosition(${JSON.stringify(positionRef.current)}); true;`,
+            )
+          }
+          // The card owns the tap; the map is a picture as far as touch goes.
+          pointerEvents="none"
+          scrollEnabled={false}
+          showsHorizontalScrollIndicator={false}
+          showsVerticalScrollIndicator={false}
+          // Tiles and the library are the same bytes every time this mounts.
+          cacheEnabled
+          androidLayerType="hardware"
+        />
+      )}
 
       {stale === true && (
         <View style={styles.staleTag}>
