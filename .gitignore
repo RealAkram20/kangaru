@@ -53,3 +53,7 @@ storage/framework/views/*
 
 # graphify code graph - regenerable in seconds, do not commit (added 2026-08-29)
 graphify-out/
+
+# Local Expo modules (mobile/modules/*): Gradle output, never source. One
+# generated dex path exceeds the Windows limit and aborts a whole git add.
+mobile/modules/**/android/build/

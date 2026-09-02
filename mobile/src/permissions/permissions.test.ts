@@ -4,6 +4,7 @@ import {
   blockingSummary,
   statusLabel,
   statusTone,
+  whatIsWrong,
   type PermissionStates,
 } from './permissions';
 
@@ -149,4 +150,42 @@ it('never carries meaning by colour alone', () => {
   // The one exception, and it is the honest one: no colour claim either.
   expect(statusTone('unreadable')).toBe('muted');
   expect(statusLabel('unreadable')).toBeNull();
+});
+
+it('still does not count the lock screen, even now that it can be read', () => {
+  /*
+   * The guard the "never counts" test warned about, now that the day has come:
+   * the state IS readable, and the temptation is to add `lockScreen` to
+   * `OFFER_CRITICAL`. It must stay out. Without the takeover a job still
+   * arrives — as a banner — so it stops no work, and counting it would tell a
+   * driver receiving every job that something is stopping them.
+   *
+   * Mutation check: add `'lockScreen'` to `OFFER_CRITICAL` and this fails.
+   */
+  expect(blockingJobs(states({ lockScreen: 'missing' }))).toEqual([]);
+  expect(blockingSummary(states({ lockScreen: 'missing' }))).toBeNull();
+});
+
+it('says so, once, when the lock screen is the only thing missing', () => {
+  const live = { batterySaver: 'off', onlineService: 'running' } as const;
+
+  expect(whatIsWrong(states({ lockScreen: 'missing' }), live)).toBe(
+    'Jobs will arrive as a banner, not over your locked screen. Allow "Show jobs over the lock screen" below.',
+  );
+  // Held, or unreadable: nothing to say. Silence is the reward.
+  expect(whatIsWrong(states({ lockScreen: 'granted' }), live)).toBeNull();
+  expect(whatIsWrong(states({ lockScreen: 'unreadable' }), live)).toBeNull();
+});
+
+it('puts a job that cannot arrive ahead of one that arrives quietly', () => {
+  /*
+   * One sentence, worst first. A missing notification permission stops every
+   * job; a missing takeover only makes them quieter. The lock-screen line is
+   * last and must never displace the one that costs a fare.
+   */
+  const live = { batterySaver: 'off', onlineService: 'running' } as const;
+
+  expect(whatIsWrong(states({ notifications: 'missing', lockScreen: 'missing' }), live)).toBe(
+    '1 permission below is stopping jobs reaching you.',
+  );
 });

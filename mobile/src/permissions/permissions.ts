@@ -13,12 +13,12 @@
  *
  * ## The rule the whole screen is built around
  *
- * **Two of these six cannot be read, and the screen must never pretend
- * otherwise.** `fullScreenIntent.ts` already argues it for its own permission:
- * *"a 'Not granted' label we cannot verify would be wrong on every handset that
- * had already said yes"*. `NotificationManager.canUseFullScreenIntent()` is
- * exposed by neither `expo-notifications` nor `react-native-notify-kit`, and
- * the battery-optimisation exemption has no Expo API at all.
+ * **One of these six cannot be read, and the screen must never pretend
+ * otherwise.** The battery-optimisation exemption has no Expo API at all. The
+ * lock-screen takeover used to be the second — `NotificationManager
+ * .canUseFullScreenIntent()` is exposed by neither `expo-notifications` nor
+ * `react-native-notify-kit` — until `modules/full-screen-intent` read it
+ * natively; it still answers `unreadable` wherever that module is absent.
  *
  * So `unreadable` is a first-class state. It is rendered as an action rather
  * than a status, and — this is the part that matters — it is **never counted**
@@ -146,7 +146,23 @@ export function whatIsWrong(states: PermissionStates, live: Reliability): string
   // Delegated rather than repeated. The sentence has one home, so the screen
   // and anything else that ever counts permissions cannot drift apart on the
   // wording — AGENTS.md's rule about a thing that appears twice.
-  return blockingSummary(states);
+  const blocking = blockingSummary(states);
+
+  if (blocking !== null) {
+    return blocking;
+  }
+
+  // **Last, and never counted.** Without the lock-screen takeover a job still
+  // arrives — as a banner the driver has to notice and tap — so it stops no
+  // work and stays out of `blockingJobs`. But it is the difference between a
+  // phone that lights up in a pocket and one that has to be looked at, which
+  // is exactly what the owner asked for. Now that the state is readable it is
+  // said once, here, only when everything that stops work is already right.
+  if (states.lockScreen === 'missing') {
+    return 'Jobs will arrive as a banner, not over your locked screen. Allow "Show jobs over the lock screen" below.';
+  }
+
+  return null;
 }
 
 /**

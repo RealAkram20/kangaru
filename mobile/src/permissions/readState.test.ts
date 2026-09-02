@@ -2,7 +2,8 @@ import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Location from 'expo-location';
 
 import { readShift } from '../duty/dutyStore';
-import { readReliability } from './readState';
+import { readFullScreenIntentGranted } from '../push/fullScreenIntent';
+import { readPermissionStates, readReliability } from './readState';
 
 /**
  * Reading the two facts no permission reports.
@@ -15,6 +16,14 @@ import { readReliability } from './readState';
 
 jest.mock('../duty/dutyStore', () => ({
   readShift: jest.fn(),
+}));
+
+// The native read behind the lock-screen row. Replaced per test so each of its
+// three answers — held, refused, unreadable — reaches the screen unchanged.
+jest.mock('../push/fullScreenIntent', () => ({
+  readFullScreenIntentGranted: jest.fn(() => null),
+  fullScreenIntentIsGrantable: jest.fn(() => false),
+  openFullScreenIntentSettings: jest.fn(async () => false),
 }));
 
 const mockShift = readShift as jest.MockedFunction<typeof readShift>;
@@ -90,4 +99,25 @@ it('calls a finished shift off duty, never stopped', async () => {
 
   expect(live.onlineService).toBe('off_duty');
   expect(hasStarted).not.toHaveBeenCalled();
+});
+
+it('reports the lock screen exactly as the platform answers', async () => {
+  /*
+   * The row this feeds used to say nothing, because nothing could read the
+   * state. Now `modules/full-screen-intent` can, and the three answers have to
+   * survive the trip to the screen without being reinterpreted: a refusal is
+   * "missing", a grant is "granted", and *could not ask* is "unreadable" —
+   * never "missing", which would tell a driver they refused something the app
+   * never managed to look at.
+   */
+  const read = readFullScreenIntentGranted as jest.MockedFunction<typeof readFullScreenIntentGranted>;
+
+  read.mockReturnValue(true);
+  expect((await readPermissionStates()).lockScreen).toBe('granted');
+
+  read.mockReturnValue(false);
+  expect((await readPermissionStates()).lockScreen).toBe('missing');
+
+  read.mockReturnValue(null);
+  expect((await readPermissionStates()).lockScreen).toBe('unreadable');
 });

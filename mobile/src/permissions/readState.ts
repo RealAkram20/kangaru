@@ -1,12 +1,11 @@
 import * as Battery from 'expo-battery';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
-import { Platform } from 'react-native';
 
 import { readShift } from '../duty/dutyStore';
 import { PRESENCE_TASK } from '../duty/PresenceTask';
 
-import { fullScreenIntentIsGrantable } from '../push/fullScreenIntent';
+import { readFullScreenIntentGranted } from '../push/fullScreenIntent';
 import { loadNotifications, runsInExpoGo } from '../push/expoNotifications';
 import type { PermissionStates, PermissionStatus, Reliability } from './permissions';
 
@@ -36,27 +35,27 @@ async function safely(read: () => Promise<boolean>): Promise<PermissionStatus> {
 }
 
 /**
- * Whether the lock-screen takeover is held, where that can be known at all.
+ * Whether the lock-screen takeover is held — read from the platform, not
+ * guessed.
  *
- * **Android 13 and below is a real `granted`, not a guess.**
- * `USE_FULL_SCREEN_INTENT` was an ordinary install-time permission until
- * Android 14, so on those handsets the app holds it by definition —
- * `fullScreenIntentIsGrantable()` returning false *is* the answer, and saying
- * so spares that driver a row telling them to fix something they already have.
+ * `readFullScreenIntentGranted()` owns every case: `true` below Android 14
+ * (granted at install), the real `canUseFullScreenIntent()` answer on 14 and
+ * above through `modules/full-screen-intent`, and `null` wherever it cannot
+ * know — iOS, Expo Go, a build without the module. That last one maps to
+ * `unreadable`, never to `missing`: it is the difference between "the driver
+ * refused" and "the app could not ask".
  *
- * On Android 14 and above it is genuinely unreadable: the platform call is
- * `NotificationManager.canUseFullScreenIntent()` and neither
- * `expo-notifications` nor `react-native-notify-kit` exposes it
- * (`fullScreenIntent.ts`).
+ * No platform check of its own, deliberately, so the one function that knows
+ * the platform rules is also the one a test replaces.
  */
 function lockScreenStatus(): PermissionStatus {
-  if (Platform.OS !== 'android') {
-    // iOS has no equivalent at any privilege level, so there is nothing to
-    // hold and nothing to ask for. The screen does not draw this row there.
+  const granted = readFullScreenIntentGranted();
+
+  if (granted === null) {
     return 'unreadable';
   }
 
-  return fullScreenIntentIsGrantable() ? 'unreadable' : 'granted';
+  return granted ? 'granted' : 'missing';
 }
 
 /**
