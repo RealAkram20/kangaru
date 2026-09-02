@@ -2,6 +2,7 @@
 
 namespace Modules\Dispatch\Services;
 
+use App\Enums\AccessLevel;
 use App\Models\Operator;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
@@ -82,7 +83,17 @@ class DispatchRecommender
      */
     public function forBooking(Booking $booking, User $actor): Collection
     {
-        return $this->rank($booking, fn (Builder $query) => $query->forActor($actor));
+        // Arm-for-arm the same predicate as `BelongsToOperator::scopeForActor`
+        // (ADR-0055 §6), and it must stay in step with it. It is inlined rather
+        // than called through `forActor` because `rank` applies this to a
+        // `Builder<TModel>` whose model is a template — and a trait scope
+        // resolves only on a concrete builder, not a generic one. A client or
+        // an applicant still reaches nothing, exactly as the scope refuses them.
+        return $this->rank($booking, fn ($query) => match ($actor->access_level) {
+            AccessLevel::FLEET => $query->where($query->getModel()->getTable().'.operator_id', $actor->operator_id),
+            AccessLevel::KANGARU => $query->whereNull($query->getModel()->getTable().'.operator_id'),
+            AccessLevel::CLIENT, AccessLevel::APPLICANT => $query->whereRaw('1 = 0'),
+        });
     }
 
     /**
@@ -100,11 +111,13 @@ class DispatchRecommender
      * for head office to `operator_id IS NULL` — which is exactly the pair
      * of predicates below, `$operatorId` being nullable for that reason.
      * A client or an applicant reaches neither door: they cannot dispatch,
-     * and `forBooking` still refuses them through `forActor`.
+     * and `forBooking` still refuses them through its own predicate.
+     *
+     * @return Collection<int, DispatchSuggestion>
      */
     public function forBookingInFleet(Booking $booking, ?int $operatorId): Collection
     {
-        return $this->rank($booking, fn (Builder $query) => $operatorId === null
+        return $this->rank($booking, fn ($query) => $operatorId === null
             ? $query->whereNull($query->getModel()->getTable().'.operator_id')
             : $query->where($query->getModel()->getTable().'.operator_id', $operatorId));
     }
@@ -118,7 +131,7 @@ class DispatchRecommender
      * That is the sentence the original comment below made about drivers,
      * and it was always true of the vehicles too.
      *
-     * @param  \Closure(Builder<covariant Model>): Builder<covariant Model>  $fleetScope
+     * @param  \Closure<TModel of Model>(Builder<TModel>): Builder<TModel>  $fleetScope
      * @return Collection<int, DispatchSuggestion>
      */
     private function rank(Booking $booking, \Closure $fleetScope): Collection

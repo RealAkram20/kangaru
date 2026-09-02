@@ -47,6 +47,8 @@ use Modules\Vehicles\Models\Vehicle;
  * @property string|null $decline_reason
  * @property string|null $allocation_override_reason
  * @property int|null $trip_id
+ * @property-read OrderRequest|null $orderRequest
+ * @property-read Booking|null $booking
  */
 class DispatchOffer extends Model
 {
@@ -194,13 +196,30 @@ class DispatchOffer extends Model
      */
     public function pickup(): ?string
     {
-        return $this->orderRequest?->pickup_location ?? $this->booking?->origin;
+        // Branched on the nullable foreign keys rather than reached through a
+        // nullsafe relation: an offer owns exactly one of the two (ADR-0068),
+        // and the key columns are what static analysis reads as null — the
+        // relation properties it reads as always present, so `?->` on them is
+        // both flagged and, when the other owner is set, wrong.
+        $order = $this->orderRequest;
+
+        if ($order !== null) {
+            return $order->pickup_location;
+        }
+
+        return $this->booking?->origin;
     }
 
     /** The far end, read the same way and for the same reason as `pickup()`. */
     public function dropoff(): ?string
     {
-        return $this->orderRequest?->dropoff_location ?? $this->booking?->destination;
+        $order = $this->orderRequest;
+
+        if ($order !== null) {
+            return $order->dropoff_location;
+        }
+
+        return $this->booking?->destination;
     }
 
     /** @return BelongsTo<Driver, $this> */

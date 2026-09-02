@@ -32,6 +32,13 @@ class TripResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        // Held in locals so a null check narrows them: a coordinate read as
+        // `$this->order()?->… ?? $this->job()?->…` puts a nullsafe access on
+        // the left of `??`, which static analysis flags, and two calls to the
+        // same accessor cannot be narrowed against each other.
+        $order = $this->order();
+        $job = $this->job();
+
         return [
             'id' => $this->id,
             // Null on a walk-in trip (ADR-0024 §1), where `customer_id`
@@ -80,13 +87,13 @@ class TripResource extends JsonResource
              */
             'pickup' => $this->place(
                 $this->origin,
-                $this->order()?->pickup_latitude ?? $this->job()?->origin_latitude,
-                $this->order()?->pickup_longitude ?? $this->job()?->origin_longitude,
+                $order !== null ? $order->pickup_latitude : $job?->origin_latitude,
+                $order !== null ? $order->pickup_longitude : $job?->origin_longitude,
             ),
             'dropoff' => $this->place(
                 $this->destination,
-                $this->order()?->dropoff_latitude,
-                $this->order()?->dropoff_longitude,
+                $order?->dropoff_latitude,
+                $order?->dropoff_longitude,
             ),
             /*
              * The run's itinerary, in order (ADR-0045). Empty for every

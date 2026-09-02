@@ -55,7 +55,10 @@ class DispatchOfferResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
-        $order = $this->orderRequest;
+        // Through the nullable key, not the relation: an offer owns exactly
+        // one of the two (ADR-0068), and `order_request_id` is what static
+        // analysis reads as null — the relation property it reads as present.
+        $order = $this->order_request_id === null ? null : $this->orderRequest;
 
         /*
          * The desk's side of the same table (ADR-0068).
@@ -73,7 +76,7 @@ class DispatchOfferResource extends JsonResource
          * both channels equally. A company name identifies no passenger and
          * is the one fact a driver most needs to decide.
          */
-        $booking = $this->booking;
+        $booking = $this->booking_id === null ? null : $this->booking;
 
         return [
             'id' => $this->id,
@@ -89,13 +92,17 @@ class DispatchOfferResource extends JsonResource
             'expires_at' => $this->expires_at->toIso8601String(),
             'expires_in_seconds' => max(0, (int) now()->diffInSeconds($this->expires_at, false)),
 
+            // Ternaries rather than `$order?->… ?? $booking?->…`: an offer owns
+            // exactly one of the two (ADR-0068), so when the order is present
+            // the booking is null and the coalesce never reached it — and a
+            // nullsafe read on the left of `??` is what static analysis flags.
             'pickup' => [
-                'label' => $order?->pickup_location ?? $booking?->origin,
-                'latitude' => $order?->pickup_latitude ?? $booking?->origin_latitude,
-                'longitude' => $order?->pickup_longitude ?? $booking?->origin_longitude,
+                'label' => $order !== null ? $order->pickup_location : $booking?->origin,
+                'latitude' => $order !== null ? $order->pickup_latitude : $booking?->origin_latitude,
+                'longitude' => $order !== null ? $order->pickup_longitude : $booking?->origin_longitude,
             ],
             'dropoff' => [
-                'label' => $order?->dropoff_location ?? $booking?->destination,
+                'label' => $order !== null ? $order->dropoff_location : $booking?->destination,
                 // A booking stores no drop-off coordinate — only the far
                 // end's name — so this stays null rather than being
                 // geocoded here. Guessing a point from a place name on the
@@ -108,7 +115,7 @@ class DispatchOfferResource extends JsonResource
 
             // A walk-in's own reference, or the booking number the desk and
             // the client both already say out loud on the telephone.
-            'reference' => $order?->reference ?? ($booking === null ? null : '#'.$booking->id),
+            'reference' => $order !== null ? $order->reference : ($booking === null ? null : '#'.$booking->id),
 
             // Corporate only, null on a walk-in. The client is who the
             // driver is working for this hour, and `scheduled_for` is the

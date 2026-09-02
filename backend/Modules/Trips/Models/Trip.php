@@ -85,6 +85,8 @@ use Modules\Vehicles\Models\Vehicle;
  * @property CarbonInterface $updated_at
  * @property-read Vehicle|null $vehicle
  * @property-read Driver|null $driver
+ * @property-read OrderRequest|null $orderRequest
+ * @property-read Booking|null $booking
  */
 class Trip extends Model
 {

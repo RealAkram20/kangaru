@@ -374,9 +374,9 @@ class DispatchOfferService
             // reach each driver's handset.
             $losers = DispatchOffer::query()
                 ->when(
-                    $booking === null,
-                    fn ($q) => $q->where('order_request_id', $request->id),
-                    fn ($q) => $q->where('booking_id', $booking->id),
+                    $locked->booking_id === null,
+                    fn ($q) => $q->where('order_request_id', $locked->order_request_id),
+                    fn ($q) => $q->where('booking_id', $locked->booking_id),
                 )
                 ->whereKeyNot($locked->id)
                 ->live()
