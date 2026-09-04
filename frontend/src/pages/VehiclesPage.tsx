@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useIsCompact } from '../lib/useMediaQuery'
 import { useAuth } from '../auth/useAuth'
 import { apiClient } from '../lib/apiClient'
 import { apiError } from '../lib/apiError'
@@ -45,6 +46,16 @@ const STATUS_TONE: Record<Vehicle['status'], 'success' | 'warning' | 'neutral'> 
  * them**, so the fleet could only be grown by a seeder or, since ADR-0048,
  * sideways through the driver form.
  */
+/**
+ * The most vehicles one delete may name, mirroring `BulkDeleteVehiclesRequest`.
+ *
+ * Duplicated rather than fetched, because the server is still the authority —
+ * this only stops the console offering a button whose request is already known
+ * to fail. Select-all on a fleet of three hundred is one click, and finding out
+ * afterwards is a worse answer than not offering it.
+ */
+const BULK_DELETE_MAX = 100
+
 export function VehiclesPage() {
   const { user } = useAuth()
   const canManage = canManageFleet(user)
@@ -62,6 +73,23 @@ export function VehiclesPage() {
    */
   const [editing, setEditing] = useState<Vehicle | 'new' | null>(null)
   const [deleting, setDeleting] = useState<Vehicle | null>(null)
+  /**
+   * The rows ticked for a bulk delete, by id.
+   *
+   * Held here rather than inside `DataTable` because the bar that acts on it
+   * lives outside the table and has to clear it once the batch lands.
+   */
+  const [selected, setSelected] = useState<Array<string | number>>([])
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+
+  /*
+    Selection is a table affordance, and below the breakpoint the list is
+    cards. Rather than invent a card-shaped multi-select, the page offers
+    bulk delete on the table only and says nothing about it on a phone —
+    which is where a fleet clerk retires vans from anyway.
+  */
+  const compact = useIsCompact()
+  const canSelect = canManage && !compact
 
   /**
    * One categories fetch for the whole page.
@@ -118,10 +146,20 @@ export function VehiclesPage() {
         render: (row) =>
           canManage ? (
             <span className="kr-categories__actions">
-              <Button size="sm" variant="secondary" onClick={() => setEditing(row)}>
+              <Button
+                size="sm"
+                variant="secondary"
+                aria-label={`Edit ${row.registration_number}`}
+                onClick={() => setEditing(row)}
+              >
                 Edit
               </Button>
-              <Button size="sm" variant="secondary" onClick={() => setDeleting(row)}>
+              <Button
+                size="sm"
+                variant="secondary"
+                aria-label={`Delete ${row.registration_number}`}
+                onClick={() => setDeleting(row)}
+              >
                 Delete
               </Button>
             </span>
@@ -257,10 +295,67 @@ export function VehiclesPage() {
             error ? (
               <p style={{ padding: 'var(--space-6)', color: 'var(--kr-error)' }}>{error}</p>
             ) : (
+              <>
+              {/*
+                Above the table and only once something is ticked. A bar that
+                is always there spends a row of a dense operational list on a
+                button that does nothing, and a destructive control sitting
+                permanently over the register is one mis-click looking for an
+                occasion.
+              */}
+              {canSelect && selected.length > 0 && (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 'var(--space-4)',
+                    padding: 'var(--space-3) var(--space-4)',
+                    borderBottom: '1px solid var(--border-default)',
+                    background: 'var(--surface-sunken)',
+                  }}
+                >
+                  {/* The count is the whole point of the bar: it is the number
+                      the confirmation will repeat back. */}
+                  <span style={{ font: 'var(--type-body-dense)', color: 'var(--text-body)' }}>
+                    {selected.length === 1 ? '1 vehicle selected' : `${selected.length} vehicles selected`}
+                    {selected.length > BULK_DELETE_MAX && (
+                      <span style={{ color: 'var(--kr-error)', marginInlineStart: 'var(--space-2)' }}>
+                        Too many at once — select up to {BULK_DELETE_MAX}.
+                      </span>
+                    )}
+                  </span>
+
+                  <span style={{ display: 'flex', gap: 'var(--space-2)' }}>
+                    <Button variant="secondary" onClick={() => setSelected([])}>
+                      Clear
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      iconLeft="trash-2"
+                      /* Every row offers a "Delete" of its own, so the bare
+                         word is ambiguous to anyone who cannot see that this
+                         one sits in the selection bar. Sighted users read the
+                         count beside it; this is the same fact, spoken. */
+                      aria-label={
+                        selected.length === 1
+                          ? 'Delete 1 selected vehicle'
+                          : `Delete ${selected.length} selected vehicles`
+                      }
+                      disabled={selected.length > BULK_DELETE_MAX}
+                      onClick={() => setBulkDeleting(true)}
+                    >
+                      Delete
+                    </Button>
+                  </span>
+                </div>
+              )}
               <DataTable<Vehicle>
                 columns={columns}
                 rows={filtered}
                 fill
+                selectedIds={canSelect ? selected : undefined}
+                onSelectionChange={canSelect ? setSelected : undefined}
                 emptyMessage={
                   vehicles === null
                     ? 'Loading…'
@@ -271,6 +366,7 @@ export function VehiclesPage() {
                         : 'No vehicles yet'
                 }
               />
+              </>
             )
           ) : (
             <VehicleCategoriesPanel
@@ -311,6 +407,21 @@ export function VehiclesPage() {
             await load()
             await reloadCategories()
             setDeleting(null)
+          }}
+        />
+      )}
+
+      {bulkDeleting && (
+        <BulkDeleteVehiclesDialog
+          ids={selected}
+          onClose={() => setBulkDeleting(false)}
+          onDeleted={async () => {
+            await load()
+            await reloadCategories()
+            setBulkDeleting(false)
+            // Cleared only on success. A refused batch keeps the ticks so the
+            // clerk can untick the rows the server named and go again.
+            setSelected([])
           }}
         />
       )}
@@ -374,6 +485,114 @@ function DeleteVehicleDialog({
       {message !== null && (
         <Alert tone="error" title="Not removed">
           {message}
+        </Alert>
+      )}
+    </Dialog>
+  )
+}
+
+/**
+ * Retiring several vehicles at once.
+ *
+ * ## Why the count is repeated, and why the copy is the single dialog's
+ *
+ * The bar above the table already says how many are ticked; this says it
+ * again, because the confirmation is the last place the number can still be
+ * wrong and the first place anybody reads it carefully. The rest of the copy
+ * is `DeleteVehicleDialog`'s, deliberately: soft-deleted, so trips, invoices
+ * and allocations that name these vehicles keep resolving. Two dialogs for
+ * one act must not disagree about what the act does.
+ *
+ * ## The refusal list is the reason this is not a loop of DELETEs
+ *
+ * The server refuses the **whole batch** if any vehicle cannot go — one out
+ * on a job, one belonging to another fleet — and names each. A client looping
+ * `DELETE /vehicles/{id}` would instead half-succeed and leave the clerk to
+ * work out which half. So the failure path here is not an error message but a
+ * list, and the selection is deliberately **kept** so they can untick the
+ * named rows and go again.
+ */
+function BulkDeleteVehiclesDialog({
+  ids,
+  onClose,
+  onDeleted,
+}: {
+  ids: Array<string | number>
+  onClose: () => void
+  onDeleted: () => void
+}) {
+  const [message, setMessage] = useState<string | null>(null)
+  const [refused, setRefused] = useState<Array<[string, string[]]>>([])
+  const [busy, setBusy] = useState(false)
+
+  const remove = async () => {
+    setBusy(true)
+    setMessage(null)
+    setRefused([])
+
+    try {
+      await apiClient.post('/vehicles/bulk-delete', { ids })
+      onDeleted()
+    } catch (failure) {
+      const problem = apiError(failure, 'Could not remove these vehicles.')
+
+      /*
+        The refusals, as the server grouped them: a reason, and the vehicles it
+        applies to. Rendered without interpreting either half — the sentence is
+        the server's copy and the console holds no dictionary of reasons that
+        could drift from it.
+
+        This deliberately also renders an ordinary validation failure, which
+        arrives in the same shape under a field name. That is the right
+        behaviour rather than a coincidence: the alternative is a batch the
+        server rejected and a dialog with nothing to say about it.
+      */
+      setRefused(Object.entries(problem.errors ?? {}).filter(([, names]) => Array.isArray(names)))
+      setMessage(problem.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog
+      open
+      tone="destructive"
+      title={ids.length === 1 ? 'Remove 1 vehicle?' : `Remove ${ids.length} vehicles?`}
+      description="They leave the fleet and stop being dispatchable. Past trips, invoices and allocations that name them are unaffected."
+      onClose={busy ? undefined : onClose}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="destructive" loading={busy} onClick={() => void remove()}>
+            {ids.length === 1 ? 'Remove vehicle' : `Remove ${ids.length} vehicles`}
+          </Button>
+        </>
+      }
+    >
+      {message !== null && (
+        <Alert tone="error" title="Nothing was removed">
+          {message}
+          {refused.length > 0 && (
+            /* Bounded, because the server accepts a hundred ids and a
+               hundred refusals would otherwise push the confirmation off
+               the screen — the buttons with it. */
+            <div style={{ marginTop: 'var(--space-3)', maxHeight: 220, overflowY: 'auto' }}>
+              {refused.map(([reason, names]) => (
+                <div key={reason} style={{ marginBottom: 'var(--space-2)' }}>
+                  <div style={{ font: 'var(--type-label)', color: 'var(--text-body)' }}>{reason}</div>
+                  {/* One line, comma-separated: the reader is scanning for
+                      which of their ticks to undo, and a column of plates is
+                      slower to scan than a sentence of them. */}
+                  <div style={{ font: 'var(--type-body-dense)', color: 'var(--text-secondary)' }}>
+                    {names.join(', ')}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </Alert>
       )}
     </Dialog>

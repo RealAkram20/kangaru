@@ -21512,3 +21512,84 @@ trip 114. **No `offers.v2` banner was posted at any point** — the un-answerabl
 - `KangaruNotification::pushWakeOptions` and the channel's two-message
   machinery stay: generic, proven, and the prune-by-index guard now exercises
   it through a purpose-built notification in the test.
+
+---
+
+## 2026-09-04 — bulk delete for the vehicle register (complete)
+
+**Status:** complete
+**Owns:** `backend/Modules/Vehicles/Requests/BulkDeleteVehiclesRequest.php`,
+`backend/tests/Feature/Vehicles/BulkDeleteVehiclesTest.php`
+**Shares:** `VehicleController`, `VehicleService`, `VehiclePolicy`,
+`Modules/Vehicles/Routes/api.php`, `docs/api/openapi.yaml`,
+`frontend/src/pages/VehiclesPage{,.test}.tsx`,
+`frontend/src/components/data/DataTable.tsx`,
+`frontend/src/components/forms/Checkbox.tsx` — exact edit: this entry appended
+to this file, one operation and its spec entry added, selection made an opt-in
+prop on the table, `indeterminate` added to the checkbox.
+
+**What this is:** the owner asked to select several rows and delete them in one
+action, and chose Vehicles in the web console as the place. One endpoint,
+`POST /api/v1/vehicles/bulk-delete`, and a selection column the rest of the
+console can opt into later.
+
+**The rule the whole thing exists to hold: all or nothing.** A partial batch
+leaves an administrator to work out which of the ten went, from a table that
+has just changed under them. So a vehicle out on a job refuses the *entire*
+batch and names itself; nothing is deleted until everything can be.
+
+**Decided rather than asked:**
+- **POST, not DELETE** — the selection travels in a body, and not every proxy
+  forwards a body on DELETE.
+- **A ceiling of 100**, mirrored in the console so select-all on a large fleet
+  disables the button and says why rather than building a request already
+  known to fail.
+- **Another fleet's vehicle is "not found", not "forbidden"**, and is named by
+  id rather than plate. Saying "forbidden" confirms the id exists, which is
+  the register disclosure ADR-0055 §3 closed on the listing. It reads exactly
+  like an id that never existed, which is the point.
+- **Selection is opt-in on `DataTable`** — pass `selectedIds` *and*
+  `onSelectionChange` or the table renders exactly as before. Controlled, not
+  internal, because the thing acting on a selection lives outside the table
+  and must clear it.
+- **Table only, never the phone cards.** A card with a checkbox is a different
+  design question; the page hides the bar below the compact breakpoint.
+
+**Two things only rendering it found**, neither visible to tsc, eslint or 766
+tests:
+1. The refusal list repeated the same twelve-word sentence once per vehicle —
+   five times on the dev fleet, and up to a hundred at the ceiling. The 422's
+   `errors` is now keyed by **reason** with the vehicles under it: the
+   envelope's ordinary field-to-messages shape used as reason-to-vehicles, so
+   the console holds no dictionary of reasons that could drift from the
+   server's copy.
+2. `var(--text-danger)` does not exist. The over-cap warning would have
+   inherited its colour silently. It is `--kr-error`. Every token on the three
+   changed files was then audited against the stylesheets; the rest resolve.
+
+**Also fixed, found while writing the tests:** every row's Edit and Delete
+button was named only "Edit"/"Delete", so twenty rows gave a screen-reader
+user twenty identical controls. Both now carry the registration. The bulk
+button keeps the visible word "Delete" — the bar beside it states the count —
+and takes an `aria-label` naming the selection.
+
+**Removed before shipping:** a `selectableReason` prop on `DataTable` that
+nothing could call. No field on the vehicle payload says a vehicle is out on a
+job, so the client cannot grey a checkbox for it — which is exactly why the
+server-side refusal list exists.
+
+**Verified:** 5 Pest tests, 10 vitest tests on the page, Pint and Larastan
+level 8 clean, `tsc -b --force` and eslint clean, full frontend suite green.
+Five guards proved by mutation and restored: dropping the refusal lines,
+sending the ids one request at a time, handing the table the unfiltered fleet,
+and removing the cap each fail exactly the test that names them.
+
+**Rendered against the real dev database in Chrome**, signed in as a throwaway
+fleet owner that was deleted afterwards: ticking, the count, select-all,
+Clear, the confirmation, and the refusal. Five of the twenty dev vehicles are
+genuinely on occupying trips, so select-all → confirm exercised the refusal
+against real data — 21 live and 0 trashed before and after, which is the
+all-or-nothing rule holding outside a test.
+
+**Not done:** no other table offers selection yet; the prop is there and unused
+elsewhere on purpose. Nothing on the phone layout.
