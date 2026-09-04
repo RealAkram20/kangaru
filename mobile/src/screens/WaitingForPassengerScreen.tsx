@@ -452,7 +452,7 @@ export function WaitingForPassengerScreen({ route, navigation }: Props) {
 /**
  * Where the pickup is, when the platform knows.
  *
- * The shared `PickupMap`, which owns the map document and the
+ * The shared `PickupMap`, which owns the MapLibre document and the
  * no-coordinates case. No distance badge and no current position, unlike
  * `PickupScreen`: the driver is *at* the pickup, so "4.6 km away" is either
  * wrong or zero, and a second GPS read to say "0.0 km" would spend battery to

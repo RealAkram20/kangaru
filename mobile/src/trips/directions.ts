@@ -7,7 +7,7 @@ import type { Coordinates } from '../api/types';
  *
  * **This app does not draw routes and is not going to.** Neither map in the
  * driver app has a routing engine behind it — `TripMap` and `PickupMap` place
- * markers on a map document and deliberately draw no line between them,
+ * markers on a MapLibre document and deliberately draw no line between them,
  * because a straight line is not a road and telling a driver to take one is
  * telling them to go a way that may not exist. ADR-0020 §3 declined to derive
  * even a *duration* from a straight line for the same reason.

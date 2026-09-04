@@ -679,7 +679,7 @@ export function TripInProgressScreen({ route, navigation }: Props) {
  *
  * Where the mockup put three lines — minutes, kilometres and a clock time —
  * this puts two, and neither is derived from the other. `PickupMap` owns the
- * map document and the no-coordinates case; a trip keyed in at the desk
+ * MapLibre document and the no-coordinates case; a trip keyed in at the desk
  * has no pins at all, and every fact on this screen stays legible without one.
  */
 function MapPanel({
