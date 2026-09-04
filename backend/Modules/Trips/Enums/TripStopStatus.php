@@ -14,6 +14,24 @@ namespace Modules\Trips\Enums;
  */
 enum TripStopStatus: string
 {
+    /**
+     * Asked for, not yet agreed — an extension a passenger requested and the
+     * driver has not accepted.
+     *
+     * The one state that is not evidence of something that happened, and it
+     * exists for one reason: an extension changes where the driver is going
+     * and what they are owed, so a passenger cannot simply impose one from
+     * the back seat. Only `EXTENSION` rows are ever created in this state;
+     * every ordinary stop still begins at `PENDING`.
+     *
+     * A proposal is not part of the journey. `RouteReference` does not route
+     * through it, the fare does not count it, and completion does not wait
+     * for it — until the driver accepts and it becomes `PENDING` like any
+     * other leg. Declining sends it to `SKIPPED` with a reason, which is
+     * §6's existing answer for "this was on the run and did not happen".
+     */
+    case PROPOSED = 'proposed';
+
     case PENDING = 'pending';
     case ARRIVED = 'arrived';
     case DONE = 'done';

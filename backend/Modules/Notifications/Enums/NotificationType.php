@@ -90,6 +90,27 @@ enum NotificationType: string
     case TRIP_OFFER_WITHDRAWN = 'trip.offer_withdrawn';
 
     /**
+     * A passenger has asked to be taken past the drop-off they agreed to
+     * (ADR-0045 §4 amendment).
+     *
+     * **Without this the feature does not work at all.** A passenger's
+     * extension lands `proposed` and waits for the driver to answer, and
+     * until this existed nothing told the driver it was there — they would
+     * have found it by opening the trip and noticing, while the passenger
+     * sat beside them waiting. The request is only half of a conversation
+     * and this is the half that reaches somebody.
+     *
+     * Not an offer, and deliberately not dressed as one. `TRIP_OFFERED` rings
+     * on `offers.call.v2` and takes over a locked screen because a job goes
+     * to somebody else in forty-five seconds. This has no such clock: the
+     * driver is already carrying the passenger who asked, and the answer can
+     * wait the seconds it takes them to look down. Borrowing the ringtone
+     * would spend the one sound the fleet has learned means "a job is
+     * leaving" on a question that is not one.
+     */
+    case TRIP_EXTENSION_REQUESTED = 'trip.extension_requested';
+
+    /**
      * What the office decided about closing a driver's account (ADR-0043 §4).
      *
      * **The first return path this platform has built for a driver-facing
@@ -197,6 +218,17 @@ enum NotificationType: string
      * the somebody.
      */
     case PLATFORM_FLEET_HAS_NO_ACCOUNT = 'platform.fleet.no_account';
+
+    /**
+     * A fleet is being handed to somebody who has no account yet (owner's
+     * decision, 24 August). The welcome email with the set-a-password link —
+     * sent to a bare address by `Notification::route`, like an applicant's,
+     * because the account is minted only when they confirm.
+     */
+    case PLATFORM_FLEET_OWNERSHIP_INVITED = 'platform.fleet.ownership_invited';
+
+    /** Head office: the handover completed — the new owner set their password. */
+    case PLATFORM_FLEET_OWNERSHIP_TRANSFERRED = 'platform.fleet.ownership_transferred';
 
     /** Head office: a driver wants to run walk-in work (ADR-0055 §5). */
     case PLATFORM_WALK_IN_CONTRACT_REQUESTED = 'platform.walk_in_contract.requested';
@@ -331,6 +363,7 @@ enum NotificationType: string
             self::TRIP_OFFERED => 'New job',
             self::DRIVER_TRIP_ASSIGNED => 'New trip assigned',
             self::TRIP_OFFER_WITHDRAWN => 'Job withdrawn',
+            self::TRIP_EXTENSION_REQUESTED => 'Passenger wants to go further',
             self::DRIVER_CLOSURE_ANSWERED => 'Account closure',
             self::DRIVER_SUPPORT_ANSWERED => 'Report answered',
             self::DRIVER_DOCUMENT_REVIEWED => 'Document checked',
@@ -341,6 +374,8 @@ enum NotificationType: string
             self::FLEET_PLAN_LIMIT_REACHED => 'Plan limit reached',
             self::PLATFORM_FLEET_ONBOARDED => 'New fleet',
             self::PLATFORM_FLEET_HAS_NO_ACCOUNT => 'Fleet has no account',
+            self::PLATFORM_FLEET_OWNERSHIP_INVITED => 'Invitation to own a fleet',
+            self::PLATFORM_FLEET_OWNERSHIP_TRANSFERRED => 'Fleet changed hands',
             self::PLATFORM_WALK_IN_CONTRACT_REQUESTED => 'Walk-in contract requested',
             self::CLIENT_INVOICE_ISSUED => 'Invoice issued',
             self::CLIENT_CREDIT_NOTE_ISSUED => 'Credit note issued',
@@ -436,6 +471,24 @@ enum NotificationType: string
              */
             self::TRIP_OFFER_WITHDRAWN => [NotificationChannel::PUSH],
             /*
+             * Push and the row, never mail — `DRIVER_TRIP_ASSIGNED`'s pair,
+             * for the same two reasons.
+             *
+             * `DATABASE` matters more here than usual: a driver who was
+             * mid-junction when the push arrived, or whose handset was in a
+             * dead zone, still has a passenger in the car expecting an
+             * answer. The row is what they find when they next look, and
+             * without it the only record of the request would be a
+             * notification that has already gone.
+             *
+             * Never mail. The passenger is sitting beside them; an email
+             * about it would arrive after the journey it was asking about.
+             */
+            self::TRIP_EXTENSION_REQUESTED => [
+                NotificationChannel::PUSH,
+                NotificationChannel::DATABASE,
+            ],
+            /*
              * **Mail only, and the omissions are the point.** A confirmed
              * closure has just detached this driver's sign-in, so a `DATABASE`
              * row would be written into an inbox nobody can open and a `PUSH`
@@ -501,10 +554,17 @@ enum NotificationType: string
             self::FLEET_PLAN_LIMIT_REACHED,
             self::PLATFORM_FLEET_ONBOARDED,
             self::PLATFORM_FLEET_HAS_NO_ACCOUNT,
+            self::PLATFORM_FLEET_OWNERSHIP_TRANSFERRED,
             self::PLATFORM_WALK_IN_CONTRACT_REQUESTED => [
                 NotificationChannel::DATABASE,
                 NotificationChannel::MAIL,
             ],
+            /*
+             * Mail alone, for `ACCOUNT_INVITED`'s reason taken further: the
+             * recipient has no account at all yet, so there is no inbox to
+             * write a row into and no handset registered to push to.
+             */
+            self::PLATFORM_FLEET_OWNERSHIP_INVITED => [NotificationChannel::MAIL],
             /*
              * Mail and the in-app row for the whole client family. No push:
              * a corporate administrator works at a desk, and none of this is
@@ -744,6 +804,14 @@ enum NotificationType: string
              */
             self::ACCOUNT_INVITED,
             self::ACCOUNT_INVITATION_EXPIRING => true,
+
+            /*
+             * The same argument one case up: the reader cannot have set a
+             * preference — they have no account until they open this — and a
+             * mailbox rule cannot be allowed to leave a fleet's handover
+             * hanging with nobody told.
+             */
+            self::PLATFORM_FLEET_OWNERSHIP_INVITED => true,
 
             self::ACCOUNT_ACCESSED_BY_SUPPORT => true,
 

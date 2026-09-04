@@ -13,13 +13,18 @@ use Modules\Bookings\Enums\OrderRequestServiceType;
 use Modules\Bookings\Enums\OrderRequestStatus;
 use Modules\Bookings\Models\OrderRequest;
 use Modules\Customers\Requests\CancelRideRequest;
+use Modules\Customers\Requests\StoreRideExtensionRequest;
 use Modules\Customers\Resources\CustomerRideResource;
 use Modules\Dispatch\Enums\DispatchOfferStatus;
 use Modules\Dispatch\Models\DispatchOffer;
 use Modules\Dispatch\Services\DispatchOfferService;
+use Modules\Notifications\Notifications\TripExtensionRequestedNotification;
 use Modules\Trips\Enums\TripStatus;
+use Modules\Trips\Enums\TripStopSource;
 use Modules\Trips\Models\Trip;
+use Modules\Trips\Resources\TripStopResource;
 use Modules\Trips\Services\TripStateMachine;
+use Modules\Trips\Services\TripStopService;
 
 /**
  * The ride a customer is currently waiting on or taking (ADR-0024 §7).
@@ -272,6 +277,79 @@ class CustomerRideController extends Controller
     private function justEnded(Trip $trip): bool
     {
         return $trip->updated_at->gt(now()->subMinutes(self::AFTERGLOW_MINUTES));
+    }
+
+    /**
+     * The passenger asking to be taken somewhere further.
+     *
+     * ## A request, not an instruction
+     *
+     * This is the one of the three ways to extend a trip that does not take
+     * effect on its own. A driver or a dispatcher adding an extension is
+     * recording a decision already taken; a passenger tapping in the back
+     * seat is *asking*, and it changes where the driver is going and what
+     * they are owed. `TripStopService::addExtension` reads the source and
+     * lands this one `PROPOSED`, which nothing routes through and nothing
+     * bills until the driver answers.
+     *
+     * ## Why the trip has to be running
+     *
+     * The same 404 as everything else here, in the same words. A passenger
+     * whose ride has finished has no trip to extend, and one whose driver is
+     * still on the way has nowhere to be extended *to* — the journey has not
+     * begun, so "further than the drop-off" has no meaning yet.
+     * `TripStopService::ACTIVE_STATUSES` is the same gate the staff surface
+     * uses, so the two cannot drift.
+     */
+    public function extend(StoreRideExtensionRequest $request, TripStopService $stops): JsonResponse
+    {
+        /** @var Customer $customer */
+        $customer = $request->user('customer');
+
+        $ride = $this->activeRideFor($customer);
+        $trip = $ride === null ? null : $this->tripFor($customer, $ride);
+
+        if ($trip === null || ! in_array($trip->status, TripStopService::ACTIVE_STATUSES, true)) {
+            return ApiResponse::error(
+                ErrorCode::NOT_FOUND,
+                'You have no ride in progress to extend.',
+                [],
+                404,
+            );
+        }
+
+        $extension = $stops->addExtension(
+            $trip,
+            $request->validated(),
+            // No staff user did this — the passenger did, and a `Customer` is
+            // not a `users` row. `TripStopService` stores a null and lets
+            // `ADDED_BY_CLIENT` carry the answer.
+            null,
+            TripStopSource::ADDED_BY_CLIENT,
+        );
+
+        /*
+         * **The half of this that reaches a person.**
+         *
+         * A proposal that nobody is told about is a passenger waiting on an
+         * answer their driver has no way of knowing was asked for — they
+         * would find it by opening the trip and noticing. Notified rather
+         * than pushed directly so the channel choice stays in
+         * `NotificationType`, which sends this on push and the in-app row and
+         * never on mail.
+         *
+         * The driver's *user*, not the driver record: notifications are
+         * addressed to accounts. A trip with no driver on it cannot reach
+         * this line — `ACTIVE_STATUSES` means the journey is under way — but
+         * the null-safe call says so rather than trusting it.
+         */
+        $trip->driver?->user?->notify(TripExtensionRequestedNotification::for($extension));
+
+        return ApiResponse::success(
+            new TripStopResource($extension),
+            'Your Captain has been asked to take you on.',
+            201,
+        );
     }
 
     private function activeRideFor(Customer $customer): ?OrderRequest

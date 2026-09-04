@@ -143,6 +143,11 @@ function routeCensus(): array
         'GET api/v1/companies/{company}' => 'A',
         'DELETE api/v1/companies/{company}' => 'A',
         'PATCH api/v1/companies/{company}' => 'A',
+        // ADR-0056 acts as a person, not an organisation, so Log in as needs
+        // somebody to name. `CompanyPolicy::actAsSomebody`, which gates on the
+        // level *and* `support.act-as` rather than on `companies.view` - the
+        // roster is disclosed only to the one grant that can use it.
+        'GET api/v1/companies/{company}/accounts' => 'A',
         // Which fleets serve a client (owner's decision, 24 Aug). Head office
         // alone - `CompanyPolicy::assignFleets` gates on the level, not on a
         // permission, so a custom role cannot be granted it.
@@ -172,6 +177,11 @@ function routeCensus(): array
         'GET api/v1/customer/order-requests/{orderRequest}' => 'C',
         'GET api/v1/customer/rides/active' => 'C',
         'POST api/v1/customer/rides/active/cancellation' => 'C',
+        // C like the rest of `rides/active`: the token's own customer_id is
+        // the scope and there is no id in the request to tamper with. The
+        // passenger only ever *proposes* — the driver answers on the staff
+        // surface, which is where the policy lives.
+        'POST api/v1/customer/rides/active/extension' => 'C',
         'POST api/v1/customer/trips/{trip}/rating' => 'C',   // customer_id compared in the controller; binding fixed 2026-08-20 (F5 closed)
         'GET api/v1/customers' => 'A',
         'GET api/v1/customers/{customer}' => 'A',
@@ -296,6 +306,15 @@ function routeCensus(): array
         'PATCH api/v1/operators/{operator}' => 'A',
         // ADR-0056 acts as a person, not an organisation, so Log in as needs somebody to name.
         'GET api/v1/operators/{operator}/accounts' => 'A',
+        // A fleet changing hands (owner's decision, 24 August). The authed
+        // pair is head office naming or withdrawing the next owner; the
+        // public pair is the accept page — the reader has no account until
+        // they finish it, so like the invitation it is a 'D' with the same
+        // measured throttle asymmetry.
+        'PUT api/v1/operators/{operator}/owner' => 'A',
+        'DELETE api/v1/operators/{operator}/owner' => 'A',
+        'GET api/v1/owner-transfers/{token}' => 'D',
+        'POST api/v1/owner-transfers/{token}/accept' => 'D',
         // Head office's own dashboard: counts only, never a row (ADR-0055 §2).
         // ADR-0058. The catalogue is open to any signed-in account; moving a
         // fleet between plans is head office's.
@@ -372,6 +391,21 @@ function routeCensus(): array
         // `viewStopCandidates` policy and 409 gate, answering from a
         // server-side geocoder proxy instead of the register.
         'GET api/v1/trips/{trip}/place-suggestions' => 'A',
+        // The extension: a passenger travelling past the drop-off they
+        // agreed to. All four A on `TripPolicy::addStop` — the trip's own
+        // driver, or an office holding `trips.transition.any` — and all four
+        // 409 outside the journey statuses, exactly like the stop routes they
+        // sit beside. The two answers additionally 404 on anything that is
+        // not this trip's unanswered extension, in one masked sentence.
+        //
+        // The *proposing* half is not here: a passenger asks through
+        // `customer/rides/active/extension`, where the token's own
+        // `customer_id` is the authorization and there is no policy to get
+        // wrong.
+        'POST api/v1/trips/{trip}/dropoff-arrival' => 'A',
+        'POST api/v1/trips/{trip}/extensions' => 'A',
+        'POST api/v1/trips/{trip}/extensions/{extension}/acceptance' => 'A',
+        'POST api/v1/trips/{trip}/extensions/{extension}/decline' => 'A',
 
         // ── Billing ─────────────────────────────────────────────────────
         'GET api/v1/invoices' => 'A',
@@ -457,7 +491,22 @@ function hasMiddleware(RouteDefinition $route, array $needles): bool
 }
 
 const MW_AUTH_STAFF = ['auth:sanctum'];
-const MW_AUTH_CUSTOMER = ['auth:customer'];
+/**
+ * The walk-in guard, both spellings.
+ *
+ * `walk-in-or-support` replaced `auth:customer` on the customer group in
+ * ADR-0066: it answers the customer token first and falls through to a staff
+ * token **only** while a live acting-as session names that customer, which is
+ * a thing `auth:customer` cannot express because it would have rejected the
+ * staff token before anything else ran.
+ *
+ * Both names are listed rather than one swapped for the other. This census
+ * asks "is anything authenticating this route", and a customer route that
+ * reverted to the plain guard tomorrow would still be authenticated — it
+ * should not fail here for having done so. What that change *would* break is
+ * `ActingAsWalkInTest`, which is the file that ought to notice.
+ */
+const MW_AUTH_CUSTOMER = ['auth:customer', 'walk-in-or-support', 'App\Http\Middleware\AuthenticateWalkInOrSupport'];
 const MW_THROTTLE = ['throttle:', 'Illuminate\Routing\Middleware\ThrottleRequests'];
 const MW_TENANT = ['tenant', 'App\Http\Middleware\IdentifyTenant'];
 
@@ -499,7 +548,17 @@ it('has a census row for every API route and a route for every census row', func
     // destination of the footer link in every email since M1, which until
     // now 404'd.
     // 236: the mail DNS check.
-    expect(count($router))->toBe(236);
+    // 240: the fleet handover, 2026-08-24 — head office's propose/withdraw
+    // pair (authenticated) and the public accept pair, which exists because
+    // the new owner has no account until they finish it.
+    // 241: the corporate client's roster (ADR-0056, 2026-08-26). Head office
+    // could act as somebody at a fleet and not at a client, which is half of
+    // the one sentence the ADR quotes the owner on.
+    // 245: the extension's four routes — mark the agreed drop-off reached,
+    // add an extension, and the driver's accept/decline of one a passenger
+    // asked for. A fifth, the passenger's own proposal, sits on the customer
+    // surface and is counted with the rest of `customer/`.
+    expect(count($router))->toBe(246);
 });
 
 it('uses only the four idioms, and files sixteen routes as public', function () {
@@ -519,7 +578,9 @@ it('uses only the four idioms, and files sixteen routes as public', function () 
      * so there is nothing to enumerate by changing a path segment.
      */
     // 16 -> 18: mail plan M2's two invitation routes.
-    expect($idioms['D'])->toBe(18);
+    // 18 -> 20: the fleet handover's accept pair, throttled like the
+    // invitation's and for its reasons.
+    expect($idioms['D'])->toBe(20);
     expect($idioms['B'])->toBe(3);
 });
 
@@ -548,7 +609,8 @@ it('authenticates every route that is not filed as public, and throttles every o
     // ADR-0027 §5's 5/min/IP. `$guarded` is unchanged because all three are
     // public by design, not by omission.
     // 16 -> 18: the two invitation routes, both throttled at 5/min/IP.
-    expect($public)->toBe(18);
+    // 18 -> 20: the fleet handover's accept pair.
+    expect($public)->toBe(20);
     // 181: the two ADR-0045 stop routes, both authenticated.
     // 183: the two application-document reads, both authenticated. They serve
     // somebody's identity document, so being counted here is the point.
@@ -562,7 +624,13 @@ it('authenticates every route that is not filed as public, and throttles every o
     // 217: the two mail-preference routes, both authenticated. Nobody
     // reads or writes anybody else's; the route takes no id.
     // 218: the mail DNS check, authenticated.
-    expect($guarded)->toBe(218);
+    // 220: the fleet handover's propose/withdraw pair, both authenticated —
+    // naming who owns a fleet is the register's most consequential write.
+    // 221: the corporate client's roster, authenticated — and gated harder
+    // than the fleet twin, on `support.act-as` rather than `companies.view`.
+    // 225: the extension's four routes, all authenticated. Where a trip is
+    // going and what it will cost is not a public question.
+    expect($guarded)->toBe(226);
 });
 
 it('binds the actor\'s tenant on every staff route, so TenantScope has something to scope by', function () {
@@ -612,5 +680,14 @@ it('binds the actor\'s tenant on every staff route, so TenantScope has something
     // the actor's tenant like the fleet register does.
     // 203: the two mail-preference routes, staff-guarded like `me/devices`.
     // 204: the mail DNS check.
-    expect($staff)->toBe(204);
+    // 206: the fleet handover's propose/withdraw pair — staff-guarded, and
+    // tenant-bound like every other operators route.
+    // 207: the corporate client's roster, staff-guarded and tenant-bound like
+    // every other companies route.
+    // 211: the extension's four routes — the drop-off arrival that divides
+    // the journey in two, the add, and the driver's accept/decline. Staff
+    // routes and tenant-bound like the stop routes they sit beside, and for
+    // the same reason: a driver's request binds a null tenant, which is the
+    // fail-closed state, and a walk-in's stops have no tenant either.
+    expect($staff)->toBe(211);
 });

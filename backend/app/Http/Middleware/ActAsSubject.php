@@ -2,9 +2,12 @@
 
 namespace App\Http\Middleware;
 
+use App\Enums\ErrorCode;
+use App\Models\Customer;
 use App\Models\ImpersonationSession;
 use App\Models\User;
 use App\Support\Access\ImpersonationContext;
+use App\Support\Api\ApiResponse;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -68,8 +71,31 @@ class ActAsSubject
 
         $subject = $session->subject;
 
-        // A session whose subject has been deleted, or was never a `User` —
-        // the walk-in half of the morph is not implemented (ADR-0056 scope).
+        // The walk-in half (ADR-0066 §5). There is no `users` row to swap to,
+        // so the staff surface is **closed** for the duration instead.
+        //
+        // ADR-0056 §1 sets the actor's own reach aside entirely while a
+        // session is open. For a `User` subject the swap below makes that true
+        // without anything having to enforce it — the actor is simply gone. A
+        // `Customer` has no staff identity to replace them with, so falling
+        // through here would leave the actor holding their full `kangaru`
+        // reach, and acting-as-a-walk-in would be the **one** session that is
+        // additive rather than substitutive. For the one account that can
+        // become anybody.
+        if ($subject instanceof Customer) {
+            app(ImpersonationContext::class)->begin($session);
+
+            return $this->allowsWhileHoldingAWalkIn($request)
+                ? $next($request)
+                : ApiResponse::error(
+                    ErrorCode::FORBIDDEN,
+                    'You are holding a walk-in customer\'s account for support, and a walk-in has no '
+                    .'console. Stop the session to use your own (ADR-0066).',
+                    status: 403,
+                );
+        }
+
+        // A session whose subject has been deleted, or is neither principal.
         // Falling through as the actor is the safe direction: they are a
         // Kangaru account, which reads Kangaru's own rows and nothing else.
         if (! $subject instanceof User) {
@@ -86,5 +112,42 @@ class ActAsSubject
         $request->setUserResolver(fn () => $subject);
 
         return $next($request);
+    }
+
+    /**
+     * The four staff routes that stay open while a walk-in session is live
+     * (ADR-0066 §5).
+     *
+     * ## An allow-list, and the opposite shape to `RefuseWhileActingAs`
+     *
+     * That class argues at length for attaching a deny-list *to* routes rather
+     * than matching names, because a deny-list that misses a route **permits**
+     * it and the failure is invisible. This is the mirror image and the
+     * argument inverts with it: an allow-list that misses a route **refuses**
+     * it. A staff route added next month is closed here until somebody opens
+     * it in a diff, which is `ClientScope`'s shape and the fail-closed
+     * direction.
+     *
+     * Each of the four earns its place:
+     *
+     * - `auth.me` — the console shell cannot render without it, and the shell
+     *   is what draws the banner that explains the refusals.
+     * - `auth.logout` — never trap somebody inside a session they cannot leave.
+     * - `support.act-as.show` — how the banner learns it should be drawn.
+     * - `support.act-as.destroy` — the way out.
+     *
+     * An unnamed route is refused. Every route this could plausibly need is
+     * named, and "it had no name" is not a reason to open the console.
+     */
+    private function allowsWhileHoldingAWalkIn(Request $request): bool
+    {
+        $name = $request->route()?->getName();
+
+        return in_array($name, [
+            'auth.me',
+            'auth.logout',
+            'support.act-as.show',
+            'support.act-as.destroy',
+        ], true);
     }
 }

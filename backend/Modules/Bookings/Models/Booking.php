@@ -12,11 +12,13 @@ use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
 use Modules\Bookings\Enums\BookingStatus;
 use Modules\Bookings\Enums\OrderRequestServiceType;
+use Modules\Dispatch\Models\DispatchOffer;
 use Modules\Trips\Models\Trip;
 use Modules\Vehicles\Models\Vehicle;
 
@@ -141,6 +143,22 @@ class Booking extends Model
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);
+    }
+
+    /**
+     * Every driver this booking has been put in front of (ADR-0068).
+     *
+     * The desk's own dispatch history: round one is the pair a dispatcher
+     * chose by hand, and any round after it is the rotation that followed a
+     * decline or a phone left ringing. Its mere existence is also the
+     * evidence one listener needs — see `SendDriverTripAssignedNotification`
+     * — that a driver was *asked* rather than simply told.
+     *
+     * @return HasMany<DispatchOffer, $this>
+     */
+    public function offers(): HasMany
+    {
+        return $this->hasMany(DispatchOffer::class);
     }
 
     /** @return BelongsTo<User, $this> */

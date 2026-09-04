@@ -38,6 +38,7 @@ function booking(overrides: Partial<Booking> = {}): Booking {
     scheduled_for: null,
     is_immediate: true,
     status: 'approved',
+    is_ringing: false,
     approved_by_user_id: 1,
     approved_at: '2026-07-20T08:05:00.000000Z',
     decision_reason: null,
@@ -94,6 +95,9 @@ function board(
   drivers: Driver[] = [driver()],
 ) {
   get.mockImplementation((url: string) => {
+    // The board labels a vehicle by category, and the office's word for
+    // one is not the stored key (ADR-0050).
+    if (url.startsWith('/vehicle-categories')) return Promise.resolve(apiOk(CATEGORIES))
     // Before the plain `/bookings` arm: these are `/bookings/{id}/...` and
     // the prefix match would otherwise hand the picker the booking queue.
     if (url.includes('/candidate-vehicles')) {
@@ -121,6 +125,25 @@ function board(
   })
 }
 
+/**
+ * The office's own words for the categories, keyed as they are stored.
+ *
+ * The board printed the key at a dispatcher — `van`, where the office says
+ * "Van" and could rename it "Panel van" tomorrow without a deploy.
+ */
+const CATEGORIES = [
+  {
+    id: 1,
+    key: 'van',
+    name: 'Panel van',
+    description: null,
+    active: true,
+    position: 0,
+    created_at: '2026-01-01T00:00:00.000000Z',
+    updated_at: '2026-01-01T00:00:00.000000Z',
+  },
+]
+
 /** Everything free, which is what most of these cases are not about. */
 const freeCandidate = {
   allocated: false,
@@ -132,7 +155,9 @@ const freeCandidate = {
 beforeEach(() => {
   vi.clearAllMocks()
   board()
-  post.mockResolvedValue(apiOk({ id: 88, driver: driver(), vehicle: vehicle() }))
+  // `status: 'assigned'` because that is what the server returns: the office
+  // has put the job on a driver's name and the driver has not answered yet.
+  post.mockResolvedValue(apiOk({ id: 88, status: 'assigned', driver: driver(), vehicle: vehicle() }))
 })
 
 /**
@@ -203,6 +228,7 @@ describe('DispatchPage', () => {
     const inWorkshop = vehicle({ id: 9, registration_number: 'UCC 333C' })
 
     get.mockImplementation((url: string) => {
+      if (url.startsWith('/vehicle-categories')) return Promise.resolve(apiOk(CATEGORIES))
       if (url.includes('/candidate-vehicles')) {
         return Promise.resolve(
           apiOk([
@@ -247,6 +273,7 @@ describe('DispatchPage', () => {
     const onLeave = driver({ id: 5, name: 'Ben Okello' })
 
     get.mockImplementation((url: string) => {
+      if (url.startsWith('/vehicle-categories')) return Promise.resolve(apiOk(CATEGORIES))
       if (url.includes('/candidate-vehicles')) {
         return Promise.resolve(apiOk([{ ...vehicle(), ...freeCandidate }]))
       }
@@ -274,6 +301,21 @@ describe('DispatchPage', () => {
     // fixes, and the board says which.
     expect(blocked).toHaveTextContent('Not rostered for this time.')
     expect(blocked).toBeDisabled()
+  })
+
+  it("names a vehicle's category in the office's own word, not the stored key", async () => {
+    const user = userEvent.setup()
+
+    renderAs(<DispatchPage />)
+    await user.click(await screen.findByRole('button', { name: /Kampala → Entebbe/ }))
+
+    // The fixture stores `van` and the office calls it "Panel van"
+    // (ADR-0050). A picker printing the key is showing a database value to
+    // a dispatcher — and one that changes under them when a clerk renames
+    // the category, without the label ever following.
+    const picker = await screen.findByLabelText(/vehicle/i)
+    expect(within(picker).getByRole('option', { name: /Panel van/ })).toBeInTheDocument()
+    expect(within(picker).queryByRole('option', { name: /· van \(/ })).toBeNull()
   })
 
   it('still offers the plain fleet when the candidate lookup fails', async () => {
@@ -350,12 +392,52 @@ describe('DispatchPage', () => {
 
     await user.click(screen.getByRole('button', { name: /confirm assignment/i }))
 
-    expect(await screen.findByText('Booking dispatched')).toBeInTheDocument()
-    expect(screen.getByText(/trip #88/)).toBeInTheDocument()
+    /*
+      **A trip came back, and since ADR-0068 that means one thing.** The desk
+      now *rings* a driver and gets a 202 with no trip; a 201 carrying a trip
+      is the other branch — this driver has no app account, nothing rang, and
+      the desk has to telephone them.
+
+      Telling a dispatcher to wait for an acceptance that cannot arrive is
+      the same failure this change was made to remove: the panel used to say
+      "Booking dispatched" and go quiet for ever, so a job nobody took read
+      exactly like a job already being driven.
+    */
+    expect(await screen.findByText(/has no app — call them/)).toBeInTheDocument()
 
     // Reloaded, not patched: another dispatcher may have been deciding at
     // the same time, and a stale queue is what causes the next 409.
     await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(before))
+  })
+
+  it('says the phone is ringing when the driver has an app, and creates no trip', async () => {
+    const user = userEvent.setup()
+
+    /*
+      202 with an offer — the ordinary outcome (ADR-0068). Branching is on
+      the HTTP status rather than the body's shape, because both payloads
+      carry an `id` and a `status` and only the code says plainly which of
+      the two things happened.
+    */
+    post.mockResolvedValue({
+      status: 202,
+      data: { success: true, message: '', data: { id: 5, status: 'offered', expires_in_seconds: 45 } },
+    })
+
+    renderAs(<DispatchPage />)
+
+    await user.click(await screen.findByRole('button', { name: /Kampala → Entebbe/ }))
+    await user.selectOptions(screen.getByLabelText(/vehicle/i), '7')
+    await user.selectOptions(screen.getByLabelText(/driver/i), '3')
+    await user.click(screen.getByRole('button', { name: /^assign$/i }))
+    await user.click(screen.getByRole('button', { name: /confirm assignment/i }))
+
+    // Named, because "the driver" would leave a dispatcher checking the
+    // board to find out who they had just rung.
+    expect(await screen.findByText(/^Ringing /)).toBeInTheDocument()
+
+    // And no claim that a trip exists, because none does until they answer.
+    expect(screen.queryByText(/trip #/i)).not.toBeInTheDocument()
   })
 
   it("shows the server's refusal verbatim when it loses a race for the vehicle", async () => {

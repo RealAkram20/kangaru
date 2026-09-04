@@ -79,6 +79,16 @@ export interface Booking {
   scheduled_for: string | null
   is_immediate: boolean
   status: BookingStatus
+  /**
+   * Whether a driver's phone is ringing for this booking right now
+   * (ADR-0068).
+   *
+   * A desk assignment no longer takes effect at the press: it puts the job in
+   * front of a driver, who may decline or never look. Without this the queue
+   * shows an unanswered booking exactly as it shows an untouched one, and the
+   * next dispatcher assigns over a phone that is already ringing.
+   */
+  is_ringing: boolean
   approved_by_user_id: number | null
   approved_by?: BookingUser
   approved_at: string | null

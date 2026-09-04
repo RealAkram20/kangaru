@@ -63,7 +63,63 @@ somebody adds one.
 invariant — ADR-0058 §1, no fleet exists without a plan, and creation *fails*
 rather than defaulting when nothing is flagged default. Everything that makes
 a plan commercial (price, period, limits, Kangaru's invoice to a fleet) is
-`K7`'s, and nothing here presumes its shape.
+`K7`'s, and nothing here presumes its shape. A plan move goes through
+`PUT /operators/{operator}/plan` **alone** — `PATCH /operators/{operator}`
+accepted `plan_id` once, and the bare `update()` behind it skipped
+`PlanAllowance`'s downgrade refusal (ADR-0058 §4), so the field was removed
+rather than guarded twice. The plan may also be chosen at onboarding
+(`POST /operators` takes an optional `plan_id`), with no allowance check — a
+fleet being born has nothing to exceed a limit with.
+
+**Ownership transfer** (owner's decision, 24 August: *"changing the email is
+changing the ownership"*). `PUT /operators/{operator}/owner` proposes a new
+owner by name and email; the address gets a mail-only invitation to choose a
+password, and until they do nothing changes: no account exists, the sitting owner keeps every access, and
+`DELETE .../owner` withdraws the proposal without a trace. Acceptance
+(`POST /owner-transfers/{token}/accept`, public like the invitation and for
+its reason) creates the new `FLEET_OWNER` and suspends the previous one in a
+single transaction — create first, then suspend, so the account count never
+passes through zero (ADR-0059 §5). It is deliberately **not**
+`UserAdminService::update()` writing `email`: renaming an account in place
+would re-attribute the old owner's audit rows, dispatches and invoices to the
+new person's name, and the history must keep saying who acted.
+`OwnershipTransfer` is the pending row; `OwnershipTransferService` is the
+only thing that ever holds the plaintext token.
+
+**An address that already has an account is no longer refused** — it is the
+ordinary case. A driver application mints an account at submission time
+(ADR-0055, amendment), so somebody invited on Monday can be an account holder
+by Tuesday, and that is precisely what happened on live on 25 August: an
+incoming fleet owner was invited at 21:22, applied to drive at 01:44, and was
+then told her four-hour-old link had **expired**. It had not. `accept()`
+returned a bare `false` for two unrelated reasons and the controller called
+both of them expiry, so nothing in the platform could say what had actually
+happened — and head office, withdrawing to re-send, hit *"the email has
+already been taken"* from the other side.
+
+Two things changed, and they are separate. `TransferOutcome` replaced the
+boolean, so lapsed and *address-in-use* now get their own sentences and their
+own codes (`OWNER_ADDRESS_IN_USE`, 409). And an account that is **free to
+move** — a driver applicant, or somebody already at this fleet — is now
+**promoted** rather than refused: same account, same id, their own name, no
+second row on one address. `OwnershipTransferService::ineligibleReason()` is
+the one rule, consulted twice on purpose — by `ProposeOwnerRequest` while head
+office is still typing, and again at accept time because a week can pass in
+between and the world can move.
+
+What stays refused is another organisation's account, and head office's own.
+Handing a fleet to a client's staff member would move a person between
+organisations on the strength of an emailed link — the write ADR-0065 spent a
+release closing on the read side. Handing it to the person who already owns
+the fleet is refused too: there is nothing to hand over, and the only effect
+would be resetting their password through a door built for something else.
+
+**Resend lives beside Withdraw** on the fleet record. `PUT` replaces the
+pending row, so resending issues a fresh token, restarts the seven days and
+kills the old link — which is what "resend" has to mean for a single-use
+credential. Before it existed the only way to re-send was to withdraw and
+retype the address, which is the path that refused the address it had accepted
+the day before.
 
 ### A new permission does nothing until `RoleSeeder` runs — and re-running it has a side effect
 

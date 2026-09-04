@@ -77,6 +77,26 @@ class BookingResource extends JsonResource
             // contradict the first.
             'is_immediate' => $this->isImmediate(),
             'status' => $this->status->value,
+
+            /*
+             * Whether a driver's phone is ringing for this right now
+             * (ADR-0068).
+             *
+             * **Derived, never stored**, for `DispatchOfferService::
+             * searchState()`'s reason: every part of the answer is already a
+             * fact in `dispatch_offers`, and a cached copy of a fact is a
+             * copy that goes wrong at the moment a driver accepts while a
+             * board is refreshing.
+             *
+             * The board needs it because a desk assignment no longer takes
+             * effect at the press. Without it an unanswered booking looks
+             * exactly like an untouched one, and the next dispatcher along
+             * assigns over the top of a phone that is already ringing —
+             * which is the failure ADR-0024 §4 recorded on the walk-in
+             * queue, arriving a second time by the other door.
+             */
+            'is_ringing' => $this->isRinging(),
+
             'approved_by_user_id' => $this->approved_by_user_id,
             'approved_by' => new UserResource($this->whenLoaded('approvedBy')),
             'approved_at' => $this->approved_at,
@@ -86,5 +106,25 @@ class BookingResource extends JsonResource
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];
+    }
+
+    /**
+     * The aggregate the board loads, or the query when nobody loaded it.
+     *
+     * The dispatch board renders a page of these and re-fetches every few
+     * seconds, so a per-row `exists()` here would be an N+1 on the hottest
+     * listing the desk has. `BookingController` supplies
+     * `offers_live_exists` through `withExists`; the fallback keeps every
+     * other caller correct rather than fast, which is the right way round —
+     * a resource that is only true when somebody remembered to eager-load is
+     * a resource that is sometimes false.
+     */
+    private function isRinging(): bool
+    {
+        $loaded = $this->resource->getAttribute('offers_live_exists');
+
+        return $loaded === null
+            ? $this->offers()->live()->exists()
+            : (bool) $loaded;
     }
 }

@@ -161,6 +161,7 @@ function trip(partial: Partial<Trip> = {}): Trip {
     gps_distance_km: '12.40',
     distance_variance_flagged: false,
     unplanned_stop_count: 0,
+    dropoff_reached_at: null,
     started_at: '2026-08-15T05:35:00Z',
     completed_at: '2026-08-15T06:22:00Z',
     duration_minutes: 32,
@@ -408,7 +409,14 @@ it('offers the actions the server says are legal, and Help reaches a person', as
 
   await fireEvent.press(screen.getByLabelText('Help with this trip'));
 
-  expect(parentNavigate).toHaveBeenCalledWith('Profile', { screen: 'Support' });
+  // `initial: false` asserted, not incidental — without it the Profile stack
+  // is created as `["Support"]` with no `ProfileHome` beneath, and the
+  // Profile tab has nothing to pop to. Same omission that reached a handset
+  // through `HomeScreen`'s bell; `nestedNavigate.test.tsx` has the mechanism.
+  expect(parentNavigate).toHaveBeenCalledWith('Profile', {
+    screen: 'Support',
+    initial: false,
+  });
 
   // The unanswered assignment is why this screen still has controls at all.
   expect(screen.getByLabelText('Accept trip')).toBeTruthy();

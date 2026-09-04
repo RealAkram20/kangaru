@@ -90,6 +90,16 @@ export interface Colleague {
 export interface StaffMeta {
   assignable_roles: AssignableRole[]
   /**
+   * Whether an invitation can actually be delivered — i.e. whether mail is
+   * switched on and configured.
+   *
+   * The choice between emailing a link and setting an initial password is
+   * offered only when the platform can keep it. An Invite option that
+   * silently created an account nobody could sign into is the hole the
+   * invitations table was built to close, reopened from the other end.
+   */
+  can_invite?: boolean
+  /**
    * The client's active routes this administrator may put somebody on.
    * Served with the list so the screen keeps no copy — empty for a platform
    * account, which belongs to no client and so has no routes.

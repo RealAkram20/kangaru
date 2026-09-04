@@ -5,6 +5,7 @@ namespace Modules\Administration\Controllers;
 use App\Enums\AccessLevel;
 use App\Enums\ErrorCode;
 use App\Enums\Permission;
+use App\Enums\RoleAudience;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Support\Api\ApiResponse;
@@ -51,6 +52,15 @@ class RoleController extends Controller
                 // at definition time.
                 'grantable' => $actor->permissions(),
                 'can_manage' => $actor->hasPermission(Permission::ROLES_MANAGE),
+                // The three audiences, with their labels, so the editor's
+                // picker and the listing's filter keep no copy of the list —
+                // the same reason `catalogue` is served rather than hardcoded.
+                'audiences' => RoleAudience::catalogue(),
+                // Only head office decides which kind of account a role is
+                // for; everybody else composes for their own level and the
+                // control is not offered. Same shape as `can_manage_mfa`.
+                'can_manage_audience' => $actor->access_level === AccessLevel::KANGARU
+                    && $actor->hasPermission(Permission::ROLES_MANAGE),
                 // ADR-0061. Whether the platform is asking for a second
                 // factor at all. Sent here rather than left to the console to
                 // fetch from `/settings`, which needs `settings.manage` — a
@@ -81,7 +91,7 @@ class RoleController extends Controller
     {
         $this->authorize('update', $role);
 
-        $role->fill($request->safe()->only(['name', 'description', 'permissions', 'requires_mfa']));
+        $role->fill($request->safe()->only(['name', 'description', 'audience', 'permissions', 'requires_mfa']));
         $role->save();
 
         return ApiResponse::success(new RoleResource($role), 'Role updated.');

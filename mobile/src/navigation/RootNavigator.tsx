@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../auth/AuthProvider';
 import { OfferPresenter } from '../duty/OfferPresenter';
 import { navigationRef } from './navigationRef';
+import { useSheetTransition, useStackTransition } from './stackTransition';
 import { registerNavigationForTracing } from '../tracing';
 import { PresenceController } from '../duty/PresenceController';
 import { FirstRunPermissions } from '../permissions/FirstRunPermissions';
@@ -198,9 +199,16 @@ function AuthScreens() {
 }
 
 function TripsNavigator() {
+  // One decision for how every screen in the app arrives, made in
+  // `stackTransition.ts` and spread into all four stacks — so the push feels
+  // the same whichever tab a driver is in.
+  const transition = useStackTransition();
+  const sheet = useSheetTransition();
+
   return (
     <TripsStack.Navigator
       screenOptions={{
+        ...transition,
         headerStyle: { backgroundColor: colors.surface },
         headerTintColor: colors.text,
         // With `enableFreeze(true)` in index.ts, a screen this stack has
@@ -291,7 +299,7 @@ function TripsNavigator() {
         // same word twice, and a back arrow that matched nothing else a driver
         // had seen. The owner's *"it looks nothing like our design"* was that.
         // `OdometerScreen` draws its own `ScreenHeader`.
-        options={{ presentation: 'modal', headerShown: false }}
+        options={{ ...sheet, headerShown: false }}
       />
     </TripsStack.Navigator>
   );
@@ -307,8 +315,10 @@ function TripsNavigator() {
  * an arrow here would look live, be tapped, and do nothing.
  */
 function EarningsNavigator() {
+  const transition = useStackTransition();
+
   return (
-    <EarningsStack.Navigator screenOptions={{ headerShown: false }}>
+    <EarningsStack.Navigator screenOptions={{ ...transition, headerShown: false }}>
       <EarningsStack.Screen name="EarningsHome" component={EarningsScreen} />
     </EarningsStack.Navigator>
   );
@@ -319,8 +329,10 @@ function EarningsNavigator() {
  * above it, there genuinely is something behind it.
  */
 function WalletNavigator() {
+  const transition = useStackTransition();
+
   return (
-    <WalletStack.Navigator screenOptions={{ headerShown: false }}>
+    <WalletStack.Navigator screenOptions={{ ...transition, headerShown: false }}>
       <WalletStack.Screen name="WalletHome" component={WalletScreen} />
       <WalletStack.Screen name="Transactions" component={TransactionsScreen} />
     </WalletStack.Navigator>
@@ -337,9 +349,12 @@ function WalletNavigator() {
  * than one extra tap.
  */
 function ProfileNavigator() {
+  const transition = useStackTransition();
+
   return (
     <ProfileStack.Navigator
       screenOptions={{
+        ...transition,
         headerStyle: { backgroundColor: colors.surface },
         headerTintColor: colors.text,
       }}
@@ -664,6 +679,33 @@ function TabsNavigator() {
           title: 'Profile',
           tabBarIcon: ({ color }) => <UserIcon color={color} size={24} strokeWidth={2} />,
         }}
+        /*
+          **Pressing Profile shows Profile.** Reported by the owner: *"now when
+          I click on the profile it sends us to the notifications."*
+          Reproduced on a handset.
+
+          `Notifications` is a screen on *this* stack, but nothing reaches it
+          from Profile — the bell in `HomeScreen`'s header does
+          `getParent()?.navigate('Profile', { screen: 'Notifications' })`, and
+          the drawer row lands in the same place. That is a push onto a tab the
+          driver was never in, and React Navigation then does what it is
+          supposed to: it remembers. So the tab kept restoring an inbox the
+          driver opened from Home half an hour earlier, and the account they
+          were actually reaching for was one Back press away with nothing
+          saying so.
+
+          Only this tab needs it, and that is the tell rather than an
+          inconsistency: Profile is the only stack another tab pushes into.
+
+          `preventDefault` is deliberately not used. The default press is what
+          switches tab and what pops an already-open stack to its top, and
+          suppressing it to navigate by hand loses both.
+        */
+        listeners={({ navigation }) => ({
+          tabPress: () => {
+            navigation.navigate('Profile', { screen: 'ProfileHome' });
+          },
+        })}
       />
     </Tabs.Navigator>
   );

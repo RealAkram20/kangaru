@@ -16,6 +16,7 @@ use Modules\Administration\Requests\StoreUserRequest;
 use Modules\Administration\Requests\UpdateUserRequest;
 use Modules\Administration\Requests\UserIndexRequest;
 use Modules\Administration\Resources\UserResource;
+use Modules\Administration\Services\SettingsService;
 use Modules\Administration\Services\UserAdminService;
 use Modules\Clients\Models\ClientRoute;
 
@@ -78,6 +79,13 @@ class UserController extends Controller
                 // exists, and never learns to build the list itself. Empty
                 // for a platform account, which has no routes of its own.
                 'routes' => $this->assignableRoutes(),
+                // Whether an invitation can actually be delivered. `mail` is a
+                // platform setting and it is off on production today, so the
+                // console offers the choice only when the platform can keep
+                // it — an Invite button that silently creates an unreachable
+                // account is the hole the invitations table was built to
+                // close, reopened from the other end.
+                'can_invite' => app(SettingsService::class)->mailConfigured(),
             ],
         );
     }
@@ -188,6 +196,21 @@ class UserController extends Controller
         $policy = app(UserPolicy::class);
 
         return Role::query()
+            // Two independent gates, and they answer different questions.
+            //
+            // `forLevel` asks whether a role belongs in this administrator's
+            // world at all — a fleet owner is never offered a role written for
+            // a bank's booking desk, however the permissions happen to line
+            // up. `assignRole` asks whether *this* administrator may hand out
+            // *this* grant, which is ADR-0004's escalation rule.
+            //
+            // Before the audience column the second was doing both jobs, and
+            // only by coincidence: `corporate_admin` stayed out of a fleet
+            // picker because its permission set happened not to be a subset,
+            // not because anything said it did not belong there. The same
+            // separation ADR-0059 §1 draws for the menu — level first, then
+            // role — for the same reason.
+            ->forLevel($actor->access_level)
             ->orderByDesc('is_system')
             ->orderBy('name')
             ->get()

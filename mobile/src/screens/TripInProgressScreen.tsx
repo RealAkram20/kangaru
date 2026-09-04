@@ -1,13 +1,30 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import {
+  acceptTripExtension,
+  declineTripExtension,
+  markDropoffReached,
+} from '../api/endpoints';
+import { refusalMessage } from '../api/errors';
 import type { Trip, TripEvent, TripRoute } from '../api/types';
+import { useAuth } from '../auth/AuthProvider';
 import { estimatedFareLabel, formatKilometres, formatMoney } from '../duty/offerPresentation';
 import { usePosition, type Fix } from '../location/usePosition';
 import type { TripsStackParams } from '../navigation/types';
 import { useSync } from '../offline/SyncProvider';
 import { dialPassenger } from '../trips/contact';
+import { ExtensionRequestCard } from '../trips/ExtensionRequestCard';
+import {
+  canMarkDropoff,
+  extendLabel,
+  extensionsStillToRun,
+  nextPlace,
+  pendingRequest,
+  stopsBeforeDropoff,
+} from '../trips/extensions';
 import { PickupMap } from '../trips/PickupMap';
 import { located, greatCircleKm, toCoordinates } from '../trips/places';
 import {
@@ -20,7 +37,7 @@ import {
 import { useOdometerEnabled } from '../trips/odometerSetting';
 import { useTrip, useTripEvents, useTripRoute } from '../trips/queries';
 import { StopList } from '../trips/StopList';
-import { nextPendingStop, pickupIsLegOrigin } from '../trips/stops';
+import { pickupIsLegOrigin } from '../trips/stops';
 import { spriteFor } from '../trips/vehicleSprites';
 import { statusLabel } from '../trips/transitions';
 import { elapsedSeconds, NO_VALUE } from '../trips/waiting';
@@ -29,6 +46,7 @@ import { SkeletonCards } from '../ui/Skeleton';
 import { DetailRow, GLYPH, Stat, StatRow } from '../ui/facts';
 import {
   BanknoteIcon,
+  CheckCircleIcon,
   CirclePlusIcon,
   NavigationIcon,
   PauseIcon,
@@ -104,6 +122,8 @@ const TITLE = 'Trip in progress';
  */
 export function TripInProgressScreen({ route, navigation }: Props) {
   const { tripId } = route.params;
+  const { api } = useAuth();
+  const queryClient = useQueryClient();
   const { data: trip, isLoading } = useTrip(tripId);
   const { data: events } = useTripEvents(tripId);
   const { queueTransition, queued } = useSync();
@@ -112,6 +132,9 @@ export function TripInProgressScreen({ route, navigation }: Props) {
   const odometerEnabled = useOdometerEnabled();
 
   const [busy, setBusy] = useState(false);
+  // The two acts on this screen that post directly rather than queueing carry
+  // their own refusal; everything else speaks through `SyncBanner`.
+  const [refusal, setRefusal] = useState<string | null>(null);
 
   // Watching, unlike every other screen in this app. The driver is
   // definitionally moving for this screen's whole life, so a single fix would
@@ -173,6 +196,10 @@ export function TripInProgressScreen({ route, navigation }: Props) {
   }
 
   const passenger = trip.passenger_contact;
+  // The one a passenger is waiting on an answer for, or null. Read after the
+  // undefined guards above, so the card cannot render against a half-loaded
+  // trip.
+  const request = pendingRequest(trip);
   const dropoff = located(trip.dropoff) ? toCoordinates(trip.dropoff) : null;
 
   /*
@@ -185,7 +212,15 @@ export function TripInProgressScreen({ route, navigation }: Props) {
    * vehicle is going.
    */
   const stops = trip.stops ?? [];
-  const nextStop = nextPendingStop(stops);
+  /*
+    **Not `nextPendingStop(stops)` any more**, and the difference is a driver
+    sent to the wrong place. Extensions share this list and sort by sequence,
+    so on a walk-in — whose only row *is* the extension — the old call named
+    it the next drop-off and pointed the navigation at it before the
+    destination the passenger was hired to reach. `nextPlace` holds the same
+    boundary the server does.
+  */
+  const nextStop = nextPlace(trip);
 
   /**
    * The status this trip is heading for, which is not always the one the
@@ -243,6 +278,73 @@ export function TripInProgressScreen({ route, navigation }: Props) {
    * write a second `trip_events` row and bill the pause twice. ADR-0023's
    * reconciliation is what prevents that, and nothing here re-implements it.
    */
+  /**
+   * The driver answers what their passenger asked for.
+   *
+   * **Posted directly, not queued**, and the reason is the passenger. An
+   * outbox item answers hours later, in coverage, long after the person who
+   * asked has been set down somewhere — and the answer decides where the
+   * vehicle goes next, so it is worthless late. That is the opposite of the
+   * pause and the completion, which bear billing evidence and must survive a
+   * dead zone (ADR-0023); this is `AddDropoffScreen`'s reasoning, which posts
+   * directly for the same reason.
+   *
+   * A refusal is shown here rather than swallowed. The server answers a
+   * masked 404 to anything that is not this trip's unanswered extension, so
+   * the ordinary way to reach it is a second tap on a request the office
+   * already has — and a driver who taps twice and sees nothing assumes the
+   * screen is broken.
+   */
+  const answerRequest = async (extensionId: number, accept: boolean) => {
+    setBusy(true);
+    setRefusal(null);
+
+    try {
+      await (accept
+        ? acceptTripExtension(api, trip.id, extensionId)
+        : declineTripExtension(api, trip.id, extensionId));
+
+      // The trip payload carries the itinerary this screen renders from.
+      await queryClient.invalidateQueries({ queryKey: ['trips', trip.id] });
+    } catch (error) {
+      setRefusal(
+        refusalMessage(
+          error,
+          "You're offline, so your answer did not reach the office. Try again in coverage.",
+        ),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Marks the destination the trip was agreed for as reached.
+   *
+   * Direct rather than queued for `answerRequest`'s reason: it decides which
+   * side of the journey an extension belongs on and therefore where the map
+   * points, and a boundary that lands hours later has already been driven
+   * past. Idempotent on the server, so a retry is safe.
+   */
+  const markDropoff = async () => {
+    setBusy(true);
+    setRefusal(null);
+
+    try {
+      await markDropoffReached(api, trip.id);
+      await queryClient.invalidateQueries({ queryKey: ['trips', trip.id] });
+    } catch (error) {
+      setRefusal(
+        refusalMessage(
+          error,
+          "You're offline, so the drop-off was not recorded. Try again in coverage.",
+        ),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const hold = async (to: 'waiting' | 'trip_resumed', stopId?: number) => {
     setBusy(true);
     // The `finally` is what `end` below already has, and skipping it here was
@@ -295,6 +397,35 @@ export function TripInProgressScreen({ route, navigation }: Props) {
    * missing" from "the trip moved on without me".
    */
   const end = () => {
+    /*
+     * **Refused here, before anything is queued, and that is the whole
+     * point.**
+     *
+     * `TransitionTripRequest` rejects a completion while an agreed extension
+     * is still to run — but this screen queues through the outbox and then
+     * navigates on the *queue* succeeding, not on the office accepting. So a
+     * driver who pressed End was shown "Great job! Ride completed" while
+     * their passenger was still in the car waiting to be taken on, and the
+     * 422 arrived minutes later as a line in Updates & sync.
+     *
+     * Seen on a handset, 2026-08-28. It is the same failure this file's
+     * Pause/Resume comment already describes — *"rendering it anyway would
+     * 422 through the outbox, minutes later, after the driver had put the
+     * phone down"* — and the answer is the same: do not offer the office a
+     * write it is going to refuse.
+     *
+     * The refusal names the place, because the driver's next act is to drive
+     * there. **A trip is never trapped by this**: the extension is closed the
+     * ordinary way, by arriving at it from the route list and resuming.
+     */
+    const outstanding = extensionsStillToRun(trip);
+    const nextLeg = outstanding[0];
+
+    if (nextLeg !== undefined) {
+      setRefusal(`${nextLeg.label} is still to run. Finish it before ending the trip.`);
+
+      return;
+    }
     // **With the odometer off, ending is a transition again** (ADR-0047).
     // The server no longer requires `odometer_end` — it prices the trip from
     // the GPS trace instead — so the reading screen would be a form asking
@@ -418,8 +549,15 @@ export function TripInProgressScreen({ route, navigation }: Props) {
 
         {stops.length > 0 && (
           <StopList
-            stops={stops}
+            stops={stopsBeforeDropoff(trip)}
             destination={trip.dropoff.label}
+            // The other side of the journey. Agreed ones only: a proposal is
+            // not part of the route until the driver has answered it.
+            extensions={extensionsStillToRun(trip)}
+            // The same answer the map pin and the drop-off row read, so the
+            // three cannot disagree — and the one that puts an Arrived
+            // control on an extension, without which the trip cannot end.
+            nextId={nextStop?.id ?? null}
             // Arriving is the pause (§2): a paused trip has nowhere to
             // arrive from, and the button follows the same `effective`
             // status the Pause/Resume pair reads.
@@ -428,6 +566,29 @@ export function TripInProgressScreen({ route, navigation }: Props) {
             onArrive={(stop) => void hold('waiting', stop.id)}
           />
         )}
+
+        {/*
+          **Above the facts, because it is a question and they are not.** A
+          passenger is sitting in the car waiting on this answer, and the
+          driver's eye lands here first. It disappears the moment it is
+          answered — `pendingRequest` reads `proposed`, and both answers move
+          the row off it.
+        */}
+        {request !== null && (
+          <ExtensionRequestCard
+            request={request}
+            busy={busy}
+            onAccept={() => void answerRequest(request.id, true)}
+            onDecline={() => void answerRequest(request.id, false)}
+          />
+        )}
+
+        {/*
+          The one place this screen speaks when a write fails. `queueTransition`
+          has the outbox behind it and says so through `SyncBanner`; these two
+          acts post directly, so a refusal has nowhere else to land.
+        */}
+        {refusal !== null && <Notice tone="warning" message={refusal} />}
 
         <Facts trip={trip} />
 
@@ -476,12 +637,37 @@ export function TripInProgressScreen({ route, navigation }: Props) {
             the occasional act, ending it is the daily one.
           */}
           <Button
-            label="Add a drop-off"
+            // "Extend the trip" on a walk-in, "Add a drop-off" on a corporate
+            // circuit. One tap, two acts: the circuit's stops are contracted
+            // and never billed, and a walk-in passenger going further is.
+            label={extendLabel(trip)}
             tone="neutral"
             busy={busy}
             onPress={() => navigation.navigate('AddDropoff', { tripId: trip.id })}
             icon={<CirclePlusIcon size={16} />}
           />
+
+          {/*
+            **Below extending, not above it** (owner, 2026-08-28: extensions
+            matter more than the drop-off mark). Extending has a passenger
+            waiting on it and money behind it; this is bookkeeping that orders
+            the journey — it decides which side of the drop-off an extension
+            falls on, which is what the driver's own map routes off.
+
+            Nothing is gated behind it: a trip may be extended before or after
+            it is pressed, and a trip nobody extends never needs it at all.
+            Gone once pressed, because the server ignores a second one and a
+            button that visibly does nothing reads as a screen not listening.
+          */}
+          {canMarkDropoff(trip) && (
+            <Button
+              label="Arrived at drop-off"
+              tone="neutral"
+              busy={busy}
+              onPress={() => void markDropoff()}
+              icon={<CheckCircleIcon size={16} />}
+            />
+          )}
         </View>
       </ScrollView>
     </Screen>
@@ -526,7 +712,12 @@ function MapPanel({
    * A label-only stop keeps the trip's own pin: prose is not a place, and
    * the badge must measure to somewhere real or to nothing.
    */
-  const nextStop = nextPendingStop(trip.stops ?? []);
+  // `nextPlace`, not `nextPendingStop`, for the reason the comment above
+  // already gives: an extension sorts into this list like a stop, so the
+  // plain call aimed the map at a place the passenger asked to be taken *to
+  // afterwards* — while the drop-off it was hired for was still ahead. The
+  // pin, the row and the line stay one answer.
+  const nextStop = nextPlace(trip);
   const target =
     nextStop !== null && located(nextStop)
       ? toCoordinates(nextStop)

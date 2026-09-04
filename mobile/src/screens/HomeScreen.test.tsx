@@ -175,7 +175,18 @@ it('opens the inbox on the Profile stack when the bell is tapped', async () => {
   // removed — and not a bare `navigate('Notifications')` either, which would
   // look right in a diff and throw on a handset: the route is not on this
   // stack.
-  expect(parentNavigate).toHaveBeenCalledWith('Profile', { screen: 'Notifications' });
+  //
+  // **`initial: false` is asserted, not incidental** — the same guard
+  // `DrawerContent.test.tsx` puts on its own three calls. Without it the
+  // Profile stack is created as `["Notifications"]` at index 0, with
+  // `ProfileHome` never in it: nothing to pop, so the Profile tab appears
+  // dead and Android's back gesture leaves the app. The drawer was fixed for
+  // this and **this call site was missed**, which is how it returned as the
+  // owner's "we are stuck, sometimes".
+  expect(parentNavigate).toHaveBeenCalledWith('Profile', {
+    screen: 'Notifications',
+    initial: false,
+  });
   expect(navigate).not.toHaveBeenCalled();
 });
 
@@ -267,7 +278,7 @@ it('puts an unanswered desk assignment on the home screen, opening the trip reco
   expect(screen.getByText('New trip assigned')).toBeTruthy();
   expect(screen.getByText('Mukono Health Centre IV, Seeta')).toBeTruthy();
 
-  fireEvent.press(screen.getByLabelText(/New trip assigned from Kampala Road/));
+  void fireEvent.press(screen.getByLabelText(/New trip assigned from Kampala Road/));
 
   // The record view is where Accept and Decline live — an assigned trip is
   // a question, and the app must not route to a pickup map before it is

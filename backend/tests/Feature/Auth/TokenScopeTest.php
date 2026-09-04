@@ -155,6 +155,24 @@ it('names the stop routes on the driver scope, so add-a-drop-off is not the eigh
     expect(ClientScope::permits([ClientScope::DRIVER], 'trips.stop-candidates.index'))->toBeTrue();
 });
 
+it('names the extension routes on the driver scope, so the ninth dead screen is not this one', function () {
+    /*
+     * **This test exists because the bug happened.** The four routes were
+     * written, unit-tested, contract-tested and built into an APK without
+     * being named on the driver scope, and the first press of Accept on a
+     * real handset answered 403 — with a passenger in the car waiting for
+     * the answer.
+     *
+     * No backend test could have caught it: they mint an unscoped console
+     * token, so the middleware waves them through. Only `ClientScope` itself
+     * can be asked, and only by name — `trips.*` is invisible to the
+     * reflective `me.*` guard above.
+     */
+    expect(ClientScope::permits([ClientScope::DRIVER], 'trips.extensions.store'))->toBeTrue();
+    expect(ClientScope::permits([ClientScope::DRIVER], 'trips.extensions.acceptance.store'))->toBeTrue();
+    expect(ClientScope::permits([ClientScope::DRIVER], 'trips.extensions.decline.store'))->toBeTrue();
+    expect(ClientScope::permits([ClientScope::DRIVER], 'trips.dropoff-arrival.store'))->toBeTrue();
+});
 // ── The console is untouched ─────────────────────────────────────────────
 
 it('leaves a console token holding everything it held before', function () {

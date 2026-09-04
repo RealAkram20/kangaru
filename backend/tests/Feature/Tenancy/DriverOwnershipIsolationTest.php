@@ -418,5 +418,11 @@ it('names no route in the driver allow-list that the router does not have', func
     // 57 -> 59: the driver app reaches its own email preferences, because a
     // third of this platform's emails are addressed to drivers and every one
     // carries a footer link there.
-    expect(count(ClientScope::routesFor(ClientScope::DRIVER)))->toBe(59);
+    // 59 -> 63: the extension (ADR-0045 §4 amendment) — add one, the driver's
+    // accept and decline of one a passenger asked for, and the mark that says
+    // the agreed drop-off was reached. All four were written, tested and built
+    // into an APK *without* being on the list, and the handset answered 403 the
+    // first time Accept was pressed. This count is the other half of that
+    // lesson: the list is where a new driver-app route becomes real.
+    expect(count(ClientScope::routesFor(ClientScope::DRIVER)))->toBe(63);
 });

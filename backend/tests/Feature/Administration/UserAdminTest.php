@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\AccessLevel;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Models\AuditLog;
@@ -175,16 +176,74 @@ it('stops a Corporate Admin promoting an existing colleague to Super Admin', fun
     expect($staff->refresh()->roleSlug())->toBe('corporate_employee');
 });
 
-it('lets a Super Admin appoint another Super Admin', function () {
-    ['superAdmin' => $superAdmin] = staffFixture();
+it('lets head office appoint another head office colleague', function () {
+    // Head office employs head office (ADR-0065), and this is the endpoint
+    // that used to 500 on it: a Kangaru actor named neither a fleet nor a
+    // client, `User::levelFor()` refused to guess that shape, and the only
+    // way to a second head-office account was a shell on the server.
+    $head = headOffice();
 
-    $this->actingAs($superAdmin, 'sanctum')->postJson('/api/v1/users', [
+    $this->actingAs($head, 'sanctum')->postJson('/api/v1/users', [
         'name' => 'Second Owner',
         'email' => 'owner2@kangaruride.test',
         'role' => 'super_admin',
         'phone' => '+256700000005',
         'password' => 'a-long-enough-password',
     ])->assertStatus(201);
+
+    $created = User::query()->where('email', 'owner2@kangaruride.test')->sole();
+
+    // The level is the assertion, not the 201. It is the one value that
+    // cannot be derived from the columns, so a colleague who came out as
+    // anything else would be a silent promotion or a silent demotion.
+    expect($created->access_level)->toBe(AccessLevel::KANGARU)
+        ->and($created->operator_id)->toBeNull()
+        ->and($created->tenant_id)->toBeNull();
+});
+
+it('refuses head office an account inside a client', function () {
+    $head = headOffice();
+    $tenant = Tenant::factory()->create();
+
+    // Ignoring the field and returning 201 would hand back a head-office
+    // account to somebody who asked for a client's employee — the opposite of
+    // what they were told happened. To add somebody at a fleet or a client,
+    // head office logs in as them (ADR-0056).
+    $this->actingAs($head, 'sanctum')->postJson('/api/v1/users', [
+        'name' => 'Planted At A Client',
+        'email' => 'planted-by-hq@kangaruride.test',
+        'role' => 'corporate_employee',
+        'phone' => '+256700000006',
+        'password' => 'a-long-enough-password',
+        'tenant_id' => $tenant->id,
+    ])->assertStatus(422)->assertJsonValidationErrors('tenant_id');
+
+    expect(User::query()->where('tenant_id', $tenant->id)->count())->toBe(0);
+});
+
+it('refuses a fleet Super Admin the right to mint another Super Admin', function () {
+    // A deliberate reduction, and the sharpest consequence of the audience
+    // column. `super_admin` is a **Kangaru** role; the fixture's Super Admin
+    // is a *fleet* account — which is what today's live `help@kangaruride.com`
+    // is, and what `UserFactory` produces for any tenant-less fixture.
+    //
+    // ADR-0065 already says what bounds a Super Admin is the level rather than
+    // the slug. This is that sentence made enforceable: a fleet's top account
+    // can no longer create a peer holding all 42 permissions, and the role it
+    // should be handing out is `fleet_owner`.
+    ['superAdmin' => $fleetSuperAdmin] = staffFixture();
+
+    expect($fleetSuperAdmin->access_level)->toBe(AccessLevel::FLEET);
+
+    $this->actingAs($fleetSuperAdmin, 'sanctum')->postJson('/api/v1/users', [
+        'name' => 'Third Owner',
+        'email' => 'owner3@kangaruride.test',
+        'role' => 'super_admin',
+        'phone' => '+256700000007',
+        'password' => 'a-long-enough-password',
+    ])->assertStatus(422)->assertJsonValidationErrors('role');
+
+    expect(User::query()->where('email', 'owner3@kangaruride.test')->exists())->toBeFalse();
 });
 
 it('refuses to let an administrator change their own role or suspend themselves', function () {
@@ -336,9 +395,27 @@ it('offers only the roles an administrator\'s own permissions contain', function
     expect($forAdmin)->toContain('corporate_employee', 'corporate_admin');
     expect($forAdmin)->not->toContain('dispatcher', 'finance', 'super_admin');
 
-    // A Super Admin holds everything, so everything is assignable.
-    expect($forOwner)->toHaveCount(count(UserRole::cases()));
-    expect($forOwner)->toContain('super_admin');
+    /*
+     * The **level** gate, beside the subset one.
+     *
+     * This Super Admin holds all 42 permissions, so the subset rule alone
+     * would offer them all ten roles — and it used to. It now offers the seven
+     * written for a fleet, because the fixture's Super Admin is a *fleet*
+     * account and `super_admin` is a Kangaru role while the two corporate ones
+     * are a client's.
+     *
+     * The count is the assertion that matters. Before the audience column the
+     * only thing keeping `corporate_admin` out of a fleet picker was whether
+     * its permission set happened not to be a subset of the actor's — which
+     * for a Super Admin it always is, so it was offered.
+     */
+    expect($forOwner)->toHaveCount(7)
+        ->and($forOwner)->toContain('fleet_owner', 'dispatcher', 'driver')
+        ->and($forOwner)->not->toContain('super_admin', 'corporate_admin', 'corporate_employee');
+
+    // And a client's administrator is offered only a client's roles, for the
+    // same reason and from the other side.
+    expect($forAdmin)->not->toContain('fleet_owner', 'driver');
 });
 
 it('refuses a role carrying permissions the administrator lacks', function () {

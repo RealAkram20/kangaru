@@ -15,6 +15,19 @@ export interface Role {
   description: string | null
   /** Seeded from PROJECT.md's ten. Editable, never deletable or renameable. */
   is_system: boolean
+  /**
+   * Which level of account this role was composed for.
+   *
+   * A property of the role, not a scope on it: the catalogue stays
+   * platform-wide (ADR-0004) and every organisation still picks from one
+   * list. It is what keeps a client's role out of a fleet's picker — before
+   * it, the only thing separating them was whether the permission sets
+   * happened to be subsets of one another, which is a coincidence rather
+   * than a boundary. Writable by head office only.
+   */
+  audience: RoleAudience
+  /** What the console calls the audience — "Kangaru", "Fleet", "Client". */
+  audience_label: string
   /** Values from `App\Enums\Permission`. */
   permissions: string[]
   /**
@@ -50,8 +63,29 @@ export interface PermissionOption {
  */
 export type PermissionCatalogue = Record<string, PermissionOption[]>
 
+/** Mirrors `App\Enums\RoleAudience`. */
+export type RoleAudience = 'kangaru' | 'fleet' | 'client'
+
+/** One audience with its label, as `meta.audiences` carries it. */
+export interface AudienceOption {
+  value: RoleAudience
+  label: string
+}
+
 export interface RolesMeta {
   catalogue: PermissionCatalogue
+  /**
+   * The three audiences with their labels, served so the picker and the
+   * filter keep no copy of the list — the same reason `catalogue` is.
+   */
+  audiences?: AudienceOption[]
+  /**
+   * Whether this actor may change which kind of account a role is for. Head
+   * office only: moving a role between audiences decides what appears in
+   * another organisation's picker, which is a decision about the platform
+   * rather than about the fleet making it.
+   */
+  can_manage_audience?: boolean
   /**
    * The permissions the caller holds themselves, and therefore the only
    * ones they may put into a role — ADR-0004's escalation rule, evaluated

@@ -23,16 +23,42 @@ export function coordinatesFor(
   latKey: string,
   lngKey: string,
 ): Record<string, number> {
-  // Compared against the *label the field was filled with*, not the place's
-  // `name`. A device fix is stored as `{name: 'Current location', detail:
-  // 'Plot 9, Bukoto Street'}` and the field shows the detail, so comparing
-  // `name` dropped the coordinates for every order placed from the phone's
-  // own position — which is most of them. The two spellings here mirror the
-  // two `onChange` calls that fill these fields.
-  const filledWith =
-    place === null ? '' : place.name === 'Current location' ? place.detail : placeLabel(place)
+  /*
+    Compared against the *label the field was filled with*, not the place's
+    `name`. A device fix is stored as `{name: 'Current location', detail:
+    'Plot 9, Bukoto Street'}`, and comparing `name` dropped the coordinates
+    for every order placed from the phone's own position — which is most of
+    them.
 
-  if (place?.lngLat === undefined || filledWith.trim() !== typed.trim()) return {}
+    **Both spellings are accepted, and that is the fix for the second half of
+    the same bug.** A device fix reaches a field two different ways:
+
+    - `OrderPage`'s geolocate path calls `setPickup(place.detail)`;
+    - `PlaceField` fills every hit, this one included, with
+      `placeLabel(hit)` — "Current location, Bukoto".
+
+    Only the first was allowed for. So a dispatcher picking the current
+    location on the internal booking form filled the field with one spelling
+    and had it compared against the other, and the pin was silently thrown
+    away — a booking with a real point on it stored as `origin_latitude
+    NULL`, and a driver later told "the order was taken without a pin on it"
+    with a blank map. Observed on booking #102, 29 August.
+
+    Matching a *set* rather than picking one branch, deliberately: which
+    spelling arrives is a property of the calling form, and this module
+    cannot see its caller. A rule that has to know which page it is serving
+    is the rule that breaks when a third page is written.
+  */
+  const spellings =
+    place === null
+      ? []
+      : place.name === 'Current location'
+        ? [place.detail, placeLabel(place)]
+        : [placeLabel(place)]
+
+  const matches = spellings.some((spelling) => spelling.trim() === typed.trim())
+
+  if (place?.lngLat === undefined || !matches) return {}
 
   const [lng, lat] = place.lngLat
 

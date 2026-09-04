@@ -70,6 +70,7 @@ function booking(
     scheduled_for: null,
     is_immediate: true,
     status: 'pending',
+    is_ringing: false,
     approved_by_user_id: null,
     approved_at: null,
     decision_reason: null,

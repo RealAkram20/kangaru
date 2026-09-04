@@ -3,6 +3,7 @@ import { apiClient } from '../lib/apiClient'
 import { apiError } from '../lib/apiError'
 import { formatUgx } from '../lib/format'
 import type { ApiSuccess } from '../types/api'
+import type { Plan } from '../types/plan'
 import { Badge } from '../components/core/Badge'
 import { Card } from '../components/core/Card'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
@@ -23,21 +24,6 @@ import { PageFill } from '../components/layout/PageFill'
  * reads as *a ceiling you have not hit yet* — and Shanitah's Founding fleet
  * plan is genuinely uncapped.
  */
-interface Plan {
-  id: number
-  slug: string
-  name: string
-  description: string | null
-  is_default: boolean
-  price_minor: number
-  currency: string
-  period: 'none' | 'monthly' | 'annual'
-  driver_limit: number | null
-  vehicle_limit: number | null
-  staff_limit: number | null
-  fleets_count?: number
-}
-
 const PERIOD: Record<Plan['period'], string> = {
   none: 'no charge',
   monthly: 'per month',

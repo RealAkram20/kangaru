@@ -2,7 +2,9 @@
 
 namespace Modules\Administration\Requests;
 
+use App\Enums\AccessLevel;
 use App\Enums\Permission;
+use App\Enums\RoleAudience;
 use App\Models\User;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
@@ -40,6 +42,9 @@ class StoreRoleRequest extends FormRequest
                 Rule::unique('roles', 'slug'),
             ],
             'description' => ['nullable', 'string', 'max:255'],
+            // Which level of account the role is for. Read only from head
+            // office — see `audienceFor()`.
+            'audience' => ['sometimes', Rule::enum(RoleAudience::class)],
             'permissions' => ['required', 'array', 'min:1'],
             'permissions.*' => ['string', Rule::enum(Permission::class)],
         ];
@@ -97,8 +102,40 @@ class StoreRoleRequest extends FormRequest
             'name' => $name,
             'slug' => $this->validated('slug') ?? Str::snake(Str::ascii($name)),
             'description' => $this->validated('description'),
+            'audience' => $this->audienceFor(),
             'permissions' => array_values(array_unique($this->validated('permissions'))),
             'is_system' => false,
         ];
+    }
+
+    /**
+     * Which audience the new role is composed for.
+     *
+     * **Head office chooses; everybody else composes for their own level.**
+     * The same shape ADR-0061 §5 gave `requires_mfa`, and for a related
+     * reason: a fleet Super Admin holds `roles.manage` and may compose roles
+     * for their own fleet all day, but a role aimed at somebody else's kind of
+     * account is a decision about the platform, not about a fleet.
+     *
+     * Defaulted rather than refused, because a role must have an audience —
+     * one belonging to nobody would sit in the catalogue looking healthy and
+     * appear in no picker at all. A fleet administrator composing a role means
+     * a fleet role, and that is what they get whether they say so or not.
+     */
+    private function audienceFor(): RoleAudience
+    {
+        /** @var User $actor */
+        $actor = $this->user();
+
+        $chosen = $this->validated('audience');
+
+        if ($chosen !== null && $actor->access_level === AccessLevel::KANGARU) {
+            return RoleAudience::from((string) $chosen);
+        }
+
+        // An applicant never reaches here — `roles.manage` is not in their
+        // grasp — but the null has to go somewhere, and a client role is the
+        // narrowest thing to fall back to.
+        return RoleAudience::forLevel($actor->access_level) ?? RoleAudience::CLIENT;
     }
 }

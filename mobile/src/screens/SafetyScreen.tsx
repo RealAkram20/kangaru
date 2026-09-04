@@ -1,7 +1,6 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useQuery } from '@tanstack/react-query';
 import {
-  ActivityIndicator,
   Animated,
   Linking,
   Pressable,
@@ -37,6 +36,7 @@ import {
   ShieldAlertIcon,
   ShieldIcon,
 } from '../ui/icons';
+import { SkeletonText } from '../ui/Skeleton';
 import { colors, radius, spacing, typography } from '../ui/theme';
 
 type Props = NativeStackScreenProps<ProfileStackParams, 'Safety'>;
@@ -264,7 +264,13 @@ export function SafetyScreen({ navigation }: Props) {
 
         <ContactSupportCard onPress={() => navigation.navigate('Support')} />
 
-        {isLoading && <ActivityIndicator color={colors.primary} style={styles.loading} />}
+        {/*
+          The shape of the guidance, not a spinner. A driver opening this has
+          been told to read something; a placeholder the size of the paragraphs
+          says it is coming, where a spinner in the middle of a page reads as
+          the office having nothing to say.
+        */}
+        {isLoading && <SkeletonText lines={5} style={styles.loading} />}
 
         {guidance !== '' && (
           <>

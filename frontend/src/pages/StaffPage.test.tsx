@@ -48,6 +48,11 @@ function staffList(people: StaffUser[], roles: AssignableRole[] = ASSIGNABLE) {
   get.mockResolvedValue(apiOk(people, { assignable_roles: roles }))
 }
 
+/** A staff list from a platform where mail is switched on, so an invitation can be sent. */
+function staffListThatCanInvite(people: StaffUser[]) {
+  get.mockResolvedValue(apiOk(people, { assignable_roles: ASSIGNABLE, can_invite: true }))
+}
+
 /** The switch catalogue as the server serves it (App\Enums\ClientCapability). */
 const CAPABILITIES = [
   { slug: 'approves_bookings', label: 'Approves bookings', description: 'Can approve or reject transport requests.' },
@@ -390,14 +395,91 @@ describe('StaffPage', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
-  it('says so when the staff list cannot be loaded', async () => {
+  it('shows a locked door, not an error, to an account without staff management', async () => {
+    // The route stopped gating on a role slug when head office began
+    // composing roles that carry `staff.manage` — no slug list can know their
+    // names, and every one of them would have been turned away from the
+    // screen built for it. So the page is reachable by anybody and answers
+    // for itself, exactly as the role catalogue beside it does.
+    //
+    // A refusal is not a failure: somebody who simply may not be here should
+    // not read a red banner about a request they did not knowingly make.
     get.mockRejectedValue(
       apiFailure(403, 'FORBIDDEN', 'You do not have permission to perform this action.'),
     )
 
     renderAs(<StaffPage />)
 
+    expect(
+      await screen.findByText(/staff administration is not available to your account/i),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('offers no way to invite when the platform cannot send email', async () => {
+    // `can_invite` is false whenever mail is off — which is production's state
+    // today. The option is not rendered at all rather than shown and refused
+    // on save: an Invite button that silently created an account nobody could
+    // sign into is the hole the invitations table was built to close.
+    staffList([person()])
+
+    const user = userEvent.setup()
+    renderAs(<StaffPage />)
+
+    await user.click(await screen.findByRole('button', { name: /add colleague/i }))
+
+    const dialog = screen.getByRole('dialog')
+
+    expect(within(dialog).queryByLabelText(/email them a link/i)).not.toBeInTheDocument()
+    expect(within(dialog).getByLabelText(/^Initial password/)).toBeInTheDocument()
+  })
+
+  it('sends an invitation instead of a password when the administrator chooses one', async () => {
+    staffListThatCanInvite([person()])
+
+    const user = userEvent.setup()
+    renderAs(<StaffPage />)
+
+    await user.click(await screen.findByRole('button', { name: /add colleague/i }))
+
+    const dialog = screen.getByRole('dialog')
+
+    await user.type(within(dialog).getByLabelText(/^Full name/), 'Grace Nakimuli')
+    await user.type(within(dialog).getByLabelText(/^Work email/), 'grace@centenary-bank.test')
+    await user.type(within(dialog).getByLabelText(/^Phone/), '+256700000301')
+    await user.click(within(dialog).getByLabelText(/email them a link/i))
+
+    // The password field goes with the choice — there is nothing to type, so
+    // leaving an empty box on screen would be a control that does nothing.
+    expect(within(dialog).queryByLabelText(/^Initial password/)).not.toBeInTheDocument()
+
+    // And the dialog's own sentence follows it. Found in a browser, not by a
+    // test: with the box ticked the dialog still read "They sign in with the
+    // password you set here", promising a password nobody was going to set.
+    expect(within(dialog).getByText(/email with a link to set their own password/i)).toBeInTheDocument()
+    expect(within(dialog).queryByText(/password you set here/i)).not.toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: /create account/i }))
+
+    const payload = post.mock.calls[0][1] as Record<string, unknown>
+
+    // The assertion that matters is the *absence*. The server drops the
+    // requirement for an invite but still holds a present password to the
+    // length floor, so sending an empty string would be refused for a field
+    // the administrator never filled in.
+    expect(payload.invite).toBe(true)
+    expect(payload).not.toHaveProperty('password')
+  })
+
+  it('still reports a real failure as an error', async () => {
+    // The other half, and the reason the branch above is on the code rather
+    // than on the status: a server that fell over is not a locked door, and
+    // rendering one would hide an outage behind a permissions message.
+    get.mockRejectedValue(apiFailure(500, 'SERVER_ERROR', 'Something went wrong.'))
+
+    renderAs(<StaffPage />)
+
     expect(await screen.findByText('Staff administration')).toBeInTheDocument()
-    expect(screen.getByText(/do not have permission/i)).toBeInTheDocument()
+    expect(screen.getByText(/something went wrong/i)).toBeInTheDocument()
   })
 })

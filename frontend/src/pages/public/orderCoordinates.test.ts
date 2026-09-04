@@ -67,6 +67,20 @@ describe('coordinatesFor', () => {
       lat: 0.3476,
       lng: 32.5825,
     })
+
+    /*
+      **The other half of the same bug.** `PlaceField` fills every hit —
+      a device fix included — with `placeLabel(hit)`, which is "Current
+      location, <locality>" and not the detail above. Only the detail was
+      accepted, so a dispatcher picking their current location on the
+      internal booking form had the pin silently discarded: booking #102 was
+      stored with `origin_latitude NULL` and the driver's screen said "the
+      order was taken without a pin on it" over a blank map.
+    */
+    expect(coordinatesFor('Current location, Plot 9', deviceFix, 'lat', 'lng')).toEqual({
+      lat: 0.3476,
+      lng: 32.5825,
+    })
   })
 
   it('ignores surrounding whitespace, which a paste often carries', () => {

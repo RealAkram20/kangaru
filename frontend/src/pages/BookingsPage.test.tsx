@@ -22,6 +22,16 @@ const { apiClient } = await import('../lib/apiClient')
 const get = vi.mocked(apiClient.get)
 const post = vi.mocked(apiClient.post)
 
+/**
+ * The POSTs that *created a booking*, not every POST on the page.
+ *
+ * Creating one now dispatches it — the panel that tells the desk whether a
+ * driver took the job asks the office to place it — so counting every call
+ * would count the answer as a second request. This asks the question these
+ * tests were always asking: was the booking sent once, and with what.
+ */
+const creates = () => post.mock.calls.filter((call) => call[0] === '/bookings')
+
 function booking(overrides: Partial<Booking> = {}): Booking {
   return {
     id: 41,
@@ -43,6 +53,7 @@ function booking(overrides: Partial<Booking> = {}): Booking {
     scheduled_for: null,
     is_immediate: true,
     status: 'pending',
+    is_ringing: false,
     approved_by_user_id: null,
     approved_at: null,
     decision_reason: null,
@@ -116,9 +127,9 @@ describe('BookingsPage', () => {
     await user.type(screen.getByLabelText(/destination/i), 'Jinja')
     await user.click(screen.getByRole('button', { name: /create booking/i }))
 
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(creates()).toHaveLength(1))
 
-    const payload = post.mock.calls[0][1] as Record<string, unknown>
+    const payload = creates()[0][1] as Record<string, unknown>
     // `lngLat` is [lng, lat]; sending them the wrong way round puts a
     // Kampala pickup off the coast of Ghana with both values still valid.
     expect(payload.origin_latitude).toBe(0.3476)
@@ -136,11 +147,11 @@ describe('BookingsPage', () => {
     await user.type(screen.getByLabelText(/destination/i), 'Jinja')
     await user.click(screen.getByRole('button', { name: /create booking/i }))
 
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(creates()).toHaveLength(1))
 
     // Free text always stands: a dispatcher on the phone types what the
     // caller says, and the booking is created without a point.
-    const payload = post.mock.calls[0][1] as Record<string, unknown>
+    const payload = creates()[0][1] as Record<string, unknown>
     expect(payload).not.toHaveProperty('origin_latitude')
     expect(payload.origin).toBe('Somewhere the geocoder never saw')
   })
@@ -184,7 +195,7 @@ describe('BookingsPage', () => {
 
     await user.click(screen.getByRole('button', { name: /create booking/i }))
 
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(creates()).toHaveLength(1))
 
     // `scheduled_for: null` is the contract for "now". The prefill is what
     // the dispatcher *sees*; what is sent for an untouched field is null,
@@ -220,8 +231,8 @@ describe('BookingsPage', () => {
     })
     await user.click(screen.getByRole('button', { name: /create booking/i }))
 
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
-    expect((post.mock.calls[0][1] as Record<string, unknown>).scheduled_for).toBe(
+    await waitFor(() => expect(creates()).toHaveLength(1))
+    expect((creates()[0][1] as Record<string, unknown>).scheduled_for).toBe(
       new Date('2026-12-24T09:30').toISOString(),
     )
   })
@@ -253,8 +264,8 @@ describe('BookingsPage', () => {
     })
     await user.click(screen.getByRole('button', { name: /create booking/i }))
 
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
-    expect((post.mock.calls[0][1] as Record<string, unknown>).scheduled_for).toBeNull()
+    await waitFor(() => expect(creates()).toHaveLength(1))
+    expect((creates()[0][1] as Record<string, unknown>).scheduled_for).toBeNull()
   })
 
   it('puts a validation error against the field it belongs to', async () => {
@@ -447,8 +458,8 @@ describe('BookingsPage', () => {
     await user.type(screen.getByLabelText(/destination/i), 'Jinja')
     await user.click(screen.getByRole('button', { name: /create booking/i }))
 
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
-    expect(post.mock.calls[0][1]).toMatchObject({
+    await waitFor(() => expect(creates()).toHaveLength(1))
+    expect(creates()[0][1]).toMatchObject({
       passenger_user_id: 12,
       passenger_name: 'Joseph Mukasa',
       passenger_phone: '+256700111222',
@@ -472,10 +483,10 @@ describe('BookingsPage', () => {
     await user.type(screen.getByLabelText(/destination/i), 'Jinja')
     await user.click(screen.getByRole('button', { name: /create booking/i }))
 
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(creates()).toHaveLength(1))
     // Sent without one, and refused by the server — which is the right
     // place for that refusal to come from.
-    expect(post.mock.calls[0][1]).not.toHaveProperty('passenger_user_id')
+    expect(creates()[0][1]).not.toHaveProperty('passenger_user_id')
   })
 
   it('shows the server refusal to name nobody against the passenger field', async () => {
@@ -632,9 +643,9 @@ describe('three services on a booking', () => {
     await user.click(screen.getByLabelText(/confirm handover with a pin/i))
     await user.click(screen.getByRole('button', { name: /create booking/i }))
 
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(creates()).toHaveLength(1))
 
-    const payload = post.mock.calls[0][1] as Record<string, unknown>
+    const payload = creates()[0][1] as Record<string, unknown>
     expect(payload).toMatchObject({
       service_type: 'delivery',
       origin: 'Nakawa',
@@ -669,9 +680,9 @@ describe('three services on a booking', () => {
     await user.type(screen.getByLabelText(/identity documents/i), 'National ID')
     await user.click(screen.getByRole('button', { name: /create booking/i }))
 
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(creates()).toHaveLength(1))
 
-    const payload = post.mock.calls[0][1] as Record<string, unknown>
+    const payload = creates()[0][1] as Record<string, unknown>
     expect(payload).toMatchObject({
       service_type: 'self_drive',
       details: { start_date: '2026-09-01', end_date: '2026-09-05', kyc_documents: 'National ID' },
@@ -718,8 +729,8 @@ describe('three services on a booking', () => {
     await user.type(screen.getByLabelText(/destination/i), 'Jinja')
     await user.click(screen.getByRole('button', { name: /create booking/i }))
 
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
-    expect(post.mock.calls[0][1]).toMatchObject({ tenant_id: 7 })
+    await waitFor(() => expect(creates()).toHaveLength(1))
+    expect(creates()[0][1]).toMatchObject({ tenant_id: 7 })
   })
 
   it('shows the hire period where a rental has no route to show', async () => {
@@ -738,5 +749,85 @@ describe('three services on a booking', () => {
 
     expect(await screen.findByText('2026-09-01 → 2026-09-05')).toBeInTheDocument()
     expect(screen.getByText('Self-drive')).toBeInTheDocument()
+  })
+})
+
+/**
+ * What became of the booking that was just raised.
+ *
+ * The owner's report was *"nothing happens next after clicking create
+ * booking… still the order did not reach the driver"*, and both halves were
+ * true: the booking was created and then stopped, silently, at gates the
+ * screen never mentioned. These assertions are that it now says which gate.
+ */
+describe('BookingsPage — what became of the booking', () => {
+  const answers = (dispatch: () => Promise<unknown>) => {
+    post.mockImplementation((url: string) =>
+      (url === '/bookings' ? Promise.resolve(apiOk(booking({ id: 77 }))) : dispatch()) as never,
+    )
+  }
+
+  const create = async () => {
+    const user = userEvent.setup()
+    renderAs(<BookingsPage />, dispatcher)
+
+    await user.click(await screen.findByRole('button', { name: /new booking/i }))
+    await user.type(screen.getByLabelText(/^passenger\*/i), 'Peter Ochieng')
+    await user.type(screen.getByLabelText(/contact number/i), '+256700111222')
+    await user.type(screen.getByLabelText(/pick-up/i), 'Nakawa')
+    await user.type(screen.getByLabelText(/destination/i), 'Jinja')
+    await user.click(screen.getByRole('button', { name: /create booking/i }))
+  }
+
+  const trip = {
+    id: 501,
+    status: 'assigned',
+    driver: { id: 3, name: 'Ada Nakato' },
+    vehicle: { id: 11, registration_number: 'UDD 005D' },
+  }
+
+  it('asks the office to place the booking exactly once', async () => {
+    answers(() => Promise.resolve(apiOk(trip)))
+
+    await create()
+
+    await waitFor(() =>
+      expect(post.mock.calls.filter((call) => call[0] === '/bookings/77/auto-assignment')).toHaveLength(1),
+    )
+
+    // Dispatching is not idempotent: a second auto-assignment is a second
+    // offer, to a second driver, for one job. The harness renders under
+    // StrictMode — which is exactly the double mount a browser does in
+    // development — so an unguarded effect sends it twice here.
+    await screen.findByText(/UDD 005D/)
+    expect(post.mock.calls.filter((call) => call[0] === '/bookings/77/auto-assignment')).toHaveLength(1)
+  })
+
+  it('says the driver has it and has not answered yet', async () => {
+    answers(() => Promise.resolve(apiOk(trip)))
+
+    await create()
+
+    // `assigned` is the office putting the job on somebody's name and
+    // nothing more. Reading it as "accepted" is what made a job nobody took
+    // look exactly like one already being driven.
+    expect(await screen.findByText(/waiting for ada nakato to accept trip #501/i)).toBeVisible()
+  })
+
+  it("shows the office's own refusal rather than a silence", async () => {
+    answers(() =>
+      Promise.reject(
+        apiFailure(422, 'NO_VEHICLE_AVAILABLE', 'No contracted vehicle is free for this client.'),
+      ),
+    )
+
+    await create()
+
+    // Verbatim. Automatic dispatch commits a *contracted* vehicle or
+    // nothing, so this is an ordinary outcome — and rewriting it here would
+    // be a second vocabulary for one refusal.
+    expect(
+      await screen.findByText(/no contracted vehicle is free for this client/i),
+    ).toBeVisible()
   })
 })

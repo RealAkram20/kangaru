@@ -194,6 +194,99 @@ export async function addTripStop(
 }
 
 /**
+ * Records that the passenger is going further than the drop-off they agreed
+ * to (ADR-0045 §4 amendment).
+ *
+ * The same two request shapes as `addTripStop`, and a different act. A stop
+ * is a pause on the way to a destination nobody changed and is never billed;
+ * an extension moves the end of the journey, so the reference route is drawn
+ * through it and the fare follows the longer distance. Sending one as the
+ * other is the difference between a driver being paid for the extra
+ * kilometres and not.
+ *
+ * Direct, outside the outbox, for `addTripStop`'s reason: the search that
+ * feeds it needs connectivity anyway, so a dead zone closes the whole flow
+ * rather than half of it.
+ */
+export async function addTripExtension(
+  api: ApiClient,
+  tripId: number,
+  input:
+    | { clientPlaceId: number }
+    | { label: string; latitude?: number; longitude?: number },
+): Promise<TripStop> {
+  const response = await api.request<TripStop>(`/trips/${tripId}/extensions`, {
+    method: 'POST',
+    body:
+      'clientPlaceId' in input
+        ? { client_place_id: input.clientPlaceId }
+        : {
+            label: input.label,
+            // Both or neither, as everywhere else — half a position is
+            // worse than none.
+            ...(input.latitude !== undefined && input.longitude !== undefined
+              ? { latitude: input.latitude, longitude: input.longitude }
+              : {}),
+          },
+  });
+
+  return response.data;
+}
+
+/**
+ * The driver's answer to an extension a passenger asked for.
+ *
+ * `acceptance` / `decline` mirrors `me/offers/{offer}`, so the app speaks one
+ * vocabulary for both things a driver answers. The server refuses anything
+ * that is not this trip's unanswered extension with a masked 404, so a second
+ * tap cannot agree twice.
+ */
+export async function acceptTripExtension(
+  api: ApiClient,
+  tripId: number,
+  extensionId: number,
+): Promise<TripStop> {
+  const response = await api.request<TripStop>(
+    `/trips/${tripId}/extensions/${extensionId}/acceptance`,
+    { method: 'POST' },
+  );
+
+  return response.data;
+}
+
+/** Refuses one. The row stays, with a reason — never deleted. */
+export async function declineTripExtension(
+  api: ApiClient,
+  tripId: number,
+  extensionId: number,
+  reason?: string,
+): Promise<TripStop> {
+  const response = await api.request<TripStop>(
+    `/trips/${tripId}/extensions/${extensionId}/decline`,
+    { method: 'POST', body: reason === undefined ? {} : { reason } },
+  );
+
+  return response.data;
+}
+
+/**
+ * Marks the destination the trip was agreed for as reached, without ending
+ * the trip.
+ *
+ * Idempotent on the server: a second tap, or a retry into a dead zone, does
+ * not move the timestamp. The first arrival is the true one, and it decides
+ * which side of the journey an extension was added on — which is what the
+ * driver's own map routes off.
+ */
+export async function markDropoffReached(api: ApiClient, tripId: number): Promise<Trip> {
+  const response = await api.request<Trip>(`/trips/${tripId}/dropoff-arrival`, {
+    method: 'POST',
+  });
+
+  return response.data;
+}
+
+/**
  * The add-a-drop-off search over the client's own place register (ADR-0045
  * §10) — the ATM estate, served to this trip's driver while the run is live
  * and to nobody else. A walk-in trip answers an empty list, which the screen

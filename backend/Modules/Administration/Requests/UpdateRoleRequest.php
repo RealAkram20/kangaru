@@ -4,6 +4,7 @@ namespace Modules\Administration\Requests;
 
 use App\Enums\AccessLevel;
 use App\Enums\Permission;
+use App\Enums\RoleAudience;
 use App\Models\User;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
@@ -35,6 +36,12 @@ class UpdateRoleRequest extends FormRequest
             'description' => ['nullable', 'string', 'max:255'],
             'permissions' => ['sometimes', 'array', 'min:1'],
             'permissions.*' => ['string', Rule::enum(Permission::class)],
+            // Which level of account the role is for. Head office only, on
+            // the same argument as `requires_mfa` below: moving a role between
+            // audiences decides what appears in another organisation's picker,
+            // which is a decision about the platform rather than about the
+            // fleet making it.
+            'audience' => ['sometimes', Rule::enum(RoleAudience::class)],
             // ADR-0061. The per-role half of the second-factor rule.
             // `RolePolicy::update` already narrows who may reach this,
             // and ADR-0061 §5 adds the level: a control that weakens
@@ -88,6 +95,16 @@ class UpdateRoleRequest extends FormRequest
                 $validator->errors()->add(
                     'requires_mfa',
                     'Only Kangaru head office can change whether a role needs a second factor.',
+                );
+            }
+
+            // Moving a role to another audience puts it in a different
+            // organisation's picker. Head office's call, for the same reason
+            // as the line above.
+            if ($this->has('audience') && $actor->access_level !== AccessLevel::KANGARU) {
+                $validator->errors()->add(
+                    'audience',
+                    'Only Kangaru head office can change which kind of account a role is for.',
                 );
             }
 

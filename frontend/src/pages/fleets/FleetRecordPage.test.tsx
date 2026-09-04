@@ -6,7 +6,7 @@ import type { Operator } from '../../types/operator'
 import { FleetRecordPage } from './FleetRecordPage'
 
 vi.mock('../../lib/apiClient', () => ({
-  apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn() },
+  apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: vi.fn() },
 }))
 
 vi.mock('react-router-dom', async (importOriginal) => ({
@@ -18,6 +18,7 @@ vi.mock('react-router-dom', async (importOriginal) => ({
 const { apiClient } = await import('../../lib/apiClient')
 const get = vi.mocked(apiClient.get)
 const patch = vi.mocked(apiClient.patch)
+const put = vi.mocked(apiClient.put)
 
 function fleet(overrides: Partial<Operator> = {}): Operator {
   return {
@@ -106,4 +107,40 @@ it('offers to reinstate a suspended fleet rather than suspending it twice', asyn
   await screen.findByText('Shanitah General Enterprises Ltd')
   expect(screen.getByRole('button', { name: 'Reinstate' })).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Suspend' })).not.toBeInTheDocument()
+})
+
+it('sends the same person a fresh link from the pending-transfer banner', function () {
+  return (async () => {
+    const pending = fleet({
+      pending_owner: {
+        name: 'Susan Nanyanzi',
+        email: 'susan@applicant.test',
+        expires_at: '2026-09-01T00:00:00Z',
+      },
+    })
+
+    load(pending)
+    put.mockResolvedValue(apiOk(pending))
+
+    const user = userEvent.setup()
+    renderAs(<FleetRecordPage />, makeUser({ role: 'super_admin', access_level: 'kangaru' }))
+
+    await user.click(await screen.findByRole('button', { name: /resend/i }))
+
+    /*
+     * The same address, sent again. Before this the only control was Withdraw,
+     * so re-sending meant withdrawing and retyping the address — and that path
+     * refused the very address it had accepted the day before, because the
+     * person had acquired an account in between.
+     *
+     * `put`, not `post`: replacing the pending row is what issues a fresh
+     * token and restarts the seven days, and it is what kills the old link.
+     */
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith('/operators/1/owner', {
+        name: 'Susan Nanyanzi',
+        email: 'susan@applicant.test',
+      }),
+    )
+  })()
 })

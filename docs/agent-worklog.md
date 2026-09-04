@@ -1,4 +1,4 @@
-# Agent worklog
+﻿# Agent worklog
 
 Several agents build screens in this repo **at the same time, in one shared
 working tree**. This file is how they stay out of each other's way.
@@ -163,6 +163,224 @@ patched the same four fixtures within a minute of each other and briefly
 produced duplicate keys. Neither cost anything because both were caught by
 `tsc`, but the rule that would have avoided both is rule 2 at the top of this
 file: **re-read before acting, and say what you saw rather than fixing it.**
+
+---
+
+### 2026-08-28 — The extension: a passenger who travels past the agreed drop-off
+
+**Status:** done. 1886 backend tests, 1225 mobile tests, `tsc --noEmit`,
+eslint, Pint, PHPStan level 8. Seven guards proved by mutation and restored
+(0 markers left). **Rendered on a handset against the local API**, which is
+where all three of the bugs below were found — none had a failing test.
+
+Verified end to end on the emulator: a passenger's request reaches the driver
+as a card naming the place; Accept round-trips and stamps `accepted_at`; the
+card clears; the route reads *Mukono Town (Agreed drop-off) -> Kabalagala
+(Going on)*; `Arrived at drop-off` hands the journey over, re-frames the map
+and removes itself; and End trip is refused, on the screen, naming the leg
+still to run.
+**Source:** owner's request — *"mark it a drop off (Before) then extension
+(after the first designation)"*. Backend decisions were put to the owner and
+answered: one trip with a longer distance (not a second fare), all three
+actors may add, any time before completion, all trip kinds, extensions live in
+`trip_stops`, and a passenger's request needs the driver's consent.
+
+**No trip status is claimed.** The ownership table is unchanged. This rides on
+`TripInProgressScreen`'s three statuses, whose entry above is marked complete —
+my diff there is an insertion, not a rewrite.
+
+**What already existed and is being built on, not rebuilt:** `TripStop` and
+the whole ADR-0045 stop machinery, `AddDropoffScreen` and its register +
+geocoder search, `addTripStop`, `Screen` / `Notice` / `Button` / `IconField`,
+`DetailRow` / `RouteRail`, `useTrip`, `driverActions`, the outbox.
+
+**Files owned — do not edit:**
+
+- `mobile/src/trips/extensions.ts` + `extensions.test.ts`
+- `mobile/src/trips/ExtensionRequestCard.tsx`
+- backend: `Modules/Trips/Controllers/TripExtensionController.php`,
+  `TripDropoffArrivalController.php`, `Enums/TripStopKind.php`,
+  `Requests/DeclineTripExtensionRequest.php`,
+  `Modules/Customers/Requests/StoreRideExtensionRequest.php`,
+  `Modules/Notifications/Notifications/TripExtensionRequestedNotification.php`,
+  `tests/Feature/Trips/TripExtensionTest.php`, and the
+  `2026_08_28_090000_a_stop_can_be_an_extension_of_the_journey` migration
+
+**Files shared — the exact edits, none of them a rewrite:**
+
+- `mobile/src/screens/TripInProgressScreen.tsx` — two insertions: the pending
+  request card near the top, and an `Arrived at drop-off` button above
+  `End trip`. No existing control changes behaviour.
+- `mobile/src/ui/components.tsx` — **added `SegmentedTabs`**, purely additive.
+- `mobile/src/screens/AddDropoffScreen.tsx` — a kind toggle above the search,
+  and the submit path chooses
+  `addTripExtension` over `addTripStop` on a walk-in. **This changes what an
+  existing button means and it was put to the owner**, who chose it: on a
+  walk-in the place a passenger asks for mid-run is an extension and is
+  billed. Corporate circuits still create stops. See the decision below.
+- `mobile/src/api/endpoints.ts` — three added functions.
+- `mobile/src/api/types.ts` — `TripStop.kind`, `TripStop.accepted_at`,
+  `TripStop.status` gains `proposed`, `Trip.dropoff_reached_at`.
+- `mobile/src/trips/StopList.tsx` — one added `extensions` prop, rendered
+  after the destination row. No existing behaviour changes.
+- `mobile/src/screens/TripInProgressScreen.test.tsx` — mocks for the two
+  direct-posting acts (42 tests failed on `useAuth` alone), two label
+  assertions updated with the reason, and six added cases.
+- `backend/app/Support/Auth/ClientScope.php` — four route names.
+- `backend/tests/Feature/Auth/TokenScopeTest.php` and
+  `Tenancy/DriverOwnershipIsolationTest.php` — one case and one pinned count.
+- `mobile/src/trips/queries.ts` — **not touched in the end.**
+- backend shared files: `TripStopService`, `TripStop`, `TripStopSource`,
+  `TripStopStatus`, `RouteReference`, `TripRouteController`,
+  `TransitionTripRequest`, `Trip`, `TripResource`, `TripStopResource`,
+  `NotificationType`, `CustomerRideController`, both route files, the two CI
+  census tests, `openapi.yaml`, and ADR-0045 (amended — see below).
+
+**Decisions taken, with the rule behind each:**
+
+- **ADR-0045 §4 is amended, not quietly contradicted.** Its "recorded and
+  shown, never billed and never hidden" was true of every row in `trip_stops`
+  until now. The owner chose to keep extensions in that table, so the ADR and
+  `TripStopSource`'s docblock now say the promise covers `kind = stop`.
+- **`kind` is a new column, not a fifth `source`.** `source` answers *who*,
+  and all three actors can add an extension; folding them together would have
+  lost the answer the consent rule depends on.
+- **`unplanned_stop_count` excludes extensions.** That counter means
+  "deviated and nobody billed for it"; an extension is billed.
+- **The reference route runs through accepted extensions.** Without it
+  `ROUTE_CAPPED` caps the billed distance at the journey the passenger did not
+  take — driven and unpaid, plus a variance for the office to investigate.
+  This is the single load-bearing line of the whole feature.
+- **A passenger's request lands `proposed` and the driver answers it.** It
+  changes where a driver is going and what they are owed.
+- **It is not dressed as a job offer.** No `offers.call.v2`, no ringtone, and
+  the payload says `extension_id` rather than `offer_id` — the app reads
+  `offer_id` as "raise the incoming-call screen", and a passenger asking a
+  question out loud must not take over a locked phone.
+- **A proposal does not hold the trip open at completion.** A back-seat tap
+  must not be able to prevent a driver finishing their shift.
+- **The driver chooses stop or extension on the search screen** (owner,
+  mid-build). My first build inferred it from the trip kind and the owner
+  asked for a toggle instead, which is the better decision: the inference is
+  right almost every time and cannot be *corrected* by the one person who
+  knows. A walk-in passenger sometimes asks the car to wait somewhere on the
+  way; a corporate driver sometimes genuinely carries somebody past the
+  contracted route. Getting it wrong is money in both directions.
+  `addsExtension` survives as the **default**, so the common case is still one
+  tap. `SegmentedTabs` was added to `ui/components.tsx` for it — the second
+  occurrence of `EarningsScreen`'s Day/Week/Month shape, which AGENTS.md says
+  becomes the component. `PeriodTabs` is deliberately **not** refactored onto
+  it: that is another agent's screen and a rewrite is not a minimal diff.
+- **The extension outranks the drop-off mark on the screen** (owner, mid-build:
+  *"extensions are more important than drop-off"*). Extending is the act with
+  money and a waiting passenger behind it; marking the drop-off is bookkeeping
+  that orders the journey. So the extend control sits above `Arrived at
+  drop-off`, and nothing about extending is gated behind marking.
+
+**Three bugs that only rendering found, and none of them had a failing test.**
+This is the entry's most useful part: all three passed 1,200 mobile tests,
+1,885 backend tests, tsc, eslint, Pint and PHPStan, and all three would have
+shipped.
+
+1. **Every extension route was 403 to the driver app.** `ClientScope` is a
+   fail-closed allow-list (ADR-0022) and the four routes were not on it, so
+   the first press of Accept on a handset answered *"This app is not allowed
+   to use that part of the API"* — with a passenger in the car waiting. No
+   backend test can see it: they mint an unscoped console token, which is
+   what the comment above that array already says, and this is the **eighth**
+   time. `TokenScopeTest` now asks `ClientScope` by name for all four.
+2. **The journey was ordered backwards.** An extension sorts into
+   `trip_stops` by `sequence` like a stop, so the route list, the "next
+   drop-off" row *and the map pin* all aimed at the extension while the
+   destination the passenger hired the car for was still ahead. The backend
+   already ordered it correctly, so handset and server disagreed. `nextPlace`
+   holds the server's boundary; `StopList` gained an `extensions` prop that
+   renders after the destination row, whose caption becomes "Agreed drop-off".
+3. **End trip reported success over a refusal.** The office refuses a
+   completion while an agreed extension is still to run — but this screen
+   queues through the outbox and navigates on the *queue* succeeding, so the
+   driver saw **"Great job! Ride completed"** with the passenger still
+   aboard, and the 422 arrived later as a line in Updates & sync. `end()` now
+   refuses before queueing and names the place. This is the same failure the
+   file's own Pause/Resume comment describes from go-live day.
+
+**The sync banner is silenced — owner's decision, 2026-08-28, and it is a
+safety net so it is written down here rather than buried in a diff.**
+
+The owner saw the red *"1 item needs your attention"* strip and asked for it
+quiet. What they were actually looking at was the corpse of bug 3 above — a
+parked End-trip write from before the guard existed — so the immediate cause
+is gone either way. They were shown the alternatives (clear the stuck item;
+keep it only for writes worth money; silence it entirely) and the cost of the
+last one, and chose it.
+
+What that costs, stated so nobody rediscovers it as a mystery:
+
+- **AGENTS.md's "show sync state clearly" is no longer met by any screen.**
+- A driver whose completion never reached the office has **no on-screen sign
+  of it**. `SyncBanner`'s removed docblock said why that matters: a queue that
+  hides itself is indistinguishable from one that has lost the work, and a
+  driver who cannot tell will re-enter the reading on paper.
+
+**Only the strip went.** `SyncProvider` still queues, drains, parks and
+reports a parked item to Sentry, and Profile → Updates & sync still lists
+every held and parked item with a Discard on each. Five tests that pinned the
+removed wording were deleted rather than left asserting nothing; two replaced
+them — that it stays quiet through *every* queue state, and that the storage
+failure still speaks.
+
+**The storage failure was kept, and that was my judgement rather than an
+instruction.** It is not a sync status: when the phone's own storage will not
+open every trip button is about to refuse, and without that sentence it reads
+as a broken app. Flagged to the owner as a one-line change if it should go too.
+
+**The Profile tab bug, reported mid-session and fixed: it is the
+`initial: false` one, back through a call site the first fix missed.**
+
+Owner: *"we are stuck, sometimes"* and *"now when I click on the profile it
+sends us to the notifications."* Two faces of one defect. `HomeScreen`'s bell
+did `getParent()?.navigate('Profile', { screen: 'Notifications' })` with no
+`initial: false`, so the Profile stack was created as `["Notifications"]` at
+index 0 with `ProfileHome` never in it — nothing to pop, so the tab looked
+dead and Android's back gesture left the app. *Sometimes*, because it only
+bites when the driver has not opened Profile since launch.
+
+**`DrawerContent.go` was fixed for exactly this** and `nestedNavigate.test.tsx`
+documents the mechanism; the bell was simply never updated. Swept the tree
+for the same shape and found a third: `TripDetailScreen`'s Help pill
+(`{ screen: 'Support' }`). Both now carry the flag and both assert it, the way
+`DrawerContent.test.tsx` already did.
+
+Separately, the Profile **tab button** now lands on `ProfileHome`. `initial:
+false` fixes the stack; it does not stop the tab restoring the inbox on top of
+it, which is what the owner actually saw.
+
+**A test of mine passed against a deliberately broken fix, and that is the
+part worth reading.** The first version pressed Profile while Profile was
+already focused — and re-pressing a focused tab pops its stack all by itself,
+so removing the listener changed nothing. Caught by mutating the listener
+away. Rewritten to walk the reported path (on Home, press Profile), it now
+fails without the fix. A second assertion in it claimed the screen above is
+kept behind Profile; it is popped. Corrected rather than left as a wrong
+explanation in the file.
+
+**Not built, deliberately:**
+
+- **The console and the customer ride screen.** Dispatcher-adds and the
+  passenger's own propose/see-the-answer UI are unbuilt; the API for both
+  exists and is documented.
+- **What an extension means against a corporate rate card.** The mechanism is
+  trip-kind agnostic and distance is distance, but whether a contracted trip
+  should extend at the card's per-km, at another rate, or need approval is a
+  commercial decision, not a code one.
+- **No way to skip an extension the driver cannot reach.** `skipped` exists
+  and the server writes it on a decline, but no surface offers it for an
+  *accepted* extension — so a road closure means ringing the office. ADR-0045
+  §6 already notes no surface writes `skipped`; this widens that gap rather
+  than closing it, and it is the one I would build next.
+- **No auto-marking of the drop-off.** Adding an extension does not stamp
+  `dropoff_reached_at`; a driver may be told about the next place while still
+  short of the first one.
 
 ---
 
@@ -20131,3 +20349,1166 @@ tree; against committed code that file is 16/16.
 input (the server's considered 422 still renders as a generic banner) and
 `service_type` on the board (a delivery still reads as a ride). Both are UI
 work; neither leaks anything.
+
+### 2026-08-24 - Fleet companies: edit the name and move the plan, from the record page
+
+**Status: in progress.** Owner asked for head office editing of a fleet
+company; the register renders counts and Onboard only, and nothing in the
+console sends `name` or a plan move. Found while building it: `PATCH
+/operators/{operator}` accepts `plan_id` through a bare `update()`, which
+bypasses `PlanAllowance` - the ADR-0058 s4 downgrade refusal only
+`PUT /operators/{operator}/plan` enforces.
+
+**Files owned - do not edit:**
+
+- `frontend/src/pages/fleets/EditFleetDialog.tsx` (+ test, new)
+- `frontend/src/pages/fleets/FleetRecordPage.tsx` (Edit button + dialog mount)
+- `frontend/src/types/plan.ts` (new - Plan moves out of PlansPage)
+- `backend/Modules/Fleet/Requests/UpdateOperatorRequest.php` (drop `plan_id`)
+
+**Shared files, minimal named edits:**
+
+- `frontend/src/pages/PlansPage.tsx` - import Plan from types instead of local
+- `docs/api/openapi.yaml` - operators PATCH loses `plan_id`; companies PATCH
+  `country` becomes length 2 (follows bc9ceb9)
+- `backend/tests/Feature/Fleet/OperatorRegisterTest.php` - closed-bypass test
+- `backend/Modules/Fleet/README.md` - one sentence in the Plans paragraph
+
+Deliberately not editable in the dialog: `slug` (URL + invoice series
+identity), `status` (record page's confirmed suspend/reinstate owns it).
+
+#### Closed
+
+Built as claimed, plus one repair the claim predicted: `PATCH
+/operators/{operator}` no longer accepts `plan_id` (spec updated,
+`OperatorRegisterTest` proves the closed bypass, guard proved by mutation -
+rule re-added, test red; removed, green). The dialog sends the name over the
+PATCH and the plan over `PUT .../plan`, so the ADR-0058 s4 refusal renders
+under the picker naming the figures - proven in the browser against
+Shanitah (19 drivers refused onto Free). Dark mode checked. Browser flow:
+rename saved and reverted, plan moved and moved back, dev DB left as found.
+
+Also in this session, same ask: `UpdateCompanyRequest.country` tightened to
+`size:2` with spec + both client dialogs hinted (bc9ceb9).
+
+**Deliberately not built:** slug editing (URL + invoice series identity),
+status in the dialog (record page's confirmed suspend/reinstate owns it),
+and any row-level Edit on the fleets list (the row already opens the
+record). Fleet+Clients backend 292 passed; frontend suite 703 passed;
+spec lint, censuses and Pint green.
+
+### 2026-08-24 - Fleet ownership transfer by email, and the plan at onboarding
+
+**Status: in progress.** Owner: *"i should be able to edit the email too and
+the new email will be sent a welcome email to set the new pasword. if the
+email not comfirmed then we keep the old email ... because changing the email
+is changing the ownership"*, and *"when creating we can not chose the plan"*.
+
+Design: a pending `ownership_transfers` row per operator (nothing else exists
+until confirmation), its own token + mail-only notification to the address
+that has no account yet (`Notification::route`, the applicant path through
+`SettingsMailChannel`). Acceptance creates the new FLEET_OWNER with the chosen
+password and suspends the previous owner account(s) in one transaction -
+attribution stays with the person who acted, which is why the account is not
+renamed in place. Unconfirmed or expired: nothing changed.
+
+**Files owned - do not edit:**
+
+- `backend/Modules/Fleet/Models/OwnershipTransfer.php` (new)
+- `backend/Modules/Fleet/Services/OwnershipTransferService.php` (new)
+- `backend/Modules/Fleet/Controllers/OwnershipTransferController.php` (new)
+- `backend/Modules/Fleet/Requests/ProposeOwnerRequest.php` (new)
+- `backend/Modules/Notifications/Notifications/FleetOwnershipInvitedNotification.php` (new)
+- `backend/database/migrations/*_a_fleet_can_change_hands_once_the_new_owner_confirms.php` (new)
+- `backend/tests/Feature/Fleet/OwnershipTransferTest.php` (new)
+- `frontend/src/pages/fleets/TransferOwnershipDialog.tsx` (+ test, new)
+
+**Shared files, minimal named edits:**
+
+- `backend/Modules/Fleet/Routes/api.php` + `public.php` - four routes
+- `backend/Modules/Fleet/Resources/OperatorResource.php` - `pending_owner`
+- `backend/Modules/Fleet/Requests/StoreOperatorRequest.php` - optional `plan_id`
+- `backend/Modules/Fleet/Services/OperatorService.php` - pass `plan_id`
+- `backend/Modules/Notifications/Enums/NotificationType.php` - two cases
+- `backend/lang/en/mail.php` - ownership block
+- `backend/tests/Feature/Ci/RoutePolicyCensusTest.php` - census rows + counts
+- `docs/api/openapi.yaml` - four routes + `pending_owner` + `plan_id`
+- `frontend/src/pages/fleets/FleetRecordPage.tsx` - transfer button + pending
+- `frontend/src/pages/fleets/OnboardFleetDialog.tsx` - plan picker
+- `frontend/src/pages/AcceptInvitePage.tsx` - endpoint parameter + company line
+- `frontend/src/routes/router.tsx` - public `/owner/:token`
+- `frontend/src/types/operator.ts` - `pending_owner`
+
+---
+
+### 2026-08-24 — Console forgot-password: the flow existed everywhere except the console
+
+**Status: in progress.** Owner: *"we do not have forgot password for the
+system operators, driver and other parties should be automatic. right now i
+have forgot the password but there is no way i can reset it."*
+
+The backend flow (ADR-0028 §2: emailed 6-digit code, oracle-refusing 202,
+throttled) and the driver app's `ForgotPasswordScreen` both exist; the web
+console's login page simply never got the link or the pages. Also done in
+this session, on the live server with the owner's confirmation: the owner's
+locked-out account reset by shell, and `auth.password_reset_enabled` switched
+on as the platform default — mail is configured there now, so the driver
+app's flow went live with the flag.
+
+**Files owned — do not edit:**
+
+- `frontend/src/pages/ForgotPasswordPage.tsx` (new) — the two steps: ask for
+  a code, then code + new password (PasswordMeter, same floor as every door).
+- `frontend/src/pages/ForgotPasswordPage.test.tsx` (new)
+
+**Shared files, minimal named edits:**
+
+- `frontend/src/lib/publicSettings.ts` — add the `auth` group
+  (`password_reset_enabled`, fail-closed `false`) to the type and defaults.
+- `frontend/src/pages/LoginPage.tsx` (+ test) — a "Forgot password?" link,
+  rendered only when the public settings say the method is on (ADR-0028 §4:
+  the client reads the flag before showing the flow).
+- `frontend/src/routes/router.tsx` — public standalone `/forgot-password`.
+
+Not touching `backend/Modules/Fleet/**` or `Notifications/**` — an agent has
+uncommitted work there right now. No backend changes needed: endpoints,
+throttles and contract entries all pre-exist.
+
+#### Closed
+
+Built as claimed, plus three touches the claim did not name: `app/Models/
+Operator.php` gained the `pendingOwnershipTransfer` relation (small,
+additive); `MailKeysTest` gained the invited type on its bespoke list (its
+copy lives in the notification class + `mail.ownership.*`, not the office
+family its `platform.` prefix suggests); and `OnboardFleetDialog`'s four
+fields gained `htmlFor`/`id` - the labels were never associated with their
+controls, found because the browser run could not address them either.
+
+Proven end to end in the real app: onboard with the plan picker (preselects
+the default), transfer proposed -> pending banner with Withdraw, accept page
+names the fleet, password set, **the new owner signed in with it**, old
+owner suspended, banner gone. Throwaway fleet removed; dev DB back to 2
+fleets. Route censuses updated (240 routes, 20 public, 220 guarded, 206
+staff+tenant). Backend sweep 618 passed, frontend suite 714, Larastan and
+Pint green, migration rolled back and reapplied.
+
+**Deliberately not built:** transferring to an *existing* account's email
+(refused with a field error - two people answering to one name), a resend
+button (re-proposing replaces, which is the same act), and any change to
+`ContractController` or client-side ownership. Suspend/activate for a fleet
+already existed on the record page and was not touched.
+
+**Coordination note for the forgot-password agent (from the fleet-handover
+session):** commit `c60fa53` includes your `/forgot-password` route and
+`ForgotPasswordPage` import in `frontend/src/routes/router.tsx` - they were
+in the shared tree when the router gained the `/owner/:token` route and rode along. Your `ForgotPasswordPage.tsx` (+ test) and the `LoginPage` /
+`publicSettings` edits are untouched and still uncommitted. **Commit your
+page files before the branch is next pushed**, or the frontend build fails
+on a missing module at `c60fa53`'s router. Owner confirmed mid-session that
+the forgot-password work is yours; nothing of it was edited here.
+
+**Update — done.** 15 tests across the two files (7 new-page, 2 gate tests on
+LoginPage), three guards proved by mutation and restored: the fail-closed gate
+(link rendered unconditionally → the off-state test red), the local
+match-check (skipped → its test red), the login-email hand-off (dropped → its
+test red). `tsc -b --force` and ESLint clean. Driven in Chrome against the
+real dev stack, both states: flag off — no link; flag on — link, prefilled
+email, 202 → code step showing the server's sentence, wrong code showing the
+422's sentence. Dev's `mail` settings were temporarily set (inert localhost
+host) to satisfy `enabled()` for the drive and restored to unconfigured after;
+dev's `auth.password_reset_enabled` was left ON, matching production.
+
+Two things other agents should know:
+
+1. **`frontend/src/routes/router.tsx` — my `/forgot-password` route was
+   swept into `c60fa53`** (the ownership-transfer commit) while uncommitted.
+   Functionally fine, noted for attribution. The sweep hazard both our
+   entries warn about, realised.
+2. **The `PLATFORM_FLEET_OWNERSHIP_TRANSFERRED` unserialize failures in
+   Sentry (15 events) were the local queue worker running pre-`c60fa53`
+   code** — a long-lived PHP process does not see new enum cases. Fixed with
+   `queue:restart` + `queue:retry all`; both stuck ownership notifications
+   then processed. After adding an enum case a queued payload carries,
+   restart the worker.
+
+---
+
+### 2026-08-24 — Why no driver has ever heard a push: no FCM key on EAS, and the channel swallowed the receipt that said so
+
+Owner: heads-up notifications for offers do not appear with the app in the
+background. Traced end to end on the live pipeline, by hand:
+
+- Registration is fine — `device_tokens` holds fresh Expo tokens for the
+  driver, re-registered today.
+- Delivery is dead for **every push ever sent**: Expo's ticket answers
+  `InvalidCredentials` — *"Unable to retrieve the FCM server key"*. The EAS
+  project has no FCM V1 service account key (the credentials screen says
+  "None assigned yet"). Firebase project is `kangaru-c698b`; the owner is
+  fetching the service-account JSON now, upload via `eas credentials` next.
+- Why nothing said so: `ExpoPushChannel::pruneDeadTokens` read the receipts
+  and reacted only to `DeviceNotRegistered`; every other ticket error was
+  dropped unlogged, and the HTTP call itself returns 200. The 5s offer poll
+  masked it in-app.
+
+**Fixed the silence** (files: `ExpoPushChannel.php`,
+`TripOfferedPushTest.php` — claimed and released in this entry): non-DNR
+ticket errors now log `push.ticket_error` at warning (Sentry's floor), once
+per error kind per send. Test proved by mutation (guard emptied → red),
+restored, 20/20 green, Pint clean. The token deliberately survives an
+`InvalidCredentials` receipt — the credential is broken, not the handset.
+
+### 2026-08-24 - The owner row lives in Edit fleet
+
+**Status: done.** Owner sent a screenshot of the Edit fleet dialog - name
+and plan, no email - saying "this is what i see". The transfer flow existed
+one card lower; where they looked, it did not. `EditFleetDialog` now carries
+an Owner row (current owner's name and email, from the record page's accounts
+read, falling back to the fleet's Super Admin because the founding fleet was
+seeded with no FLEET_OWNER at all) and a "Change owner" button that closes
+Edit and opens `TransferOwnershipDialog`. While an invitation is out the row
+says so instead of offering the button - one handover, one live path.
+Files: `EditFleetDialog.tsx` (+2 tests), `FleetRecordPage.tsx`. Verified in
+dark mode against the owner's own screenshot framing; 18 fleet/accept tests
+and `tsc -b` green.
+
+---
+
+### 2026-08-24 — Walk-ins died at 00:47 today, and the door that would revive them was never built
+
+**Status: report + live unblock. No code claimed.** Owner: *"why is that we
+can not get the order from both walkins, from the fleet and corporate
+clients."* Traced on the live pipeline:
+
+- `14a1a0e` (today 00:47, deployed with today's merges) gates the walk-in
+  pool on an ACTIVE `DriverWalkInContract` (ADR-0055 §5). Correct rule — but
+  **nothing anywhere calls `WalkInContractService::request()`**: no route, no
+  controller action, no driver-app screen. The consent/approval/refusal
+  endpoints exist for the consoles; the driver's *ask* step has no door. So
+  no contract can come into existence through the product, and the walk-in
+  candidate pool has been empty on live since the first deploy today.
+  Live order #29 (03:16Z) converted under pre-gate code; #31/#32 tonight
+  closed unserved.
+- **Fleet/corporate is not the gate** — it is presence: the board offers
+  only on-duty, recently-heard drivers, and the driver was off duty at
+  probe time. Worked this morning on duty.
+- With the owner's confirmation, the live driver's contract was activated
+  through the real service chain (request → consent → approve), so walk-ins
+  work again for them tonight. **The driver-side ask screen + endpoint still
+  needs building** — likely belonging to the planned Driver's Application
+  surface. Whoever takes it: the service is finished and state-checked; it
+  needs a `POST` route, policy wiring, and a driver-app surface.
+- Separately: every push ever sent died at Expo with `InvalidCredentials`
+  (no FCM V1 key on EAS) — see the previous entry. Fix in flight with the
+  owner.
+
+---
+
+### 2026-08-24 — Local dispatch proven end to end, in the app, on the emulator
+
+**Status: verification, no product code changed.** Owner asked for the order
+flow to be tested locally against the emulator. Driven through the real UI,
+not asserted.
+
+**Result: the pipeline is correct.** Walk-in order posted to
+`POST /public/order-requests` on the local API → `DispatchOfferService`
+created an offer → the offer card rendered on the emulator ("New ride
+request · Pickup: Garden City, Kampala · 3.9 km away") → **Accept** tapped in
+the app → trip 99 `driver_en_route`, and the app moved to *Pickup passenger*.
+Also proven by API only, twice (trips 98, 99).
+
+**Why nothing had ever reached the emulator — three separate causes, none a
+dispatch bug:**
+
+1. **The emulator was running the *production* APK** (built tonight, points at
+   `api.kangaruride.com`). A local order can never reach it. Fixed by
+   building `dist/kangaruride-driver-LOCALTEST.apk` — same keystore, same
+   versionCode, `EXPO_PUBLIC_API_BASE_URL` = the LAN address.
+   `android/app/src/main/AndroidManifest.xml` needed
+   `usesCleartextTraffic="true"` (targetSdk 36 blocks `http://` by default);
+   `android/` is gitignored so that stays a test-build-only change, and
+   `.env.production` was restored after the build.
+2. **The demo driver (15) is occupied by trip 97** (`assigned`, corporate,
+   created 12:41 today). `AvailabilityService` excludes a driver on an
+   occupying trip — correct. Testing used `driver.free@kangaruride.test`
+   (driver 17). Dev passwords set to `kampala-9` on users 8 and 10.
+3. **Presence needs a real fix.** The app says so honestly — *"Waiting for a
+   location fix — you may not get jobs yet"* — and stays undispatchable until
+   a position lands. `adb emu geo fix <lon> <lat>` after granting location.
+
+**Corporate/fleet orders are not broken either, and do not ring.** A fleet
+assignment *becomes a trip*; there is no 45-second auction. Trip 97 is
+visible at the top of `GET /trips` as `assigned` — which is the corporate
+path working. `GET /me/trips` is **history** (completed/cancelled only), so
+looking there for an active job finds nothing by design.
+
+**Walk-in contracts were activated for all 20 local dev drivers** through the
+real service chain, since the `14a1a0e` gate had emptied the local pool too.
+
+**Two observations, not fixed, for whoever owns these:**
+
+- **An offer's `estimated_fare` is null unless the order carries *dropoff*
+  coordinates.** `DispatchOfferResource::estimatedFare()` passes them to
+  `WalkInFareService::quote()`. My test order had pickup coordinates only, so
+  the app honestly rendered `—` for both fare and journey. **If the public
+  order form does not geocode the drop-off, every walk-in offer reaches
+  drivers with no fare on it** — worth confirming against the real form.
+  Inferred from the code path; not re-proved, because the driver was on a
+  trip by then and could take no second offer.
+- `ReactNativeJS: Tried to show an alert while not attached to an Activity`,
+  followed by Expo's "Something went wrong" screen. **Caused by my own
+  `adb pm grant` mid-session** (Android restarts a process when a permission
+  changes), not by an offer. Recorded because the alert path is not
+  Activity-safe, which a real permission change from Settings would also hit.
+
+---
+
+### 2026-08-24 — Push notifications actually deliver now: the FCM key, and the proof
+
+**Status: done and verified on a device.** The owner uploaded the Firebase
+service-account key to EAS (`eas credentials -p android` → Google Service
+Account → FCM V1); project `kangaru-c698b`, client
+`firebase-adminsdk-fbsvc@kangaru-c698b.iam.gserviceaccount.com`.
+
+**Before/after on the live server, same probe both times:**
+
+| | Expo ticket |
+|---|---|
+| before | `InvalidCredentials` — *"Unable to retrieve the FCM server key"* |
+| after | `{"status":"ok","id":"01a03524-…"}` |
+
+**Delivery proved on the emulator, not just acceptance.** The first receipt
+came back `DeviceNotRegistered` — a stale token from an app instance that had
+been reinstalled, which is exactly the row `ExpoPushChannel::pruneDeadTokens`
+deletes. Re-registered by signing in on a fresh install, then: app sent to
+background, **screen switched off**, walk-in order placed → the notification
+shade carried **"KangaruRide Driver — New job — 3.9 km away · Pickup at
+Garden City, K…"**. Screenshot in the session scratchpad.
+
+**No rebuild was needed for the fix** — the key lives on EAS, so handsets
+already carrying 1.0.4 receive pushes now. v1.0.5 (versionCode 16) was cut
+and released anyway at the owner's request; it carries no app-code change.
+
+**A near-miss worth recording.** The first 1.0.5 build silently reused the JS
+bundle from the local-API test build: the APK had `192.168.1.138` baked in and
+no live URL at all. Gradle reported BUILD SUCCESSFUL and the signature and
+version were perfect. **`assembleRelease` does not re-bundle when only
+`.env.production` changed** — the bundle task was up-to-date. Caught by
+`unzip -p … assets/index.android.bundle | grep -c api.kangaruride.com`, which
+is now the mandatory check before any APK leaves this machine. Fix: delete
+`android/app/build/generated/assets/react` and
+`android/app/build/tmp/createBundleReleaseJsAndAssets`, then rebuild.
+
+**Still open:** the app's *"Let jobs reach you on a locked phone"* prompt
+(full-screen intent) was dismissed with **Not now** during the test, so what
+is proved is the banner-and-ring path, not the incoming-call-style screen.
+Worth a second pass on a device where that permission is granted.
+
+---
+
+## 2026-08-25 — Each organisation gets staff of its own (plan: `docs/org-staff-and-roles-plan.md`)
+
+**Backend done and committed; the frontend half is what this entry claims.**
+
+Landed so far: `6a6d3e7` (S0 — the cross-fleet account hole), `cada2a3`
+(R1 role audiences, R2 `fleet_owner` gains `staff.*`, U1 head office can
+create head office), `d22b24d` (U2 — invitation or password). 1847 backend
+tests green, Pint and Larastan clean.
+
+### One thing the plan asked for that I am deliberately **not** building
+
+The plan's `W1` said to give `FleetRecordPage`'s Accounts card a toolbar and
+row actions, so head office could add somebody at a fleet. **ADR-0065, written
+between the plan and the work, forbids it**: head office administers head
+office, and reaching into a fleet is act-as. Building it would ship a button
+whose every press is a 403 — the same trap `StaffPage` already avoids by
+rendering "You" with no buttons on your own row.
+
+The route in is the **Log in as** button that card already has. Raised here
+rather than resolved silently, per the `/screen` rule that the rules outrank
+the plan. The plan document is corrected in the same commit.
+
+The client half needs no new screen either: the client menu already carries a
+Staff entry and `StaffPage` already scopes to the actor's own client. What was
+missing was never the screen.
+
+### Files I own (nobody else edits)
+
+- `frontend/src/pages/RolesPage.tsx` — audience column, filter, and the
+  editor's audience picker (head office only, `meta.can_manage_audience`).
+- `frontend/src/pages/StaffPage.tsx` — the invitation-or-password choice
+  (`meta.can_invite`), and a `FORBIDDEN` branch that renders a lock rather
+  than an error banner.
+- `frontend/src/pages/RolesPage.test.tsx`, `frontend/src/pages/StaffPage.test.tsx`.
+- `frontend/src/types/role.ts`, `frontend/src/types/staff.ts`.
+
+### Shared files, each with the exact edit named
+
+- `frontend/src/lib/navigation.ts` — add `fleet_owner` to the `staff` entry's
+  `VISIBLE_TO` list. It holds `staff.view`/`staff.manage` since R2 and would
+  otherwise be offered no door to the screen built for it.
+- `frontend/src/routes/router.tsx` — **remove `RequireNavAccess` from
+  `/staff`.** This reverses a deliberate choice, so the reason is stated in
+  place: that guard decides by role *slug*, and the comment on the `/roles`
+  route beside it already explains why a permission a **custom** role can hold
+  must not be gated that way. Until R1 only two seeded slugs held
+  `staff.manage`, so a slug list was the whole truth. Kangaru now composes
+  fleet-audience and client-audience roles that carry it — which is the
+  owner's actual request — and every one of them would be turned away from the
+  one screen built for it. The page gates on whether the API answers instead,
+  exactly as `/roles` and `/audit-log` already do.
+- `frontend/src/lib/navigation.test.ts` — the `fleet_owner` case.
+
+### Not mine, in the tree while I worked
+
+Another session holds `mobile/src/push/*`, `mobile/index.ts` and
+`backend/Modules/Notifications/*` (offer push). Untouched, and
+`TripOfferedPushTest.php` was unstaged from my commit when `git add` on the
+module directory caught it.
+
+### Done — verified in a browser, not only in tests
+
+Driven in system Chrome against the real dev stack at all three levels
+(`playwright-core` reused from an earlier session's scratchpad; no repo
+dependency added). **No console errors at any level.**
+
+**The whole feature, in one observation.** Najjemba's fleet owner opens *Add
+colleague* and the role picker offers exactly seven — Branch Manager, Depot
+Manager, Dispatcher, Driver, Finance, Fleet Owner, Operations Manager. No
+`super_admin` (a Kangaru role), no `corporate_admin` or `corporate_employee`
+(a client's). That is the audience gate and the escalation subset both doing
+their half, and it is the same count `UserAdminTest` asserts.
+
+**The isolation, proved against real rows rather than fixtures.** Najjemba
+(fleet 2) holds active contracts with Centenary Bank and Playwright Probe Ltd,
+and its staff list shows exactly those two clients' people plus its own —
+**and zero of Acme NGO's**, which it does not serve. Shanitah's staff are
+invisible to it throughout.
+
+**One bug the tests could not have caught, found by looking.** With the invite
+box ticked, the dialog still read *"They sign in with the password you set
+here"* — the screen promising a password nobody was going to set. The sentence
+now follows the choice, and a test was added for it afterwards.
+
+Four guards proved by mutation and every mutation restored: the audience
+filter, the invite payload's omission of `password`, the `FORBIDDEN` branch,
+and `fleet_owner`'s place in the staff menu.
+
+Suites: **1847 backend** (Pint + Larastan clean), **724 frontend** (eslint
+clean, `tsc -b --force` clean, `vite build` clean).
+
+### Dev-database state I changed, and did not fully restore
+
+- **`RoleSeeder` was rerun** to land the audiences and `fleet_owner`'s new
+  permissions. That put `requires_mfa` back on `super_admin` and `finance` —
+  the flip the MFA note warns a re-seed causes, and it locked head office out
+  of the console mid-drive. **Switched back off**, both gates, per the recorded
+  command.
+- **`mail.enabled` is now ON in dev**, so the invitation path is exercisable.
+  It was off. Left on deliberately — the feature cannot be seen otherwise —
+  and named here so nobody debugs it as a surprise. Live is untouched.
+- **Three dev passwords were overwritten** to sign in
+  (`realakram20@gmail.com`, `superadmin@kangaruride.test`,
+  `admin@centenarybank.test`) and then set to the documented dev default
+  `password`. The first of those had a password of the owner's own choosing;
+  it is gone and cannot be restored. Flagged to the owner.
+
+### Deliberately not built
+
+- **Staff controls on `FleetRecordPage`** — ADR-0065 forbids it; see above.
+  The plan document is corrected in the same commit.
+- **A Staff card on `OrganisationView`** (a client's own view of itself). The
+  client menu already routes to `/staff` and `StaffPage` already scopes to the
+  actor's client, so this would have been a second door to one screen.
+- **Resending an invitation from the staff list.** `InvitationService` supports
+  it and the row has no control for it. Real, small, and nobody has asked.
+
+### Deployed to production, 25 August ~12:00 UTC — `ee23113d`
+
+Backup first (`kangaruride-20260825T115256Z.sql.gz`), then checkout,
+`SOURCE_COMMIT`, rebuild, **and the role seeder** — which is the step this
+release could not have skipped: `roles.audience` would have been backfilled by
+the migration but `fleet_owner` would not have gained `staff.*`, so the feature
+would have looked shipped and done nothing.
+
+Verified, in this order:
+
+- `APP_BUILD` = `ee23113d`; eight containers healthy; the audience migration
+  `Ran`; ten scheduled jobs; one scheduler and one queue worker; upload limits
+  12M/16M; `https://api.kangaruride.com/up` → 200.
+- All ten roles carry an audience. `fleet_owner` is at **30** permissions and
+  holds `staff.manage`, so Najjemba's owner can now add their own people.
+- **ADR-0065 proved through the router on the running server**, not through the
+  policy: Shanitah's fleet-level `super_admin` — which does hold
+  `staff.manage` — gets **403** on `GET` and `PATCH /users/{Najjemba's owner}`,
+  the rename did not land, and **200** on its own account. That last one is the
+  positive control; three refusals would pass against a policy that refused
+  everybody. The verification token was created for this and deleted after.
+- The console bundle is the new one, checked by fetching it rather than
+  assuming: `StaffPage-CgkChZUB.js` carries the invitation control and the
+  locked-door state, `RolesPage-kVVGsbYt.js` the audience filter and column.
+  Worth doing — a green build shipping a stale bundle has happened here before.
+
+**Mail is on in production** (Titan, `help@kangaruride.com`,
+`mailConfigured: YES`), so the invitation path is live rather than inert, and
+so is password reset.
+
+**Live is ahead of `main`.** These five commits sit on
+`feat/driver-app-screens-and-earnings` and PR #18 is still open. The deploy
+takes a sha, not a branch, so production is correct — but `main` does not yet
+describe what is running.
+
+---
+
+### 2026-08-26 — Support can become a corporate client, and a walk-in
+
+The owner's ask: *"we want to be sign as for Corporate client and other walking
+clients as well because we need to be able to help in case of assistance
+required."*
+
+ADR-0056 already quotes them naming four populations — *"any fleet, corporate
+client, walk-in client and drivers"* — and only one of the four had a way in.
+This is the other three, in two commits, because they are two different sizes
+of problem.
+
+**Two commits, deliberately.** The client half is a button and an endpoint; the
+walk-in half crosses the guard split ADR-0013 built a tripwire test around.
+Reviewing them together would have hidden the second inside the first.
+
+#### Commit 1 — the corporate client (`129bc6f`, done)
+
+The backend already accepted any non-Kangaru subject, so nothing about the
+session changed. What was missing was a roster to pick a name from and a place
+to press.
+
+`GET companies/{company}/accounts`, gated on a **new** `CompanyPolicy::actAsSomebody`
+rather than on `view`. That is the one decision in this commit worth reading:
+the fleet twin rides on `view`, which under `OperatorPolicy` already means head
+office alone, but `CompanyPolicy::view` is `companies.view` — which a client's
+**own** administrator holds for their own profile. Reusing it would have handed
+every head-office reader with a directory grant a roster of named employees at
+every client on the platform, for no reason ADR-0062 recognises.
+
+Two things found by running it rather than by reading it:
+
+- **The dialog's labels were attached to nothing.** `FormField` treats
+  `htmlFor` as optional and renders a `<label>` pointing nowhere when it is
+  omitted, so the field looked labelled and still annotated `aria-required` —
+  and the picker that decides whose identity you assume had no accessible
+  **name**. Present since the fleet dialog shipped; found because the test
+  queried by label, which is the query that would have caught it then.
+- **The "wrong access level shares this tenant" test cannot be written.**
+  `users_access_level_matches_columns` rejects the fixture with SQLSTATE 45000
+  through `saveQuietly` and a raw update alike. The `access_level` clause in
+  the controller therefore guards nothing; it stays for readability and both
+  files say so, rather than leaving a reader to assume it is load-bearing.
+
+#### Commit 2 — the walk-in (ADR-0066, done)
+
+Harder, and the reason is structural rather than an oversight: ADR-0013 made a
+walk-in a `Customer` on its own guard, and `ActAsSubject` says outright that
+*"the walk-in half of the morph is not implemented."*
+
+**The owner was asked and chose full reach minus the identity acts** — support
+can cancel a stuck ride and order on a walk-in's behalf, not only watch. The
+read-only option was recommended and declined; ADR-0066's Alternatives records
+both sides. What that costs is written into its Consequences without softening:
+a support agent can dispatch a real car to a real address on a member of the
+public's account, and `impersonator_id` beside the row is the only thing that
+makes it survivable.
+
+Five decisions, each with a test:
+
+1. The session's morph takes a `Customer`. Two of the four refusals become
+   *inapplicable* rather than relaxed — a `Customer` is never an actor, so it
+   can be neither yourself nor a head-office account to chain through. Written
+   as a narrowing so the reason stays visible.
+2. A staff token reaches `/customer/*` only under a live session whose subject
+   is a `Customer`. No customer token is minted, so ending the session ends the
+   reach with nothing left in a browser.
+3. `POST /customer/auth/logout` is denied, and the reason is mechanical: it
+   revokes `currentAccessToken()`, which under a session is the **support
+   agent's own staff token**. Pressing it would sign them out of the console
+   and revoke the credential the session runs on.
+4. **While a walk-in session is live, the staff console is closed** to
+   everything but four routes. ADR-0056 §1 sets the actor's own reach aside for
+   the duration; for a `User` subject the swap makes that structural, and for a
+   `Customer` there is nothing to swap to — so without this it would silently
+   be the one session that kept its own powers.
+5. The walk-in is told by email. §5 asked for drivers **and** walk-in
+   customers; the shipped service did drivers only.
+
+**Rating a driver is left reachable and I want that on the record.** It is the
+one act on the customer surface that is somebody's testimony rather than their
+transaction, and a star attributed to a customer who did not write it follows a
+driver. It is outside "the identity acts" as the owner drew them, so it stays —
+written into ADR-0066's Consequences as the first thing to revisit.
+
+#### Files owned (nobody else edits)
+
+- `backend/Modules/Clients/Controllers/ClientAccountController.php`
+- `backend/tests/Feature/Clients/ClientAccountsTest.php`
+- `frontend/src/components/security/ActAsDialog.tsx` (moved here from
+  `pages/fleets/`)
+- `frontend/src/pages/CorporateClientsPage.test.tsx`
+- `docs/adr/0066-acting-as-a-walk-in-client.md`
+- `backend/app/Http/Middleware/AuthenticateWalkInOrSupport.php`
+- `backend/tests/Feature/Administration/ActingAsWalkInTest.php`
+- `frontend/src/components/security/ActAsWalkInDialog.tsx` and its test
+- `frontend/src/components/security/ActingAsChrome.tsx`
+
+**Verified:** the whole backend suite (1872 tests), the whole frontend suite
+(735), `tsc -b --force`, eslint, pint and phpstan. **Not** driven in a browser
+— the dev stack was down and bringing Apache, the php-cgi pool and Vite up
+beside another agent's session was not worth the collision. The three things
+worth seeing with eyes are the banner on `/order`, the console's 403 reading as
+a state rather than a fault, and the walk-in dialog's warning.
+
+#### Shared files, each with the exact edit named
+
+- `backend/Modules/Clients/Policies/CompanyPolicy.php` — one added method,
+  `actAsSomebody`
+- `backend/Modules/Clients/Routes/api.php` — one added route
+- `backend/tests/Feature/Ci/RoutePolicyCensusTest.php` — one row per new route,
+  and the three counters
+- `docs/api/openapi.yaml` — one path block per new route
+- `frontend/src/pages/fleets/FleetRecordPage.tsx` — import path and props only
+- `frontend/src/pages/CorporateClientsPage.tsx` — one row action and its dialog
+
+#### Not mine, in the tree while I worked
+
+`backend/Modules/Notifications/*`, `backend/Modules/Administration/Requests/StoreUserRequest.php`,
+`backend/Modules/Administration/Services/UserAdminService.php` and everything
+under `mobile/src/push/` were already modified and uncommitted. Left alone;
+nothing here stages them.
+
+#### A trap worth writing down
+
+Piping `pest` through `head`/`tail` leaves the run orphaned on Windows — the
+tool returns when the pipe closes, the PHP process does not. Two orphans raced
+the shared `kangaruride_testing` database and produced deadlocks and
+"table already exists" that read exactly like a broken migration. Redirect to a
+file and read the file. Same shape as the jest/`grep -q` wedge already in
+memory.
+
+---
+
+## 2026-08-26 — The same bug, a second door: an address that already has an account
+
+**Reported by the owner twice in two days, and the second time is the one that
+matters.** On the 25th a fleet handover said *"that invitation has expired"*
+when the address had simply acquired an account. I fixed the handover. On the
+26th a fleet tried to hire one of its own driver applicants as an Operations
+Manager and got *"the email has already been taken"*.
+
+**I fixed the case, not the class.** That is the whole lesson of this entry. A
+driver application mints a real account at submission time (ADR-0055,
+amendment), so an address that was free yesterday has an account today — and
+**every** "add a person" door on this platform refused it with a bare
+uniqueness message. There were two such doors. I fixed one and did not go
+looking for the other.
+
+### What changed
+
+`UserAdminService::joinableReason()` is the rule, beside
+`OwnershipTransferService::ineligibleReason()`. Deliberately not shared code:
+they answer different questions (*may this account take a **fleet** over* has a
+different answer for the sitting owner) over the same underlying rule — an
+account **free to move** joins, one belonging to another organisation does not.
+
+- **Free to move**: an applicant, or somebody already at this organisation.
+- **Refused**: another fleet's staff, a client's staff, head office. ADR-0065
+  from the hiring side — absorbing a competitor's dispatcher would move a
+  person between organisations on one administrator's say-so.
+- **Attaching requires the invitation path.** This is the difference from the
+  handover, and it is the security half. There the token had gone to the
+  address and the holder chose their own password. Here an administrator is
+  doing the adding, and an applicant's account holds their own driver
+  application — licence and ID among it. A password typed by a fleet office
+  would be a way into that. The refusal says what to do instead.
+- A pending driver application is **left alone**. It is somebody's submitted
+  work; a reviewer can act on it. Rejecting it here would destroy a record on
+  an assumption about why the person is being hired.
+
+Guards proved by mutation, both restored: remove the invitation requirement and
+the consent test fails; make everybody joinable and the cross-fleet test fails.
+
+### Two things I got wrong, recorded because they are the useful part
+
+- **The stale docblock I said I had deleted was still there.** The U2 commit
+  message claims `StoreUserRequest`'s "no invite flow exists" docblock was
+  removed. It was not. It survived a commit that said otherwise, which is its
+  own small lesson about believing a commit message over the file.
+- **A mutation showed one of my own assertions was not biting.** Removing the
+  explicit `access_level` from the handover's `promote()` did not fail the
+  test, because the model derives it from `operator_id` anyway. The line
+  documents intent; the model is what enforces it. Said plainly rather than
+  dressed up as a proof.
+
+### Not mine, in the tree while I worked
+
+`129bc6f` (head office acting as somebody at a corporate client) landed on top
+of my `92587d2` mid-session.
+
+- **It left `CrossTenantAnswers404Test` red.** Its new route
+  `companies.accounts.index` was missing from the census and from three
+  hand-maintained counts (44 → 45). Fixed here, minimally, because the suite
+  gates everything; the entry names the commit it came from.
+- **`ActAsSubject` and friends are mid-mutation right now** — four static
+  analysis errors including a call to `allowsWhileHoldingAWalkIn()`, which does
+  not exist yet. **Left alone**, per the rule about finding a file
+  mid-mutation. My commit contains none of those files, so the deploy carries
+  none of it. Static analysis is clean over my own files and over `Modules/Fleet`.
+
+### The Sentry question the owner asked, answered
+
+Two of the three issues in Sentry are **not from production**. The literal
+error text is
+`Table 'kangaruride_testing.migrations' doesn't exist` — my own machine's *test*
+database, whose schema was wiped when XAMPP MySQL crashed mid-session. The
+`[2002] No connection` beside it is the same crash. Both reached Sentry because
+this repo's local `.env` carries a DSN with `SENTRY_ENVIRONMENT=local`, and
+that DSN points at the **React Native** project, which is why Laravel stack
+traces are filed under `REACT-NATIVE-*`.
+
+**And the finding underneath it: production reports nothing to Sentry at all.**
+`SENTRY_LARAVEL_DSN` is unset in the live `.env` and `config('sentry.dsn')` is
+empty in the running container. Backend errors on live have been invisible.
+Needs the right project's DSN from the owner; not something to guess at.
+
+The third issue is real and live: `NativeDatabase.prepareAsync` in the driver
+app — expo-sqlite, which backs the GPS ping buffer and the offline outbox.
+Untouched here.
+
+## 2026-08-29 — The office can ask a fleet by category, and a booking says what became of it
+
+Two owner asks, one session: *"let use have our Boda driver be part of shanitah
+and can work on the coporate clients"*, and *"we need to make sure we have a
+filter for the drivers and Vehicle so that we can see vehicles by categories so
+we can know which driver are availble per category"*.
+
+### The boda half needed no code
+
+Driver 15 and vehicle 19 (UDD 005D) were **already** Shanitah's — operator 1.
+The blocker was a contract, not a roster: automatic dispatch commits a
+*contracted* vehicle or nothing (ADR-0009), and the boda was contracted to
+nobody. Non-exclusive allocations for tenants 1, 2 and 4 (`POST /allocations`,
+rows 5–7) fixed it, and Acme NGO booking 98 auto-assigned to the boda as trip
+110 — a client that had zero contracted vehicles an hour earlier. **Data, not a
+deploy**; a fresh seed loses it.
+
+### Files I own
+
+- `frontend/src/pages/VehiclesPage.test.tsx` — new; the register had none.
+- `backend/tests/Feature/Drivers/DriverVehicleCategoryTest.php` — new.
+
+### Shared files, each with the exact edit named
+
+- `backend/Modules/Drivers/Resources/DriverResource.php` — `category` added to
+  the flat vehicle summary, allow-listed beside the other four keys rather than
+  spread from the model (`docs/screen-rules.md` §2).
+- `docs/api/openapi.yaml` — the same field on **both** driver vehicle summaries.
+  `CandidateDriver` spreads `DriverResource`, so it drifts with it; the
+  contract test only caught the `Driver` one, and the other was luck.
+- `frontend/src/types/driver.ts` — `DriverVehicle.category`.
+- `frontend/src/pages/VehiclesPage.tsx`, `DriversPage.tsx` — a category chooser
+  before each search box, and the row count now reads "1 of 20" under a filter.
+- `frontend/src/pages/DispatchPage.tsx` — the vehicle picker printed the stored
+  key (`van`) at a dispatcher. One `useVehicleCategories()` at the board,
+  passed down; `categoryLabel` in both option builders.
+- `frontend/src/dispatch/BookingDispatchNotice.tsx` — see below.
+- `frontend/src/pages/BookingsPage.test.tsx`, `DispatchPage.test.tsx` — mocks
+  and new cases.
+
+### The defect the tests found, which the screen would have found later
+
+`BookingDispatchNotice` POSTed `/bookings/{id}/auto-assignment` **twice**. The
+effect had a `stopped` flag, which stops a *reply writing state* and does
+nothing about a request already sent — and StrictMode double-mounts every
+component in development, which is exactly what the test harness does. A second
+auto-assignment is a second offer, to a second driver, for one job. Guarded
+with a ref keyed on the booking, and the ref — not a flag — is now also what
+decides whether a reply may speak, because a `stopped` flag plus the ref would
+leave the panel on "Finding a driver" for ever after the remount.
+
+Ten existing `expect(post).toHaveBeenCalledTimes(1)` assertions were counting
+every POST on the page; they now count the ones to `/bookings`, which is the
+question they were always asking.
+
+### Proved by mutation, restored after each
+
+Eight guards, each broken deliberately and watched to fail: category filter
+inert (vehicles, drivers), text filter or-ed beside the category instead of
+within it (both), a driver with no vehicle matching every category, the row
+and the dispatch picker printing the stored key, and the count ignoring the
+filter. Two of these passed on the first attempt at the fixtures — a text term
+that only matched inside the category could not tell "narrowed" from "or-ed",
+so both fixtures now put the same word on either side of the category line.
+
+### Verified in a browser
+
+Chrome via playwright-core, signed in as `admin@shanitah.test`: both choosers
+list the nine office categories, "Boda" cuts 20 vehicles to 1 and 19 drivers to
+1, and the driver row reads `UDD 005D  Boda`.
+
+### Deliberately not built
+
+- **"Available" on the drivers list still means the account, not the shift.**
+  Real availability is the dispatch board's; the roster has no on-duty column
+  and inventing one from `status` would be a lie the screen cannot back.
+- **No category filter on the dispatch board's candidate pickers.** They are
+  per-booking, server-scoped and already annotated; the owner's ask was the two
+  listings.
+- Server-side filtering. The fleet is ~20 rows and both lists are already
+  loaded whole; a request per keystroke would cost the operator more than it
+  saves.
+
+### Not mine, in the tree while I worked
+
+`SystemSettingsPage.test.tsx` times out under full-suite load and passes alone.
+Untouched by me; flaky, not a regression.
+
+## 2026-08-29 — Shanitah is the main fleet, and a vehicle goes to its own driver
+
+The owner hit `NO_DISPATCH_CANDIDATE` on a Centenary Bank booking and read it,
+reasonably, as a permissions problem: *"i thought you have added the driver and
+this driver can server this particular fleet."* They could. Three separate
+things were wrong, and the message named none of them.
+
+### What was actually wrong
+
+**All five of Centenary Bank's contracted vehicles were held by open trips.**
+Three since **17 August** (seed trips 3, 4, 9 — flagged in an earlier entry and
+left alone then), one from a dispatch the day before that nobody answered
+(#109), and the boda from the contract proof (#110, `passenger_onboard`). The
+owner asked for all five to be closed; they are cancelled. Offerable candidates
+for booking 99 went **0 → 18**.
+
+### The rule that changed (ADR-0067)
+
+*"shanitah is the main fleet that has got all the access to both walking and
+Coporate, the other just need to request another contract."*
+
+`operators.is_main_fleet`, set on row 1 by migration, read by
+`DispatchRecommender::offerableFor` beside `contracted`. **Eligibility widened;
+the ranking did not** — the 1000-point contract bonus is untouched, so a paying
+client is still served from its own vehicles first. Every other fleet still
+contracts. The three allocations written for the boda on 28 August are kept by
+the owner's decision; they now decide order rather than admission.
+
+### The defect underneath it
+
+`forBooking` paired vehicles to drivers **by position** — vehicle *i* with
+driver *i*. For a depot handing out cars that is fine and is what it was
+written for. For a fleet where drivers keep their vehicles it is a coin toss:
+it could offer the boda to a van driver and the van to the boda rider, and
+`assign()` would commit it, because the endpoint only asks whether each is
+free. Nothing 409s and nothing looks wrong on the board.
+
+Now the driver holding a vehicle gets it; round-robin survives for the ones
+nobody holds. One edge case cost a second pass: keying the pool on *has a
+`vehicle_id`* rather than *holds one of today's* stranded a rider whose own boda
+was in the workshop — in neither group, able to drive nothing. Caught by
+reading the code back, not by a test, and now has one.
+
+### The message
+
+`NO_DISPATCH_CANDIDATE` covered three conditions with three different fixes —
+wait, write a contract, book a bigger vehicle — in one sentence naming none. It
+now distinguishes "nothing is free" from "N vehicles are free and none is
+contracted to this client", with the fix in the sentence.
+
+### Files I own
+
+- `backend/database/migrations/2026_08_29_100000_shanitah_is_the_main_fleet_and_needs_no_contract.php`
+- `backend/tests/Feature/Dispatch/MainFleetDispatchTest.php`
+- `backend/tests/Feature/Dispatch/VehicleGoesToItsOwnDriverTest.php`
+- `docs/adr/0067-the-main-fleet-needs-no-contract.md`
+
+### Shared files, each with the exact edit named
+
+- `app/Models/Operator.php` — `is_main_fleet` cast + `isMainFleet()`.
+  **Deliberately not fillable**: a fleet that could set it on itself would be
+  granting itself the house's standing.
+- `Modules/Dispatch/Services/DispatchSuggestion.php` — `$mainFleet`.
+- `Modules/Dispatch/Services/DispatchRecommender.php` — the filter and the
+  pairing.
+- `Modules/Dispatch/Controllers/DispatchController.php` — ranks once, filters
+  inline so the refusal can say which refusal it is. Its docblock said
+  "`offerableFor`, not `bestFor`" and would have been a lie; rewritten.
+- `tests/Feature/Dispatch/AutomaticDispatchTest.php` — three tests asserted the
+  old rule. **Rewritten, not deleted**: one now asserts the contracted vehicle
+  comes *first* (the half that must not move), one asserts the house is offered
+  when nothing is contracted, and the 409 test uses "no driver at all" as its
+  cause. A fourth was added for the contract wording.
+- `docs/adr/0009-vehicle-allocation-and-dispatch.md` — "Amended by" header.
+
+### Walk-ins were not touched, and that was checked before anything changed
+
+The owner asked for it explicitly. Walk-in dispatch runs through
+`WalkInRecommender` and `DispatchOfferService`; the change is entirely in
+`DispatchRecommender`, whose only caller is `DispatchController`. The two share
+no code — only comments referring to each other. The whole backend suite passes.
+
+### Proved by mutation, restored after each
+
+Eleven: main fleet ineligible (the old rule), every fleet eligible (the leak),
+contract bonus removed, holder ignored, a paired driver back in the pool, an
+undrivable vehicle offered anyway, a holder not needing one of today's vehicles
+(the stranded rider), and both refusal messages pinned in both directions.
+
+### Deliberately not built
+
+- **No console surface for `is_main_fleet`.** Set by migration, changed by
+  somebody looking at the database on purpose. Right while there is one house;
+  wrong as soon as a deployment has to choose its own. In ADR-0067's
+  Consequences.
+- **The odometer report was not reproduced.** The owner reported the driver app
+  still asking with the setting off. Local *and* live `/public/settings` both
+  answer `odometer_enabled: false`, and `driverActions` drops the requirement
+  correctly — so the app is reading its own default. `useOdometerEnabled`
+  returns `data ?? true` and is backed by a persisted cache, so a handset that
+  has not refetched keeps asking. Not changed: the default takes the cheaper
+  mistake on purpose (wrongly off strands a trip behind a 422 read hours later;
+  wrongly on costs a tap). Waiting on which screen.
+- **`owns_vehicle` left alone.** The owner's answer was that ownership is not
+  the point — the vehicles are the fleet's, already handed over, and dispatch
+  should not be assigning them at order time. That is what the pairing change
+  addresses; the flag stays as it is.
+
+## 2026-08-29 — A desk assignment rings the driver, the same as a walk-in
+
+**In progress.** Claimed after the backend was already under way, which is the
+wrong order and is recorded as such — the entry below is a claim from here on,
+not a plan written in advance.
+
+The owner dispatched a delivery from the admin and watched it reach the driver
+as nothing at all: *"the order request did not come in the way it should, the
+notification did not go through, not even the notification page, we just went
+straight to the trip details."* Then, asked what it should do instead: *"we
+need the same experience throughout… the same experience we have for the
+walk-in."*
+
+### What was actually wrong
+
+Nothing was broken. `dispatch_offers` had an `order_request_id` and **no
+`booking_id`**, so a corporate booking was structurally incapable of producing
+an offer. The ring, the full-screen Accept/Decline and the rotation had never
+been available to the desk's own work — a desk assignment created the trip
+outright and sent one deliberately quiet notification
+(`DriverTripAssignedNotification`: no `channelId`, no sound, therefore
+Android's default channel at ordinary importance).
+
+Two owner rulings settle the shape (asked, answered 29 Aug):
+
+- a decline or a ring-out **rolls to the next driver**, not back to the desk;
+- the phone rings **the moment the desk assigns**, not before pickup time.
+
+### Files I own
+
+- `backend/database/migrations/2026_08_29_120000_a_desk_assignment_rings_the_driver.php`
+- `docs/adr/0068-a-desk-assignment-rings-the-driver.md`
+
+### Shared files, each with the exact edit named
+
+- `Modules/Dispatch/Models/DispatchOffer.php` — `booking_id` +
+  `allocation_override_reason` in `$fillable`, `booking()` relation, the
+  one-owner assertion in `booted()`, `pickup()` / `dropoff()`.
+- `Modules/Dispatch/Services/DispatchOfferService.php` — booking branch in
+  `accept()`, `decline()` and `advance()`; new `offerBookingToChosen()`,
+  `dispatchBooking()`, `offerWaveForBooking()`, `settleLapsedForBooking()`,
+  `withdrawForBooking()`; `DispatchRecommender` injected.
+- `Modules/Dispatch/Services/DispatchService.php` — `assign()` returns
+  `Trip|DispatchOffer` and rings instead of writing a trip, except for a
+  driver with no sign-in account.
+- `Modules/Dispatch/Services/DispatchRecommender.php` — `forBooking` body
+  extracted to `rank(Booking, Closure $fleetScope)`; new
+  `forBookingInFleet()` and `offerableForFleet()` for the scheduler, which
+  has no actor.
+- `Modules/Dispatch/Controllers/DispatchController.php` — 202 + offer, or
+  201 + trip, in both `store()` and `autoAssign()`.
+- `Modules/Dispatch/Resources/DispatchOfferResource.php` — falls back to the
+  booking for pickup/drop-off/service/reference; adds `client` and
+  `scheduled_for`.
+- `Modules/Notifications/Notifications/TripOfferedNotification.php` — reads
+  `$offer->pickup()` rather than the order request.
+- `Modules/Notifications/Listeners/SendDriverTripAssignedNotification.php` —
+  returns early when the booking has offers; a driver who was asked is not
+  told.
+- `Modules/Bookings/Models/Booking.php` — `offers()` relation.
+- `mobile/src/api/types.ts` — `client` and `scheduled_for` on `DispatchOffer`.
+
+### Two things worth knowing
+
+- **The trip's tenant had to become explicit.** `BelongsToTenant` fills
+  `tenant_id` from the ambient context, which was the *dispatcher's* request
+  and is now the *driver's* — and a driver belongs to no client. Left alone,
+  every corporate trip born from an accept would have been owned by nobody:
+  ADR-0001's worst-available bug, reached by a route nothing was watching.
+  Taken from `bookings.tenant_id` in `DispatchOfferService::accept`.
+- **The migration's `down()` order is load-bearing on MySQL.** InnoDB adopts
+  the composite `['booking_id','status']` index to back the foreign key and
+  then refuses to drop it (errno 1553). Constraint, then index, then column.
+
+### Not mine, in the tree while I worked
+
+106 modified files from the driver-app screens and earnings branch, untouched.
+
+### Environment, not code
+
+The dev stack was down when this started — **zero `php-cgi` workers** (Apache
+answering 503 on everything), no queue worker, no scheduler. All three
+restarted. MariaDB then crashed twice under test load and was restarted each
+time; one crash left the new migration half-applied (FK and index gone, column
+present), repaired by hand.
+
+### Still to do
+
+Frontend dispatch board ("ringing" derived from live offers), the driver
+app's offer screen for a corporate job, tests, `docs/api/openapi.yaml`, and
+the Dispatch module README.
+
+### Closed — 29 August, all suites green
+
+- **Backend:** 1909 passed (7439 assertions), up from 1900 — nine new in
+  `tests/Feature/Dispatch/DeskAssignmentRingsTest.php`. Pint clean.
+- **Frontend:** 751 passed, `tsc -b --force` clean.
+- **Mobile:** `tsc --noEmit` clean; `OfferScreen` and `offerPresentation`
+  suites pass with two new cases.
+
+### The test that was green and proved nothing
+
+`DispatchAssignmentTest` passed unchanged through this entire change,
+because every driver it builds is a `Driver::factory()` with no `user_id` —
+the phone-less path, which still assigns outright. A suite can be completely
+green about a feature it never exercises once.
+
+Worse, my own first version of the tenant test was the same shape: it called
+`DispatchOfferService::accept()` directly, and the dispatcher's HTTP request
+a moment earlier had left a tenant bound to the container. **Deleting
+`'tenant_id' => $booking->tenant_id` left it green.** Rewriting it to accept
+through `POST /me/offers/{id}/acceptance` — the driver's own request, where
+no tenant is bound — immediately failed with a 409 on every corporate
+accept, which was a real bug: `TenantScope` fails closed, so the booking
+lookup found nothing and the guard read that as "the job is gone".
+
+### Proved by mutation, restored after each
+
+- `'tenant_id' => $booking->tenant_id` removed → *"Failed asserting that null
+  is identical to 4"*. (Green before the test was rewritten; that is the
+  point of the paragraph above.)
+- The `booking->offers()->exists()` early return in
+  `SendDriverTripAssignedNotification` removed → the accepted-driver test
+  fails.
+- `response.status === 202` forced false in `DispatchPage.tsx` → the new
+  ringing test fails.
+
+`grep -rn MUTATION` is clean in `Modules/`, `tests/` and `frontend/src/`.
+
+### Also changed, beyond the original claim
+
+- `Modules/Bookings/Resources/BookingResource.php` — `is_ringing`, derived.
+- `Modules/Bookings/Controllers/BookingController.php` — `withExists` so the
+  board does not N+1 on it.
+- `Modules/Dispatch/Resources/DispatchOfferResource.php` —
+  `scheduled_for_label`, formatted server-side in the fleet's timezone.
+- `database/seeders/DriverAppSeeder.php` — answers the ring on the demo
+  driver's behalf, because an offer expires in under a minute and a seeded
+  ringing phone would be silent before anybody opened the app. The live demo
+  trip therefore sits at `accepted` rather than `assigned`; its test says so.
+- `frontend/src/pages/DispatchPage.tsx` — 202 handling, a "Ringing X" notice,
+  a "Ringing a driver" badge on the queue row, and the 201 branch now reads
+  *"X has no app — call them"* rather than telling a dispatcher to wait for
+  an acceptance that cannot arrive.
+- `mobile/src/screens/OfferScreen.tsx` — client and scheduled time on a
+  desk-assigned job.
+- `docs/api/openapi.yaml` — the 202 on both assignment endpoints, `client`,
+  `scheduled_for`, `scheduled_for_label`, `is_ringing`.
+- `Modules/Dispatch/README.md`.
+
+### Deliberately not built
+
+- **No "who is it ringing" on the board.** The row says a phone is ringing,
+  not whose — `DispatchOfferResource` withholds the driver deliberately
+  (it becomes a lock-screen push), and the desk knows who it just chose. A
+  dispatcher arriving later at a ringing row cannot see the name. Worth
+  doing; needs a desk-side offer read, which is a new endpoint.
+- **No scheduled ring.** The phone rings when the desk assigns, including for
+  a booking a week out — the owner's choice on 29 August, asked explicitly.
+- **Not verified on a handset.** Everything here is proved by test and by
+  contract, not by watching a real phone ring. That is the one check this
+  change most deserves and it has not been done.
+
+### Environment, for whoever is next
+
+MariaDB crashed twice under test load and had to be restarted; one crash left
+this migration half-applied and another wrecked `kangaruride_testing` (its
+`migrations` table gone), which was dropped and recreated. If a suite fails
+with *"No plan is flagged as the default"*, the testing database has lost the
+rows the plans migration inserts — `php artisan migrate:fresh --env=testing`
+restores them.
+
+---
+
+## 2026-08-31 ~19:55 — the offer push goes silent: only the call screen rings (in progress)
+
+**Claiming:** `Modules/Notifications/Notifications/TripOfferedNotification.php`,
+`tests/Feature/Notifications/TripOfferedPushTest.php`, and this file. Nothing
+else. The owner asked (twice — once in an earlier session, again today watching
+the emulator) for the plain "New job — tap to accept" push to go away and for
+the answerable incoming-call notification to be the only offer surface. Today's
+evidence from the emulator: the visible push arrives and rings; the wake push
+arrived ~46 s late (FCM on the AVD, see the FcmRetry note in this file), by
+which time the offers were already declined in-app, so `raiseOfferCall`
+correctly skipped — logcat `offer.call_skipped … no_live_match`. The plain push
+therefore lingered, which is exactly what the owner photographed.
+
+**The change:** `TripOfferedNotification` becomes `pushIsSilent()`, drops the
+companion `pushWakeOptions()` (one headless message *is* the wake-up), keeps
+`collapseId offer-<id>`/ttl/expiration, adds `_contentAvailable`, nulls the
+sound. Server-only: the installed release APK already raises the call screen
+from a headless push, so no rebuild is needed. The floor this removes is
+recorded in the class docblock — a handset whose JS cannot run now gets
+nothing until the app is next opened.
+
+### Done, and proved on the emulator
+
+`TripOfferedNotification` is now `pushIsSilent()` with no companion — one
+headless message per offer, `collapseId offer-<id>` (the withdrawal's key, so
+a withdrawal still replaces an undelivered wake-up), ttl/expiration from the
+window, `sound => null`, `_contentAvailable => true`, no `channelId` because
+nothing is rendered from it. The rewritten tests hold the shape:
+`TripOfferedPushTest` 23/23, proved by mutation (`pushIsSilent` flipped to
+false → 'sends one headless push' fails on the title), Notifications +
+Dispatch suites 168/168, Pint and Larastan clean.
+
+End to end on the Test_Android AVD (release APK v1.0.7 — **no rebuild was
+needed**: the installed app already raises the call screen from a headless
+push): walk-in `KR-6FYPEV` placed at the driver's own coordinates →
+`offer.push_task open_offer 110 background` within a second → NOTIFEE posted
+`offer-call-110` → Accept pressed on the call surface → offer 110 `accepted`,
+trip 114. **No `offers.v2` banner was posted at any point** — the un-answerable
+"New job" card the owner photographed is gone.
+
+### Environment facts that were half the bug
+
+- The wake pushes on the AVD had been arriving ~46 s late and were re-delivered
+  stale (`offer.call_skipped … no_live_match` for offers already declined) —
+  the FcmRetry wedge this file already records; an `adb reboot` cleared it.
+- `USE_FULL_SCREEN_INTENT` was still `default` (deny) on the fresh AVD with a
+  `rejectTime` proving Android had downgraded a call screen; now `allow`.
+- The kadson_dev AVD is PIN-locked with the PIN recorded nowhere; the driver
+  APK was pulled off it and installed on Test_Android instead.
+
+### Deliberately not built
+
+- **No mobile change and no new APK.** The app keeps its whole
+  plain-push-handling path (`dismissPlainPush`, the `shown === false` floor
+  guard) — it is what makes an *old server* still work and costs nothing.
+- **The floor is gone knowingly.** A handset whose JS cannot run
+  (force-stop, OEM battery manager, expo/expo#38223 terminated) now hears
+  nothing until the app next opens. The owner chose this with the trade
+  stated. If the fleet's handsets start missing jobs, the first suspect is
+  this paragraph.
+- `KangaruNotification::pushWakeOptions` and the channel's two-message
+  machinery stay: generic, proven, and the prune-by-index guard now exercises
+  it through a purpose-built notification in the test.

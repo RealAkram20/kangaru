@@ -36,6 +36,15 @@ vendor/
 # and production would have 500'd on the first notification email rather than
 # at deploy time, which is the worse of the two.
 !backend/resources/views/vendor/
+
+# The driver app's vendored map library is source too, and for the same
+# reason: `vendor/` above is Composer's, but the bare pattern also swallowed
+# mobile/src/trips/vendor/, where tools/vendor-maplibre.mjs writes MapLibre GL
+# as a string module (ADR-0070). The app inlines it into every map document, so
+# without it `tsc` cannot resolve the import and the bundle has no map library
+# at all — and the failure lands on a fresh clone and in CI, never on the
+# machine that generated it. Exactly the shape of the mail-theme bug above.
+!mobile/src/trips/vendor/
 .env
 .env.*
 !.env.example
@@ -50,3 +59,10 @@ storage/logs/*
 storage/framework/cache/*
 storage/framework/sessions/*
 storage/framework/views/*
+
+# graphify code graph - regenerable in seconds, do not commit (added 2026-08-29)
+graphify-out/
+
+# Local Expo modules (mobile/modules/*): Gradle output, never source. One
+# generated dex path exceeds the Windows limit and aborts a whole git add.
+mobile/modules/**/android/build/

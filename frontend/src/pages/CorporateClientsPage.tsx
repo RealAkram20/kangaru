@@ -11,6 +11,7 @@ import { Alert } from '../components/feedback/Alert'
 import { EmptyState } from '../components/feedback/EmptyState'
 import { Input } from '../components/forms/Input'
 import { PageFill } from '../components/layout/PageFill'
+import { ActAsDialog } from '../components/security/ActAsDialog'
 import { EditClientDialog } from './clients/EditClientDialog'
 import { OnboardClientDialog } from './clients/OnboardClientDialog'
 
@@ -44,6 +45,7 @@ export function CorporateClientsPage() {
   const [query, setQuery] = useState('')
   const [onboarding, setOnboarding] = useState(false)
   const [editing, setEditing] = useState<Company | null>(null)
+  const [actingAs, setActingAs] = useState<Company | null>(null)
 
   const load = useCallback(
     () =>
@@ -90,10 +92,22 @@ export function CorporateClientsPage() {
         // a person typed, and until this there was no way to fix one - head
         // office could onboard a client and then watch a wrong legal name sit
         // in the register for ever.
+        //
+        // **Log in as** is the second half of the same argument, and the one
+        // ADR-0062 was written around: head office reads the directory and not
+        // the operations, so a client ringing about a booking it cannot see
+        // could be answered only by an engineer with database access. The way
+        // in is to become somebody there — announced, time-boxed and recorded
+        // against both names (ADR-0056).
         render: (row) => (
-          <Button size="sm" variant="secondary" onClick={() => setEditing(row)}>
-            Edit
-          </Button>
+          <span style={{ display: 'inline-flex', gap: 'var(--space-2)', justifyContent: 'flex-end' }}>
+            <Button size="sm" variant="secondary" onClick={() => setEditing(row)}>
+              Edit
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => setActingAs(row)}>
+              Log in as
+            </Button>
+          </span>
         ),
       },
     ],
@@ -178,6 +192,15 @@ export function CorporateClientsPage() {
             setEditing(null)
             void load()
           }}
+        />
+      )}
+
+      {actingAs && (
+        <ActAsDialog
+          title={actingAs.trading_name || actingAs.legal_name}
+          accountsUrl={`/companies/${actingAs.id}/accounts`}
+          emptyDescription="Onboarding creates a client’s first administrator with the client, so this is worth reporting."
+          onClose={() => setActingAs(null)}
         />
       )}
     </PageFill>

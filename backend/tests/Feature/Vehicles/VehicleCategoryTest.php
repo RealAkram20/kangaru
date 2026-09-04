@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\Permission;
+use App\Enums\RoleAudience;
 use App\Enums\UserRole;
 use App\Models\User;
 use Modules\Administration\Models\Role;
@@ -44,6 +45,7 @@ function categoryReader(): User
     Role::create([
         'slug' => 'fleet_reader',
         'name' => 'Fleet Reader',
+        'audience' => RoleAudience::FLEET,
         'is_system' => false,
         'permissions' => [Permission::VEHICLES_VIEW->value],
     ]);

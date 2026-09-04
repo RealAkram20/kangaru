@@ -82,6 +82,11 @@ function offer(overrides: Partial<DispatchOffer> = {}): DispatchOffer {
     pickup: { label: 'Geoprix Engineering Limited, Seeta', latitude: 0.3476, longitude: 32.5825 },
     dropoff: { label: 'Acacia Mall, 14-18 Cooper Rd', latitude: 0.3676, longitude: 32.5825 },
     service_type: 'delivery',
+    // Null on a walk-in, which is what these fixtures are — a
+    // corporate offer is the other channel (ADR-0068).
+    client: null,
+    scheduled_for: null,
+    scheduled_for_label: null,
     reference: 'KR-ABC234',
     pickup_distance_km: 4.6,
     trip_distance_km: 8.24,
@@ -192,6 +197,29 @@ it('renders an em dash rather than a figure for an order taken over the phone', 
   // And it says why the price is missing, rather than leaving a driver to
   // wonder whether the job pays nothing.
   expect(getByText(/No published price for this vehicle yet/)).toBeTruthy();
+});
+
+it('names the client and the time on a desk-assigned job, and neither on a walk-in', async () => {
+  // ADR-0068: the desk's assignment now rings on this same screen. `client`
+  // is what separates the two channels — a walk-in belongs to no client — so
+  // one screen serves both without a second flag to keep in step.
+  const { getByText } = await renderOffer(
+    offer({ client: 'Stanbic Bank', scheduled_for_label: 'Tue 2 Sep, 04:00 PM' }),
+  );
+
+  expect(getByText('Stanbic Bank')).toBeTruthy();
+
+  // The time is rendered from the *server's* string. A driver saying yes to
+  // Tuesday is answering a different question from one saying yes to a
+  // passenger at a kerb, and an hour computed on the handset would be the
+  // wrong hour — `trips/history.ts` records why.
+  expect(getByText('Tue 2 Sep, 04:00 PM')).toBeTruthy();
+});
+
+it('shows no client row on a walk-in, which belongs to nobody', async () => {
+  const { queryByText } = await renderOffer(offer({ client: null }));
+
+  expect(queryByText('Client')).toBeNull();
 });
 
 it('drops the package cell on a ride instead of leaving a hole in the row', async () => {

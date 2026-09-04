@@ -3,6 +3,7 @@
 namespace Modules\Administration\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Models\Customer;
 use App\Models\ImpersonationSession;
 use App\Models\User;
 use App\Support\Access\ImpersonationContext;
@@ -53,7 +54,15 @@ class ImpersonationController extends Controller
         $subject = $session->subject;
 
         return ApiResponse::success([
-            'subject_name' => $subject instanceof User ? $subject->name : 'somebody',
+            'subject_name' => $subject instanceof User || $subject instanceof Customer
+                ? $subject->name
+                : 'somebody',
+            // Which surface this session belongs on (ADR-0066). A walk-in's
+            // console is the order flow, not the staff shell, and the banner's
+            // "back to what you are holding" has to know which. The console
+            // cannot work it out: `auth/me` answers as the actor during a
+            // walk-in session, because there is no staff user to swap to.
+            'subject_kind' => $subject instanceof Customer ? 'customer' : 'user',
             'expires_at' => $session->expires_at->toIso8601String(),
         ]);
     }
@@ -70,8 +79,13 @@ class ImpersonationController extends Controller
         /** @var User $actor */
         $actor = $request->user();
 
-        /** @var User $subject */
-        $subject = User::query()->findOrFail($request->integer('subject_id'));
+        // Resolved from the validated kind, not guessed from the id. The
+        // request has already proved the row exists in the right table
+        // (ADR-0066 §1), so a `findOrFail` here is belt to that braces rather
+        // than the check itself.
+        $subject = $request->subjectIsWalkIn()
+            ? Customer::query()->findOrFail($request->integer('subject_id'))
+            : User::query()->findOrFail($request->integer('subject_id'));
 
         $session = $this->sessions->begin(
             $actor,
@@ -85,6 +99,7 @@ class ImpersonationController extends Controller
                 'id' => $session->id,
                 'subject_id' => $subject->id,
                 'subject_name' => $subject->name,
+                'subject_kind' => $subject instanceof Customer ? 'customer' : 'user',
                 'expires_at' => $session->expires_at->toIso8601String(),
             ],
             'You are now acting as '.$subject->name.'. Every action is recorded against your name as well as theirs.',

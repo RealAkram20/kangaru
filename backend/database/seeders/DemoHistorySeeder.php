@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Enums\Permission;
+use App\Enums\RoleAudience;
 use App\Enums\UserRole;
 use App\Models\Tenant;
 use App\Models\User;
@@ -398,6 +399,11 @@ class DemoHistorySeeder extends Seeder
                 'name' => 'Regional Auditor',
                 'description' => 'Reads trips, reports and the audit trail. Changes nothing.',
                 'is_system' => false,
+                // Everything it reads — trips, vehicles, drivers, the fleet's
+                // own audit trail — is a fleet's, so this is a fleet role.
+                // Named rather than defaulted: a role with no audience appears
+                // in nobody's picker while looking perfectly healthy.
+                'audience' => RoleAudience::FLEET,
                 'permissions' => [
                     Permission::AUDIT_VIEW->value,
                     Permission::REPORTS_VIEW->value,

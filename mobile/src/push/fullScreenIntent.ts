@@ -34,19 +34,20 @@ import { runsInExpoGo } from './expoNotifications';
  * first thing to check when someone reports the popup not appearing on a
  * newer handset.
  *
- * ## Why there is no `isGranted()` here
+ * ## How granted state is read
  *
- * Because nothing in this stack can answer it. `NotificationManager
- * .canUseFullScreenIntent()` is the platform call, and neither
- * `expo-notifications` nor `react-native-notify-kit` exposes it —
+ * `NotificationManager.canUseFullScreenIntent()` is the platform call, and
+ * neither `expo-notifications` nor `react-native-notify-kit` exposes it —
  * notify-kit's `AndroidNotificationSettings` carries `alarm` and nothing
- * else. Reading it would take a native module of our own.
+ * else. So `modules/full-screen-intent` is a native module of our own: one
+ * function, that one call. `readFullScreenIntentGranted()` below is its
+ * JavaScript face, and it is the reason the prompt can now stop asking a
+ * driver who said yes and keep asking one who has not.
  *
- * So the app cannot show a driver whether they have granted this, and this
- * file does not pretend otherwise: it offers the door, and the row that uses
- * it is worded as an action rather than as a state. Inventing a
- * "Not granted" label we cannot verify would be worse than saying nothing —
- * it would be wrong on every handset that *had* granted it.
+ * It answers `null` where it genuinely cannot know — iOS, Expo Go, a build
+ * without the module — and callers must treat that as *unreadable*, never
+ * as refused. Reporting "Not allowed" to a driver whose phone the app simply
+ * could not ask is the lie the permissions screen exists to prevent.
  */
 
 /** Android 14. Below this the permission is granted at install and there is nothing to ask. */
@@ -62,6 +63,50 @@ const ANDROID_14 = 34;
  */
 export function fullScreenIntentIsGrantable(): boolean {
   return Platform.OS === 'android' && Number(Platform.Version) >= ANDROID_14;
+}
+
+/**
+ * Whether the driver has granted the lock-screen takeover — read, not guessed.
+ *
+ * - `true` below Android 14, where it is granted at install.
+ * - The platform's own `canUseFullScreenIntent()` on 14 and above, through
+ *   `modules/full-screen-intent`.
+ * - `null` wherever it cannot be known: iOS, Expo Go (the module is not in
+ *   that runtime), a build without the module, or a manager that would not
+ *   answer. Callers treat `null` as *unreadable*, never as refused.
+ *
+ * Synchronous, because the native call is — one system-service lookup — and
+ * a screen reading six permissions on focus should not turn one of them into
+ * a promise for no reason.
+ */
+export function readFullScreenIntentGranted(): boolean | null {
+  if (Platform.OS !== 'android') {
+    return null;
+  }
+
+  if (!fullScreenIntentIsGrantable()) {
+    return true;
+  }
+
+  if (runsInExpoGo()) {
+    return null;
+  }
+
+  try {
+    // Lazy, and by name: the module is autolinked from `modules/` and absent
+    // under Jest and in Expo Go. `requireNativeModule` throws where it is
+    // missing, which is the `null` below — the same "could not ask" shape as
+    // every other unreadable permission.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy on purpose, see above
+    const { requireNativeModule } = require('expo-modules-core') as {
+      requireNativeModule: (name: string) => { canUseFullScreenIntent?: () => boolean | null };
+    };
+    const answer = requireNativeModule('FullScreenIntent').canUseFullScreenIntent?.();
+
+    return typeof answer === 'boolean' ? answer : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

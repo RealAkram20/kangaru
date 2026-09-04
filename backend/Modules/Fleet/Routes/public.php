@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Fleet\Controllers\OwnershipTransferController;
 use Modules\Fleet\Controllers\PublicNearbyVehicleController;
 
 /*
@@ -25,3 +26,16 @@ use Modules\Fleet\Controllers\PublicNearbyVehicleController;
 Route::get('public/nearby-vehicles', [PublicNearbyVehicleController::class, 'index'])
     ->middleware('throttle:30,1')
     ->name('public.nearby-vehicles.index');
+
+// The fleet-handover accept page (owner's decision, 24 August).
+// Unauthenticated of necessity, like /invitations/{token}: the reader has no
+// account until they finish this. The 48-character single-use token is the
+// only credential, and the throttles copy the invitation's measured pair —
+// the read survives React StrictMode's double effect, the write does not
+// need to.
+Route::get('owner-transfers/{token}', [OwnershipTransferController::class, 'show'])
+    ->middleware('throttle:20,1')
+    ->name('owner-transfers.show');
+Route::post('owner-transfers/{token}/accept', [OwnershipTransferController::class, 'accept'])
+    ->middleware('throttle:5,1')
+    ->name('owner-transfers.accept');

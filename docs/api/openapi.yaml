@@ -186,10 +186,16 @@ paths:
                   data:
                     nullable: true
                     type: object
-                    required: [subject_name, expires_at]
+                    required: [subject_name, subject_kind, expires_at]
                     additionalProperties: false
                     properties:
                       subject_name: { type: string }
+                      # Which surface this session belongs on (ADR-0066). A
+                      # walk-in's console is the order flow, not the staff
+                      # shell, and the console cannot work it out for itself -
+                      # auth/me answers as the actor during a walk-in session,
+                      # because there is no staff user to swap to.
+                      subject_kind: { enum: [user, customer] }
                       expires_at: { $ref: '#/components/schemas/Timestamp' }
         default:
           $ref: '#/components/responses/Error'
@@ -197,6 +203,17 @@ paths:
       summary: >
         Begins a support session: the caller acts as another user for thirty
         minutes. Every action taken is recorded against both names.
+      description: >
+        The subject may be a staff, fleet or client account (ADR-0056) or a
+        walk-in customer (ADR-0066). subject_type says which table subject_id
+        names, and defaults to user - the ids overlap, so sending the wrong one
+        would resolve an entirely different person.
+
+
+        A walk-in session behaves differently once open: the agent works on the
+        customer surface (/api/v1/customer/*) with their own staff token, and
+        the staff console answers 403 for everything but auth/me, auth/logout
+        and these two act-as routes.
       requestBody:
         required: true
         content:
@@ -206,6 +223,7 @@ paths:
               required: [subject_id, reason]
               additionalProperties: false
               properties:
+                subject_type: { enum: [user, customer] }
                 subject_id: { type: integer }
                 reason: { type: string, minLength: 8, maxLength: 255 }
       responses:
@@ -730,7 +748,7 @@ paths:
                     items: { $ref: '#/components/schemas/User' }
                   meta:
                     type: object
-                    required: [assignable_roles, capabilities, routes]
+                    required: [assignable_roles, capabilities, routes, can_invite]
                     additionalProperties: false
                     properties:
                       routes:
@@ -767,25 +785,56 @@ paths:
                             slug: { $ref: '#/components/schemas/ClientCapability' }
                             label: { type: string }
                             description: { type: string }
+                      can_invite:
+                        type: boolean
+                        description: >
+                          Whether an invitation can actually be delivered, i.e.
+                          whether mail is switched on and configured. The console
+                          offers the choice between emailing a link and setting an
+                          initial password only when this is true: an Invite button
+                          that silently creates an account nobody can sign into is
+                          the hole the invitations table was built to close,
+                          reopened from the other end.
         default:
           $ref: '#/components/responses/Error'
     post:
-      summary: Creates an account.
+      summary: Creates an account, reached either by an emailed invitation or by an initial password.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [name, email, phone, role, password]
+              required: [name, email, phone, role]
               additionalProperties: false
               properties:
                 name: { type: string, maxLength: 255 }
                 email: { type: string, format: email }
                 phone: { type: string, maxLength: 32 }
                 role: { type: string }
-                password: { type: string, minLength: 6 }
-                tenant_id: { type: integer, description: Super Admin only. }
+                password:
+                  type: string
+                  minLength: 6
+                  description: >
+                    Required unless invite is true, in which case the account is
+                    created with a random password nobody ever sees and the new
+                    colleague sets their own from the emailed link.
+                invite:
+                  type: boolean
+                  description: >
+                    Email a sign-in link instead of setting a password here. Both
+                    paths exist by decision: mail is a platform setting that may be
+                    off, and an invitation-only endpoint would then mean nobody can
+                    be added at all. Refused with a 422 when mail is not configured,
+                    rather than creating an account no invitation can reach.
+                tenant_id:
+                  type: integer
+                  description: >
+                    The client this colleague belongs to. Read only from a
+                    fleet-level actor, and only for a client that fleet actively
+                    serves (ADR-0065); a client administrator's colleagues are
+                    always their own client's and the field is not consulted. Head
+                    office is refused it outright — head office employs head office.
                 capabilities:
                   type: array
                   items: { $ref: '#/components/schemas/ClientCapability' }
@@ -1130,6 +1179,27 @@ paths:
                         type: array
                         items: { type: string }
                       can_manage: { type: boolean }
+                      audiences:
+                        type: array
+                        description: >
+                          The three audiences with their labels, so the editor's
+                          picker and the listing's filter keep no copy of the
+                          list — the same reason the permission catalogue is
+                          served rather than hardcoded.
+                        items:
+                          type: object
+                          required: [value, label]
+                          additionalProperties: false
+                          properties:
+                            value: { type: string, enum: [kangaru, fleet, client] }
+                            label: { type: string }
+                      can_manage_audience:
+                        type: boolean
+                        description: >
+                          Whether this actor may change which kind of account a
+                          role is for. Kangaru head office only; the console
+                          reads this rather than holding its own copy of the
+                          rule, and omits the field from its payload when false.
                       mfa_enforced:
                         type: boolean
                         description: >
@@ -1165,6 +1235,16 @@ paths:
                 name: { type: string, maxLength: 120 }
                 slug: { type: string, maxLength: 120, pattern: '^[a-z][a-z0-9_]*$' }
                 description: { type: ['string', 'null'], maxLength: 255 }
+                audience:
+                  type: string
+                  enum: [kangaru, fleet, client]
+                  description: >
+                    Which level of account the role is for. Read only from
+                    Kangaru head office; everybody else composes for their own
+                    level and this field is ignored rather than refused,
+                    because a role must have an audience — one belonging to
+                    nobody would sit in the catalogue looking healthy and
+                    appear in no picker at all.
                 permissions:
                   type: array
                   minItems: 1
@@ -1194,6 +1274,15 @@ paths:
                   type: array
                   minItems: 1
                   items: { type: string }
+                audience:
+                  type: string
+                  enum: [kangaru, fleet, client]
+                  description: >
+                    Which level of account the role is for. Kangaru head office
+                    only, on the same argument as requires_mfa: moving a role
+                    between audiences decides what appears in another
+                    organisation's picker, which is a decision about the
+                    platform rather than about the fleet making it.
                 requires_mfa:
                   type: boolean
                   description: >
@@ -1530,6 +1619,27 @@ paths:
         apply. 409 AUTOMATIC_DISPATCH_DISABLED when the flag is off,
         409 NO_DISPATCH_CANDIDATE when nothing is free.
       responses:
+        '202':
+          description: >
+            The driver's phone is ringing (ADR-0068). The request was
+            accepted and an offer is out; **no trip exists yet**, and one may
+            never — the driver can decline, and a decline or a ring-out rolls
+            the booking to the next candidate.
+
+
+            This is the ordinary outcome. A 201 means the opposite: the
+            driver has no app account, so nothing could ring and they were
+            assigned outright with the desk to telephone them.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DispatchOffer' }
         '201':
           $ref: '#/components/responses/TripResponse'
         default:
@@ -1538,7 +1648,8 @@ paths:
   /api/v1/bookings/{booking}/assignment:
     post:
       summary: >
-        Assigns a vehicle and driver to a booking, producing its trip.
+        Puts a booking in front of a driver — 202 and a ringing offer, or
+        201 and a trip when the driver has no app (ADR-0068).
         Every failure is a 409 with a code the client branches on —
         VEHICLE_UNAVAILABLE, DRIVER_UNAVAILABLE or INVALID_BOOKING_TRANSITION.
       parameters:
@@ -1562,6 +1673,27 @@ paths:
                     non-exclusive allocation — recorded on the trip and
                     audited (ADR-0009).
       responses:
+        '202':
+          description: >
+            The driver's phone is ringing (ADR-0068). The request was
+            accepted and an offer is out; **no trip exists yet**, and one may
+            never — the driver can decline, and a decline or a ring-out rolls
+            the booking to the next candidate.
+
+
+            This is the ordinary outcome. A 201 means the opposite: the
+            driver has no app account, so nothing could ring and they were
+            assigned outright with the desk to telephone them.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/DispatchOffer' }
         '201':
           $ref: '#/components/responses/TripResponse'
         default:
@@ -2017,7 +2149,10 @@ paths:
                 address_line1: { type: ['string', 'null'], maxLength: 255 }
                 address_line2: { type: ['string', 'null'], maxLength: 255 }
                 city: { type: string, maxLength: 255 }
-                country: { type: string, maxLength: 255 }
+                # ISO 3166-1 alpha-2, matching onboarding. `max:255` here while
+                # onboarding said `size:2` is how the register came to hold
+                # "Uganda" and "UG" as two different countries.
+                country: { type: string, minLength: 2, maxLength: 2 }
                 credit_limit_minor: { type: integer, minimum: 0 }
                 status: { enum: [active, suspended] }
       responses:
@@ -2030,6 +2165,44 @@ paths:
       responses:
         '204':
           description: Deleted. No content.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/companies/{company}/accounts:
+    parameters:
+      - { name: company, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: Who head office can act as at this corporate client.
+      description: >
+        The client-side twin of /api/v1/operators/{operator}/accounts, and it
+        exists for the same one reason: ADR-0056 acts as a person, not an
+        organisation, so Log in as needs somebody to name.
+
+
+        Gated harder than the fleet twin. companies.view is a permission a
+        client's own administrator holds for their own profile, so it cannot be
+        the gate on a roster of that client's employees. This needs
+        access_level kangaru AND support.act-as - the one grant that can use
+        the list is the one that is shown it. A client reading its own
+        colleagues has /api/v1/users, correctly scoped (ADR-0065).
+
+
+        Client-level accounts only.
+      responses:
+        '200':
+          description: Accounts at this client, by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/User' }
         default:
           $ref: '#/components/responses/Error'
 
@@ -3312,6 +3485,62 @@ paths:
                     anyOf:
                       - { $ref: '#/components/schemas/CustomerRide' }
                       - { enum: [null] }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/customer/rides/active/extension:
+    post:
+      summary: The passenger asks to be taken further than the agreed drop-off.
+      description: >
+        No identifier, for the same reason cancellation takes none: the ride
+        is whichever one is active for this token.
+
+
+        **A request, not an instruction.** This is the one of the three ways
+        to extend a trip that does not take effect on its own. A driver or a
+        dispatcher adding an extension is recording a decision already taken;
+        a passenger tapping in the back seat is asking, and it changes where
+        the driver is going and what they are owed. The row lands `proposed`,
+        which is not routed through, not billed, and does not hold the trip
+        open at completion, until the driver answers it through
+        `trips/{trip}/extensions/{extension}/acceptance`.
+
+
+        No `client_place_id`: that register belongs to a corporate client and
+        ADR-0045 §10 releases it to one driver on one live run, never to a
+        passenger. A pin is optional — a place the geocoder could not find is
+        still worth telling the driver — and an extension with no pin is
+        carried and billed on the trace, it simply does not steer the
+        reference route.
+
+
+        404 when there is no ride in progress to extend, in the same words the
+        cancellation uses.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [label]
+              additionalProperties: false
+              properties:
+                label: { type: string, maxLength: 160 }
+                latitude: { type: ['number', 'null'], minimum: -90, maximum: 90 }
+                longitude: { type: ['number', 'null'], minimum: -180, maximum: 180 }
+      responses:
+        '201':
+          description: The request, waiting on the driver.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/TripStop' }
         default:
           $ref: '#/components/responses/Error'
 
@@ -5594,6 +5823,12 @@ paths:
                   description: Generated from the name when absent. Unique across the platform.
                 owner_name: { type: string, maxLength: 255 }
                 owner_email: { type: string, format: email }
+                plan_id:
+                  type: integer
+                  description: >
+                    Chosen at onboarding, or absent for the default plan
+                    (ADR-0058 §1). No allowance check — a fleet being born
+                    has nothing to exceed a limit with.
       responses:
         '201':
           $ref: '#/components/responses/OperatorResponse'
@@ -5618,6 +5853,12 @@ paths:
         either fail against its own history or orphan it. A fleet that leaves
         the platform is suspended, which keeps its trips explicable and its
         invoices reconcilable.
+
+        No `plan_id` and no `slug`. A plan move goes through
+        `PUT /operators/{operator}/plan` alone, because that is where the
+        ADR-0058 §4 downgrade refusal runs — this route once accepted the
+        field and moved a fleet without it. The slug names the fleet in URLs
+        and in an invoice series, so a corrected name must not re-key either.
       requestBody:
         required: true
         content:
@@ -5628,12 +5869,130 @@ paths:
               properties:
                 name: { type: string, maxLength: 255 }
                 status: { enum: [active, suspended] }
-                plan_id:
-                  type: integer
-                  description: Which plan this fleet is on. What a plan *means* — limits, price, period — is K7's.
       responses:
         '200':
           $ref: '#/components/responses/OperatorResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/operators/{operator}/owner:
+    parameters:
+      - { name: operator, in: path, required: true, schema: { type: integer } }
+    put:
+      summary: >
+        Proposes the fleet's next owner (owner's decision, 24 August).
+        Head office only, and pending by design: the address gets a welcome
+        email to choose a password, and **nothing about the fleet changes
+        until they do**. Replaces any earlier proposal, which kills its link.
+      description: >
+        Not a field on the fleet's PATCH, because changing the email is
+        changing the ownership — a different act from correcting a name. The
+        email must not belong to any existing account: an address that
+        already signs in has an identity here, and handing a fleet to an
+        existing account is an act this platform does not offer. 422 under
+        `email` when it is taken.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email]
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 255 }
+                email: { type: string, format: email }
+      responses:
+        '200':
+          $ref: '#/components/responses/OperatorResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: >
+        Withdraws the pending proposal. The row is the whole of the pending
+        state, so deleting it is the whole of the withdrawal — the emailed
+        link stops working and the sitting owner was never touched.
+      responses:
+        '200':
+          $ref: '#/components/responses/OperatorResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/owner-transfers/{token}:
+    get:
+      summary: >
+        Whose fleet a handover link takes over (owner's decision, 24 August).
+        Unauthenticated: the reader has no account until they finish this.
+        Throttled 20/min/IP for the invitation read's measured reason.
+      description: >
+        200 with the new owner's name, address, the fleet and the expiry, so
+        the accept page can say "you are taking over this fleet" rather than
+        presenting a bare password form. 404 NOT_FOUND for an unknown token,
+        409 INVITATION_ALREADY_USED for one already accepted, 410
+        INVITATION_EXPIRED for one that lapsed — three answers because they
+        send the reader to three different places, exactly as the invitation
+        argues.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 64 }
+      responses:
+        '200':
+          description: The handover this link completes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string, nullable: true }
+                  data:
+                    type: object
+                    required: [name, email, company, expires_at]
+                    additionalProperties: false
+                    properties:
+                      name: { type: string }
+                      email: { type: string, format: email }
+                      company: { type: string, description: The fleet being handed over. }
+                      expires_at: { type: string, format: date-time }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/owner-transfers/{token}/accept:
+    post:
+      summary: >
+        The handover itself. Unauthenticated, throttled 5/min/IP, single use.
+        Creates the new owner's account with the password they chose and
+        suspends the sitting owner's, in one transaction — the fleet is never
+        ownerless in between (ADR-0059 §5).
+      description: >
+        Answers a message rather than a session, for the invitation's
+        reasons. The password floor is `PasswordPolicy`'s, shared by every
+        door. 410 also covers an address that stopped being free while the
+        link sat unread — the fix in every 410 case is the same person, so
+        the answer is the same sentence.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password, password_confirmation]
+              additionalProperties: false
+              properties:
+                password: { type: string, minLength: 6 }
+                password_confirmation: { type: string }
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOnly'
         default:
           $ref: '#/components/responses/Error'
 
@@ -6790,6 +7149,173 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/v1/trips/{trip}/dropoff-arrival:
+    post:
+      summary: Marks the agreed drop-off as reached, without ending the trip.
+      description: >
+        The boundary the extension feature hangs off. Until extensions,
+        arriving at the drop-off and finishing the trip were one act; an
+        extension separates them, so this records the first half on its own.
+
+
+        It is not a trip status: the state machine's graph is shared by every
+        kind of work the platform carries, and this is a fact about one
+        journey. Two things read it — the driver's map, which routes to the
+        agreed destination before it is set and to the accepted extensions
+        afterwards, and completion.
+
+
+        Idempotent. A driver who taps twice, or retries into a dead zone, does
+        not move the timestamp: the first arrival is the true one, and a later
+        write would change which side of the boundary an extension was added
+        on.
+
+
+        A trip that nobody extends never calls this, and nothing about it
+        changes. Only while the trip is running: anything else answers 409
+        TRIP_NOT_ACTIVE.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: The trip, with `dropoff_reached_at` set.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/Trip' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}/extensions:
+    post:
+      summary: Records that the passenger is going further than the agreed drop-off.
+      description: >
+        The same table and the same request shape as a stop, and a different
+        act: a stop is a pause on the way to a destination nobody changed and
+        is never billed, while an extension moves the end of the journey and
+        the fare follows the longer distance. The reference route is drawn
+        through accepted extensions, which is what stops the resolver capping
+        a correct trace and leaving the extra kilometres unpaid.
+
+
+        The driver or the office adds one outright — they are recording a
+        decision already taken in the car — and it is accepted on creation.
+        A passenger *proposes* one through
+        `POST /customer/rides/active/extension`, and the driver answers it.
+
+
+        Only while the trip is running: anything else answers 409
+        TRIP_NOT_ACTIVE.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                client_place_id: { type: ['integer', 'null'] }
+                label: { type: ['string', 'null'], maxLength: 160 }
+                latitude: { type: ['number', 'null'], minimum: -90, maximum: 90 }
+                longitude: { type: ['number', 'null'], minimum: -180, maximum: 180 }
+      responses:
+        '201':
+          description: The extension, appended to the journey.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/TripStop' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}/extensions/{extension}/acceptance:
+    post:
+      summary: The driver agrees to carry an extension a passenger asked for.
+      description: >
+        `acceptance` rather than `accept`, matching
+        `me/offers/{offer}/acceptance`: the driver is creating an agreement,
+        so a handset speaks one vocabulary for both things it answers.
+
+
+        Only an extension on this trip that is still `proposed` can be
+        answered — anything else is a masked 404, which covers another trip's
+        row, a plain stop, and one already answered without saying which. A
+        second tap on Accept therefore does not produce a second agreement.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+        - { name: extension, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: The extension, now pending and part of the journey.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/TripStop' }
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/v1/trips/{trip}/extensions/{extension}/decline:
+    post:
+      summary: The driver refuses an extension a passenger asked for.
+      description: >
+        Lands the row on `skipped` with a reason — §6's existing answer for
+        something that was on the run and did not happen. The row stays: a
+        passenger asking to be taken somewhere and being refused is exactly
+        what the desk gets asked about, and deleting it would leave the office
+        with nothing to look at.
+
+
+        The reason is optional. A driver declining at the roadside is not
+        filling in a form, and a required sentence would collect a
+        keyboard-mash; the service writes a plain default when none is given.
+      parameters:
+        - { name: trip, in: path, required: true, schema: { type: integer } }
+        - { name: extension, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason: { type: ['string', 'null'], maxLength: 200 }
+      responses:
+        '200':
+          description: The extension, skipped, with the reason it carries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data]
+                additionalProperties: false
+                properties:
+                  success: { enum: [true] }
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/TripStop' }
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/v1/trips/{trip}/stop-candidates:
     get:
       summary: The add-a-drop-off search over the client's place register (ADR-0045 §10).
@@ -7837,12 +8363,15 @@ components:
               message: { type: string }
               data:
                 type: object
-                required: [id, subject_id, subject_name, expires_at]
+                required: [id, subject_id, subject_name, subject_kind, expires_at]
                 additionalProperties: false
                 properties:
                   id: { type: integer }
+                  # In the table subject_kind names. The two id spaces overlap,
+                  # so this pair has to be read together (ADR-0066).
                   subject_id: { type: integer }
                   subject_name: { type: string }
+                  subject_kind: { enum: [user, customer] }
                   expires_at: { $ref: '#/components/schemas/Timestamp' }
 
     RoleResponse:
@@ -8318,6 +8847,7 @@ components:
         - CLIENT_PLACE_IN_USE
         - VEHICLE_CATEGORY_IN_USE
         - DRIVER_ACCOUNT_CONFLICT
+        - OWNER_ADDRESS_IN_USE
         - DRIVER_APPLICATION_CLOSED
         - DRIVER_APPLICATION_DOCUMENTS_PENDING
         - AUTH_METHOD_DISABLED
@@ -8670,13 +9200,28 @@ components:
 
     Role:
       type: object
-      required: [slug, name, description, is_system, permissions, requires_mfa, created_at]
+      required: [slug, name, description, is_system, audience, permissions, requires_mfa, created_at]
       additionalProperties: false
       properties:
         slug: { type: string }
         name: { type: string }
         description: { type: ['string', 'null'] }
         is_system: { type: boolean }
+        audience:
+          type: string
+          enum: [kangaru, fleet, client]
+          description: >
+            Which level of account this role was composed for. A property of
+            the role, not a scope on it — the catalogue stays platform-wide
+            (ADR-0004) and every organisation still picks from one list. It is
+            what keeps a client's role out of a fleet's picker: before it, the
+            only thing separating them was whether the permission sets happened
+            to be subsets of one another, which is a coincidence rather than a
+            boundary. Writable by Kangaru head office only; everybody else
+            composes for their own level.
+        audience_label:
+          type: string
+          description: What the console calls the audience — Kangaru, Fleet or Client.
         permissions:
           type: array
           items: { type: string }
@@ -9013,6 +9558,9 @@ components:
         - dropoff
         - service_type
         - reference
+        - client
+        - scheduled_for
+        - scheduled_for_label
         - pickup_distance_km
         - trip_distance_km
         - reasons
@@ -9037,6 +9585,43 @@ components:
         dropoff: { $ref: '#/components/schemas/OfferPlace' }
         service_type: { type: ['string', 'null'] }
         reference: { type: ['string', 'null'] }
+        client:
+          description: >
+            The client this job belongs to, on a desk assignment (ADR-0068).
+
+
+            Null on a walk-in, which belongs to no client — so its presence is
+            also how a client tells the two kinds of offer apart, without a
+            second flag to do it.
+
+
+            A company name, never a passenger's. ADR-0024 §7 withholds who is
+            travelling until the driver has accepted, and that applies to both
+            channels equally.
+          type: ['string', 'null']
+        scheduled_for:
+          description: >
+            When the desk booked this for, on a desk assignment. Null on a
+            walk-in, which is always now.
+
+
+            The fact that decides whether a driver can say yes: accepting
+            "now" and accepting "Tuesday at four" are different answers to
+            the same ringing phone.
+          type: ['string', 'null']
+          format: date-time
+        scheduled_for_label:
+          description: >
+            The same moment written out in the fleet's own timezone, for a
+            client that must not do the arithmetic itself.
+
+
+            The driver app renders this rather than `scheduled_for`: the
+            server runs in UTC, so an hour computed on a handset rolls at the
+            wrong moment, and Hermes ships an `Intl` whose locale data differs
+            by platform and build — two phones in one fleet would show one job
+            at two different times.
+          type: ['string', 'null']
         pickup_distance_km:
           description: >
             How far the driver is from the pickup. Straight-line, not road
@@ -9328,6 +9913,18 @@ components:
             id: { type: integer }
             name: { type: string }
             is_default: { type: boolean }
+        pending_owner:
+          type: ['object', 'null']
+          description: >
+            The handover nobody has confirmed yet, when the relation was
+            loaded. Name, address and expiry only — the token exists only
+            inside the email it was sent in. Null when nothing is pending.
+          required: [name, email, expires_at]
+          additionalProperties: false
+          properties:
+            name: { type: string }
+            email: { type: string, format: email }
+            expires_at: { type: string, format: date-time }
         users_count: { type: integer, description: Staff and drivers both — every account whose fleet this is. }
         drivers_count: { type: integer }
         vehicles_count: { type: integer }
@@ -9606,13 +10203,21 @@ components:
           oneOf:
             - type: 'null'
             - type: object
-              required: [id, registration_number, make, model]
+              required: [id, registration_number, make, model, category]
               additionalProperties: false
               properties:
                 id: { type: integer }
                 registration_number: { type: string }
                 make: { type: string }
                 model: { type: string }
+                category:
+                  type: ['string', 'null']
+                  description: >
+                    The vehicle's category key, so the office can ask which
+                    drivers are free on a boda without loading the fleet
+                    beside the roster. A key, not a label: categories are
+                    operator-defined and renameable, and the name is resolved
+                    from the category list.
         status: { enum: [active, suspended, inactive] }
         vehicle_id:
           description: >
@@ -9743,13 +10348,22 @@ components:
           oneOf:
             - type: 'null'
             - type: object
-              required: [id, registration_number, make, model]
+              required: [id, registration_number, make, model, category]
               additionalProperties: false
               properties:
                 id: { type: integer }
                 registration_number: { type: string }
                 make: { type: string }
                 model: { type: string }
+                category:
+                  description: >
+                    The vehicle's category **key** (ADR-0050), so the office can
+                    ask "who is free on a boda" without loading the fleet beside
+                    the roster. The key and not the office's name for it: a
+                    category is renameable, and a client filtering on a label
+                    would stop matching the moment a clerk edited one. Null for a
+                    vehicle with no category set.
+                  type: ['string', 'null']
         account:
           description: >
             The account this driver signs in with, or null if they cannot sign
@@ -10657,6 +11271,7 @@ components:
         - scheduled_for
         - is_immediate
         - status
+        - is_ringing
         - approved_by_user_id
         - approved_at
         - decision_reason
@@ -10737,6 +11352,18 @@ components:
         scheduled_for: { $ref: '#/components/schemas/NullableTimestamp' }
         is_immediate: { type: boolean }
         status: { $ref: '#/components/schemas/BookingStatus' }
+        is_ringing:
+          description: >
+            Whether a driver's phone is ringing for this booking right now
+            (ADR-0068).
+
+
+            Derived from live offers, never stored. The board needs it
+            because a desk assignment no longer takes effect at the press:
+            without it an unanswered booking looks exactly like an untouched
+            one, and the next dispatcher assigns over a phone that is already
+            ringing.
+          type: boolean
         approved_by_user_id: { type: ['integer', 'null'] }
         approved_by:
           anyOf:
@@ -11823,6 +12450,7 @@ components:
         - gps_distance_km
         - distance_variance_flagged
         - unplanned_stop_count
+        - dropoff_reached_at
         - cancellation_charge_applicable
         - started_at
         - completed_at
@@ -11889,7 +12517,19 @@ components:
           description: >
             How many stops were added mid-run rather than planned (ADR-0045
             §4). A note, not a charge — the client sees that the run deviated
-            and where; nobody bills for the deviation.
+            and where; nobody bills for the deviation. Extensions are excluded:
+            they are billed, and a counter that means "not billed" must not
+            carry them.
+        dropoff_reached_at:
+          allOf:
+            - $ref: '#/components/schemas/NullableTimestamp'
+          description: >
+            When the vehicle reached the destination the trip was agreed for.
+            Null until it does, and on every trip that simply ended there —
+            arriving and finishing were one act until extensions separated
+            them. The driver's screen reads it to know which half of the
+            journey it is rendering, and the map routes to the agreed drop-off
+            before it is set and to the accepted extensions afterwards.
         service_type:
           description: >
             What kind of job this was — `ride`, `delivery` or `self_drive`, from
@@ -12137,10 +12777,12 @@ components:
         - label
         - latitude
         - longitude
+        - kind
         - source
         - status
         - arrived_at
         - departed_at
+        - accepted_at
         - skip_reason
         - client_place_id
       additionalProperties: false
@@ -12157,17 +12799,40 @@ components:
             in a dead zone, or free text with no pin) renders as prose, never
             as a pin at 0°,0°.
         longitude: { type: ['number', 'null'] }
+        kind:
+          enum: [stop, extension]
+          description: >
+            Whether this row paused the journey or moved its end. A `stop` is
+            ADR-0045 §4's subject — recorded, shown, never billed. An
+            `extension` is the passenger travelling past the drop-off they
+            agreed to: the reference route is drawn through it and the fare
+            follows the longer distance. A client that rendered the two alike
+            would be showing a passenger a fare it could not explain.
         source:
           enum: [planned, added_by_driver, added_by_dispatch, added_by_client]
-          description: Who put this stop on the run (§4). Only added_by_driver counts toward unplanned_stop_count.
+          description: >
+            Who put this row on the run (§4). Only added_by_driver counts
+            toward unplanned_stop_count, and only when `kind` is `stop` — that
+            counter is a note rather than a charge, and an extension is a
+            charge.
         status:
-          enum: [pending, arrived, done, skipped]
+          enum: [proposed, pending, arrived, done, skipped]
           description: >
             Moved only by the transitions §2 reuses — a `waiting` carrying
             `stop_id` marks the arrival, the resume marks the departure.
-            `skipped` is §6's first-class case; no surface writes it yet.
+            `skipped` is §6's first-class case, and is also where a declined
+            extension lands, with a reason. `proposed` appears only on an
+            extension a passenger asked for and the driver has not answered:
+            it is not routed through, not billed, and does not hold the trip
+            open at completion.
         arrived_at: { $ref: '#/components/schemas/NullableTimestamp' }
         departed_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        accepted_at:
+          allOf:
+            - $ref: '#/components/schemas/NullableTimestamp'
+          description: >
+            When the driver agreed to an extension. Null on a `proposed` one
+            and on every ordinary stop.
         skip_reason: { type: ['string', 'null'] }
         client_place_id: { type: ['integer', 'null'] }
 
