@@ -278,7 +278,7 @@ it('puts an unanswered desk assignment on the home screen, opening the trip reco
   expect(screen.getByText('New trip assigned')).toBeTruthy();
   expect(screen.getByText('Mukono Health Centre IV, Seeta')).toBeTruthy();
 
-  fireEvent.press(screen.getByLabelText(/New trip assigned from Kampala Road/));
+  void fireEvent.press(screen.getByLabelText(/New trip assigned from Kampala Road/));
 
   // The record view is where Accept and Decline live — an assigned trip is
   // a question, and the app must not route to a pickup map before it is

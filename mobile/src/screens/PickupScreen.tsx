@@ -74,7 +74,7 @@ const PASSENGER_LABEL = 'Passenger';
  *
  * Where routing cannot reach — no signal, no fix, no pins — the line is dashed
  * or absent, never invented: a straight line is not a road. `PickupMap`
- * carries the rest of that argument, including why it is MapLibre in a WebView
+ * carries the rest of that argument, including why it is a map in a WebView
  * rather than the native map a mockup implies: `react-native-maps` needs a
  * Google billing account to draw a street.
  *
@@ -361,7 +361,7 @@ export function PickupScreen({ route, navigation }: Props) {
 /**
  * Where things are, when the platform knows.
  *
- * A thin wrapper over the shared `PickupMap`, which owns the MapLibre
+ * A thin wrapper over the shared `PickupMap`, which owns the map
  * document and the no-coordinates case. What lives here is the badge over it:
  * the same straight-line distance the facts row states, put where the mockup
  * puts it, because a driver glancing at the map should not have to look

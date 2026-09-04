@@ -75,10 +75,10 @@ export function greatCircleKm(from: Coordinates, to: Coordinates): number {
 }
 
 /**
- * The box that holds every point given, as MapLibre wants it:
+ * The box that holds every point given, in GeoJSON order:
  * `[[west, south], [east, north]]`.
  *
- * **Longitude first in each pair.** That is GeoJSON's order and MapLibre's,
+ * **Longitude first in each pair.** That is GeoJSON's order and the server's,
  * and it is the opposite of the `lat, lng` every other part of this app says —
  * which is exactly why `Coordinates` is named fields rather than a positional
  * pair. Uganda sits at ~0.3°N, ~32.6°E, so a swap here passes every range

@@ -203,7 +203,9 @@ it('lets the driver pan and zoom when the map has the whole screen', async () =>
   // On a full screen it meant a driver could not zoom in to see anything.
   const view = await renderMap();
 
-  expect(mapHtml(view.toJSON())).toContain('interactive: true');
+  // Leaflet takes it as separate handler flags, all fed from one constant
+  // the shell writes (ADR-0070) — so the constant is what carries the claim.
+  expect(mapHtml(view.toJSON())).toContain('var INTERACTIVE = true;');
 });
 
 it('joins the points with a dashed line, never a solid one', async () => {
@@ -217,8 +219,8 @@ it('joins the points with a dashed line, never a solid one', async () => {
   const view = await renderMap();
   const html = mapHtml(view.toJSON());
 
-  expect(html).toContain("'line-dasharray'");
-  expect(html).toContain('LineString');
+  expect(html).toContain("dashArray: '6 6'");
+  expect(html).toContain('L.polyline');
 });
 
 // ── The real road, when there is one ──────────────────────────────────────
@@ -545,10 +547,12 @@ it('draws the road already driven, so there is something to be part-way along', 
   // second no longer covers, which is the road behind the driver.
   expect(html).toContain(WHOLE_LEG.polyline);
   expect(html).toContain(ROAD.polyline);
-  expect(html).toContain("id: 'leg-route'");
+  expect(html).toContain('legRouteLine');
   // Under the live road, never over it — a covered road drawn on top of the
-  // one still to drive would hide the half that matters.
-  expect(html.indexOf("id: 'leg-route'")).toBeLessThan(html.indexOf("id: 'route-casing'"));
+  // one still to drive would hide the half that matters. Leaflet stacks
+  // polylines in the order they are added, so declaration order *is* the
+  // z-order, and this is the line that asserts it.
+  expect(html.indexOf('var legRouteLine')).toBeLessThan(html.indexOf('var routeCasing'));
 });
 
 it('draws the driver as the vehicle they are actually in', async () => {
@@ -593,9 +597,10 @@ it('points the vehicle where the handset says, and nowhere when it does not', as
   const view = await renderMap();
   const html = mapHtml(view.toJSON());
 
-  // Rotation on the inner element — MapLibre owns the marker root's transform
-  // — and no rotation at all without a bearing. An unrotated sprite points
-  // north, which reads as an icon; a guessed angle would read as a course.
+  // Rotation on the inner element — the map library owns the marker root's
+  // transform — and no rotation at all without a bearing. An unrotated sprite
+  // points north, which reads as an icon; a guessed angle would read as a
+  // course.
   expect(html).toContain(
     "hereTurn.style.transform = heading === null ? '' : 'rotate(' + heading + 'deg)';",
   );
@@ -637,15 +642,16 @@ it('draws no bar at all when the whole leg was never measured', async () => {
   expect(queryByText('12.2 km')).toBeNull();
 });
 
-it('leaves MapLibre owning where every marker sits', async () => {
+it('leaves the map library owning where every marker sits', async () => {
   // The bug this pins cost two renders to find and no assertion could see.
   //
-  // MapLibre's own stylesheet sets `position: absolute` on each marker root
-  // and then positions it with a transform. Sizing the roots so a pin sits on
-  // its coordinate meant giving them a box — and declaring `position:
-  // relative` to hang the label off. That inline `<style>` is parsed *after*
-  // the MapLibre link, so at equal specificity it won: the roots dropped back
-  // into normal flow and the vehicle rendered 52 px away from the road it was
+  // The library's own stylesheet — Leaflet's now, MapLibre's when this was
+  // found (ADR-0070) — sets `position: absolute` on each marker root and then
+  // positions it with a transform. Sizing the roots so a pin sits on its
+  // coordinate meant giving them a box — and declaring `position: relative`
+  // to hang the label off. That inline `<style>` is parsed *after* the
+  // library's, so at equal specificity it won: the roots dropped back into
+  // normal flow and the vehicle rendered 52 px away from the road it was
   // driving on, on a map that was otherwise perfect.
   //
   // Nothing in an HTML string says that. It is only visible by rendering the

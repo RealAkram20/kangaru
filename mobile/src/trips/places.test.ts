@@ -80,9 +80,9 @@ describe('greatCircleKm', () => {
 });
 
 describe('boundsFor', () => {
-  it('puts longitude first in each pair, as MapLibre wants', () => {
+  it('puts longitude first in each pair, as GeoJSON wants', () => {
     // The assertion that matters most in this file. Every other part of the
-    // app says `lat, lng`; GeoJSON and MapLibre say the opposite, and Uganda's
+    // app says `lat, lng`; GeoJSON and the server say the opposite, and Uganda's
     // coordinates pass every range check either way round — so a swap here is
     // invisible except that the map shows the Indian Ocean.
     const bounds = boundsFor([CENTRE]);

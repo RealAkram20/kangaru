@@ -26,7 +26,7 @@ type Props = NativeStackScreenProps<TripsStackParams, 'TripMap'>;
  * means finding the app again with a passenger in the car.
  *
  * So the tap now **expands the map that was already on the screen**: the same
- * MapLibre document, the same pins, the driver's live position, pinch to zoom.
+ * map document, the same pins, the driver's live position, pinch to zoom.
  * The hand-off is still one button away, and it is still the right answer for
  * actual guidance — see below.
  *

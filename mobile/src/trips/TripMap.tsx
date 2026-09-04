@@ -4,6 +4,7 @@ import { WebView } from 'react-native-webview';
 
 import { useAfterTransition } from '../navigation/useAfterTransition';
 import { colors, radius, spacing, typography } from '../ui/theme';
+import { mapShell } from './mapShell';
 
 /**
  * Where the driver is, on the trip card.
@@ -15,12 +16,15 @@ import { colors, radius, spacing, typography } from '../ui/theme';
  * this platform has none. Buying that key would make the driver's home screen
  * depend on a Google billing account before it can draw a street.
  *
- * MapLibre GL against CARTO's Positron style needs no key at all, and it is
- * already what the console falls back to when `VITE_MAPBOX_TOKEN` is unset
- * (`frontend/src/pages/public/MapPanel.tsx`) — so the two surfaces draw
- * Kampala the same way. The native MapLibre binding would need a development
- * build; inside a WebView it runs in Expo Go, on a physical handset, and in
- * whatever the fleet eventually installs.
+ * Inside it runs **Leaflet over CARTO's keyless Positron raster tiles**,
+ * the same basemap the console falls back to when `VITE_MAPBOX_TOKEN` is
+ * unset (`frontend/src/pages/public/MapPanel.tsx`) — so the two surfaces
+ * still draw Kampala the same way. It was MapLibre GL against that
+ * basemap's vector style until ADR-0070: that fetched its library from a
+ * CDN on every mount and rendered through WebGL, and the owner reported the
+ * result as slow. Leaflet ships inside the bundle and draws images.
+ *
+ * The document scaffold is `mapShell.ts`, shared with `PickupMap`.
  *
  * ## Why it is not interactive
  *
@@ -159,22 +163,23 @@ export function TripMap({
 }
 
 /**
- * The whole map as one document.
+ * The whole map as one document (ADR-0070).
  *
- * Inline rather than a bundled asset so there is nothing to keep in step: the
- * only inputs are two numbers and the brand green, and the style URL is the
- * same keyless CARTO one the console uses.
+ * Built on `mapShell`, which brings the library with it: only the marker and
+ * the one entry point are this map's own. The inputs are still two numbers
+ * and the brand green.
  */
-function mapDocument(position: number[]): string {
-  return `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
-<style>
-  html, body, #map { margin: 0; padding: 0; height: 100%; width: 100%; background: ${colors.surfaceSunken}; }
-  .maplibregl-ctrl-attrib, .maplibregl-ctrl-bottom-left { display: none; }
+function mapDocument(position: [number, number]): string {
+  return mapShell({
+    // `position` is longitude-first, as every fix on this platform is
+    // (ADR-0020); the shell's constructor wants latitude first.
+    center: [position[1], position[0]],
+    // A raster tile is sharp at the zoom it was rendered for, so an integer:
+    // ~1.5 km across, close enough to recognise the junction you are at,
+    // wide enough that a poor fix does not look like a wild jump.
+    zoom: 14,
+    interactive: false,
+    css: `
   /* The halo is the theme's green tint, not a hand-mixed alpha — one more
      place a raw colour would have crept in unnoticed. */
   .pin {
@@ -188,57 +193,32 @@ function mapDocument(position: number[]): string {
     background: ${colors.primary};
     border: 2.5px solid ${colors.onPrimary};
     display: block;
-  }
-</style>
-</head>
-<body>
-<div id="map"></div>
-<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-<script>
-  var map = new maplibregl.Map({
-    container: 'map',
-    style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
-    center: ${JSON.stringify(position)},
-    // ~1.5km across: close enough to recognise the junction you are at, wide
-    // enough that a poor fix does not look like a wild jump.
-    zoom: 14.2,
-    attributionControl: false,
-    interactive: false
-  });
-
-  var el = document.createElement('div');
-  el.className = 'pin';
-  el.innerHTML = '<i></i>';
-
+  }`,
+    script: `
+  var pin = L.divIcon({ className: 'pin', html: '<i></i>', iconSize: [30, 30], iconAnchor: [15, 15] });
   var marker = null;
-  var pending = ${JSON.stringify(position)};
-  var loaded = false;
 
-  // The one entry point React Native injects into. A fix that arrives before
-  // the style has loaded is parked and replayed from the load handler.
+  // The one entry point React Native injects into. Nothing to park: a raster
+  // map is ready the moment it is built, so a fix is drawn as it arrives.
   window.__setPosition = function (lngLat) {
     if (lngLat === null) { return; }
-    if (!loaded) { pending = lngLat; return; }
+
+    var at = ll(lngLat);
 
     if (marker === null) {
-      marker = new maplibregl.Marker({ element: el }).setLngLat(lngLat).addTo(map);
+      marker = L.marker(at, { icon: pin, interactive: false }).addTo(map);
     } else {
-      marker.setLngLat(lngLat);
+      marker.setLatLng(at);
     }
 
     // Eased, never jumped: this map is the dot, so the camera follows it —
     // smoothly, because a camera that teleports under the reader's eyes is
     // the "shake" this file was rewritten to remove.
-    map.easeTo({ center: lngLat, duration: 600 });
+    map.panTo(at, { animate: true, duration: 0.6 });
   };
 
-  map.on('load', function () {
-    loaded = true;
-    window.__setPosition(pending);
+  window.__setPosition(${JSON.stringify(position)});`,
   });
-</script>
-</body>
-</html>`;
 }
 
 const HEIGHT = 150;
