@@ -15,6 +15,19 @@ export type TransitionPayload = {
   notes?: string;
   odometer_start?: number;
   odometer_end?: number;
+  /**
+   * Which stop a pause is an arrival at (ADR-0045 §2). Only ever set with
+   * `to: 'waiting'`; the resume pairs itself server-side with whichever stop
+   * is open, so it never carries one.
+   */
+  stop_id?: number;
+  /**
+   * What this handset measured of its own buffered pings (ADR-0045 §5),
+   * riding the completion so a cash passenger has a fare before the server
+   * resolves the trace. Declared here (main sent it undeclared through a
+   * spread) so the photo path below cannot silently drop it again.
+   */
+  provisional_distance_km?: number;
 };
 
 export type AvailabilityRequestPayload = {

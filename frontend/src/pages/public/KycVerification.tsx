@@ -1,5 +1,10 @@
 import { useId } from 'react'
-import { ArrowLeft, Check, ChevronRight, Lock, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, ChevronRight, Lock, ShieldCheck } from 'lucide-react'
+
+// The one icon on this page that marks a moment rather than labelling a
+// thing, so it is the one that animates — see DESIGN.md §7. Everything else
+// here is chrome a person reads many times over, and stays on plain Lucide.
+import { Check } from '@/components/animate-ui/icons/check'
 import { kycComplete, type KycDocument, type KycFiles, type KycSection } from './kycDocuments'
 
 /**
@@ -159,7 +164,14 @@ function DocumentRow({
       />
       {uploaded ? (
         <span className="flex shrink-0 items-center gap-1 text-sm font-semibold text-brand-green">
-          <Check className="h-4 w-4" strokeWidth={3} aria-hidden />
+          {/*
+            Draws itself once, when the document lands. This branch only
+            mounts on the transition from "Not uploaded", so the tick is
+            confirming something that just happened rather than decorating a
+            steady state — the distinction DESIGN.md §7 draws between motion
+            that is feedback and motion that is noise.
+          */}
+          <Check className="h-4 w-4" strokeWidth={3} animate aria-hidden />
           Uploaded
         </span>
       ) : (

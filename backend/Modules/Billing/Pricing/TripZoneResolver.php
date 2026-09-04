@@ -65,8 +65,21 @@ class TripZoneResolver
             return null;
         }
 
-        // The tenant scopes which zones are eligible: the platform's, plus
-        // this client's own. Never another client's (ADR-0021 §4).
-        return $this->zones->pricingZoneAt($latitude, $longitude, $trip->tenant_id);
+        // Two axes scope which zones are eligible. The **client** one is
+        // ADR-0021 §4: the platform's zones plus this client's own, never
+        // another client's. The **fleet** one is ADR-0055 §5: the operating
+        // fleet's patch plus Kangaru's defaults, never a competitor's.
+        //
+        // Taken from the trip, which knows which fleet ran it. Pricing runs
+        // from a queue and from invoice generation, where the request's
+        // `AccessContext` is unbound and the actor may not be in the fleet
+        // that did the work — so the ambient answer would be wrong twice
+        // over, and silently, in a zone surcharge on somebody's bill.
+        return $this->zones->pricingZoneAt(
+            $latitude,
+            $longitude,
+            $trip->tenant_id,
+            $trip->operator_id,
+        );
     }
 }

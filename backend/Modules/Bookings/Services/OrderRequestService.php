@@ -83,6 +83,15 @@ class OrderRequestService
             return;
         }
 
+        // Rides and deliveries go to a driver; a self-drive rental does not
+        // (`OrderRequestServiceType::dispatchesToDriver`, which records what
+        // happened when nothing asked). It stays in the desk's queue, where a
+        // human checks the hire dates and the KYC documents the form collected
+        // — which is the only place that check can happen.
+        if (! $request->service_type->dispatchesToDriver()) {
+            return;
+        }
+
         // A ride for later is not offered now. Holding an offer open for six
         // hours, or waking a matcher at 05:00 to find somebody for a 06:00
         // pickup, is a scheduler with its own decisions about how early to

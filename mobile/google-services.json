@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "588425027408",
+    "project_id": "kangaru-c698b",
+    "storage_bucket": "kangaru-c698b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:588425027408:android:00223280574ae1f5699655",
+        "android_client_info": {
+          "package_name": "ug.co.kangaruride.driver"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDPLc8eTkhcsaqf28t2lva45tSH9i1R_so"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

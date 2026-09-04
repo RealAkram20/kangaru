@@ -4,6 +4,7 @@ namespace Modules\Trips\Models;
 
 use App\Concerns\Auditable;
 use App\Concerns\BelongsToTenant;
+use App\Concerns\RecordsActingFleet;
 use App\Models\Customer;
 use App\Models\Tenant;
 use App\Support\Tenancy\TenantScope;
@@ -15,9 +16,13 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Bookings\Models\Booking;
+use Modules\Bookings\Models\OrderRequest;
 use Modules\Drivers\Models\Driver;
+use Modules\Drivers\Models\DriverLedgerEntry;
+use Modules\Trips\Distance\DistanceGrade;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Vehicles\Models\Vehicle;
 
@@ -36,6 +41,10 @@ use Modules\Vehicles\Models\Vehicle;
  *                               of this and customer_id is ever set.
  * @property int|null $customer_id
  * @property int|null $booking_id
+ * @property string $channel Walk-in or corporate (ADR-0063 §5). Declared for the
+ *                           same reason User::$access_level is: the column is a plain
+ *                           string, so static analysis reads every isWalkIn() off it as
+ *                           an undefined property and fails the level-8 gate.
  * @property int $vehicle_id
  * @property int $driver_id
  * @property string $origin
@@ -46,18 +55,66 @@ use Modules\Vehicles\Models\Vehicle;
  * @property string|null $distance_km
  * @property string|null $gps_distance_km
  * @property bool $distance_variance_flagged
+ * @property int $unplanned_stop_count How many stops were added mid-run rather
+ *                                     than planned (ADR-0045 §4) — surfaced, never billed.
+ *                                     Extensions are excluded: they are billed.
+ * @property CarbonInterface|null $dropoff_reached_at When the vehicle reached the
+ *                                                    destination the trip was agreed for. Null until it does, and on
+ *                                                    every trip that ends there — the two were one act until extensions
+ *                                                    separated them.
+ * @property string|null $billed_distance_km The resolver's figure (ADR-0045). Nothing
+ *                                           prices from it yet — Phase 1 of `docs/measured-distance-plan.md` runs in shadow.
+ * @property DistanceGrade|null $distance_grade
+ * @property CarbonInterface|null $distance_resolved_at
+ * @property string|null $provisional_distance_km The handset's own measurement of its buffered pings, sent with the completion (ADR-0045 §5).
+ * @property int|null $fare_provisional_minor What the driver showed and took at the kerb; never overwritten.
+ * @property CarbonInterface|null $distance_cleared_at
+ * @property int|null $distance_cleared_by_user_id
+ * @property string|null $distance_cleared_reason
  * @property bool|null $cancellation_charge_applicable
+ * @property int|null $fare_minor Whole shillings — UGX is zero-decimal. Null
+ *                                until `WalkInFareService::settle()` prices the completed trip, and null
+ *                                forever on a corporate trip, which is invoiced instead (ADR-0026 §2).
+ * @property string|null $fare_currency
+ * @property int|null $fare_rate_card_version_id What priced it, so the figure
+ *                                               can be re-derived years later when somebody disputes it.
+ * @property CarbonInterface|null $fare_computed_at
  * @property CarbonInterface|null $started_at
  * @property CarbonInterface|null $completed_at
  * @property CarbonInterface $created_at
  * @property CarbonInterface $updated_at
  * @property-read Vehicle|null $vehicle
  * @property-read Driver|null $driver
+ * @property-read OrderRequest|null $orderRequest
+ * @property-read Booking|null $booking
  */
 class Trip extends Model
 {
+    /** Kangaru's own work: no contract, priced by the public tariff. */
+    public const CHANNEL_WALK_IN = 'walk_in';
+
+    /** A client's contracted work. The default, and the safe default —
+     * a row nobody set is not swept into Kangaru's commission. */
+    public const CHANNEL_CORPORATE = 'corporate';
+
+    /**
+     * Set here as well as on the column, for the reason `OperatorClient`
+     * records about its own status: **a database default applies on insert**,
+     * so a `new Trip([...])` that is never saved carries null for it and every
+     * read of that instance sees a trip with no channel.
+     *
+     * That is not hypothetical — `WalkInFareService::quote()` prices an
+     * unsaved Trip through the real engine on purpose, and a null channel made
+     * it resolve a *corporate* tariff for a walk-in estimate. The symptom was
+     * "no default rate card has been set up", which points at configuration
+     * rather than at the model.
+     *
+     * @var array<string, mixed>
+     */
+    protected $attributes = ['channel' => self::CHANNEL_CORPORATE];
+
     /** @use HasFactory<TripFactory> */
-    use Auditable, BelongsToTenant, HasFactory, SoftDeletes;
+    use Auditable, BelongsToTenant, HasFactory, RecordsActingFleet, SoftDeletes;
 
     /**
      * @see Vehicle::newFactory() for why this is explicit.
@@ -99,6 +156,13 @@ class Trip extends Model
 
     protected $fillable = [
         'tenant_id',
+        // The fleet whose driver ran this (ADR-0055). Set by `TripService`
+        // from the assigned driver rather than from whoever is acting: the
+        // fleet that did the work is a fact about the work, and a dispatcher
+        // — or, after ADR-0056, a support agent acting as one — is not
+        // necessarily in it. Null only on a walk-in nobody has accepted.
+        'operator_id',
+        'channel',
         // ADR-0024 §1. The other owner: set on a walk-in trip, where
         // tenant_id is null. TripService is the only writer and asserts
         // that exactly one of the pair is present.
@@ -119,6 +183,14 @@ class Trip extends Model
         'distance_km',
         'gps_distance_km',
         'distance_variance_flagged',
+        'billed_distance_km',
+        'distance_grade',
+        'distance_resolved_at',
+        'provisional_distance_km',
+        'fare_provisional_minor',
+        'distance_cleared_at',
+        'distance_cleared_by_user_id',
+        'distance_cleared_reason',
         'cancellation_charge_applicable',
         'started_at',
         'completed_at',
@@ -140,6 +212,14 @@ class Trip extends Model
             'distance_km' => 'decimal:2',
             'gps_distance_km' => 'decimal:2',
             'distance_variance_flagged' => 'boolean',
+            'unplanned_stop_count' => 'integer',
+            'dropoff_reached_at' => 'datetime',
+            'billed_distance_km' => 'decimal:2',
+            'distance_grade' => DistanceGrade::class,
+            'distance_resolved_at' => 'datetime',
+            'provisional_distance_km' => 'decimal:2',
+            'fare_provisional_minor' => 'integer',
+            'distance_cleared_at' => 'datetime',
             'cancellation_charge_applicable' => 'boolean',
             'started_at' => 'datetime',
             'completed_at' => 'datetime',
@@ -227,9 +307,38 @@ class Trip extends Model
      * `TripService::assertExactlyOneOwner` only ever refused both, which was
      * right; the ADR's wording and this method were what overstated it.
      */
+    /**
+     * Whether this trip is Kangaru's own walk-in work.
+     *
+     * **Reads the column, not the shape of the row.** `tenant_id === null` was
+     * true of every walk-in and is not the same statement: ADR-0055 §2 refused
+     * the inference because it *"would quietly stop being true the first time a
+     * client-less booking exists for some other reason — and it would stop
+     * being true silently, in the one predicate that decides what head office
+     * reads."*
+     *
+     * ADR-0063 §5 made that urgent rather than tidy. This predicate now also
+     * decides **which fares are split three ways**, so a trip on the wrong side
+     * of it is no longer a display bug — it is money reaching the wrong
+     * parties, with nothing anywhere reporting an error.
+     */
     public function isWalkIn(): bool
     {
-        return $this->tenant_id === null;
+        return $this->channel === self::CHANNEL_WALK_IN;
+    }
+
+    /**
+     * The current resolution of this trip's distance, or null when the
+     * resolver has not run (ADR-0045).
+     *
+     * A query through `DistanceEvidence::scopeForTrip` rather than a
+     * `HasOne`, because the evidence table's tenant is nullable and a
+     * relation through `TenantScope` would return nothing for a walk-in —
+     * the trap `TripEvent::scopeForTrip` documents.
+     */
+    public function latestDistanceEvidence(): ?DistanceEvidence
+    {
+        return DistanceEvidence::query()->forTrip($this)->first();
     }
 
     /**
@@ -257,9 +366,103 @@ class Trip extends Model
             ->where($this->getTable().'.customer_id', $customer->id);
     }
 
+    /**
+     * A driver's own trips, past the tenant scope — the sibling of
+     * `forCustomer` above, and it exists for exactly the same reason.
+     *
+     * **`TenantScope` fails closed, and a driver's walk-in work has no
+     * tenant.** With no tenant bound the scope appends `1 = 0`; with one
+     * bound it appends `tenant_id = X`, which excludes every walk-in, whose
+     * `tenant_id` is null by definition (`isWalkIn()` above). Either way a
+     * plain `Trip::query()->where('driver_id', …)` from a `/me` endpoint
+     * silently loses the trips a boda rider actually did — silently being the
+     * dangerous half. `DriverLedgerController` records the same trap costing
+     * that endpoint a test.
+     *
+     * The narrowing **is** the authorization, as in `forCustomer`: every query
+     * starts from the token's own driver, so there is no "may this driver see
+     * that row" question left for a policy to answer wrongly. This is why
+     * `/me/trips` needs no policy and `drivers/{driver}/trips` would.
+     *
+     * @param  Builder<static>  $query
+     * @return Builder<static>
+     */
+    public function scopeForDriver(Builder $query, Driver $driver): Builder
+    {
+        return $query
+            ->withoutGlobalScope(TenantScope::class)
+            ->where($this->getTable().'.driver_id', $driver->getKey());
+    }
+
     /** @return HasMany<TripEvent, $this> */
     public function events(): HasMany
     {
         return $this->hasMany(TripEvent::class)->orderBy('created_at');
+    }
+
+    /**
+     * The stops this journey carried, in run order (ADR-0045 §1).
+     *
+     * **The tenant scope is dropped on the relation itself**, and that is
+     * load-bearing rather than tidy: `TenantScope` fails closed, a driver's
+     * request binds no tenant, and a walk-in trip's stops have none — so a
+     * plain `hasMany` here would serve an empty itinerary on exactly the
+     * requests that need it. `TripEvent::scopeForTrip` records this same trap
+     * shipping silently once; the narrowing to one already-authorised trip is
+     * the authorization, as it argues there.
+     *
+     * @return HasMany<TripStop, $this>
+     */
+    public function stops(): HasMany
+    {
+        return $this->hasMany(TripStop::class)
+            ->withoutGlobalScope(TenantScope::class)
+            ->orderBy('sequence');
+    }
+
+    /**
+     * The walk-in order this trip was born from (ADR-0024 §3), or null.
+     *
+     * **A `hasOne` against `order_requests.trip_id`, not a column on this
+     * table.** The link already existed in that direction — `DispatchOffer
+     * Service` writes it on the accept, and the race check reads it — so
+     * adding `trips.order_request_id` would have been a second edge for the
+     * same fact, and the two would disagree the first time one was written
+     * without the other.
+     *
+     * What it is *for* is the coordinates. A trip carries `origin` and
+     * `destination` as prose, because that is all a dispatcher keying one in
+     * has; the order request behind a walk-in carries latitude and longitude
+     * as well, and a driver's pickup screen cannot draw a map or measure a
+     * leg from a street name. Null on every corporate trip, and null on a
+     * walk-in that a dispatcher fulfilled by hand — both of which render as
+     * a screen with no map rather than a map of nowhere.
+     *
+     * @return HasOne<OrderRequest, $this>
+     */
+    public function orderRequest(): HasOne
+    {
+        return $this->hasOne(OrderRequest::class, 'trip_id');
+    }
+
+    /**
+     * What this trip did to the driver's wallet.
+     *
+     * Written as a pair at completion by `DriverLedgerService` — a
+     * `fare_earned` credit and a `cash_collected` debit — and read back by
+     * `TripResource` so the driver can be shown their own share of the job
+     * they just finished. Nothing else on the platform reads it per-trip; the
+     * home screen's figures are aggregates over the whole ledger.
+     *
+     * **Eager-load this only where one trip is being served.** It is unbounded
+     * per row, so loading it on a list endpoint is the N+1 AGENTS.md forbids —
+     * `TripController::show()` loads it and `index()` does not, the same bound
+     * `orderRequest` carries and for the same reason.
+     *
+     * @return HasMany<DriverLedgerEntry, $this>
+     */
+    public function ledgerEntries(): HasMany
+    {
+        return $this->hasMany(DriverLedgerEntry::class, 'trip_id');
     }
 }

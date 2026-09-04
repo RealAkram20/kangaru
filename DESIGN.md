@@ -232,7 +232,74 @@ forms and cards use 16/24.
 
 ---
 
-# 7. Enforcement
+# 7. Icons
+
+**One vocabulary: [Lucide](https://lucide.dev). 24-unit grid, round caps and
+joins.** Both apps draw the same shapes. This section exists because they did
+not — the web app was on Lucide and the driver app on Feather, which are close
+enough that nobody noticed and different enough to be wrong.
+
+| App | Source | Animated? |
+|---|---|---|
+| `frontend/` | `lucide-react`, plus Animate UI for the few that animate | Where it earns it |
+| `mobile/` | `src/ui/icons.tsx` — hand-drawn SVG on Lucide geometry | Never |
+
+## The web app
+
+Static icons come from `lucide-react`. Animated ones come from
+[Animate UI](https://animate-ui.com), pulled in with the shadcn CLI:
+
+```bash
+npx shadcn@latest add https://animate-ui.com/r/icons-<name>.json
+```
+
+Animate UI draws Lucide's own geometry, so the two mix with no visible seam —
+which matters, because **its set is partial.** Roughly half the Lucide icons
+have an animated counterpart; `camera`, `phone`, `mail`, `wallet`, `eye`,
+`shield-check` and `car` did not at the time of writing. A 404 from the
+registry is the normal answer, not a problem. Use `lucide-react` for that icon.
+
+Vendored Animate UI source lives in `src/components/animate-ui/` and is
+governed by the README there: it is exempt from our React Compiler lint rules,
+not from type checking, and two small patches must be re-applied after every
+registry pull.
+
+## The driver app
+
+React Native has no DOM, no Tailwind and no Motion, so **Animate UI cannot run
+there at all.** Icons are hand-drawn SVG in `mobile/src/ui/icons.tsx`, and the
+paths are transcribed *verbatim* from
+`frontend/node_modules/lucide-react/dist/esm/icons/<name>.mjs`. Never
+approximate a shape by eye — that is exactly how the two apps drifted before.
+
+The native app keeps its own stroke weight (1.7 rather than Lucide's 2, finer
+at form-field sizes and easier to read in direct sun). **The shape is what has
+to match; the weight is the native app's to tune.**
+
+## When an icon may animate
+
+An icon a driver or dispatcher sees hundreds of times a day must not animate —
+motion stops reading as feedback and starts reading as noise, and on the mobile
+side it competes with a countdown that is already moving. Reserve animation for
+moments that are occasional and mean something: a tick on a completed
+verification, a pin when a location resolves.
+
+Navigation chrome — chevrons, menus, back arrows, tab icons — stays static in
+both apps.
+
+## Rules
+
+- New icon? It must exist in Lucide first. If Lucide has no suitable glyph,
+  that is a design conversation, not a licence to draw one.
+- Never install another icon set, and never `@expo/vector-icons` in `mobile/` —
+  it bundles whole fonts for a handful of glyphs, and a missing glyph renders
+  as a tofu box where a vector renders as nothing.
+- Icons carry meaning only alongside a label or an accessible name; see §8 on
+  never communicating status by colour or glyph alone.
+
+---
+
+# 8. Enforcement
 
 - Raw hex values in component code fail review — use tokens.
 - Any new color pairing must pass WCAG AA (4.5:1 normal text, 3:1 large text/UI

@@ -2,6 +2,11 @@
 
 namespace Modules\Dispatch\Services;
 
+use App\Enums\AccessLevel;
+use App\Models\Operator;
+use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Modules\Bookings\Models\Booking;
 use Modules\Dispatch\Support\GreatCircle;
@@ -39,6 +44,34 @@ use Modules\Vehicles\Models\Vehicle;
  */
 class DispatchRecommender
 {
+    /**
+     * What a category match is worth, and why it is this number (ADR-0051).
+     *
+     * The owner's rule is "a matching vehicle outranks everything except a
+     * contracted one", and the tiers have to hold arithmetically rather than
+     * by intention:
+     *
+     * - the contract bonus is **1000** (ADR-0009 §1: a commercial agreement
+     *   must not be overridden by a distance heuristic);
+     * - distance contributes at most **500**, as `500 / (1 + km)` at km = 0;
+     * - the spare-seat penalty subtracts at most **20**.
+     *
+     * So a contracted vehicle scores at least `1000 - 20 = 980`, and for it
+     * to beat every non-contracted one this bonus must satisfy
+     * `CATEGORY_MATCH + 500 < 980` — anything under 480. At 450 the tiers
+     * are strict: contract, then category, then distance.
+     *
+     * It is not a *total* order over distance, deliberately. A matching van
+     * 40 km away scores `450 + 12 = 462` and loses to a sedan at the kerb on
+     * `500`. That is the right answer and it is what "strong preference"
+     * means: at some distance the vehicle that can actually arrive wins, and
+     * the reason line says plainly that it is not what was asked for.
+     *
+     * Changing this number changes who gets sent. It belongs beside the
+     * arithmetic that constrains it, not in config.
+     */
+    private const CATEGORY_MATCH = 450.0;
+
     public function __construct(
         private readonly AvailabilityService $availability,
         private readonly AllocationLookup $allocations,
@@ -48,11 +81,81 @@ class DispatchRecommender
     /**
      * @return Collection<int, DispatchSuggestion>
      */
-    public function forBooking(Booking $booking): Collection
+    public function forBooking(Booking $booking, User $actor): Collection
+    {
+        // Arm-for-arm the same predicate as `BelongsToOperator::scopeForActor`
+        // (ADR-0055 §6), and it must stay in step with it. It is inlined rather
+        // than called through `forActor` because `rank` applies this to a
+        // `Builder<TModel>` whose model is a template — and a trait scope
+        // resolves only on a concrete builder, not a generic one. A client or
+        // an applicant still reaches nothing, exactly as the scope refuses them.
+        return $this->rank($booking, fn ($query) => match ($actor->access_level) {
+            AccessLevel::FLEET => $query->where($query->getModel()->getTable().'.operator_id', $actor->operator_id),
+            AccessLevel::KANGARU => $query->whereNull($query->getModel()->getTable().'.operator_id'),
+            AccessLevel::CLIENT, AccessLevel::APPLICANT => $query->whereRaw('1 = 0'),
+        });
+    }
+
+    /**
+     * The same ranking, asked on behalf of a fleet rather than a person
+     * (ADR-0068).
+     *
+     * Automatic rotation needs this. When a desk-assigned offer times out,
+     * the next wave is chosen by the scheduler, which has no request, no
+     * session and therefore no actor — and `forActor` is defined in terms of
+     * one. What the scheduler *does* have is the booking, and
+     * `bookings.operator_id` records which fleet is running it.
+     *
+     * The two doors agree by construction rather than by comment: for fleet
+     * staff `forActor` reduces to `operator_id = $actor->operator_id`, and
+     * for head office to `operator_id IS NULL` — which is exactly the pair
+     * of predicates below, `$operatorId` being nullable for that reason.
+     * A client or an applicant reaches neither door: they cannot dispatch,
+     * and `forBooking` still refuses them through its own predicate.
+     *
+     * @return Collection<int, DispatchSuggestion>
+     */
+    public function forBookingInFleet(Booking $booking, ?int $operatorId): Collection
+    {
+        return $this->rank($booking, fn ($query) => $operatorId === null
+            ? $query->whereNull($query->getModel()->getTable().'.operator_id')
+            : $query->where($query->getModel()->getTable().'.operator_id', $operatorId));
+    }
+
+    /**
+     * The ranking itself, over whichever pool the caller's door allows.
+     *
+     * `$fleetScope` is applied to `drivers` and to `vehicles` alike — both
+     * carry `BelongsToOperator`, and both have to be narrowed or automatic
+     * dispatch could commit another fleet's van to this fleet's booking.
+     * That is the sentence the original comment below made about drivers,
+     * and it was always true of the vehicles too.
+     *
+     * @param  \Closure<TModel of Model>(Builder<TModel>): Builder<TModel>  $fleetScope
+     * @return Collection<int, DispatchSuggestion>
+     */
+    private function rank(Booking $booking, \Closure $fleetScope): Collection
     {
         [$from, $to] = $this->availability->windowFor($booking->scheduled_for);
 
-        $drivers = $this->availability->availableDrivers($from, $to);
+        // `availableDrivers` answers *who is free*, across the platform — it
+        // is a utility shared with the availability checks and is right to be
+        // unscoped. Which of them are **this fleet's** is a separate question,
+        // and it has to be asked here: this collection is the pool the
+        // suggestion is chosen from, and `bestFor` hands the winner straight
+        // to `assign()`. Unscoped, automatic dispatch could commit another
+        // fleet's driver to this fleet's booking — not merely display them.
+        //
+        // Narrowed through `forActor` rather than a hand-written
+        // `operator_id` comparison, so the three access levels keep one
+        // definition (ADR-0055 §6) — now behind `$fleetScope`, which is that
+        // same scope for a person and its fleet-shaped twin for the
+        // scheduler (`forBookingInFleet`).
+        $free = $this->availability->availableDrivers($from, $to);
+
+        $mine = $fleetScope(Driver::query())->whereKey($free->pluck('id')->all())->pluck('id')->flip();
+
+        $drivers = $free->filter(fn (Driver $driver) => $mine->has($driver->id))->values();
 
         if ($drivers->isEmpty()) {
             return collect();
@@ -62,7 +165,7 @@ class DispatchRecommender
         $on = $booking->scheduled_for ?? now();
         $contracted = $this->allocations->vehiclesFor($booking->tenant_id, $on);
 
-        $vehicles = Vehicle::query()
+        $vehicles = $fleetScope(Vehicle::query())
             ->where('status', 'active')
             // A hard filter, not a penalty: a five-seater cannot take eight
             // passengers, and ranking it low would still eventually offer it
@@ -76,32 +179,143 @@ class DispatchRecommender
             return collect();
         }
 
-        // One driver per vehicle. Pairing every driver with every vehicle
-        // would be a cross product nobody reads — 3,000 × 2,000 rows to
-        // choose one from — and the choice of driver barely depends on the
-        // choice of vehicle once both are free.
-        $rankedDrivers = $drivers->values()->all();
-        $driverCount = count($rankedDrivers);
+        /*
+         * One driver per vehicle. Pairing every driver with every vehicle
+         * would be a cross product nobody reads — 3,000 × 2,000 rows to
+         * choose one from.
+         *
+         * **The driver who already holds the vehicle gets it.** The owner,
+         * 29 August 2026: *"these vehicle are already given to them way
+         * before … by the time of order everything is smooth, we don't need
+         * to asing vehicles as well."* This used to pair by position —
+         * vehicle *i* with driver *i* — which for a fleet where drivers keep
+         * their vehicles is a coin toss: it could offer the boda to a van
+         * driver and the van to the boda rider, and `assign()` would commit
+         * it, because the endpoint only asks whether both are free.
+         *
+         * Round-robin survives for the vehicles nobody holds, which is the
+         * arrangement it was written for and is still true of a depot: a car
+         * handed out at the start of a shift has no driver until it is.
+         */
+        $offerable = $vehicles->pluck('id')->flip();
+
+        $held = $drivers
+            ->filter(fn (Driver $driver) => $driver->vehicle_id !== null
+                // Their vehicle has to be one of *today's*. A rider whose own
+                // boda is in the workshop, or too small for this booking,
+                // holds nothing that can take the job — and would otherwise
+                // fall out of both groups and be unable to drive anything.
+                && $offerable->has($driver->vehicle_id))
+            // Cast because the filter above is what makes this non-null,
+            // and static analysis reads the two lines independently.
+            ->keyBy(fn (Driver $driver) => (int) $driver->vehicle_id);
+
+        // Everyone not already spoken for. A driver holding one of today's
+        // vehicles is not also a candidate for somebody else's, or the pairing
+        // above would be undone by the fallback beneath it — but a driver whose
+        // own vehicle is off the road today is free to take a depot one.
+        $spokenFor = $held->pluck('id')->flip();
+
+        $pool = $drivers->reject(fn (Driver $driver) => $spokenFor->has($driver->id))->values()->all();
+        $poolCount = count($pool);
+
+        $mainFleets = Operator::query()->where('is_main_fleet', true)->pluck('id')->flip();
+
+        $spare = 0;
 
         return $vehicles
             ->values()
-            ->map(fn (Vehicle $vehicle, int $index) => $this->score(
-                $booking,
-                $vehicle,
-                $rankedDrivers[$index % $driverCount],
-                $contracted->contains($vehicle->id),
-            ))
+            ->map(function (Vehicle $vehicle) use ($booking, $contracted, $held, $pool, $poolCount, $mainFleets, &$spare): ?DispatchSuggestion {
+                $driver = $held->get($vehicle->id);
+
+                if (! $driver instanceof Driver) {
+                    if ($poolCount === 0) {
+                        // Nobody free can drive it. Dropped rather than
+                        // ranked low, like every other hard filter here:
+                        // offering a vehicle with no driver is offering a
+                        // candidate that cannot take the job.
+                        return null;
+                    }
+
+                    $driver = $pool[$spare % $poolCount];
+                    $spare++;
+                }
+
+                return $this->score(
+                    $booking,
+                    $vehicle,
+                    $driver,
+                    $contracted->contains($vehicle->id),
+                    // A vehicle with no fleet belongs to no house, which
+                    // is the honest reading of a null here and not a
+                    // reason to treat it as the platform's.
+                    $vehicle->operator_id !== null && $mainFleets->has($vehicle->operator_id),
+                );
+            })
+            ->filter()
             ->sortByDesc(fn (DispatchSuggestion $s) => $s->score)
             ->values();
     }
 
-    /** The single best pair, or null when nothing can take this booking. */
-    public function bestFor(Booking $booking): ?DispatchSuggestion
+    /**
+     * The pairs a corporate booking may be *offered* to, best first.
+     *
+     * ## Why this is a filter and not the ranking above
+     *
+     * `forBooking` is the dispatcher's own view: it lists everything that
+     * could take the job and puts the contracted vehicles on top, because a
+     * human choosing by hand should see the whole board and be told what the
+     * contract says.
+     *
+     * Offering is a different act. Nobody is looking: the job goes out to
+     * drivers and the first to accept takes it. The owner's ruling
+     * (2026-08-28) is that a corporate booking offered this way **never
+     * leaves the client's own contracted fleet** — a client paying to have
+     * vehicles set aside must not have their work carried by somebody else's
+     * van because that van happened to be nearer. A job no contracted driver
+     * answers falls back to the desk, which is where it sits today.
+     *
+     * So the 1000-point bonus becomes a hard filter here. Ranking on it would
+     * still eventually offer an uncontracted vehicle on a thin morning, which
+     * is exactly the outcome the ruling excludes — the same reasoning
+     * `WalkInRecommender` gives for filtering rather than scoring anything
+     * the accept path would refuse.
+     *
+     * @return Collection<int, DispatchSuggestion>
+     */
+    public function offerableFor(Booking $booking, User $actor): Collection
     {
-        return $this->forBooking($booking)->first();
+        return $this->forBooking($booking, $actor)
+            ->filter(fn (DispatchSuggestion $s) => $s->contracted || $s->mainFleet)
+            ->values();
     }
 
-    private function score(Booking $booking, Vehicle $vehicle, Driver $driver, bool $allocated): DispatchSuggestion
+    /** The single best pair, or null when nothing can take this booking. */
+    public function bestFor(Booking $booking, User $actor): ?DispatchSuggestion
+    {
+        return $this->forBooking($booking, $actor)->first();
+    }
+
+    /**
+     * `offerableFor`, asked by the scheduler (ADR-0068).
+     *
+     * The same commercial filter deliberately, not a looser one. A rotation
+     * that reached for any free van the moment a driver let their phone ring
+     * out would hand a client's contracted work to somebody else's vehicle —
+     * the exact outcome ADR-0067 and `autoAssign` both refuse — and it would
+     * do it unattended, which is worse than doing it on a board somebody is
+     * watching.
+     *
+     * @return Collection<int, DispatchSuggestion>
+     */
+    public function offerableForFleet(Booking $booking, ?int $operatorId): Collection
+    {
+        return $this->forBookingInFleet($booking, $operatorId)
+            ->filter(fn (DispatchSuggestion $s) => $s->contracted || $s->mainFleet)
+            ->values();
+    }
+
+    private function score(Booking $booking, Vehicle $vehicle, Driver $driver, bool $allocated, bool $mainFleet): DispatchSuggestion
     {
         $score = 0.0;
         $reasons = [];
@@ -129,6 +343,30 @@ class DispatchRecommender
                 : 'This vehicle has not reported a position, so distance was not used.';
         }
 
+        // ADR-0051. The kind of vehicle the client asked for.
+        //
+        // **A preference, not a filter.** The owner was offered a hard
+        // filter and chose this: refusing every other category means a bank
+        // whose van is out gets no candidate at all, the booking sits, and
+        // nothing says why. Ranking says the same thing and still leaves a
+        // dispatcher something to send.
+        if ($booking->vehicle_category !== null) {
+            if ($vehicle->category === $booking->vehicle_category) {
+                $score += self::CATEGORY_MATCH;
+                $reasons[] = sprintf('%s, as the client requested.', ucfirst($vehicle->category));
+            } else {
+                // Said on every mismatch, not only the ones that rank badly.
+                // A dispatcher reading a list has to be able to see that the
+                // top candidate is not what was asked for — that is the
+                // whole difference between this and a silent substitution.
+                $reasons[] = sprintf(
+                    'Not the %s the client requested — this is a %s.',
+                    $booking->vehicle_category,
+                    $vehicle->category,
+                );
+            }
+        }
+
         // A gentle nudge, not a rule: a fifty-seater sent to collect one
         // passenger is legal and wasteful, and the spare seats are what a
         // dispatcher would notice.
@@ -147,6 +385,8 @@ class DispatchRecommender
             score: round($score, 2),
             pickupDistanceKm: $distanceKm === null ? null : round($distanceKm, 2),
             reasons: $reasons,
+            contracted: $allocated,
+            mainFleet: $mainFleet,
         );
     }
 

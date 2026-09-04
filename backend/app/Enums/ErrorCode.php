@@ -27,11 +27,28 @@ enum ErrorCode: string
     case INVALID_TRIP_TRANSITION = 'INVALID_TRIP_TRANSITION';
     case INVALID_BOOKING_TRANSITION = 'INVALID_BOOKING_TRANSITION';
     case INVALID_ORDER_REQUEST_TRANSITION = 'INVALID_ORDER_REQUEST_TRANSITION';
+
+    /**
+     * The booking's service never takes a driver (ADR-0064): a self-drive
+     * rental is a vehicle handed over, not a journey somebody is sent on.
+     * A conflict rather than a validation failure — the ids were
+     * well-formed, the booking is simply not that kind of work.
+     */
+    case BOOKING_NOT_DISPATCHABLE = 'BOOKING_NOT_DISPATCHABLE';
     case VEHICLE_UNAVAILABLE = 'VEHICLE_UNAVAILABLE';
     case DRIVER_UNAVAILABLE = 'DRIVER_UNAVAILABLE';
     case REPORT_TOO_LARGE = 'REPORT_TOO_LARGE';
     case EXPORT_NOT_READY = 'EXPORT_NOT_READY';
     case EXPORT_EXPIRED = 'EXPORT_EXPIRED';
+
+    /**
+     * The trip is not in a journey status, so its itinerary cannot grow and
+     * the place search is closed (ADR-0045 §4, §10 — a driver's reach is
+     * bounded to the run they are *currently driving*). A conflict rather
+     * than a validation failure: the request was well-formed, the trip has
+     * simply moved on — or not started.
+     */
+    case TRIP_NOT_ACTIVE = 'TRIP_NOT_ACTIVE';
 
     /**
      * An exclusive allocation cannot share a vehicle with another contract
@@ -63,6 +80,25 @@ enum ErrorCode: string
      */
     case TRIP_NOT_INVOICEABLE_WALK_IN = 'TRIP_NOT_INVOICEABLE_WALK_IN';
 
+    /**
+     * The trip's distance has not been resolved yet, and its rate card bills
+     * on the measured trace (ADR-0045). "Not yet", like TRIP_NOT_INVOICEABLE:
+     * the resolver runs after a grace period and re-runs on late pings, so
+     * the right response is to wait or to force it from the console.
+     */
+    case TRIP_DISTANCE_UNRESOLVED = 'TRIP_DISTANCE_UNRESOLVED';
+
+    /**
+     * The trip's distance resolved to grade C — held — and
+     * `tracking.held_blocks_billing` is on (ADR-0045 §2). Nothing bills from
+     * it until a person with `trips.transition.finance` clears it with a
+     * reason.
+     */
+    case TRIP_DISTANCE_HELD = 'TRIP_DISTANCE_HELD';
+
+    /** Clearing a trip that is not held: nothing to clear (ADR-0045 §2). */
+    case TRIP_DISTANCE_NOT_HELD = 'TRIP_DISTANCE_NOT_HELD';
+
     case TRIP_ALREADY_INVOICED = 'TRIP_ALREADY_INVOICED';
     case IDEMPOTENCY_KEY_REUSED = 'IDEMPOTENCY_KEY_REUSED';
     case CREDIT_NOTE_EXCEEDS_INVOICE = 'CREDIT_NOTE_EXCEEDS_INVOICE';
@@ -90,6 +126,43 @@ enum ErrorCode: string
     case MAIL_DELIVERY_FAILED = 'MAIL_DELIVERY_FAILED';
 
     /**
+     * ADR-0045: a route named a saved place that is not this client's, or a
+     * team member who is not in their organisation. 422 rather than 404 —
+     * the route being saved is the resource, and it is the *payload* that
+     * is wrong. A 404 here would also be a worse answer than it looks: the
+     * ids came from the client's own screen, so "not found" reads as "we
+     * lost your data" rather than "that one is not yours".
+     */
+    case UNKNOWN_CLIENT_PLACE = 'UNKNOWN_CLIENT_PLACE';
+    case UNKNOWN_ROUTE_MEMBER = 'UNKNOWN_ROUTE_MEMBER';
+
+    /**
+     * A saved place cannot be deleted while a route still visits it
+     * (ADR-0045 §1 — `client_route_stops.client_place_id` is
+     * restrictOnDelete). 409: the request is legal and the state refuses
+     * it, and the message names the routes so the officer can act.
+     */
+    case CLIENT_PLACE_IN_USE = 'CLIENT_PLACE_IN_USE';
+
+    /**
+     * A vehicle category cannot be deleted while a vehicle, a rate card
+     * price or an invoice line still names it (ADR-0050 §3).
+     *
+     * Unlike `CLIENT_PLACE_IN_USE` above, **no foreign key is enforcing
+     * this** — `rate_card_rates.vehicle_category` and
+     * `invoice_lines.vehicle_category` are deliberately plain strings, so
+     * that an issued invoice reproduces from stored data without joining a
+     * table somebody can rename. The database will not refuse this delete;
+     * the controller must, or an immutable rate card rate is left naming
+     * nothing on a version that can never be corrected.
+     *
+     * 409 for the shared reason: the request is well-formed and the world
+     * disagrees with it. The message names the counts and points at
+     * retirement, which is the action that actually resolves it.
+     */
+    case VEHICLE_CATEGORY_IN_USE = 'VEHICLE_CATEGORY_IN_USE';
+
+    /**
      * The sign-in account cannot be attached to this driver (ADR-0016):
      * the profile already has one, or the account being linked is already
      * some other driver's. 409 rather than 422 — the request is
@@ -97,6 +170,59 @@ enum ErrorCode: string
      * fixes it by detaching first rather than by editing a field.
      */
     case DRIVER_ACCOUNT_CONFLICT = 'DRIVER_ACCOUNT_CONFLICT';
+
+    /**
+     * The address named for a fleet handover belongs to an account that may
+     * not take the fleet over — another fleet's staff, a client's, or head
+     * office (ADR-0065).
+     *
+     * An account that is *free to move* — a driver applicant, or somebody
+     * already at this fleet — is promoted instead, so this is only ever the
+     * cross-organisation case. 409 for the reason the codes around it are:
+     * the request is well formed and it is the world that disagrees, and the
+     * fix is another address rather than an edited field.
+     *
+     * **Separate from `INVITATION_EXPIRED`, which it used to be reported as.**
+     * The two send the reader to different places — one waits for a new link,
+     * the other needs a different address — and collapsing them told an
+     * incoming fleet owner that a four-hour-old link had lapsed.
+     */
+    case OWNER_ADDRESS_IN_USE = 'OWNER_ADDRESS_IN_USE';
+
+    /**
+     * Somebody already approved or rejected this driver application
+     * (ADR-0027 §4). 409 for the same reason as the two codes either side
+     * of it: the request is well formed and the world has moved, and the
+     * reviewer fixes it by refreshing rather than by editing a field.
+     *
+     * Worth more here than elsewhere, because the thing a lost race would
+     * otherwise produce is a second account and a second driver profile for
+     * one person.
+     */
+    case DRIVER_APPLICATION_CLOSED = 'DRIVER_APPLICATION_CLOSED';
+
+    /**
+     * Approval was attempted while a document was still unaccepted
+     * (ADR-0057 §2). Distinct from CLOSED, which means somebody already
+     * decided: this application is open and there is one more step.
+     */
+    case DRIVER_APPLICATION_DOCUMENTS_PENDING = 'DRIVER_APPLICATION_DOCUMENTS_PENDING';
+
+    /**
+     * The sign-in method the caller asked for is switched off, or its
+     * prerequisites are not configured (ADR-0028 §1). 409 rather than 404:
+     * the endpoint exists, the platform's owner has it turned off, and the
+     * caller's fix is the settings screen rather than a different URL.
+     */
+    case AUTH_METHOD_DISABLED = 'AUTH_METHOD_DISABLED';
+
+    /**
+     * The Google/Facebook proof did not verify — wrong audience, expired,
+     * or the provider refused it (ADR-0028 §3). Never distinguishes which,
+     * to the caller: the detail goes to the log, where it helps an
+     * operator instead of an attacker.
+     */
+    case SOCIAL_TOKEN_INVALID = 'SOCIAL_TOKEN_INVALID';
 
     /**
      * Somebody already approved or declined this request for time off
@@ -169,4 +295,46 @@ enum ErrorCode: string
      * replayed somewhere it should not be.
      */
     case TOKEN_SCOPE_EXCEEDED = 'TOKEN_SCOPE_EXCEEDED';
+
+    /**
+     * The driver already has a settlement request of this kind waiting
+     * (ADR-0032 §4).
+     *
+     * 409 rather than 422: nothing about the request they sent is malformed —
+     * it is the world that refuses it, and their own wallet screen already
+     * shows the open one. A driver fixes this by waiting or by cancelling,
+     * not by editing a field.
+     *
+     * The rule exists because two pending payout requests are not two
+     * payouts. They are one driver asking twice, and a queue full of
+     * duplicates is a queue the office stops reading.
+     */
+    case SETTLEMENT_REQUEST_ALREADY_OPEN = 'SETTLEMENT_REQUEST_ALREADY_OPEN';
+    /** ADR-0043. One open closure request per driver; withdraw it to change it. */
+    case CLOSURE_REQUEST_ALREADY_OPEN = 'CLOSURE_REQUEST_ALREADY_OPEN';
+    /** ADR-0043. A second reviewer answering a queue row a colleague just answered. */
+    /**
+     * The invitation link has already been used (mail plan M2).
+     *
+     * Separate from `INVITATION_EXPIRED` because the two send the reader to
+     * different places, and a client that could not tell them apart would send
+     * both to the same one. Somebody who already accepted needs the sign-in
+     * screen. Somebody whose link lapsed needs a colleague to send a new one,
+     * and telling the first person that has them chasing an email they do not
+     * need.
+     */
+    case INVITATION_ALREADY_USED = 'INVITATION_ALREADY_USED';
+
+    /**
+     * The invitation link has lapsed, or the account was suspended after it
+     * went out (mail plan M2).
+     *
+     * Both answer the same way on purpose. A suspended account is one somebody
+     * decided should not be used, and an invitation issued before that
+     * decision must not be the way around it; saying so would confirm the
+     * suspension to whoever is holding the link.
+     */
+    case INVITATION_EXPIRED = 'INVITATION_EXPIRED';
+
+    case CLOSURE_REQUEST_ALREADY_DECIDED = 'CLOSURE_REQUEST_ALREADY_DECIDED';
 }

@@ -9,6 +9,7 @@ import { Alert } from '../components/feedback/Alert'
 import { EmptyState } from '../components/feedback/EmptyState'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { PageFill } from '../components/layout/PageFill'
 import { Select } from '../components/forms/Select'
 import { apiClient } from '../lib/apiClient'
 import { apiError } from '../lib/apiError'
@@ -150,11 +151,13 @@ export function AuditLogPage() {
     () => [
       {
         key: 'created_at',
+        card: 'meta',
         header: 'When',
         render: (row) => formatTimestamp(row.created_at),
       },
       {
         key: 'user_id',
+        card: 'title',
         header: 'Who',
         render: (row) =>
           // A mutation with no actor came from a seeder, a queue job or a
@@ -164,6 +167,7 @@ export function AuditLogPage() {
       },
       {
         key: 'action',
+        card: 'status',
         header: 'Action',
         render: (row) => (
           <Badge tone={ACTION_TONE[row.action]} icon={ACTION_ICON[row.action]} size="sm">
@@ -173,6 +177,7 @@ export function AuditLogPage() {
       },
       {
         key: 'auditable_type',
+        card: 'meta',
         header: 'Record',
         render: (row) => (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -185,6 +190,7 @@ export function AuditLogPage() {
       },
       {
         key: 'ip_address',
+        card: 'hide',
         header: 'From',
         // AGENTS.md asks for "from which IP". Null on anything a console
         // wrote, which is not a gap but the absence of a request.
@@ -197,6 +203,7 @@ export function AuditLogPage() {
       },
       {
         key: 'id',
+        card: 'meta',
         header: 'Changes',
         render: (row) => (
           <Button
@@ -219,7 +226,7 @@ export function AuditLogPage() {
         <EmptyState
           icon="lock"
           title="The audit log is not available to your account"
-          description="Reading the audit trail is reserved for administrators. Ask a Super Admin or your Corporate Admin if you need access."
+          description="Ask a Super Admin or your Corporate Admin for access."
         />
       </Card>
     )
@@ -228,18 +235,22 @@ export function AuditLogPage() {
   const openEntry = entries?.find((entry) => entry.id === expanded) ?? null
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+    <PageFill>
       {error && (
         <Alert tone="error" title="Audit log" onDismiss={() => setError(null)}>
           {error}
         </Alert>
       )}
 
+      {/* The filter card keeps its natural height — it is a form, and a form
+          that scrolls internally to reveal its own Apply button is worse than
+          one that simply takes the room it needs. The trail below it is what
+          flexes. */}
       <Card
         title="Audit log"
         subtitle={
           meta?.scope === 'platform'
-            ? 'Every tenant, plus platform-level changes such as roles. Append-only — nothing here can be edited or removed.'
+            ? 'Every client, plus platform-level changes such as roles. Append-only — nothing here can be edited or removed.'
             : 'Your organisation’s record of who changed what. Append-only — nothing here can be edited or removed.'
         }
       >
@@ -312,7 +323,7 @@ export function AuditLogPage() {
           <div style={{ display: 'flex', gap: 'var(--gap-inline)' }}>
             {/* Explicit, not on change: a date is typed a character at a
                 time, and "2026-0" is not a range anybody meant to run. */}
-            <Button iconLeft="filter" onClick={() => apply(draft)}>
+            <Button iconLeft="funnel" onClick={() => apply(draft)}>
               Apply filters
             </Button>
             {hasAnyFilter(filters) && (
@@ -324,7 +335,18 @@ export function AuditLogPage() {
         </div>
       </Card>
 
-      <Card padding="none">
+      <PageFill.Flex>
+      <Card
+        fill
+        padding="none"
+        footer={
+          <LoadMore
+            hasMore={meta?.cursor.next != null}
+            loading={loadingMore}
+            onLoadMore={() => void loadMore()}
+          />
+        }
+      >
         {entries !== null && entries.length === 0 ? (
           <EmptyState
             icon="file-clock"
@@ -344,19 +366,23 @@ export function AuditLogPage() {
             columns={columns}
             rows={entries ?? []}
             dense
+            fill
             emptyMessage={entries === null ? 'Loading…' : 'Nothing matches these filters'}
           />
         )}
 
-        {openEntry && <ChangeDetail entry={openEntry} />}
-
-        <LoadMore
-          hasMore={meta?.cursor.next != null}
-          loading={loadingMore}
-          onLoadMore={() => void loadMore()}
-        />
+        {/* Below the scrolling rows but inside the card, so the change stays
+            attached to the trail it belongs to. Bounded and scrolling in its
+            own right: a diff of a wide record must not squeeze the list that
+            opened it down to one row. */}
+        {openEntry && (
+          <div style={{ flexShrink: 0, maxHeight: '40%', overflowY: 'auto' }} className="kr-scroll">
+            <ChangeDetail entry={openEntry} />
+          </div>
+        )}
       </Card>
-    </div>
+      </PageFill.Flex>
+    </PageFill>
   )
 }
 

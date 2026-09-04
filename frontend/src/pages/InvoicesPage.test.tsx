@@ -166,7 +166,7 @@ describe('InvoicesPage', () => {
     expect(await screen.findByText('No invoices yet')).toBeInTheDocument()
     // Nothing on this page creates one; saying so saves a hunt for a button
     // that does not exist.
-    expect(screen.getByText(/raised from a completed trip on the Trips page/i)).toBeInTheDocument()
+    expect(screen.getByText(/raised from a completed trip, on the Trips page/i)).toBeInTheDocument()
   })
 
   it('reports a genuine failure as one', async () => {

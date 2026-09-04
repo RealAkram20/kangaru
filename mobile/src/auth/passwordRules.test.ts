@@ -23,16 +23,29 @@ describe('passwordProblem', () => {
   });
 
   /**
-   * `Password::min(12)`. Mutation check — lower `MINIMUM_PASSWORD_LENGTH` or
-   * drop the comparison and this fails: an 11-character password is accepted
-   * locally, sent, and refused by the server.
+   * The number itself, asserted as a literal and only here.
+   *
+   * The relative test below pins the *comparison*; this pins the *value*
+   * against `App\Support\Auth\PasswordPolicy::MINIMUM_LENGTH`, which every
+   * request class on the server now validates against. Written as a literal on
+   * purpose — a test phrased in terms of the constant it is checking passes
+   * whatever the constant becomes, which is exactly the drift that would let a
+   * screen promise a floor the server does not hold.
    */
-  it('enforces the same twelve-character minimum the server does', () => {
-    const eleven = 'a'.repeat(MINIMUM_PASSWORD_LENGTH - 1);
-    const twelve = 'a'.repeat(MINIMUM_PASSWORD_LENGTH);
+  it('holds the six the server holds', () => {
+    expect(MINIMUM_PASSWORD_LENGTH).toBe(6);
+  });
 
-    expect(passwordProblem({ ...VALID, next: eleven, confirmation: eleven })).toBe('too_short');
-    expect(passwordProblem({ ...VALID, next: twelve, confirmation: twelve })).toBeNull();
+  /**
+   * Mutation check — drop the comparison and this fails: a password one short
+   * of the floor is accepted locally, sent, and refused by the server.
+   */
+  it('refuses one character below the floor and accepts the floor exactly', () => {
+    const under = 'a'.repeat(MINIMUM_PASSWORD_LENGTH - 1);
+    const exact = 'a'.repeat(MINIMUM_PASSWORD_LENGTH);
+
+    expect(passwordProblem({ ...VALID, next: under, confirmation: under })).toBe('too_short');
+    expect(passwordProblem({ ...VALID, next: exact, confirmation: exact })).toBeNull();
   });
 
   /**

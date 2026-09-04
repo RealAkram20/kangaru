@@ -1,6 +1,8 @@
 <?php
 
 use App\Enums\UserRole;
+use App\Models\Operator;
+use App\Models\OperatorClient;
 use App\Models\Tenant;
 use App\Models\User;
 use Modules\Administration\Services\SettingsService;
@@ -56,6 +58,7 @@ it('auto-approves a booking when the owner has waived approval', function () {
 
     $this->actingAs($employee, 'sanctum')
         ->postJson('/api/v1/bookings', [
+            'passenger_user_id' => $employee->id,
             'passenger_name' => 'Nakato Grace',
             'passenger_phone' => '0700123456',
             'origin' => 'Kampala',
@@ -77,6 +80,7 @@ it('keeps the approval step by default', function () {
 
     $this->actingAs($employee, 'sanctum')
         ->postJson('/api/v1/bookings', [
+            'passenger_user_id' => $employee->id,
             'passenger_name' => 'Nakato Grace',
             'passenger_phone' => '0700123456',
             'origin' => 'Kampala',
@@ -96,6 +100,7 @@ it('caps how far ahead a booking may be scheduled, per settings', function () {
     ]);
 
     $base = [
+        'passenger_user_id' => $employee->id,
         'passenger_name' => 'Nakato Grace',
         'passenger_phone' => '0700123456',
         'origin' => 'Kampala',
@@ -127,4 +132,51 @@ it('applies the same advance cap to the public order form', function () {
     ])
         ->assertStatus(422)
         ->assertJsonValidationErrors(['scheduled_for']);
+});
+
+it('auto-approves for a fleet desk, whose actor carries no tenant of their own', function () {
+    /*
+      **The case the test above cannot reach, and the bug it hid.**
+
+      That one signs in a corporate employee, whose own `tenant_id` binds the
+      scope — so `BookingService::decide` could re-read the booking and
+      nobody noticed it was reading through `TenantScope`. A fleet
+      dispatcher has no tenant of their own, and nothing binds one on
+      `POST /bookings` because there is no `{booking}` in the URL for
+      `IdentifyTenant` to read.
+
+      So the booking was written, `decide` could not see it a line later,
+      and the caller got **404 NOT_FOUND for a booking that had just been
+      created** — with the row rolled back to `pending`. Reported by the
+      owner as "nothing happens next after clicking create booking".
+
+      Approving through `/bookings/{booking}/approval` never showed it: the
+      route model binds the tenant first.
+    */
+    app(SettingsService::class)->setGroup('booking', ['approval_required' => false]);
+
+    $tenant = Tenant::factory()->create();
+    $desk = User::factory()->create([
+        'tenant_id' => null,
+        'role' => UserRole::DISPATCHER,
+        'operator_id' => Operator::SHANITAH,
+    ]);
+
+    // A desk may only book for a client its fleet serves, which is a
+    // separate refusal (422) from the one under test.
+    OperatorClient::query()->firstOrCreate(
+        ['operator_id' => Operator::SHANITAH, 'tenant_id' => $tenant->id],
+        ['status' => OperatorClient::ACTIVE],
+    );
+
+    $this->actingAs($desk, 'sanctum')
+        ->postJson('/api/v1/bookings', [
+            'tenant_id' => $tenant->id,
+            'passenger_name' => 'Nakato Grace',
+            'passenger_phone' => '0700123456',
+            'origin' => 'Kampala',
+            'destination' => 'Entebbe',
+        ])
+        ->assertStatus(201)
+        ->assertJsonPath('data.status', BookingStatus::APPROVED->value);
 });

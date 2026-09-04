@@ -4,6 +4,33 @@ import type { Trip } from './trip'
 /** Mirrors Modules/Bookings/Enums/BookingStatus.php. */
 export type BookingStatus = 'pending' | 'approved' | 'rejected' | 'assigned' | 'cancelled'
 
+/**
+ * Mirrors Modules/Bookings/Enums/OrderRequestServiceType.php — the same
+ * triad the walk-in order form offers, on the internal channel since
+ * ADR-0064.
+ */
+export type BookingServiceType = 'ride' | 'delivery' | 'self_drive'
+
+/**
+ * The per-service extras, exactly as `BookingResource` emits them: the
+ * service's own keys all present (missing values as null), and null on a
+ * ride, whose absence of details is the fact itself.
+ */
+export interface BookingDetails {
+  // Delivery
+  item_type?: string | null
+  package_size?: string | null
+  payer?: string | null
+  payment_method?: string | null
+  recipient_name?: string | null
+  recipient_phone?: string | null
+  confirm_with_pin?: boolean | null
+  // Self drive
+  start_date?: string | null
+  end_date?: string | null
+  kyc_documents?: string | null
+}
+
 export interface BookingUser {
   id: number
   name: string
@@ -24,15 +51,44 @@ export interface Booking {
   client?: ClientSummary
   requested_by_user_id: number
   requested_by?: BookingUser
+  /**
+   * The colleague this was raised for, when a client raised it; null for
+   * the walk-ins and callers Shanitah's own desk books. The link, not the
+   * source — the name and number below are the snapshot the driver was
+   * dispatched against, and stay authoritative.
+   */
+  passenger_user_id: number | null
   passenger_name: string
   passenger_phone: string
   passenger_count: number
-  origin: string
-  destination: string
+  /**
+   * The kind of vehicle the client asked for (ADR-0051), or null when they
+   * stated none.
+   *
+   * **Null is a real answer.** "No preference" and "asked for a van, got a
+   * sedan" are different facts, and a client's auditor is entitled to tell
+   * them apart — so this is never rendered as a default or coerced to one.
+   */
+  vehicle_category: string | null
+  service_type: BookingServiceType
+  details: BookingDetails | null
+  /** Null on a self-drive rental, which has no route (ADR-0064). */
+  origin: string | null
+  destination: string | null
   /** Null for an immediate request. */
   scheduled_for: string | null
   is_immediate: boolean
   status: BookingStatus
+  /**
+   * Whether a driver's phone is ringing for this booking right now
+   * (ADR-0068).
+   *
+   * A desk assignment no longer takes effect at the press: it puts the job in
+   * front of a driver, who may decline or never look. Without this the queue
+   * shows an unanswered booking exactly as it shows an untouched one, and the
+   * next dispatcher assigns over a phone that is already ringing.
+   */
+  is_ringing: boolean
   approved_by_user_id: number | null
   approved_by?: BookingUser
   approved_at: string | null

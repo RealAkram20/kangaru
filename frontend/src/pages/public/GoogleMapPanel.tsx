@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { CircleDot, Crosshair, MapPin } from 'lucide-react'
 import { fetchRoute } from './places'
 import { loadGoogleMaps } from './googleMaps'
+import type { FleetSprite } from './nearbyVehicles'
 import type { VehicleKind } from './MapPanel'
 import './landing.css'
 
@@ -42,6 +43,7 @@ export function GoogleMapPanel({
   to,
   matching = false,
   searching = false,
+  fleet = [],
   captainAt = null,
   captainKind = 'sedan',
   sheetFraction,
@@ -54,6 +56,8 @@ export function GoogleMapPanel({
   to: [number, number] | null
   matching?: boolean
   searching?: boolean
+  /** The real nearby vehicles — see MapPanelProps. */
+  fleet?: FleetSprite[]
   captainAt?: [number, number] | null
   captainKind?: VehicleKind
   sheetFraction?: number
@@ -65,6 +69,7 @@ export function GoogleMapPanel({
   const youRef = useRef<google.maps.Marker | null>(null)
   const radiusRef = useRef<google.maps.Circle | null>(null)
   const captainRef = useRef<google.maps.Marker | null>(null)
+  const fleetRef = useRef(new Map<string, google.maps.Marker>())
   const endsRef = useRef<google.maps.Marker[]>([])
   const routeRef = useRef<google.maps.Polyline[]>([])
   const [ready, setReady] = useState(false)
@@ -78,6 +83,9 @@ export function GoogleMapPanel({
   useEffect(() => {
     if (containerRef.current === null) return
     let cancelled = false
+    // Captured once so the cleanup does not read `.current` after unmount —
+    // a reference to a mutated Map, not a snapshot.
+    const fleetOnMap = fleetRef.current
 
     void loadGoogleMaps()
       .then((maps) => {
@@ -125,6 +133,8 @@ export function GoogleMapPanel({
       youRef.current?.setMap(null)
       radiusRef.current?.setMap(null)
       captainRef.current?.setMap(null)
+      fleetOnMap.forEach((m) => m.setMap(null))
+      fleetOnMap.clear()
       endsRef.current.forEach((m) => m.setMap(null))
       routeRef.current.forEach((l) => l.setMap(null))
       youRef.current = null
@@ -194,6 +204,56 @@ export function GoogleMapPanel({
       })
     }
   }, [ready, matching, searching, center])
+
+  /**
+   * The live fleet — the same data and the same visibility vetoes as the
+   * GL panel: one marker per key, moved rather than rebuilt, removed
+   * outright while a route is drawn or a match is running.
+   *
+   * Classic `google.maps.Marker` image icons cannot rotate, so the derived
+   * heading is not drawn here — position and silhouette only. The rotation
+   * returns with the AdvancedMarkerElement migration the header describes.
+   */
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || map === null) return
+    const maps = google.maps
+
+    const visible = !matching && (from === null || to === null)
+    const wanted = visible ? fleet : []
+    const onMap = fleetRef.current
+    const incoming = new Set(wanted.map((vehicle) => vehicle.key))
+
+    for (const [key, marker] of onMap) {
+      if (!incoming.has(key)) {
+        marker.setMap(null)
+        onMap.delete(key)
+      }
+    }
+
+    for (const vehicle of wanted) {
+      const position = { lat: vehicle.lngLat[1], lng: vehicle.lngLat[0] }
+      const existing = onMap.get(vehicle.key)
+      if (existing !== undefined) {
+        existing.setPosition(position)
+      } else {
+        onMap.set(
+          vehicle.key,
+          new maps.Marker({
+            map,
+            position,
+            clickable: false,
+            zIndex: 2,
+            icon: {
+              url: VEHICLE_SPRITES[vehicle.kind],
+              scaledSize: new maps.Size(46, 46),
+              anchor: new maps.Point(23, 23),
+            },
+          }),
+        )
+      }
+    }
+  }, [ready, fleet, matching, from, to])
 
   /** The captain, once one is actually coming. */
   useEffect(() => {
@@ -304,10 +364,30 @@ export function GoogleMapPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- bottomInset reads live layout, not state
   }, [ready, from, to])
 
+  /**
+   * @see MapPanel — the same order of subjects, so the two engines answer
+   * the crosshair the same way. A drawn trip outranks a fix; with no trip,
+   * your own position; with no fix, the pickup.
+   */
+  const canRecentre = center !== null || from !== null || sheetFraction !== undefined
+
   const recentre = () => {
     const map = mapRef.current
-    if (map === null || center === null) return
-    map.panTo({ lat: center[1], lng: center[0] })
+    if (map === null) return
+
+    if (from !== null && to !== null) {
+      const bounds = new google.maps.LatLngBounds()
+      bounds.extend({ lat: from[1], lng: from[0] })
+      bounds.extend({ lat: to[1], lng: to[0] })
+      map.fitBounds(bounds, 90)
+
+      return
+    }
+
+    const target = center ?? from
+    if (target === null) return
+
+    map.panTo({ lat: target[1], lng: target[0] })
     const inset = bottomInset()
     if (inset > 0) map.panBy(0, inset / 2)
   }
@@ -317,13 +397,19 @@ export function GoogleMapPanel({
       <div className="h-full lg:sticky lg:top-16 lg:h-[calc(100dvh-4rem)] lg:border-l lg:border-border">
         <div ref={containerRef} className="h-full w-full" />
 
-        {sheetFraction !== undefined && (
+        {/* Shown whenever there is somewhere to go back to, not only on
+            the matching screen. The order page draws the same map, gives it
+            the same fix, and had no way back to it — you panned across
+            Kampala to check a landmark and that was that. `center` is your
+            own position here (`myPosition`), so this is Google's crosshair
+            doing Google's job. */}
+        {canRecentre && (
           <button
             type="button"
             onClick={recentre}
             aria-label="Recentre the map"
             className="absolute right-5 z-20 flex h-12 w-12 items-center justify-center rounded-full bg-surface-card text-text-heading shadow-lg transition-transform duration-150 ease-[var(--kr-ease-out)] active:scale-95 bottom-[calc(var(--kr-sheet)*1dvh+1rem)] lg:bottom-6"
-            style={{ '--kr-sheet': sheetFraction * 100 } as CSSProperties}
+            style={{ '--kr-sheet': (sheetFraction ?? 0) * 100 } as CSSProperties}
           >
             <Crosshair className="h-5 w-5" aria-hidden />
           </button>

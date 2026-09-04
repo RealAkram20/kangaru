@@ -6,6 +6,8 @@ use App\Models\User;
 use App\Support\Auth\ClientScope;
 use Illuminate\Support\Facades\Hash;
 use Modules\Administration\Requests\LoginRequest;
+use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Notifications\SecurityEventNotification;
 
 class AuthService
 {
@@ -126,8 +128,11 @@ class AuthService
      * `personal_access_tokens` during an incident needs to know which
      * device a row is for, and every one of them used to say "api".
      */
-    private function issueToken(User $user, string $client): string
+    public function issueToken(User $user, string $client): string
     {
+        // Public since ADR-0028: the social sign-in path mints its tokens
+        // here too, so a Google login can never end up with a differently
+        // scoped token than a password login for the same client.
         return $user->createToken($client, ClientScope::abilitiesFor($client))->plainTextToken;
     }
 
@@ -160,5 +165,23 @@ class AuthService
         $user->save();
 
         $user->tokens()->delete();
+
+        /*
+         * The warning, and it is not a receipt.
+         *
+         * The person who just typed the new password already knows. This email
+         * is for the case where they did not: somebody holding a stolen
+         * session changing the password is the move that locks the real owner
+         * out, and until this line existed the owner's first notice was
+         * failing to sign in.
+         *
+         * After the token revocation above rather than before, so a failure to
+         * send cannot leave the sessions open. The notification is queued, so
+         * nothing here waits on a network.
+         */
+        $user->notify(new SecurityEventNotification(
+            NotificationType::ACCOUNT_PASSWORD_CHANGED,
+            [__('mail.security.fact_when') => now()->isoFormat('D MMMM YYYY, HH:mm')],
+        ));
     }
 }

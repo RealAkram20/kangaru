@@ -49,4 +49,25 @@ module.exports = [
       '@typescript-eslint/no-explicit-any': 'off',
     },
   },
+  {
+    /*
+     * Expo config plugins, which are CommonJS `.js` by necessity — they are
+     * required by `expo prebuild` outside the app's TypeScript build.
+     *
+     * The block above only reaches `.ts`/`.tsx`, so a `.js` test file gets no
+     * Jest globals and every `describe` and `expect` in it is reported as
+     * `no-undef`. Declaring them here rather than sprinkling per-file global
+     * comments keeps the exception in one visible place.
+     */
+    files: ['plugins/**/*.js'],
+    languageOptions: {
+      globals: {
+        require: 'readonly',
+        module: 'writable',
+        describe: 'readonly',
+        it: 'readonly',
+        expect: 'readonly',
+      },
+    },
+  },
 ];

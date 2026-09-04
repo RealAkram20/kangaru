@@ -85,8 +85,38 @@ final class ClientScope
                 'trips.index',
                 'trips.show',
                 'trips.events.index',
+                // The road ahead (ADR-0031). Read-only, and null far more
+                // often than not — no key, no signal, no pins.
+                'trips.route.show',
                 'trips.transitions.store',
                 'trips.odometer-photo.show',
+                // Extending a live run, and the search that feeds it
+                // (ADR-0045 §4, §10). Named here at birth rather than
+                // discovered missing: this list fails closed, every backend
+                // test mints an unscoped console token, and seven endpoints
+                // have already shipped 403 to the only client with a screen
+                // for them by being left off exactly this array. Both are
+                // policy-bounded to the trip's own driver on a live trip.
+                'trips.stops.store',
+                'trips.stop-candidates.index',
+                'trips.place-suggestions.index',
+
+                // The extension (ADR-0045 §4 amendment): the passenger going
+                // past the drop-off they agreed to, the driver's answer to
+                // one their passenger asked for, and the mark that says the
+                // agreed destination was reached.
+                //
+                // **This list caught them.** They were written, tested and
+                // built into an APK without being named here, and the driver
+                // app answered a passenger's request with a 403 the first
+                // time the button was pressed on a handset — the eighth time
+                // this array has done exactly what the comment above it
+                // describes. Backend tests cannot catch it: they mint an
+                // unscoped console token, so every one of them passed.
+                'trips.dropoff-arrival.store',
+                'trips.extensions.store',
+                'trips.extensions.acceptance.store',
+                'trips.extensions.decline.store',
 
                 // GPS, which is the whole point of the device being there.
                 'trips.locations.store',
@@ -103,6 +133,116 @@ final class ClientScope
                 'me.offers.index',
                 'me.offers.acceptance.store',
                 'me.offers.decline.store',
+
+                // Their own numbers, for the home screen: trips and fares
+                // today, acceptance and completion rate. Counted from rows
+                // that already exist; nothing here is another driver's.
+                'me.stats.show',
+
+                // How they are doing over thirty days, and where they are in
+                // the current bonus week (ADR-0038). Named here rather than
+                // left to be discovered, because **this list fails closed and
+                // no backend test can see the omission** — every test signs in
+                // without a `client`, minting an unscoped console token, so an
+                // endpoint passes its own suite while being 403 to the only
+                // app with a screen for it. Four money endpoints shipped that
+                // way; see the block below.
+                'me.performance.show',
+
+                // Who they are on the platform, and their papers (ADR-0033).
+                // All three are keyed off the token — `me.documents.file`
+                // takes a document id, but its policy grants a driver their
+                // own row only, so an id belonging to somebody else is a 403
+                // rather than a leak.
+                //
+                // There is no counterpart for verifying: a driver who could
+                // accept their own licence is the feature inverting itself,
+                // and the `drivers.documents.*` routes are absent from this
+                // list for that reason rather than by omission.
+                'me.profile.show',
+                // Correcting their own name or phone number. The seventh
+                // omission, and the one that proves the pattern is not about
+                // any single feature: the Profile screen's inline editor was
+                // 403 from the day it shipped. The office's own
+                // `drivers.update` stays off this list — a driver may correct
+                // two fields on their own row, not seven on anybody's.
+                'me.profile.update',
+                // Their own photograph (ADR-0041). All three are keyed off the
+                // token — there is no id in any path, so none can name another
+                // driver's portrait.
+                'me.photo.show',
+                'me.photo.store',
+                'me.photo.destroy',
+                'me.documents.index',
+                'me.documents.store',
+                'me.documents.file',
+
+                // The applicant's own application, before they are a driver
+                // (ADR-0057 §5). On the driver list because the driver app is
+                // where an applicant signs in — the same binary serves both,
+                // and the account simply has no driver profile yet.
+                'me.application.documents.index',
+                'me.application.documents.store',
+
+                // The money screens, and **all four of these were missing.**
+                // The routes shipped; the allow-list did not follow, and this
+                // list fails closed — so `GET /me/earnings` and
+                // `GET /me/ledger-entries` were 403 to the only client that
+                // has a screen for them. Nothing catches it but a handset:
+                // every backend test signs in without a `client`, which mints
+                // an unscoped console token, so the endpoints pass their own
+                // suites while being unreachable from the app.
+                //
+                // Earnings answers *how much*, the ledger answers *why is my
+                // balance that*, and `me.trips.index` answers *what did I
+                // do*. All three are reads keyed off the token — there is no
+                // id in any path, so none of them can name another driver.
+                'me.earnings.show',
+                'me.ledger-entries.index',
+                'me.trips.index',
+                // What is currently on offer — the Promotions screen
+                // (ADR-0036, ADR-0037). A read keyed off the token like the
+                // three above, so it cannot name another driver; it is on this
+                // list rather than absent from it because this list fails
+                // closed, and four endpoints have already shipped 403 to the
+                // only client with a screen for them by being left off.
+                'me.promotions.index',
+                // Asking the office to settle (ADR-0032). A request, not a
+                // payment: it moves no money and cannot change a balance, so
+                // the write is as safe as the read beside it.
+                'me.settlement-requests.index',
+                'me.settlement-requests.store',
+                // Where the office should send their money (ADR-0042), and
+                // asking for the account to be closed (ADR-0043).
+                //
+                // **The same omission, twice more, and found the same way.**
+                // Both shipped with a screen and neither reached this array,
+                // so Bank Details and the profile's danger zone answered 403
+                // to the only client that draws them — the fifth and sixth
+                // endpoints to do it. Caught here by a `curl` against the
+                // running server with a real driver token, which is the only
+                // thing that ever catches it: every backend test signs in
+                // without a `client` and gets an unscoped console token, so
+                // both suites are green while both screens are dead.
+                //
+                // Every one is keyed off the token with no id in the path, so
+                // none can name another driver's bank account or close
+                // somebody else's account.
+                'me.payout-account.show',
+                'me.payout-account.update',
+                'me.payout-account.destroy',
+                'me.closure-request.show',
+                'me.closure-request.store',
+                'me.closure-request.destroy',
+                // Reporting something to the office in writing, and reading
+                // the answer (ADR-0044). **Named here rather than left to be
+                // discovered**: this list fails closed, every backend test
+                // mints an unscoped console token, and four endpoints have
+                // already shipped 403 to the only client that has a screen for
+                // them by being omitted from exactly this array. There is a
+                // test asserting both names are on it.
+                'me.support-requests.index',
+                'me.support-requests.store',
 
                 // Going on duty, and saying where they are (ADR-0024 §2).
                 // The app cannot be offered work without these, and the
@@ -122,6 +262,24 @@ final class ClientScope
                 // addresses on somebody else's lock screen.
                 'me.devices.store',
                 'me.devices.destroy',
+
+                /*
+                 * Which of those emails they want (mail plan M6).
+                 *
+                 * On the driver's list rather than the console's alone,
+                 * because **drivers are the audience for a third of the
+                 * emails this platform sends**: a document expiring, a
+                 * settlement answered, a weekly bonus. Every one of those
+                 * carries a footer link to this screen, and a link that 403s
+                 * for the app it was sent to is the same broken promise as a
+                 * link that 404s.
+                 *
+                 * Reading and writing only their own: the routes take no id
+                 * and scope to the token, which is the property that makes
+                 * them safe here at all.
+                 */
+                'me.mail-preferences.index',
+                'me.mail-preferences.update',
 
                 // Their inbox.
                 'notifications.index',

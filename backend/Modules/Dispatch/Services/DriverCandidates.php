@@ -2,6 +2,7 @@
 
 namespace Modules\Dispatch\Services;
 
+use App\Models\User;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
 use Modules\Bookings\Models\Booking;
@@ -48,7 +49,7 @@ class DriverCandidates
     /**
      * @return Collection<int, array{driver: Driver, dispatchable: bool, note: string|null}>
      */
-    public function forBooking(Booking $booking): Collection
+    public function forBooking(Booking $booking, User $actor): Collection
     {
         [$from, $to] = $this->availability->windowFor($booking->scheduled_for);
 
@@ -57,7 +58,11 @@ class DriverCandidates
         // at 3,000 drivers the naive shape is an N+1 across three tables.
         $free = $this->availability->availableDrivers($from, $to)->pluck('id')->flip();
 
-        return Driver::query()
+        // `forActor`, for the reason `VehicleCandidates` sets out beside the
+        // same line: `BelongsToOperator` has no global scope, so a bare query
+        // here put every fleet's roster on this fleet's board — names and
+        // licence numbers of a competitor's drivers.
+        return Driver::forActor($actor)
             ->where('status', 'active')
             ->orderBy('name')
             ->get()

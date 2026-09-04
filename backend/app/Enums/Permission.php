@@ -25,6 +25,17 @@ enum Permission: string
     case AUDIT_VIEW = 'audit.view';
     case STAFF_VIEW = 'staff.view';
     case STAFF_MANAGE = 'staff.manage';
+    /**
+     * Becoming somebody else, for support (ADR-0056 §6).
+     *
+     * Held only by Kangaru accounts, and **implied by nothing** — not by
+     * `staff.manage`, not by being a Super Admin. ADR-0006 said creating a
+     * platform account should be Super Admin's alone; ADR-0055 then took
+     * almost all of that account's reach away, and this is the single grant
+     * that gives it back. An account holding it can become anybody on the
+     * platform, so it is granted deliberately or not at all.
+     */
+    case SUPPORT_ACT_AS = 'support.act-as';
     /** Creating and editing roles themselves. The keys to the building. */
     case ROLES_MANAGE = 'roles.manage';
     /**
@@ -94,11 +105,44 @@ enum Permission: string
     case RATECARDS_VIEW = 'ratecards.view';
     case RATECARDS_MANAGE = 'ratecards.manage';
 
+    // ── Fleet companies ───────────────────────────────────────────────
+    /**
+     * Read the register of fleet companies (ADR-0055, ADR-0059).
+     *
+     * **The permission is not the control here — the level is.** Every Super
+     * Admin holds this, including a fleet's own, because `StoreRoleRequest`
+     * refuses to let anybody grant a permission they do not hold themselves,
+     * and an ungrantable permission is broken rather than strict. What keeps
+     * the register to head office is `OperatorPolicy`, which requires
+     * `access_level = kangaru` on top of this — the same shape as
+     * `support.act-as` (see `RoleSeeder`'s note on the Super Admin role).
+     */
+    case FLEETS_VIEW = 'fleets.view';
+
+    /** Onboard, edit and suspend a fleet company. Kangaru-level only. */
+    case FLEETS_MANAGE = 'fleets.manage';
+
     // ── Clients ───────────────────────────────────────────────────────
     case COMPANIES_VIEW = 'companies.view';
     case COMPANIES_CREATE = 'companies.create';
     case COMPANIES_UPDATE = 'companies.update';
     case COMPANIES_DELETE = 'companies.delete';
+
+    /**
+     * ADR-0045: read a client's saved places and the routes built from
+     * them. Wide on the platform side, because a dispatcher looking at a
+     * multi-stop trip on the live map has to be able to see the circuit it
+     * came from — a stop list with no plan behind it is unreadable.
+     */
+    case ROUTES_VIEW = 'routes.view';
+
+    /**
+     * Build them. Narrow, and it is the *client's* to hold: ADR-0045 §9
+     * puts route building on the client's side of the panel, because a
+     * bank's cash circuit is a bank's operational decision. Shanitah's
+     * staff read routes; they do not draw them.
+     */
+    case ROUTES_MANAGE = 'routes.manage';
 
     // ── Fleet ─────────────────────────────────────────────────────────
     case VEHICLES_VIEW = 'vehicles.view';
@@ -126,11 +170,11 @@ enum Permission: string
     public function group(): string
     {
         return match (explode('.', $this->value)[0]) {
-            'audit', 'staff', 'roles', 'settings' => 'Administration',
+            'audit', 'staff', 'roles', 'settings', 'support' => 'Administration',
             'bookings', 'order_requests' => 'Bookings',
             'trips' => 'Trips',
             'invoices', 'ratecards' => 'Billing',
-            'companies' => 'Clients',
+            'companies', 'routes' => 'Clients',
             'vehicles', 'drivers', 'allocations' => 'Fleet',
             'reports' => 'Reports',
             default => 'Other',
@@ -143,6 +187,7 @@ enum Permission: string
             self::AUDIT_VIEW => 'Read the audit log',
             self::STAFF_VIEW => 'See the staff list',
             self::STAFF_MANAGE => 'Add, edit and suspend staff',
+            self::SUPPORT_ACT_AS => 'Act as another user, for support',
             self::ROLES_MANAGE => 'Create and edit roles',
             self::SETTINGS_MANAGE => 'Change platform settings',
             self::BOOKINGS_VIEW_ALL => "See everyone's bookings",
@@ -172,9 +217,13 @@ enum Permission: string
             self::RATECARDS_VIEW => 'See rate cards',
             self::RATECARDS_MANAGE => 'Create rate cards and versions',
             self::COMPANIES_VIEW => 'See client companies',
+            self::FLEETS_VIEW => 'See the fleet companies on the platform',
+            self::FLEETS_MANAGE => 'Onboard, edit and suspend a fleet company',
             self::COMPANIES_CREATE => 'Onboard a client company',
             self::COMPANIES_UPDATE => 'Edit a client company',
             self::COMPANIES_DELETE => 'Remove a client company',
+            self::ROUTES_VIEW => 'See saved places and routes',
+            self::ROUTES_MANAGE => 'Build and edit routes',
             self::VEHICLES_VIEW => 'See the fleet',
             self::VEHICLES_MANAGE => 'Add and edit vehicles',
             self::DRIVERS_VIEW => 'See drivers',

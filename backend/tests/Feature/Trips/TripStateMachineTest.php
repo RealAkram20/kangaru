@@ -192,6 +192,48 @@ it('serves the legal next states so clients need no copy of the graph', function
         ->assertJsonPath('data.allowed_transitions', []);
 });
 
+it('serves the pickup waiting target from configuration, not from a literal', function () {
+    ['dispatcher' => $dispatcher, 'trip' => $trip] = seedTripStateMachineFixture();
+
+    // Set to something no reasonable default would collide with, so a
+    // hardcoded 300 in the resource fails this rather than passing by
+    // coincidence.
+    config(['dispatch.pickup_wait_target_seconds' => 137]);
+
+    $this->actingAs($dispatcher, 'sanctum')
+        ->getJson("/api/v1/trips/{$trip->id}")
+        ->assertOk()
+        ->assertJsonPath('data.pickup_wait_target_seconds', 137);
+});
+
+it('does not let the waiting target change any trip state when it elapses', function () {
+    ['dispatcher' => $dispatcher, 'trip' => $trip] = seedTripStateMachineFixture();
+
+    // The claim `config/dispatch.php` and the contract both make: this
+    // number is a display target and has no consequence. A trip parked at
+    // Driver Arrived for ten times the target is still at Driver Arrived,
+    // and still offers exactly the same moves.
+    $this->actingAs($dispatcher, 'sanctum')->postJson("/api/v1/trips/{$trip->id}/transitions", [
+        'to' => TripStatus::ACCEPTED->value,
+    ])->assertOk();
+    $this->actingAs($dispatcher, 'sanctum')->postJson("/api/v1/trips/{$trip->id}/transitions", [
+        'to' => TripStatus::DRIVER_EN_ROUTE->value,
+    ])->assertOk();
+    $this->actingAs($dispatcher, 'sanctum')->postJson("/api/v1/trips/{$trip->id}/transitions", [
+        'to' => TripStatus::DRIVER_ARRIVED->value,
+    ])->assertOk();
+
+    config(['dispatch.pickup_wait_target_seconds' => 60]);
+
+    $this->travel(600)->seconds();
+
+    $this->actingAs($dispatcher, 'sanctum')
+        ->getJson("/api/v1/trips/{$trip->id}")
+        ->assertOk()
+        ->assertJsonPath('data.status', TripStatus::DRIVER_ARRIVED->value)
+        ->assertJsonPath('data.allowed_transitions', ['passenger_onboard', 'no_show', 'cancelled']);
+});
+
 it('reports no duration until the trip has both started and completed', function () {
     ['dispatcher' => $dispatcher, 'trip' => $trip] = seedTripStateMachineFixture();
 

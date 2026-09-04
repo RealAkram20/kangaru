@@ -31,9 +31,10 @@ use Modules\Dispatch\Services\DispatchOfferService;
  *
  * ## Cadence
  *
- * `dispatch.offer_ttl_seconds` is 15 by default and cron's floor is a
+ * `dispatch.offer_ttl_seconds` is 45 by default and cron's floor is a
  * minute, so scheduling this every minute would add up to 60 seconds to a
- * 15-second window. The schedule therefore runs it `everyMinute()` **and**
+ * 45-second window — more than doubling it. The schedule therefore runs it
+ * `everyMinute()` **and**
  * `DispatchOfferService::decline()` advances immediately — the common case,
  * a driver actually answering, does not wait for this at all. This is the
  * backstop for the driver who says nothing, and a passenger waiting out one

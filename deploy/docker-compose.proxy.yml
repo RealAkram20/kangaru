@@ -1,0 +1,124 @@
+# =============================================================================
+# Proxy overlay — routing and TLS when the stack is deployed WITHOUT Coolify.
+#
+# `docker-compose.yml` publishes no host ports on purpose: it expects something
+# in front to terminate TLS and reach `app` and `web` by container name. In a
+# Coolify deployment that something is Coolify, which writes these labels
+# itself from the domains set in its UI (deploy/README.md §2.3).
+#
+# This file is the same wiring, written down, for a plain `docker compose`
+# host — the path `deploy/rollback.sh` already anticipates in its header. It is
+# used on the owner's server, where Coolify runs but manages a different
+# project, and its Traefik is shared:
+#
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.proxy.yml up -d
+#
+# CI never loads this file — the deploy-stack job pins
+# COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.ci.yml — so the smoke
+# test keeps talking to containers directly, which is what makes it a test of
+# the stack rather than a test of somebody's DNS.
+#
+# -----------------------------------------------------------------------------
+# ## The direction this connection runs, and why it is not the obvious one
+#
+# The obvious way to let a shared Traefik reach these containers is to attach
+# them to the proxy's own `coolify` network. **That is wrong here, and it was
+# tried first.** It broke immediately and it broke silently:
+#
+# Coolify's own Redis carries the network alias `redis` on that network. With
+# `app` attached, `redis` resolved to Coolify's Redis rather than this
+# project's, and every cache, presence and live-position read failed
+# `WRONGPASS` — while all seven healthchecks stayed green, because each
+# container was individually fine. The live map would simply have been blank.
+#
+# The auth failure was the lucky outcome. Had that Redis been passwordless,
+# this platform would have quietly shared a neighbouring project's cache.
+#
+# It breaks the other way too: attaching these containers publishes generic
+# aliases — `redis`, `mysql`, `app`, `web` — onto a network Coolify's own
+# services resolve names on. A second container answering to `redis` there is
+# a hazard aimed at the neighbour, not at us.
+#
+# `docs/master-plan.md` §1.4 asks for the opposite of all that: "a noisy
+# neighbour must not be able to take down a bank client's dispatch, and this
+# project must not be able to take down theirs."
+#
+# So the connection runs the other way, which is also exactly what Coolify
+# itself does for the projects it manages: **the proxy joins the project's
+# network**, and the project's containers join nothing.
+#
+#   docker network connect kangaruride_default coolify-proxy
+#
+# `deploy/README.md` and `docs/runbook.md` carry that command. It survives
+# container restarts and Docker daemon restarts, because Docker stores the
+# attachment on the network. It does NOT survive the proxy being *recreated* —
+# a Coolify upgrade, or a change to its proxy configuration. If both domains
+# start answering 404 after a Coolify upgrade, that one command is the fix, and
+# it is the standing cost of running outside Coolify's management.
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # app — the API, on api.kangaruride.com, port 8080.
+  #
+  # No `networks:` key. These containers stay on the compose project's own
+  # network and nothing else; see the header for what happened when they did
+  # not.
+  # ---------------------------------------------------------------------------
+  app:
+    labels:
+      traefik.enable: "true"
+      # The network the proxy should dial the container on. This is the
+      # project's own network, which the proxy has been joined to — not the
+      # proxy's network, which this container is deliberately not on.
+      traefik.docker.network: kangaruride_default
+
+      # http -> https. The redirect is a middleware rather than a global
+      # entrypoint setting because this Traefik is shared with another
+      # project, and this file may not change that project's behaviour.
+      traefik.http.routers.kangaru-api-http.entryPoints: http
+      traefik.http.routers.kangaru-api-http.rule: Host(`api.kangaruride.com`)
+      traefik.http.routers.kangaru-api-http.middlewares: kangaru-to-https
+
+      traefik.http.routers.kangaru-api-https.entryPoints: https
+      traefik.http.routers.kangaru-api-https.rule: Host(`api.kangaruride.com`)
+      traefik.http.routers.kangaru-api-https.tls: "true"
+      # The HTTP-01 resolver the neighbouring project already uses. The DNS-01
+      # resolver on this server is bound to a different domain's credentials.
+      traefik.http.routers.kangaru-api-https.tls.certresolver: letsencrypt
+      traefik.http.routers.kangaru-api-https.service: kangaru-api
+      traefik.http.routers.kangaru-api-https.middlewares: kangaru-gzip
+
+      # Named explicitly. `app` exposes 8080 and nothing else, but a service
+      # that guesses its own port is a service that guesses wrong the day a
+      # second port is exposed.
+      traefik.http.services.kangaru-api.loadbalancer.server.port: "8080"
+
+      # Middleware definitions. Namespaced with a `kangaru-` prefix rather than
+      # reusing the neighbour's `gzip` and `redirect-to-https`: those are
+      # defined by labels on THEIR container, so borrowing them would mean this
+      # project's routes break when that project is redeployed.
+      traefik.http.middlewares.kangaru-to-https.redirectscheme.scheme: https
+      traefik.http.middlewares.kangaru-gzip.compress: "true"
+
+  # ---------------------------------------------------------------------------
+  # web — the SPA, on the apex and www, port 80.
+  # ---------------------------------------------------------------------------
+  web:
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: kangaruride_default
+
+      traefik.http.routers.kangaru-web-http.entryPoints: http
+      traefik.http.routers.kangaru-web-http.rule: Host(`kangaruride.com`) || Host(`www.kangaruride.com`)
+      traefik.http.routers.kangaru-web-http.middlewares: kangaru-to-https
+
+      traefik.http.routers.kangaru-web-https.entryPoints: https
+      traefik.http.routers.kangaru-web-https.rule: Host(`kangaruride.com`) || Host(`www.kangaruride.com`)
+      traefik.http.routers.kangaru-web-https.tls: "true"
+      traefik.http.routers.kangaru-web-https.tls.certresolver: letsencrypt
+      traefik.http.routers.kangaru-web-https.service: kangaru-web
+      traefik.http.routers.kangaru-web-https.middlewares: kangaru-gzip
+
+      traefik.http.services.kangaru-web.loadbalancer.server.port: "80"

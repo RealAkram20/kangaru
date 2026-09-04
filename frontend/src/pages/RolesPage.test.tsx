@@ -42,6 +42,9 @@ function role(overrides: Partial<Role> = {}): Role {
     name: 'Dispatcher',
     description: 'Assigns drivers and vehicles.',
     is_system: true,
+    audience: 'fleet',
+    audience_label: 'Fleet',
+    requires_mfa: false,
     permissions: ['trips.view.all'],
     users_count: 3,
     created_at: '2026-07-01T08:00:00.000000Z',
@@ -55,6 +58,8 @@ function catalogue(roles: Role[], meta: Partial<RolesMeta> = {}) {
       catalogue: CATALOGUE,
       grantable: EVERYTHING,
       can_manage: true,
+      mfa_enforced: true,
+      can_manage_mfa: true,
       ...meta,
     }),
   )
@@ -82,6 +87,7 @@ describe('RolesPage', () => {
         slug: 'regional_auditor',
         name: 'Regional Auditor',
         is_system: false,
+    requires_mfa: false,
         users_count: 0,
       }),
     ])
@@ -203,12 +209,81 @@ describe('RolesPage', () => {
     await user.click(within(dialog).getByRole('button', { name: /save changes/i }))
 
     // No `name` in the payload: it cannot change, so it is not sent.
+    //
+    // `requires_mfa` is sent because this fixture's actor can manage it
+    // (ADR-0061 §5). An actor who cannot omits the key entirely rather than
+    // sending the role's current value back — see the test below, which is
+    // the half that matters: a payload echoing a value you may not change is
+    // one server-side bug away from changing it.
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith('/roles/dispatcher', {
         description: 'Assigns drivers and vehicles.',
         permissions: ['trips.view.all', 'invoices.view'],
+        requires_mfa: false,
       }),
     )
+  })
+
+  /**
+   * ADR-0061 §4. The count is the safety of this feature: without it the
+   * switch is a trap that fires later, on somebody else, at a moment nobody
+   * connects to this action. It appears only when it would actually affect
+   * people — a role with nobody unenrolled gets the plain sentence.
+   */
+  it('names how many people the switch would ask to enrol, before it is thrown', async () => {
+    const user = userEvent.setup()
+    catalogue([role({ requires_mfa: false, unenrolled_count: 3, users_count: 3 })])
+
+    renderAs(<RolesPage />)
+    await user.click((await screen.findAllByRole('button', { name: /edit|view/i }))[0])
+    const dialog = await screen.findByRole('dialog')
+
+    // Off: no warning, because switching it off asks nobody to do anything.
+    expect(within(dialog).queryByText(/have not set one up/i)).not.toBeInTheDocument()
+
+    await user.click(within(dialog).getByLabelText(/second factor/i))
+
+    expect(await within(dialog).findByText(/3 of these accounts have not set one up/i)).toBeInTheDocument()
+  })
+
+  /**
+   * A control that looks live and does nothing is worse than one that is
+   * absent. When the platform switch is off, the per-role toggle still saves
+   * — the role setting is real — but the hint says it changes nothing yet.
+   */
+  it('says the per-role switch is inert while the platform switch is off', async () => {
+    const user = userEvent.setup()
+    catalogue([role({ requires_mfa: true, unenrolled_count: 3 })], { mfa_enforced: false })
+
+    renderAs(<RolesPage />)
+    await user.click((await screen.findAllByRole('button', { name: /edit|view/i }))[0])
+    const dialog = await screen.findByRole('dialog')
+
+    expect(within(dialog).getByText(/inert/i)).toBeInTheDocument()
+  })
+
+  /**
+   * ADR-0061 §5. The console holds no copy of the rule — it reads
+   * `meta.can_manage_mfa` — and when it cannot manage the switch it omits the
+   * key rather than echoing the current value back. An echoed value is one
+   * server-side bug away from being a write.
+   */
+  it('omits the second-factor field entirely when this actor may not change it', async () => {
+    const user = userEvent.setup()
+    catalogue([role()], { can_manage_mfa: false })
+    patch.mockResolvedValue(apiOk({}))
+
+    renderAs(<RolesPage />)
+
+    await user.click((await screen.findAllByRole('button', { name: /edit|view/i }))[0])
+    const dialog = await screen.findByRole('dialog')
+
+    expect(within(dialog).queryByLabelText(/second factor/i)).not.toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: /save changes/i }))
+
+    await waitFor(() => expect(patch).toHaveBeenCalled())
+    expect(patch.mock.calls[0][1]).not.toHaveProperty('requires_mfa')
   })
 
   it('shows the server refusal against the permissions field, not as a bare failure', async () => {
@@ -279,7 +354,9 @@ describe('RolesPage', () => {
    */
   it('renders read-only for someone who may read the catalogue but not write it', async () => {
     const user = userEvent.setup()
-    catalogue([role()], { can_manage: false, grantable: ['staff.view', 'trips.view.all'] })
+    catalogue([role()], { can_manage: false,
+    mfa_enforced: true,
+    can_manage_mfa: true, grantable: ['staff.view', 'trips.view.all'] })
 
     renderAs(<RolesPage />, makeUser({ role: 'corporate_admin' }))
 
@@ -310,6 +387,84 @@ describe('RolesPage', () => {
    * whether the API answers, so a *custom* role holding `roles.manage` —
    * which no slug list can know about — reaches the editor built for it.
    */
+  it('filters the catalogue to one kind of account', async () => {
+    // The audience is what keeps a client's role out of a fleet's picker.
+    // Before the column, the only thing separating them was whether the
+    // permission sets happened to be subsets of one another — a coincidence
+    // rather than a boundary, and one that stops holding the moment head
+    // office composes the roles it was asked for.
+    catalogue([
+      role({ slug: 'dispatcher', name: 'Dispatcher', audience: 'fleet', audience_label: 'Fleet' }),
+      role({
+        slug: 'corporate_admin',
+        name: 'Corporate Admin',
+        audience: 'client',
+        audience_label: 'Client',
+      }),
+    ])
+
+    const user = userEvent.setup()
+    renderAs(<RolesPage />)
+
+    expect(await screen.findByText('Dispatcher')).toBeInTheDocument()
+    expect(screen.getByText('Corporate Admin')).toBeInTheDocument()
+
+    await user.selectOptions(
+      screen.getByLabelText(/filter roles by the kind of account/i),
+      'client',
+    )
+
+    // Both halves. Asserting only the survivor would pass just as happily
+    // against a filter that did nothing.
+    expect(screen.getByText('Corporate Admin')).toBeInTheDocument()
+    expect(screen.queryByText('Dispatcher')).not.toBeInTheDocument()
+  })
+
+  it('offers the audience picker only to head office', async () => {
+    // Moving a role between audiences decides what appears in another
+    // organisation's picker, so it is head office's call — the same shape the
+    // second-factor switch already has. A control that always refused would
+    // be a trap rather than a rule, so a fleet sees the answer and not the
+    // control.
+    catalogue([role()], { can_manage_audience: false })
+
+    const user = userEvent.setup()
+    renderAs(<RolesPage />)
+
+    await user.click(await screen.findByRole('button', { name: /^edit$/i }))
+    const dialog = screen.getByRole('dialog')
+
+    expect(within(dialog).queryByLabelText(/^For/)).not.toBeInTheDocument()
+    // The role's own audience is still stated, because hiding the control is
+    // not the same as hiding the fact.
+    expect(within(dialog).getByText('Fleet')).toBeInTheDocument()
+  })
+
+  it('sends the audience head office chose', async () => {
+    catalogue([role()], {
+      can_manage_audience: true,
+      audiences: [
+        { value: 'kangaru', label: 'Kangaru' },
+        { value: 'fleet', label: 'Fleet' },
+        { value: 'client', label: 'Client' },
+      ],
+    })
+
+    const user = userEvent.setup()
+    renderAs(<RolesPage />)
+
+    const dialog = await openNewRole(user)
+
+    await user.type(within(dialog).getByLabelText(/^Name/), 'Fleet HR')
+    await user.selectOptions(within(dialog).getByLabelText(/^For/), 'client')
+    await user.click(within(dialog).getByLabelText(/See every trip/))
+    await user.click(within(dialog).getByRole('button', { name: /create role/i }))
+
+    await waitFor(() => expect(post).toHaveBeenCalled())
+
+    expect((post.mock.calls[0][1] as Record<string, unknown>).audience).toBe('client')
+  })
+
   it('treats a 403 as an answer rather than a fault', async () => {
     get.mockRejectedValue(
       apiFailure(403, 'FORBIDDEN', 'You do not have permission to perform this action.'),

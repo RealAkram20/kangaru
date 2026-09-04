@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use Modules\Customers\Controllers\CustomerAuthController;
 use Modules\Customers\Controllers\CustomerOrderRequestController;
 use Modules\Customers\Controllers\CustomerRideController;
+use Modules\Trips\Controllers\TripRatingController;
 
 /*
 |--------------------------------------------------------------------------
@@ -29,8 +30,20 @@ Route::prefix('customer')->group(function () {
         ->middleware('throttle:5,1')
         ->name('customer.auth.login');
 
-    Route::middleware('auth:customer')->group(function () {
+    // `walk-in-or-support`, not `auth:customer` (ADR-0066 section 3). The
+    // walk-in's own token answers first and almost always; a staff token is
+    // accepted only while a live acting-as session names this customer as its
+    // subject, and is refused with a plain 401 otherwise. Stacking a second
+    // middleware after `auth:customer` could not have expressed it - the first
+    // would have rejected the staff token before the second ever ran.
+    Route::middleware('walk-in-or-support')->group(function () {
+        // Denied while acting as (ADR-0066 section 4), and the reason is
+        // mechanical rather than moral: this revokes `currentAccessToken()`,
+        // which under a session is the support agent's own staff token. A
+        // support agent pressing sign-out here would sign themselves out of
+        // the console and revoke the credential the session runs on.
         Route::post('/auth/logout', [CustomerAuthController::class, 'logout'])
+            ->middleware('not-acting-as')
             ->name('customer.auth.logout');
         Route::get('/auth/me', [CustomerAuthController::class, 'me'])
             ->name('customer.auth.me');
@@ -66,5 +79,23 @@ Route::prefix('customer')->group(function () {
         // driver's side of the same idea.
         Route::post('/rides/active/cancellation', [CustomerRideController::class, 'cancel'])
             ->name('customer.rides.cancel');
+
+        // Asking to be taken further than the drop-off agreed at booking.
+        // Nested under `active` for the same reason cancellation is: the ride
+        // is whichever one is running, and the passenger supplies no id to
+        // tamper with.
+        //
+        // A **request**, not a change — the driver answers it through
+        // `trips/{trip}/extensions/{extension}/acceptance`. Until they do it
+        // is `PROPOSED`, which nothing routes through and nothing bills.
+        Route::post('/rides/active/extension', [CustomerRideController::class, 'extend'])
+            ->name('customer.rides.extension.store');
+
+        // Rating the ride once it is over (ADR-0030 §1). Keyed by trip id
+        // unlike the endpoints above, and safely: the controller refuses any
+        // trip whose customer_id is not this token's, so an id guessed from
+        // elsewhere resolves to a 404 rather than somebody else's journey.
+        Route::post('/trips/{trip}/rating', [TripRatingController::class, 'store'])
+            ->name('customer.trips.rating.store');
     });
 });

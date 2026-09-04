@@ -11,6 +11,7 @@ const KAMPALA: Ping = {
   speedKph: 38.5,
   headingDegrees: 120,
   accuracyMetres: 8,
+    isMock: false,
 };
 
 describe('toPingBody', () => {

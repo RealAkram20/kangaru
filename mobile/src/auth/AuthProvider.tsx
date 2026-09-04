@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/react-native';
 import type { ReactNode } from 'react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
@@ -7,6 +8,7 @@ import {
   logout as logoutRequest,
   unregisterDevice,
 } from '../api/endpoints';
+import { goOffline } from '../duty/OnlineService';
 import { forgetPushToken, readPushToken } from '../push/tokenStore';
 import { isApiError } from '../api/errors';
 import type { User } from '../api/types';
@@ -26,6 +28,12 @@ type AuthValue = {
   user: User | null;
   api: ApiClient;
   signIn: (email: string, password: string) => Promise<SignInOutcome>;
+  /**
+   * Accepts a session minted somewhere other than the password form —
+   * today, `/auth/social` (ADR-0028 §3). The token is the same
+   * driver-scoped kind `signIn` stores; only the door differs.
+   */
+  adoptSession: (user: User, token: string) => Promise<void>;
   signOut: () => Promise<void>;
   /**
    * Drops the session without calling the server.
@@ -63,12 +71,57 @@ async function releasePushRegistration(api: ApiClient): Promise<void> {
 }
 
 /**
+ * Who every error and every log for the rest of this session is about.
+ *
+ * One call in each direction — a session begins, a session ends — rather than
+ * an attribute repeated at every log site. The SDK attaches `user.id` and
+ * `user.email` to everything after this, which is what turns "some handset
+ * could not answer an offer" into a driver the office can ring.
+ *
+ * The email is already in every error event: ADR-0054 §2 sends the request
+ * body, and this app's requests carry it. `name` is deliberately not sent —
+ * the id is what a report is joined on, and a driver's name adds nothing to a
+ * stack trace that their id does not.
+ */
+function identify(user: User | null): void {
+  Sentry.setUser(user === null ? null : { id: String(user.id), email: user.email });
+}
+
+/**
  * How long to wait for the keystore before giving up on it.
  *
  * Reading two small values out of Keychain/Keystore is a few milliseconds on
  * any working device, so a wait this long already means something is wrong.
  */
 const SESSION_RESTORE_TIMEOUT_MS = 3_000;
+
+/**
+ * How long any single step of signing out may take before it is abandoned.
+ *
+ * Sign-out is three awaited steps — release the push registration, stop the
+ * foreground service, tell the server — and each crosses either the network
+ * or the native bridge. Any one of them hanging used to hang the whole thing:
+ * `user` never cleared, and the app sat on the Profile screen apparently
+ * ignoring the tap, on exactly the OEM builds ADR-0046 names as unreliable.
+ * Every step is best-effort by its own documentation; none of them may cost
+ * the driver the ability to hand the phone over.
+ */
+const SIGN_OUT_STEP_TIMEOUT_MS = 5_000;
+
+/**
+ * A best-effort step: bounded in time, and a rejection means "move on".
+ *
+ * `withTimeout` alone handles the promise that never settles; the `catch`
+ * handles the one that rejects — `forgetPushToken`'s keystore delete, a
+ * `goOffline` whose native call throws. Either way the answer is the same:
+ * the next step runs, because the local session is coming down regardless.
+ */
+function bestEffort(step: Promise<unknown>): Promise<unknown> {
+  return withTimeout(
+    step.catch(() => null),
+    SIGN_OUT_STEP_TIMEOUT_MS,
+  );
+}
 
 /**
  * Resolves to null rather than waiting forever.
@@ -96,6 +149,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
 
   const handleUnauthenticated = useCallback(() => {
+    // Before the user is cleared, so the log below still carries `user.id`.
+    //
+    // A token lasts 24 hours with no refresh (ADR-0008), so a driver on a
+    // long shift meets this mid-queue: the outbox pauses, every screen falls
+    // back to the sign-in gate, and whatever they were part-way through waits.
+    // From the office it has always looked like nothing at all.
+    Sentry.logger.warn('Session expired; the driver was signed out mid-session');
+    identify(null);
+
     setCurrentToken(null);
     setUser(null);
     void clearSession();
@@ -122,6 +184,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (session !== null) {
           setCurrentToken(session.token);
           setUser(session.user);
+          identify(session.user);
         }
       } catch {
         // Signed out, not stuck.
@@ -158,12 +221,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setCurrentToken(result.token);
         await writeSession(result.token, result.user);
         setUser(result.user);
+        identify(result.user);
 
         return { kind: 'signed_in' };
       } catch (error) {
         if (isApiError(error)) {
+          // The code, not the message, and not the email: what the office
+          // needs from a failed sign-in is whether the credential was
+          // rejected, the account suspended, or the request throttled — three
+          // different conversations that look identical over the phone.
+          Sentry.logger.warn('Sign-in refused', { code: error.code });
+
           return { kind: 'failed', code: error.code, message: error.message };
         }
+
+        // The other half, and the one a driver upcountry actually meets. It is
+        // not a server refusal at all: the request never completed. Counting
+        // these separately is what tells a depot's connection problem apart
+        // from a forgotten password.
+        Sentry.logger.warn('Sign-in could not reach the office', { code: 'OFFLINE' });
 
         return {
           kind: 'failed',
@@ -175,6 +251,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [api],
   );
 
+  const adoptSession = useCallback(async (nextUser: User, token: string) => {
+    setCurrentToken(token);
+    await writeSession(token, nextUser);
+    setUser(nextUser);
+    identify(nextUser);
+  }, []);
+
   const signOut = useCallback(async () => {
     // Before the token is discarded, because unregistering needs it.
     //
@@ -182,10 +265,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // previous driver's push registration would deliver another person's job
     // offers — pickup address on the lock screen — to whoever holds the phone
     // next (ADR-0025 §4).
-    await releasePushRegistration(api);
+    await bestEffort(releasePushRegistration(api));
+
+    // The foreground service and the shift record go with it, for the same
+    // reason and with a sharper edge: left running, a depot handset would keep
+    // an ongoing "You are online" notification on screen and keep reporting
+    // the previous driver's position to the matcher — which would offer them
+    // work, from a phone now in somebody else's hands (ADR-0046).
+    //
+    // Before the token is discarded is not required here, unlike the push
+    // registration, but it is where it belongs: everything that makes this
+    // handset *this driver's* is released in one place.
+    await bestEffort(goOffline());
 
     try {
-      await logoutRequest(api);
+      await withTimeout(logoutRequest(api), SIGN_OUT_STEP_TIMEOUT_MS);
     } catch {
       // The token is being discarded either way. A driver who cannot reach the
       // server must still be able to hand the phone over, and the token
@@ -194,6 +288,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     setCurrentToken(null);
     setUser(null);
+    identify(null);
     await clearSession();
   }, [api]);
 
@@ -207,16 +302,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // rows in the same transaction.
     //
     // The local copy is dropped so the next sign-in registers afresh.
-    await forgetPushToken();
+    await bestEffort(forgetPushToken());
+
+    // The service is stopped here too, and this path is the one that needs it
+    // most: an expired token means the heartbeat is now answering 401 on every
+    // tick, so the notification would say "You are online" over a shift the
+    // platform stopped recognising hours ago.
+    //
+    // Bounded like `signOut`'s steps, and this path needs it *more*: it runs
+    // on session expiry, so a hang here is a driver who cannot leave a screen
+    // the platform has already stopped recognising.
+    await bestEffort(goOffline());
 
     setCurrentToken(null);
     setUser(null);
+    identify(null);
     await clearSession();
   }, []);
 
   const value = useMemo(
-    () => ({ ready, user, api, signIn, signOut, signOutLocally }),
-    [ready, user, api, signIn, signOut, signOutLocally],
+    () => ({ ready, user, api, signIn, adoptSession, signOut, signOutLocally }),
+    [ready, user, api, signIn, adoptSession, signOut, signOutLocally],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

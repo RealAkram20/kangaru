@@ -120,9 +120,14 @@ export class GpsStreamer {
       // The device clock at capture, per the brief. `reading.timestamp` is
       // milliseconds since the epoch on this handset.
       recordedAt: new Date(reading.timestamp).toISOString(),
-      speedKph: reading.coords.speed === null ? null : round(reading.coords.speed * 3.6, 1),
+      speedKph: reported(reading.coords.speed, (value) => round(value * 3.6, 1)),
       headingDegrees: normaliseHeading(reading.coords.heading),
-      accuracyMetres: reading.coords.accuracy === null ? null : round(reading.coords.accuracy, 1),
+      accuracyMetres: reported(reading.coords.accuracy, (value) => round(value, 1)),
+      // The OS's own verdict, passed through (ADR-0045). Android marks a fix
+      // produced by a mock-location app; iOS does not report the field at
+      // all, and `undefined` is stored as false — "the device did not say
+      // so", which is the honest reading of silence.
+      isMock: reading.mocked === true,
     };
 
     if (__DEV__ && !looksLikeServiceArea(ping.position)) {
@@ -188,12 +193,35 @@ export class GpsStreamer {
 }
 
 /**
+ * A figure the platform actually reported, or null.
+ *
+ * **`=== null` was not enough, and the gap was invisible to the type system.**
+ * Expo types `speed`, `heading` and `accuracy` as `number | null`, but a fix
+ * can omit them — an Android emulator does it constantly — and `undefined`
+ * walks straight past a null check into the arithmetic: `undefined * 3.6` is
+ * NaN, and `typeof NaN` is `'number'`, so it satisfies `number | null` and
+ * travels all the way to SQLite. The native binder cannot cast NaN and
+ * rejects the whole statement, so **one missing field dropped the entire
+ * ping** — and pings are what ADR-0045 measures a trip's distance from.
+ *
+ * Found in Sentry as `NativeDatabase.prepareAsync has been rejected`, three
+ * layers from the cause.
+ */
+function reported(value: number | null, map: (value: number) => number): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? map(value) : null;
+}
+
+/**
  * The API takes an integer 0–359. A device reports -1 when it has no fix on
  * heading, and 360 is the same bearing as 0 — both would be a 422 that costs
  * the whole batch.
+ *
+ * The `Number.isFinite` half is `reported`'s guard, for the same reason: an
+ * absent heading arrives as `undefined` on some fixes, and `Math.round` turns
+ * that into NaN rather than refusing it.
  */
 function normaliseHeading(heading: number | null): number | null {
-  if (heading === null || heading < 0) {
+  if (typeof heading !== 'number' || !Number.isFinite(heading) || heading < 0) {
     return null;
   }
 

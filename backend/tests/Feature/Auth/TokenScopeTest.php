@@ -2,6 +2,8 @@
 
 use App\Enums\UserRole;
 use App\Models\User;
+use App\Support\Auth\ClientScope;
+use Illuminate\Support\Facades\Route;
 use Modules\Drivers\Models\Driver;
 use OTPHP\TOTP;
 
@@ -107,6 +109,70 @@ it('closes a route nobody has named on the list, without anybody deciding to', f
         ->assertJsonPath('code', 'TOKEN_SCOPE_EXCEEDED');
 });
 
+/**
+ * The guard for the mistake this list keeps making.
+ *
+ * **Seven endpoints have shipped 403 to the only client that draws them.**
+ * Earnings, the ledger, promotions and trips were the first four; the payout
+ * account, the closure request and the driver's own profile edit were found
+ * the same way months later — with `curl` against a running server, because
+ * nothing else looks. Every backend test signs in without a `client` and gets
+ * an unscoped console token, so an endpoint's own suite is green while its
+ * screen is dead, and the app's tests mock the client and are green too.
+ *
+ * `/me` is the driver's own surface *by construction*: no id in any path, the
+ * token is the subject. So a `me.*` route that is not on the driver's list is
+ * either an omission or a decision nobody wrote down — and this makes the
+ * second one cost a line of code, which is the right price.
+ *
+ * The office's own routes over a driver's row (`drivers.*`) are deliberately
+ * out of scope here: a driver may correct two fields on their own record, not
+ * seven on anybody's, and `drivers.documents.*` is absent so that nobody can
+ * verify their own licence.
+ */
+it('leaves no me route unreachable by the app that owns it', function () {
+    $names = collect(Route::getRoutes()->getRoutes())
+        ->map(fn ($route): ?string => $route->getName())
+        ->filter(fn (?string $name): bool => $name !== null && str_starts_with($name, 'me.'))
+        ->values();
+
+    // A guard that found nothing because it looked at nothing is the failure
+    // mode of every reflective test. This one has 35 routes to look at.
+    expect($names)->not->toBeEmpty();
+
+    $unreachable = $names
+        ->reject(fn (string $name): bool => ClientScope::permits([ClientScope::DRIVER], $name))
+        ->values()
+        ->all();
+
+    expect($unreachable)->toBe([]);
+});
+
+it('names the stop routes on the driver scope, so add-a-drop-off is not the eighth dead screen', function () {
+    // `trips.*`, so the reflective `me.*` guard above cannot see them —
+    // pinned by name instead (ADR-0045 §4, §10).
+    expect(ClientScope::permits([ClientScope::DRIVER], 'trips.stops.store'))->toBeTrue();
+    expect(ClientScope::permits([ClientScope::DRIVER], 'trips.stop-candidates.index'))->toBeTrue();
+});
+
+it('names the extension routes on the driver scope, so the ninth dead screen is not this one', function () {
+    /*
+     * **This test exists because the bug happened.** The four routes were
+     * written, unit-tested, contract-tested and built into an APK without
+     * being named on the driver scope, and the first press of Accept on a
+     * real handset answered 403 — with a passenger in the car waiting for
+     * the answer.
+     *
+     * No backend test could have caught it: they mint an unscoped console
+     * token, so the middleware waves them through. Only `ClientScope` itself
+     * can be asked, and only by name — `trips.*` is invisible to the
+     * reflective `me.*` guard above.
+     */
+    expect(ClientScope::permits([ClientScope::DRIVER], 'trips.extensions.store'))->toBeTrue();
+    expect(ClientScope::permits([ClientScope::DRIVER], 'trips.extensions.acceptance.store'))->toBeTrue();
+    expect(ClientScope::permits([ClientScope::DRIVER], 'trips.extensions.decline.store'))->toBeTrue();
+    expect(ClientScope::permits([ClientScope::DRIVER], 'trips.dropoff-arrival.store'))->toBeTrue();
+});
 // ── The console is untouched ─────────────────────────────────────────────
 
 it('leaves a console token holding everything it held before', function () {

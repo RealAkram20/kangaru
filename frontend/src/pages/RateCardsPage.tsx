@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/useAuth'
 import { Badge } from '../components/core/Badge'
 import { Button } from '../components/core/Button'
@@ -35,8 +36,18 @@ const RATE_COLUMNS: DataColumn<RateRow>[] = [
     // read as missing data on a pricing document.
     render: (r) => (r.zone === null ? 'Anywhere else' : r.zone),
   },
-  { key: 'base_fare_minor', header: 'Base fare', numeric: true, render: (r) => formatUgx(r.base_fare_minor) },
-  { key: 'per_km_minor', header: 'Per km', numeric: true, render: (r) => formatUgx(r.per_km_minor) },
+  {
+    key: 'base_fare_minor',
+    header: 'Base fare',
+    numeric: true,
+    render: (r) => formatUgx(r.base_fare_minor),
+  },
+  {
+    key: 'per_km_minor',
+    header: 'Per km',
+    numeric: true,
+    render: (r) => formatUgx(r.per_km_minor),
+  },
   {
     key: 'per_waiting_minute_minor',
     header: 'Per waiting min',
@@ -54,17 +65,24 @@ const RATE_COLUMNS: DataColumn<RateRow>[] = [
     header: 'Maximum',
     numeric: true,
     // Null is uncapped, which is a different statement from "capped at 0".
-    render: (r) => (r.maximum_charge_minor === null ? 'Uncapped' : formatUgx(r.maximum_charge_minor)),
+    render: (r) =>
+      r.maximum_charge_minor === null ? 'Uncapped' : formatUgx(r.maximum_charge_minor),
   },
 ]
 
 export function RateCardsPage() {
   const { user } = useAuth()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [cards, setCards] = useState<RateCard[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [forbidden, setForbidden] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
-  const [dialogFor, setDialogFor] = useState<{ card: RateCard | null } | null>(null)
+  const [dialogFor, setDialogFor] = useState<{
+    card: RateCard | null
+    /** ADR-0050 §5. A category to open the version with, blank. */
+    addCategory?: string
+  } | null>(null)
 
   const canManage = canManageBilling(user)
 
@@ -114,6 +132,45 @@ export function RateCardsPage() {
     }
   }, [])
 
+  /**
+   * Opened from "Price it" on the vehicle categories screen (ADR-0050 §5).
+   *
+   * The categories screen can say a category is unpriced but cannot fix it —
+   * a rate card version is immutable, so the price has to go on a *new*
+   * version, and that is this dialog. Arriving here with the right card
+   * already open and the missing category already added is the difference
+   * between a warning and a way out.
+   *
+   * **Derived during render, not set from an effect.** Copying the router's
+   * state into `useState` would be one source of truth mirrored into a
+   * second, and it is the shape `react-hooks/set-state-in-effect` refuses:
+   * a synchronous setState in an effect body cascades a render for a value
+   * that was already available. It waits for `cards` only because the card
+   * has to be found before the dialog can copy its latest version.
+   *
+   * The state is cleared when the dialog closes rather than when it opens,
+   * so a browser Back into this entry does not reopen a dialog over a card
+   * whose prices may since have changed.
+   */
+  const priceRequest = location.state as { priceCategory?: string; cardId?: number } | null
+
+  const requested =
+    priceRequest?.priceCategory !== undefined && cards !== null
+      ? (cards.find((candidate) => candidate.id === priceRequest.cardId) ?? null)
+      : null
+
+  const openDialog =
+    dialogFor ??
+    (requested !== null ? { card: requested, addCategory: priceRequest?.priceCategory } : null)
+
+  const closeDialog = () => {
+    setDialogFor(null)
+
+    if (priceRequest?.priceCategory !== undefined) {
+      navigate(location.pathname, { replace: true, state: null })
+    }
+  }
+
   const makeDefault = async (card: RateCard) => {
     try {
       await apiClient.put(`/rate-cards/${card.id}/default`)
@@ -129,7 +186,7 @@ export function RateCardsPage() {
       <EmptyState
         icon="lock"
         title="Rate cards are not visible to your role"
-        description="Pricing is restricted to Finance, Super Admin, Operations Manager and Corporate Admin. Ask an administrator if you need access."
+        description="Restricted to Finance and administrators. Ask for access."
       />
     )
   }
@@ -174,20 +231,38 @@ export function RateCardsPage() {
 
       {(cards ?? []).map((card) => (
         <RateCardPanel
-          key={card.id}
+          /*
+            **Keyed on the newest version, not just the card.**
+
+            `RateCardPanel` picks which version to expand with a `useState`
+            initialiser, which runs once per mounted instance. Keyed on
+            `card.id` alone the instance survives every refetch, so adding a
+            version left `expanded` pointing at the version that *used* to be
+            newest: the list gained a row and the panel went on showing the old
+            prices. Somebody had just changed a tariff and the screen appeared
+            not to have noticed.
+
+            Folding the newest version's id into the key remounts the panel
+            exactly when the answer to "which version is current" changes, and
+            leaves it alone on every other reload. An effect syncing the state
+            would do the same thing and trip `react-hooks/set-state-in-effect`,
+            which this codebase already documents as a rule it keeps.
+          */
+          key={`${card.id}:${card.versions?.[0]?.id ?? 'none'}`}
           card={card}
           canManage={canManage}
-          onAddVersion={() => setDialogFor({ card })}
+          onEdit={() => setDialogFor({ card })}
           onMakeDefault={() => void makeDefault(card)}
         />
       ))}
 
-      {dialogFor && (
+      {openDialog && (
         <RateCardVersionDialog
-          card={dialogFor.card}
-          onClose={() => setDialogFor(null)}
+          card={openDialog.card}
+          addCategory={openDialog.addCategory}
+          onClose={closeDialog}
           onSaved={(message) => {
-            setDialogFor(null)
+            closeDialog()
             setNotice(message)
             void load()
           }}
@@ -200,12 +275,12 @@ export function RateCardsPage() {
 function RateCardPanel({
   card,
   canManage,
-  onAddVersion,
+  onEdit,
   onMakeDefault,
 }: {
   card: RateCard
   canManage: boolean
-  onAddVersion: () => void
+  onEdit: () => void
   onMakeDefault: () => void
 }) {
   // Versions arrive newest first. The top one is what a trip run today
@@ -229,9 +304,23 @@ function RateCardPanel({
               </Button>
             )
           )}
+          {/*
+            **One Edit, opening the same form the card was created with.**
+
+            There were two buttons here — *Edit* for the name and *New version*
+            for the prices — and the owner put the two dialogs side by side and
+            said the edit was a different thing from the create. It was: the
+            immutability rule had been made the *shape of the UI* rather than
+            the behaviour of Save.
+
+            It is the behaviour of Save now. The form carries everything;
+            renaming issues a PATCH, repricing adds a version, and doing both
+            does both. The rule is unchanged and the dialog states it — what
+            went away is having to know which button implements which half.
+          */}
           {canManage && (
-            <Button size="sm" iconLeft="plus" onClick={onAddVersion}>
-              New version
+            <Button size="sm" iconLeft="pencil" onClick={onEdit}>
+              Edit
             </Button>
           )}
         </div>
@@ -247,7 +336,9 @@ function RateCardPanel({
           />
         ))}
         {(card.versions ?? []).length === 0 && (
-          <p style={{ color: 'var(--text-secondary)' }}>This card has no versions and cannot price a trip.</p>
+          <p style={{ color: 'var(--text-secondary)' }}>
+            This card has no versions and cannot price a trip.
+          </p>
         )}
       </div>
     </Card>

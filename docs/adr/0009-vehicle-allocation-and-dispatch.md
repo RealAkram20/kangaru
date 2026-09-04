@@ -5,6 +5,11 @@
 **Depends on:** ADR-0005 (Accepted). The fleet belongs to the platform; a
 vehicle may be *allocated* to a corporate account for a period.
 
+**Amended by:** ADR-0067 (29 August 2026), which exempts the **main fleet**
+from needing an allocation to be offered a corporate booking. §1's ranking is
+untouched — a contracted vehicle still outranks everything by 1000 points — and
+every fleet that is not the house still contracts for the work.
+
 **Resolves:** the two items `Modules/Fleet/README.md` names as blocked on a
 product decision — "Nothing consults an allocation" and "No overlap
 constraint" — which it correctly refused to settle by reading PROJECT.md.

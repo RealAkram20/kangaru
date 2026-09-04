@@ -4,8 +4,54 @@ use Illuminate\Support\Facades\Route;
 use Modules\Fleet\Controllers\AvailabilityBlockController;
 use Modules\Fleet\Controllers\DriverAvailabilityController;
 use Modules\Fleet\Controllers\DriverPresenceController;
+use Modules\Fleet\Controllers\KangaruOverviewController;
+use Modules\Fleet\Controllers\OnDutyDriverController;
+use Modules\Fleet\Controllers\OperatorAccountController;
+use Modules\Fleet\Controllers\OperatorController;
+use Modules\Fleet\Controllers\OwnershipTransferController;
+use Modules\Fleet\Controllers\PlanController;
 use Modules\Fleet\Controllers\VehicleAllocationController;
 use Modules\Fleet\Controllers\ZoneController;
+
+// The register of fleet companies (ADR-0055, ADR-0059) — head office's, and
+// nobody else's. `OperatorPolicy` requires `access_level = kangaru` on every
+// method, so a fleet's own Super Admin holds the permission and is refused.
+//
+// No destroy route: six operational tables carry `operator_id` and
+// `operator_client` restricts on delete, so a fleet that leaves is suspended
+// rather than removed — which keeps its trips explicable.
+Route::get('operators', [OperatorController::class, 'index'])->name('operators.index');
+Route::post('operators', [OperatorController::class, 'store'])->name('operators.store');
+Route::get('operators/{operator}', [OperatorController::class, 'show'])->name('operators.show');
+Route::patch('operators/{operator}', [OperatorController::class, 'update'])->name('operators.update');
+
+// A fleet changing hands (owner's decision, 24 August). Its own routes, not a
+// field on the PATCH above, because naming who owns a fleet is a different
+// act from correcting its name — and it is *pending*: the PUT sends an
+// invitation, the DELETE withdraws it, and nothing about the fleet changes
+// until the new owner sets a password on the public half (Routes/public.php).
+Route::put('operators/{operator}/owner', [OwnershipTransferController::class, 'propose'])
+    ->name('operators.owner.propose');
+Route::delete('operators/{operator}/owner', [OwnershipTransferController::class, 'withdraw'])
+    ->name('operators.owner.withdraw');
+
+// Who head office can act as at this fleet (ADR-0056). A person, never an
+// organisation — so Log in as needs somebody to name. Separate from
+// `OperatorResource`, which is counts-only on purpose.
+Route::get('operators/{operator}/accounts', [OperatorAccountController::class, 'index'])
+    ->name('operators.accounts.index');
+
+// What head office sees when it signs in (ADR-0059). Counts only — a list
+// would be the cross-fleet read ADR-0055 §2 forbids, and the difference is
+// one endpoint.
+Route::get('kangaru/overview', [KangaruOverviewController::class, 'show'])
+    ->name('kangaru.overview');
+
+// What a fleet pays to be on Kangaru (ADR-0058). Reading the catalogue is open
+// — a fleet is entitled to know what it could move to, and the list carries no
+// other fleet's information. Moving a fleet between plans is head office's.
+Route::get('plans', [PlanController::class, 'index'])->name('plans.index');
+Route::put('operators/{operator}/plan', [PlanController::class, 'assign'])->name('operators.plan.assign');
 
 // `Modules/Fleet`'s first routes (ADR-0009). Nested under nothing: an
 // allocation is about one vehicle and one client but belongs to neither
@@ -79,3 +125,9 @@ Route::put('me/duty', [DriverPresenceController::class, 'update'])->name('me.dut
 Route::post('me/presence', [DriverPresenceController::class, 'ping'])
     ->middleware('throttle:30,1')
     ->name('me.presence.store');
+
+// The office's read of the same presence: who is on duty and where, for
+// the live map. Not under `/me/` — this is somebody else looking — and
+// gated by `DriverPolicy::viewAny`, the fleet register's own read, which
+// a client's roles do not hold (security-gate F2).
+Route::get('driver-presence', [OnDutyDriverController::class, 'index'])->name('driver-presence.index');

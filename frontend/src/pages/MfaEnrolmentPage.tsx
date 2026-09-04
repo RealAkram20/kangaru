@@ -102,7 +102,7 @@ export function MfaEnrolmentPage() {
         subtitle={`Required for ${user?.role.replace(/_/g, ' ') ?? 'your role'} — this role can issue invoices and change rates.`}
       >
         {error && (
-          <Alert tone="error" title="Two-factor setup" onDismiss={() => setError(null)}>
+          <Alert tone="error" title="Setup failed" onDismiss={() => setError(null)}>
             {error}
           </Alert>
         )}

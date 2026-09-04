@@ -20,6 +20,7 @@ use Modules\Administration\Services\AuthService;
 use Modules\Administration\Services\InvalidCredentialsException;
 use Modules\Administration\Services\InvalidMfaChallengeException;
 use Modules\Administration\Services\InvalidMfaCodeException;
+use Modules\Administration\Services\KnownDeviceService;
 use Modules\Administration\Services\MfaAlreadyEnrolledException;
 use Modules\Administration\Services\MfaService;
 
@@ -28,6 +29,7 @@ class AuthController extends Controller
     public function __construct(
         private readonly AuthService $authService,
         private readonly MfaService $mfa,
+        private readonly KnownDeviceService $devices,
     ) {}
 
     public function login(LoginRequest $request): JsonResponse
@@ -64,8 +66,24 @@ class AuthController extends Controller
             );
         }
 
+        /*
+         * Recorded here rather than in `AuthService::login()`, and after the
+         * MFA branch above rather than before it (mail plan A5).
+         *
+         * After, because a password that is correct but still owes a second
+         * factor has not signed anybody in. Warning at that point would email
+         * the account holder every time an attacker guessed the password and
+         * was stopped by the factor, which is the factor working, and would
+         * make the message mean two different things.
+         *
+         * Here rather than in the service because the service takes a
+         * `LoginRequest` for its credentials and has no business also knowing
+         * about user agents and IP addresses.
+         */
+        $this->devices->remember($result['user'], $request);
+
         return ApiResponse::success([
-            'user' => new UserResource($result['user']),
+            'user' => new UserResource($result['user']->load(['tenant', 'operator'])),
             'token' => $result['token'],
             // The SPA needs this at the moment it stores the token: a user
             // in this state can reach nothing but enrolment, and a client
@@ -106,7 +124,7 @@ class AuthController extends Controller
         }
 
         return ApiResponse::success([
-            'user' => new UserResource($result['user']),
+            'user' => new UserResource($result['user']->load(['tenant', 'operator'])),
             'token' => $result['token'],
             'must_enrol_mfa' => false,
         ], 'Logged in successfully.');
@@ -216,7 +234,9 @@ class AuthController extends Controller
         }
 
         return ApiResponse::success(
-            new UserResource($user->fresh()),
+            // `refresh`, not `fresh`: same reload, but it returns this user
+            // rather than a nullable copy of a row that was read moments ago.
+            new UserResource($user->refresh()->load(['tenant', 'operator'])),
             'Two-factor authentication is off. You can turn it back on at any time.',
         );
     }
@@ -234,7 +254,11 @@ class AuthController extends Controller
 
     public function me(Request $request): JsonResponse
     {
-        return ApiResponse::success(new UserResource($request->user()));
+        // Guaranteed non-null: this route requires auth:sanctum.
+        /** @var User $user */
+        $user = $request->user();
+
+        return ApiResponse::success(new UserResource($user->load(['tenant', 'operator'])));
     }
 
     /**

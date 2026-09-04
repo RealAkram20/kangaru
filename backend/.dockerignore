@@ -1,0 +1,50 @@
+# What never enters the API image (W1-a).
+
+# Secrets and local config — the container gets its environment from Coolify.
+.env
+.env.*
+auth.json
+
+# Version control, IDE, OS
+.git
+.gitignore
+.gitattributes
+.github
+.idea
+.vscode
+.fleet
+.nova
+.zed
+.DS_Store
+
+# Not needed at runtime
+tests
+phpunit.xml
+phpstan.neon
+phpstan-local.neon
+phpstan-baseline.neon
+pint.json
+bin
+node_modules
+package.json
+package-lock.json
+vite.config.js
+resources/css
+resources/js
+public/hot
+public/build
+
+# Runtime state — created empty in the Dockerfile, mounted as volumes by compose.
+storage/app/private/*
+storage/app/public/*
+storage/framework/cache/data/*
+storage/framework/sessions/*
+storage/framework/testing/*
+storage/framework/views/*
+storage/logs/*
+storage/phpstan
+storage/coverage.xml
+storage/*.key
+storage/pail
+bootstrap/cache/*.php
+vendor

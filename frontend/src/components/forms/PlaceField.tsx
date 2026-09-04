@@ -1,7 +1,8 @@
 import { useId, useState } from 'react'
 import { usePlaceSearch } from '../../lib/usePlaceSearch'
-import { placeLabel, type PlaceHit } from '../../pages/public/places'
+import { currentLocationPlace, placeLabel, type PlaceHit } from '../../pages/public/places'
 import { Icon } from '../core/Icon'
+import { IconButton } from '../core/IconButton'
 import { FormField } from './FormField'
 import { Input } from './Input'
 
@@ -42,6 +43,7 @@ export function PlaceField({
   hint,
   error,
   required = false,
+  locatable = false,
   onChange,
 }: {
   label: string
@@ -50,6 +52,17 @@ export function PlaceField({
   hint?: string
   error?: string
   required?: boolean
+  /**
+   * Offers the crosshair that fills this box from the device's position.
+   *
+   * **Opt-in, and on pick-up only.** "Where am I" is a question about the
+   * person holding the device, and the dispatcher holding it is not the
+   * passenger — but on a pick-up it is still the right shortcut, because the
+   * desk and the caller are usually in the same place and the driver has to
+   * reach the desk either way. On a destination it would be plainly wrong:
+   * nobody orders a car to where they already are.
+   */
+  locatable?: boolean
   /**
    * `place` is the suggestion that was taken, or null when the text was
    * typed. The caller keeps it so it can send coordinates only while the
@@ -60,6 +73,7 @@ export function PlaceField({
   const id = useId()
   const { hits, markTyped, settle } = usePlaceSearch(value)
   const [open, setOpen] = useState(false)
+  const [locating, setLocating] = useState(false)
 
   const take = (hit: PlaceHit) => {
     settle()
@@ -69,6 +83,33 @@ export function PlaceField({
     // this exact label — spelling it differently here silently dropped
     // every point, which is the bug this component exists to fix.
     onChange(placeLabel(hit), hit)
+  }
+
+  /**
+   * The device's own position, as a picked place.
+   *
+   * `currentLocationPlace()` reverse-geocodes and **never rejects** — a
+   * refused prompt, a timeout or a geocoder outage all resolve to null, and
+   * the field is left exactly as the person had it. That is the whole error
+   * handling: there is nothing useful to say about a browser permission the
+   * page cannot grant itself, and an alert over a working text box would be
+   * noise in front of somebody who can simply type.
+   *
+   * It goes through `take()` rather than setting the text directly, so it
+   * lands as a **picked place** with coordinates — which is the entire point.
+   * A pickup typed as "Current location" with no point behind it is the
+   * no-coordinates booking this component was built to stop.
+   */
+  const locate = async () => {
+    setLocating(true)
+
+    try {
+      const here = await currentLocationPlace()
+
+      if (here !== null) take(here)
+    } finally {
+      setLocating(false)
+    }
   }
 
   const showing = open && hits.length > 0
@@ -97,7 +138,36 @@ export function PlaceField({
             setTimeout(() => setOpen(false), 150)
           }}
           required={required}
+          // Room for the crosshair, or a long address runs under it.
+          style={locatable ? { paddingInlineEnd: 40 } : undefined}
         />
+
+        {locatable && (
+          <span
+            style={{
+              position: 'absolute',
+              insetInlineEnd: 4,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              display: 'inline-flex',
+            }}
+          >
+            <IconButton
+              icon={locating ? 'loader-circle' : 'crosshair'}
+              label="Use my current location"
+              size="sm"
+              disabled={locating}
+              // `onMouseDown` with the default prevented, for the reason the
+              // suggestion buttons below give: the input's blur would
+              // otherwise fire first and this would resolve against a field
+              // that had already closed its list.
+              onMouseDown={(event) => {
+                event.preventDefault()
+                void locate()
+              }}
+            />
+          </span>
+        )}
 
         {showing && (
           <ul
@@ -112,10 +182,10 @@ export function PlaceField({
               overflowY: 'auto',
               listStyle: 'none',
               padding: 'var(--space-1)',
-              background: 'var(--surface-raised)',
+              background: 'var(--surface-card)',
               border: '1px solid var(--border-default)',
               borderRadius: 'var(--radius-lg)',
-              boxShadow: 'var(--elevation-overlay)',
+              boxShadow: 'var(--shadow-lg)',
             }}
           >
             {hits.map((hit) => (

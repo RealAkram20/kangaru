@@ -1,0 +1,49 @@
+/*
+ * The Suspense fallback for a lazily-loaded route.
+ *
+ * This is on screen for roughly the time it takes to fetch one chunk — often
+ * under 100ms on a warm connection. So it is deliberately quiet: bars in the
+ * page's own surface colours, no spinner, no branding. Anything louder reads
+ * as an error state to someone who only sees it for three frames.
+ *
+ * Motion is opt-in, matching landing.css and fleetMap.css: the bars are
+ * static unless the reader has expressed no preference against animation.
+ */
+.route-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.route-fallback__bar {
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .route-fallback__bar {
+    animation: route-fallback-pulse 1.4s ease-in-out infinite;
+  }
+
+  /* Staggered so the block reads as one settling surface rather than a
+     row of identical blinking rectangles. */
+  .route-fallback__bar:nth-child(2) {
+    animation-delay: 0.12s;
+  }
+  .route-fallback__bar:nth-child(3) {
+    animation-delay: 0.24s;
+  }
+  .route-fallback__bar:nth-child(4) {
+    animation-delay: 0.36s;
+  }
+}
+
+@keyframes route-fallback-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}

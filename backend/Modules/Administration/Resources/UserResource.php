@@ -21,8 +21,48 @@ class UserResource extends JsonResource
         return [
             'id' => $this->id,
             'tenant_id' => $this->tenant_id,
+            // Additive. The console's chrome names whose console this is —
+            // "Centenary Bank", not "Tenant 1" — and a client's user should
+            // not have to fetch their own company to learn their own name.
+            // Null for platform staff, who have no tenant (ADR-0006).
+            //
+            // Only when the relation was loaded: this resource is nested on
+            // every booking, trip event and audit row as the actor, and a
+            // lazy load per row is the N+1 `CrossClientQueueLabellingTest`
+            // exists to catch. `/auth/*` and `/users*` load it; a nested
+            // actor does not carry it and does not need to.
+            'tenant_name' => $this->whenLoaded('tenant', fn () => $this->tenant?->name),
+            // The fleet's display name — "Shanitah General Enterprises Ltd".
+            //
+            // The companion to `tenant_name`, and it exists because the chrome
+            // could not tell two of the three levels apart: `tenant_id` is
+            // null for a **fleet** account and null for a **Kangaru** account
+            // alike, so both rendered the same "Platform" chip. A Super Admin
+            // at Shanitah and a Super Admin at head office saw an identical
+            // topbar and two different menus, which is the worst way round.
+            //
+            // `whenLoaded` for the same reason as `tenant_name`: this resource
+            // is nested on every booking, trip event and audit row, and a lazy
+            // load per row is the N+1 `CrossClientQueueLabellingTest` exists
+            // to catch.
+            'operator_name' => $this->whenLoaded('operator', fn () => $this->operator?->name),
+            // Which level this account belongs to (ADR-0055 §4). The console
+            // chooses **which menu exists** from this before role narrows it
+            // (ADR-0059 §1) — a fleet's dispatch board is not a thing in
+            // Kangaru's world, and answering that with a role deny-list means
+            // never forgetting one of six roles, forever.
+            //
+            // Unconditional rather than `whenLoaded`: it is a column on the
+            // row, not a relation, so it costs no query wherever this resource
+            // is nested. It is not a secret either — it is a fact about the
+            // caller that the caller's own menu already reveals.
+            'access_level' => $this->access_level->value,
             'name' => $this->name,
             'email' => $this->email,
+            // The work number, so a booking raised for this person can be
+            // dispatched against a number somebody already checked rather
+            // than one retyped from memory each time.
+            'phone' => $this->phone,
             'role' => $this->roleSlug(),
             // Additive fields only (AGENTS.md: new optional fields are
             // allowed within a version). /auth/me returns this same
@@ -33,6 +73,20 @@ class UserResource extends JsonResource
             // if the row is somehow missing rather than fataling on a
             // nullable relation.
             'role_label' => $this->roleRecord instanceof Role ? $this->roleRecord->name : $this->roleSlug(),
+            // What a client's administrator switched on for this person
+            // (App\Enums\ClientCapability), and whether their bookings need
+            // approving. Additive; the labels travel in the staff list's
+            // `meta.capabilities` catalogue, not here.
+            'capabilities' => array_map(fn ($c) => $c->value, $this->capabilities()),
+            'books_without_approval' => $this->booksWithoutApproval(),
+            // The routes this person rides (ADR-0045 §8) — a roster, never
+            // a permission. `whenLoaded` for the reason `tenant_name` is:
+            // this resource is nested on every booking and audit row, and a
+            // lazy load per row is the N+1 the staff list would pay for.
+            'route_ids' => $this->whenLoaded(
+                'clientRoutes',
+                fn () => $this->clientRoutes->pluck('id')->all(),
+            ),
             'status' => $this->status->value,
             'status_label' => $this->status->label(),
             'is_active' => $this->isActive(),

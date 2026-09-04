@@ -39,6 +39,73 @@ list is unbuilt and named below.
 | `booking.approved` | `Modules\Bookings\Events\BookingApproved` | the requester | in-app + mail |
 | `booking.rejected` | `Modules\Bookings\Events\BookingRejected` | the requester | in-app + mail |
 | `report.export.ready` | `Modules\Reports\Events\ReportExportCompleted` | the requester | in-app |
+| `trip.assigned` | `Modules\Trips\Events\TripStatusChanged` (creation, `from` null) | the booking's requester | in-app + mail |
+| `trip.driver_arrived` | `TripStatusChanged` → `driver_arrived` | the booking's requester | in-app + mail |
+| `trip.completed` | `TripStatusChanged` → `trip_completed` — the body carries the six data points (Centenary letter) | the booking's requester | in-app + mail |
+| `trip.offered` | `DispatchOfferService::ring()` | the offered driver | push + in-app |
+| `trip.offer_withdrawn` | `DispatchOfferService::withdraw()` — an accept superseding a wave, or a passenger cancelling | the losing drivers | push, silently |
+| `driver.document.reviewed` | `DriverDocumentService::verify()` / `::reject()` — a person at the office, never a machine | the driver whose document it is | **in-app + push + mail** |
+
+### `driver.document.reviewed` is the only type that takes all three channels
+
+ADR-0052. Each channel is doing a different job and none of them is a
+duplicate of another:
+
+- the **in-app row** is the record, and it is the only one that cannot fail —
+  push is best-effort (ADR-0025 §3) and a driver may have declined the OS
+  permission outright;
+- the **push** is what makes a *rejection* reach somebody the same day, which
+  is the entire point of the feature: a driver who does not know their licence
+  was refused believes they are compliant;
+- the **email** is the only channel that survives an uninstalled app, and the
+  only one allowed to carry the office's rejection reason in words.
+
+**The reason is on the email and nowhere else.** It is somebody's account of a
+defect in a stranger's identity document, and a push lands on a lock screen
+that is read over a shoulder. `body()` — which the push channel and the in-app
+row both render verbatim — never contains it, and `context()` does not either,
+so it never becomes push `data`.
+
+`pushOptions()` cannot be used to soften the push body instead, and the way it
+fails is worth knowing: `ExpoPushChannel` composes `$shown + … + $options`, and
+PHP's `+` keeps the **left** operand's keys, so a `body` supplied there is
+discarded without a warning. The safe design is a `body()` that is already safe
+on every channel. `DriverDocumentNotificationTest` pins it.
+
+This type replaces ADR-0033 §6's explicit refusal to notify at all. That
+refusal was an argument about consistency — settlements and ratings had no
+notification either — and ADR-0043 and ADR-0044 have since made the platform
+consistent the other way.
+
+### The two `trip.offer*` rows are the only ones that reach a handset
+
+`trip.offered` is the one message in the platform that earns an interruption
+(ADR-0025 §5): it has a countdown on it and it is the only reason the Driver's
+Application is installed. It says how it wants to be delivered through
+`pushOptions()` — a MAX-importance Android channel with a ringtone, a `ttl`
+equal to the offer's own remaining seconds, and a collapse key.
+
+**The `ttl` is the part worth knowing about.** Expo keeps a message deliverable
+long after its subject is gone, so without it a push held while a handset was
+in a dead zone arrives later and rings for a job somebody else has been driving
+for ten minutes. That is worse than never ringing.
+
+`trip.offer_withdrawn` is **the only silent notification here** and the only one
+whose purpose is to *undo* an interruption rather than cause one. It shows
+nothing and writes no in-app row: "a job you never answered was withdrawn" is an
+inbox entry for a non-event, generated once per cancelled ride. It is also
+**allowed to fail** — the guarantee is a deadline the handset arms when it
+starts ringing (ADR-0046 §4), and Android will not deliver a data-only push to
+an app it has killed at all. This is an accelerator, in the same sense
+`dispatch:advance-offers` is an accelerator for an expiry that is really a clock.
+
+The three `trip.*` rows are one class, `TripProgressNotification`, sent by
+`SendTripProgressNotification` off `TripStatusChanged` — every other move
+(`accepted`, `driver_en_route`, `passenger_onboard`, `waiting`…) is
+deliberately silent, because an inbox that narrates every step is an inbox
+that gets muted. A walk-in trip has no booking and its rider is told by the
+customer flow, so nothing is sent for it. The driver is named by **first name
+only**; the plate and make/model identify the car.
 
 Three things each of these deliberately does **not** do:
 
@@ -170,6 +237,59 @@ only should not need a release.
 point. Distinct from `APP_URL`, which is this API — a relative path is
 useless in an email client and `APP_URL` would send the recipient to a JSON
 endpoint.
+
+## Email
+
+One path, and the reason it is worth stating is that there used to be two.
+
+`NotificationChannel::MAIL` resolved to the string `mail`, which is Laravel's
+default mailer, which is `MAIL_MAILER`, which is `log`. Every email on this
+channel was written to `storage/logs/laravel.log` and delivered to nobody, for
+the whole life of the feature, while `PasswordResetService` sent real mail
+built from the settings the owner saved. A green test send in the settings
+screen vouched for none of it.
+
+`SettingsMailChannel` is now the only path. It builds from
+`SettingsService::smtpMailer()`, which is the same code the settings screen's
+test send uses, so a green test there proves the path that matters.
+
+### The three gates, each silent
+
+A notification is raised by something else finishing. None of those may fail
+because email is off, so each gate returns and the in-app row is what the
+recipient still gets.
+
+1. no address on the account;
+2. `mailConfigured()` is false, which is the platform's default state;
+3. `MailPreference::allows()` is false, which required types ignore.
+
+### What a template may be
+
+`MailContent` is the shape: one heading, a few sentences, an optional block of
+facts, at most one action. A notification that cannot fit is trying to be two
+emails. `KangaruNotification::mailContent()` derives a sensible default from
+`subject()`, `body()` and `url()`, so a new notification gets a branded email
+for free; override it when the email genuinely differs from the in-app row,
+which it usually does by wanting facts rather than more prose.
+
+The shell is `resources/views/mail/layout.blade.php` and its plain text
+partner. Both are rendered by `MailRenderer`, which is separate from the
+channel so a template can be rendered without sending anything.
+
+**Run `php artisan mail:preview` and open the files.** The first version of the
+shell passed its tests while rendering an invisible header band and links at
+2.08:1. Tests could not see either; a browser saw both at once.
+
+### mail_deliveries
+
+Append only, one row per attempted send, written *before* the transport is
+touched so a killed worker leaves a visible gap rather than nothing. It is how
+support answers "did the client get the invoice", and it is the only place the
+SMTP account's daily cap becomes visible when a digest sweep runs into it.
+
+`operator_id` is on the row so the mail plan §6 rule is a query rather than an
+incident report: **an email about a fleet's operations goes to that fleet and
+to nobody else.**
 
 ## Dependencies
 

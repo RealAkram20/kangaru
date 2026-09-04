@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Models\Operator;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Modules\Drivers\Models\Driver;
@@ -20,6 +21,9 @@ class DriverFactory extends Factory
     {
         return [
             'user_id' => null,
+            // Every driver drives for a fleet (ADR-0055). Shanitah is the only
+            // one that exists, and F0 ships no way to create a second.
+            'operator_id' => Operator::SHANITAH,
             'name' => fake()->name(),
             'phone' => '+2567'.fake()->unique()->numerify('########'),
             'license_number' => fake()->unique()->regexify('DL-[A-Z]{2}-[0-9]{4}'),

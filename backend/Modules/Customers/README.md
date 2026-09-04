@@ -89,5 +89,13 @@ Nothing here lets staff act *as* a customer: no password reset, no
 impersonation, no profile edit. The profile does say **how** somebody signs
 in (`has_password`, `has_google`) without saying what the credential is.
 
+The impersonation half of that sentence has an exception since ADR-0066, and
+it is **not in this module**: head office may hold a walk-in's account through
+a support session, which is time-boxed, disclosed to the customer by email, and
+recorded against both names in `audit_logs`. `Modules/Administration` owns it.
+The other two refusals are untouched and are the reason the exception is
+shaped that way — a session can be told apart from the person's own hand, and a
+silent password reset cannot.
+
 Frontend: `frontend/src/pages/CustomersPage.tsx`.
 

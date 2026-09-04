@@ -2,15 +2,18 @@
 
 namespace Modules\Billing\Services;
 
+use App\Models\OperatorClient;
 use App\Models\User;
 use App\Support\Money\Shillings;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Modules\Billing\Enums\RateCardStatus;
 use Modules\Billing\Enums\RoundingMode;
 use Modules\Billing\Models\RateCard;
 use Modules\Billing\Models\RateCardRate;
 use Modules\Billing\Models\RateCardVersion;
 use Modules\Billing\Models\RateCardZoneRate;
+use Modules\Trips\Distance\DistancePolicy;
 
 /**
  * Creates rate cards and adds versions to them.
@@ -37,6 +40,25 @@ class RateCardService
         return DB::transaction(function () use ($data, $actor) {
             $card = RateCard::create([
                 'tenant_id' => $actor->tenant_id,
+                // Which fleet's prices these are (ADR-0055 §5), and the
+                // answer follows the client rather than the actor.
+                //
+                // **A card with no client is the public tariff, and the public
+                // tariff is Kangaru's** — Kangaru owns the walk-in customer, so
+                // Kangaru sets what a walk-in pays. That is true no matter who
+                // types it in, and the first version of this line got it wrong
+                // by reading the actor: a platform Super Admin has had a fleet
+                // since F0, so it stamped Shanitah onto the public tariff and
+                // `walkInTariff()` — which requires a null fleet — stopped
+                // finding it. Twelve tests went red, all of them walk-in
+                // pricing.
+                //
+                // **A client's card belongs to the fleet serving that client**,
+                // read from the contract. The actor cannot answer it: these
+                // cards are written by the *client's* own Finance officer, who
+                // has no fleet at all, and taking their null would file every
+                // negotiated rate as a Kangaru default readable by every fleet.
+                'operator_id' => $this->fleetPricingFor($actor->tenant_id),
                 'name' => $data['name'],
                 'description' => $data['description'] ?? null,
                 'status' => RateCardStatus::ACTIVE,
@@ -66,6 +88,40 @@ class RateCardService
     }
 
     /**
+     * Which fleet's prices a card written for this client is (ADR-0055 §6).
+     *
+     * Null for a client-less card, which is the public tariff and Kangaru's.
+     *
+     * Otherwise the client's contracted fleet. **Refused rather than guessed**
+     * when a client has more than one: with two fleets serving them there are
+     * two sets of negotiated terms, and picking either would silently file one
+     * fleet's prices under the other's name — the exact failure a per-fleet
+     * rate card exists to prevent. Nothing reaches that branch today, because
+     * every client has one contract; it is written now because the moment it
+     * can be reached is the moment somebody is looking at a screen and not at
+     * this file.
+     */
+    private function fleetPricingFor(?int $tenantId): ?int
+    {
+        if ($tenantId === null) {
+            return null;
+        }
+
+        $fleets = OperatorClient::serving($tenantId)->pluck('operator_id');
+
+        if ($fleets->count() > 1) {
+            throw ValidationException::withMessages([
+                'operator_id' => [
+                    'This client is served by more than one fleet, so a rate card has to say '
+                    .'which fleet it prices. Choose the fleet and try again.',
+                ],
+            ]);
+        }
+
+        return $fleets->first();
+    }
+
+    /**
      * Adds the next immutable version to a card.
      *
      * @param  array<string, mixed>  $data
@@ -84,7 +140,7 @@ class RateCardService
             $version = RateCardVersion::create([
                 'tenant_id' => $locked->tenant_id,
                 'rate_card_id' => $locked->id,
-                'version' => $this->nextVersionNumber($locked),
+                'version' => $this->nextVersionNumber($locked, $actor),
                 'effective_from' => $data['effective_from'],
                 'currency' => Shillings::currency(),
                 'rounding_mode' => RoundingMode::tryFrom((string) ($data['rounding_mode'] ?? ''))
@@ -93,6 +149,8 @@ class RateCardService
                 'night_starts_at' => $data['night_starts_at'] ?? null,
                 'night_ends_at' => $data['night_ends_at'] ?? null,
                 'night_multiplier_bp' => $data['night_multiplier_bp'] ?? RateCardVersion::NO_MULTIPLIER_BP,
+                'distance_policy' => DistancePolicy::tryFrom((string) ($data['distance_policy'] ?? ''))
+                    ?? DistancePolicy::ODOMETER,
                 'created_by_user_id' => $actor->id,
                 'notes' => $data['notes'] ?? null,
             ]);
@@ -154,6 +212,41 @@ class RateCardService
     }
 
     /**
+     * Renames a card, redescribes it, or archives it.
+     *
+     * **The card's *label*, never its prices.** Nothing reachable from here
+     * touches a `RateCardVersion` or a `PricedRate`, which throw
+     * `FinancialRecordImmutableException` on update anyway — the point is that
+     * this method offers no route to try. Changing what a client is charged
+     * stays `addVersion()`, so an invoice already sent stays reproducible from
+     * the version it was priced by.
+     *
+     * `RateCard` is `Auditable`, so the rename is recorded with its before and
+     * after. That is the reason to do this through the model rather than a
+     * query-builder update: a pricing document's name changing with nobody
+     * accountable for it is the kind of thing an auditor asks about.
+     *
+     * Archiving is deliberately **not** blocked when the card is the default.
+     * The two flags answer different questions and the existing guard is
+     * elsewhere: `makeDefault()` owns which card prices an unnamed trip, and
+     * `RateCardResolver` already refuses to price against a card with no
+     * usable version. Adding a second rule here would put the same decision in
+     * two places.
+     *
+     * @param  array<string, mixed>  $details  only the keys the client sent
+     */
+    public function updateDetails(RateCard $card, array $details, User $actor): RateCard
+    {
+        $card->fill($details)->save();
+
+        // `forActor`, not `refresh()` — the same trap `create()` documents at
+        // length. The model's own refresh goes back through `TenantScope`,
+        // which fails closed, so a platform actor renaming the public tariff
+        // would write the row and then fail to read it back.
+        return RateCard::forActor($actor)->findOrFail($card->id);
+    }
+
+    /**
      * Makes this the card invoice generation reaches for when no card is
      * named. Exactly one card per tenant holds the flag; MySQL cannot
      * express "at most one true per tenant" as a constraint, so the demotion
@@ -177,8 +270,33 @@ class RateCardService
         });
     }
 
-    private function nextVersionNumber(RateCard $card): int
+    /**
+     * The next version number for this card, counted the way the card itself
+     * was loaded.
+     *
+     * **`forActor()`, not `$card->versions()`.** The plain relation carries
+     * the global `TenantScope`, which fails closed — `1 = 0` — whenever no
+     * tenant is bound. Platform staff have no tenant of their own, so for a
+     * **platform-owned** rate card (`tenant_id` null, which the public walk-in
+     * tariff is) the count came back empty and this returned 1 for ever. The
+     * insert then died on the `(rate_card_id, version)` unique index, so the
+     * public tariff could not be given a second version through the API at
+     * all — a 500, every time.
+     *
+     * It was never noticed because that card is the only platform-owned one
+     * and it had exactly one version. `Vehicle::CATEGORIES` hid it further:
+     * the request refused the tariff's own `boda` and `tricycle` rows with a
+     * 422 before execution ever reached here.
+     *
+     * Reading past the scope grants nothing. `$card` has already been resolved
+     * through `RateCard::forActor()` and authorised by the policy; this only
+     * asks how many versions that same card has, filtered to it by id.
+     */
+    private function nextVersionNumber(RateCard $card, User $actor): int
     {
-        return (int) $card->versions()->reorder()->max('version') + 1;
+        return (int) RateCardVersion::forActor($actor)
+            ->where('rate_card_id', $card->getKey())
+            ->reorder()
+            ->max('version') + 1;
     }
 }

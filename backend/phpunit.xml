@@ -31,6 +31,9 @@
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
         <env name="MAIL_MAILER" value="array"/>
+        <!-- SettingsService::smtpMailer() builds its own mailer, which Mail::fake()
+             does not intercept. Without this it opens a real socket. -->
+        <env name="MAIL_SETTINGS_TRANSPORT" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>

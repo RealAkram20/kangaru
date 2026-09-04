@@ -1,11 +1,13 @@
 import axios from 'axios'
-import { useState, type FormEvent } from 'react'
-import { Navigate } from 'react-router-dom'
+import { useEffect, useState, type FormEvent } from 'react'
+import { Link, Navigate } from 'react-router-dom'
 import { useAuth } from '../auth/useAuth'
 import { Logo } from '../components/brand/Logo'
 import { Button } from '../components/core/Button'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { fetchPublicSettings } from '../lib/publicSettings'
+import { useIsCompact } from '../lib/useMediaQuery'
 
 /**
  * Two steps since ADR-0008, for the roles that can move money.
@@ -68,6 +70,7 @@ function signInErrorMessage(error: unknown): string {
 
 export function LoginPage() {
   const { user, login, verifyMfa } = useAuth()
+  const compact = useIsCompact()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -81,6 +84,22 @@ export function LoginPage() {
    */
   const [challengeId, setChallengeId] = useState<string | null>(null)
   const [code, setCode] = useState('')
+  /**
+   * ADR-0028 §4: the client reads the flag before showing the flow, so a
+   * door the owner switched off never renders. False until the server says
+   * otherwise — the same fail-closed rule as the driver app.
+   */
+  const [resetEnabled, setResetEnabled] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    void fetchPublicSettings().then((settings) => {
+      if (!cancelled) setResetEnabled(settings.auth.password_reset_enabled)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   if (user) {
     return <Navigate to="/" replace />
@@ -132,50 +151,79 @@ export function LoginPage() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'grid', gridTemplateColumns: '1.1fr 1fr' }}>
+    /*
+      Two columns on a desktop, one on a phone.
+
+      It was `1.1fr 1fr` at every width, which meant that at 390px the two
+      columns and their `--space-12` padding needed 725px: the marketing panel
+      filled the screen and the form — Sign in included — sat off-screen to the
+      right. Nobody could sign into either console from a phone, which is the
+      worst place for a layout bug to be, since it is the door to everything.
+    */
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'grid',
+        gridTemplateColumns: compact ? '1fr' : '1.1fr 1fr',
+        gridTemplateRows: compact ? 'auto 1fr' : undefined,
+      }}
+    >
       <div
         style={{
           background: 'var(--surface-chrome)',
-          padding: 'var(--space-16) var(--space-12)',
+          // A band above the form on a phone rather than half the screen: the
+          // pitch is for someone deciding whether to buy, and this person has
+          // an account and wants to get in.
+          padding: compact
+            ? 'var(--space-6) var(--space-5)'
+            : 'var(--space-16) var(--space-12)',
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'space-between',
+          gap: compact ? 'var(--space-4)' : undefined,
         }}
       >
-        <Logo variant="horizontal-navy" height={38} />
-        <div>
-          <h1
-            style={{
-              font: 'var(--type-page-title)',
-              fontSize: 'var(--text-4xl)',
-              color: 'var(--text-on-chrome)',
-              maxWidth: 460,
-            }}
-          >
-            Every trip recorded. Every invoice reproducible.
-          </h1>
-          <p
-            style={{
-              font: 'var(--type-body)',
-              color: 'var(--text-on-chrome-secondary)',
-              marginTop: 'var(--space-4)',
-              maxWidth: 460,
-            }}
-          >
-            Transport management for corporate fleets: dispatch, GPS tracking, odometer capture,
-            rate-card billing and enterprise reporting.
+        <Logo variant="horizontal-navy" height={compact ? 30 : 38} />
+        {/* The headline and the footer are the parts that do not survive a
+            phone: keeping them would push the password field below the fold
+            on a 667px screen, behind the keyboard. */}
+        {!compact && (
+          <div>
+            <h1
+              style={{
+                font: 'var(--type-page-title)',
+                fontSize: 'var(--text-4xl)',
+                color: 'var(--text-on-chrome)',
+                maxWidth: 460,
+              }}
+            >
+              Every trip recorded. Every invoice reproducible.
+            </h1>
+            <p
+              style={{
+                font: 'var(--type-body)',
+                color: 'var(--text-on-chrome-secondary)',
+                marginTop: 'var(--space-4)',
+                maxWidth: 460,
+              }}
+            >
+              Transport management for corporate fleets: dispatch, GPS tracking, odometer capture,
+              rate-card billing and enterprise reporting.
+            </p>
+          </div>
+        )}
+        {!compact && (
+          <p style={{ font: 'var(--type-caption)', color: 'var(--text-on-chrome-secondary)' }}>
+            Shanitah General Enterprises Ltd · Kampala, Uganda
           </p>
-        </div>
-        <p style={{ font: 'var(--type-caption)', color: 'var(--text-on-chrome-secondary)' }}>
-          Shanitah General Enterprises Ltd · Kampala, Uganda
-        </p>
+        )}
       </div>
       <div
         style={{
           display: 'flex',
-          alignItems: 'center',
+          alignItems: compact ? 'flex-start' : 'center',
           justifyContent: 'center',
-          padding: 'var(--space-12)',
+          padding: compact ? 'var(--space-8) var(--space-5)' : 'var(--space-12)',
         }}
       >
         {challengeId === null ? (
@@ -233,6 +281,23 @@ export function LoginPage() {
                   required
                 />
               </FormField>
+              {resetEnabled && (
+                <Link
+                  to="/forgot-password"
+                  // The typed email rides along so the next page does not ask
+                  // for what this one already knows.
+                  state={{ email }}
+                  style={{
+                    font: 'var(--type-body-dense)',
+                    color: 'var(--text-link)',
+                    textDecoration: 'none',
+                    justifySelf: 'end',
+                    alignSelf: 'flex-end',
+                  }}
+                >
+                  Forgot password?
+                </Link>
+              )}
               <Button
                 size="lg"
                 fullWidth

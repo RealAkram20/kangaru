@@ -42,10 +42,11 @@ class FleetReportController extends Controller
 
     private function render(ReportType $type, FleetReportRequest $request): JsonResponse
     {
-        // A report spans the whole tenant's fleet, which is more than a
-        // driver or a corporate employee should see — the same gate the
-        // trip report uses.
-        $this->authorize('viewReports');
+        // Per report, not merely "may run reports": the driver report needs
+        // `drivers.view` as well, the vehicle report only `reports.view` —
+        // ReportType::permissions() is the one place that says so, and this
+        // is the same gate the financial report uses.
+        $this->authorize('viewReport', $type);
 
         /** @var User $actor */
         $actor = $request->user();

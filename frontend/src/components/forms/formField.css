@@ -1,0 +1,43 @@
+/*
+ * The split field layout — label and hint in a left column, control and error
+ * in a right one.
+ *
+ * A stylesheet rather than inline styles, like `dataTable.css`, because the
+ * only thing it needs is a media query and inline styles cannot hold one. The
+ * alternative was `useIsCompact()` inside FormField, which would open a
+ * `matchMedia` subscription for every field on every form in the console to
+ * answer a question one page asks.
+ *
+ * **The control column is the fixed one, and the label column takes the
+ * slack.** The obvious arrangement is the opposite — a fixed label column,
+ * controls filling the rest — and it is worse in both directions at once: a
+ * four-character number field leaves several hundred pixels of nothing to its
+ * right, while the sentence explaining it wraps to three lines in a 280px
+ * column. Capping the controls and letting the label breathe fixes both, and
+ * every control still starts on one strong vertical line.
+ */
+.kr-field-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 460px);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+/* A narrow desktop window still splits, but the control column gives ground
+   first — a hint that has become unreadable is worse than a shorter field. */
+@media (max-width: 1200px) {
+  .kr-field-split {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 380px);
+    gap: var(--space-4);
+  }
+}
+
+/* COMPACT_MAX_WIDTH — the one width at which this console stops being a
+   desktop console (`useMediaQuery.ts`). Kept in step with it by hand; there
+   is no build step here that could share the number. */
+@media (max-width: 900px) {
+  .kr-field-split {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+}

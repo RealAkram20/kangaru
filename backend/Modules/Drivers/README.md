@@ -14,6 +14,13 @@ driver equivalent of `vehicle_allocations`.
 
 - `Driver` — name, phone, email, licence number, licence expiry, status.
   One record per driver.
+- `Driver.owns_vehicle` (ADR-0048 §7) — whether `vehicle_id` names the
+  driver's **own** machine or one the depot allocates. Deliberately stored
+  rather than derived from `vehicle_id`, which a depot driver also sets: the
+  two differ in who insures the vehicle, who repairs it, whether it leaves
+  when the driver does, and whether the vehicle papers on file are the
+  driver's or the platform's. **It gates nothing yet** — same
+  record-before-enforcement split as ADR-0033 §6.
 - `Driver.user_id` (nullable FK to `users`) links a driver profile to the
   account that signs in as them. `Modules/Trips` needs it so a driver can
   trigger their own transitions — the `trips.transition.own` permission is
@@ -39,11 +46,422 @@ Standard REST resource, all behind `auth:sanctum` + `tenant` middleware:
 |---|---|---|
 | GET | `/api/v1/drivers` | `viewAny` — `drivers.view`, seeded on every system role |
 | GET | `/api/v1/drivers/{id}` | `view` — same permission |
-| POST | `/api/v1/drivers` | `create` — `drivers.manage` |
-| PATCH | `/api/v1/drivers/{id}` | `update` — `drivers.manage` |
+| POST | `/api/v1/drivers` | `create` — `drivers.manage`. May carry `owns_vehicle` and a nested `vehicle` object; registering one also needs `vehicles.manage`, checked separately (ADR-0048 §9) |
+| PATCH | `/api/v1/drivers/{id}` | `update` — same, including the inline vehicle |
 | DELETE | `/api/v1/drivers/{id}` | `delete` — `drivers.manage` |
 | POST | `/api/v1/drivers/{id}/account` | `manageAccount` — `drivers.manage` **and** `staff.manage` (ADR-0016) |
 | DELETE | `/api/v1/drivers/{id}/account` | `manageAccount` — same pair |
+| POST | `/api/v1/driver-applications/documents` | **Public.** Authorised by the ADR-0048 §4 claim ticket, throttled 5/min/IP |
+| GET | `/api/v1/driver-applications/documents` | **Public.** Same ticket. Metadata only — `file_url` is null for an application-owned row |
+| DELETE | `/api/v1/driver-applications/documents/{type}` | **Public.** Same ticket. 204 whether or not anything was held |
+| GET | `/api/v1/me/stats` | None — the driver is the token. `403 NOT_A_DRIVER` for an account with no driver profile |
+| GET | `/api/v1/me/earnings?period=day\|week\|month` | Same — the driver is the token |
+| GET | `/api/v1/me/ledger-entries?cursor=&from=&to=` | Same — the driver is the token |
+| GET | `/api/v1/me/trips?cursor=&service_type=` | Same — the driver is the token |
+| GET | `/api/v1/me/promotions` | Same — the driver is the token. Reading it **mints** their referral code |
+| GET/POST | `/api/v1/me/settlement-requests` | Same — the driver is the token. `tip` also 404s on a trip that is not theirs |
+| GET | `/api/v1/settlement-requests` | `viewAny` — `drivers.manage` |
+| POST | `/api/v1/settlement-requests/{id}/confirm` | `answer` — `drivers.manage` |
+| POST | `/api/v1/settlement-requests/{id}/decline` | `answer` — `drivers.manage` |
+| GET | `/api/v1/me/profile` | None — the driver is the token |
+| GET/POST | `/api/v1/me/documents` | Same — the driver is the token |
+| GET | `/api/v1/me/documents/{id}/file` | `view` — the owner, or `drivers.manage` |
+| GET | `/api/v1/drivers/{id}/documents` | `viewAny` — `drivers.manage` |
+| POST | `/api/v1/drivers/{id}/documents` | `create` — `drivers.manage`. The office filing a paper handed over in person (ADR-0052 §5). **Filing is not verifying**: the row lands `pending`. |
+| GET | `/api/v1/drivers/{id}/documents/{doc}/file` | `view` — `drivers.manage` |
+| POST | `/api/v1/drivers/{id}/documents/{doc}/verify` | `review` — `drivers.manage` |
+| POST | `/api/v1/drivers/{id}/documents/{doc}/reject` | `review` — `drivers.manage` |
+
+`me/stats` feeds the app's home screen and is counted on read, never stored:
+trips and fares completed today, plus acceptance and completion rate over a
+rolling 30 days. Rates are **null** rather than zero until there is something
+to divide by — a first-shift driver shown "0%" reads it as a failing grade for
+having done nothing wrong.
+
+### `me/profile` — the profile screen
+
+Who the driver is on the platform: name, phone, their own vehicle, when they
+joined, how many trips they have finished, and a one-line documents summary.
+
+**Separate from `me/stats` on purpose.** Stats is polled by the home screen
+every sixty seconds; this is opened deliberately and carries a lifetime
+`COUNT`, a vehicle join and a documents summary that no poll should pay for.
+The same argument that kept `me/earnings` off `me/stats`.
+
+**The rating is deliberately not in this payload**, even though the screen
+shows one. `me/stats` already produces it under ADR-0030's withholding rule,
+and a second reading of a figure suppressed below five ratings is a second
+chance to publish it by mistake. The app reads both endpoints and puts them
+side by side.
+
+`vehicle` is null for a driver who has none, which is not an edge case — a
+corporate driver takes whatever the depot hands them, and
+`driver_presence.vehicle_id` is the per-shift answer.
+
+### Driver documents (ADR-0033)
+
+The feature behind the profile screen's **Documents** row. That row is why it
+exists: printing "Verified" against a compliance fact the platform did not hold
+would be relied on by a driver at a checkpoint and by an operator answering a
+regulator.
+
+**Four types, none named for one country** — `driving_licence`,
+`identity_document`, `vehicle_insurance`, `vehicle_registration`. The obvious
+East African list (*PSV badge*, *logbook*) was deliberately not used: a type
+enum lands in a column, an OpenAPI enum and every shipped handset, and is then
+untouchable.
+
+**Encrypted at rest (ADR-0053).** The bytes on disk are ciphertext —
+`Crypt::encryptString`, keyed by `APP_KEY` — and `driver_documents.encrypted`
+records it per row so that files written before that change still stream. The
+flag *describes* the file; nothing consults it to decide whether to encrypt,
+because the store always does.
+
+`DriverDocumentStore::download()` is the single read path, and it is single on
+purpose: two controllers stream these rows, and a decryption branch present in
+one and absent from the other would serve a national ID as gibberish to exactly
+one audience. `Storage::response()` is gone from both — it infers the content
+type from bytes that are now ciphertext, so the response is built from the
+stored `mime_type` instead.
+
+**`APP_KEY` is now load-bearing for stored data.** Rotating it without
+re-encrypting makes every document unreadable, and a restore from backup needs
+the key that was current when the files were written.
+
+**One row per driver per type.** Re-uploading replaces the file and resets the
+status to `pending`, clearing the review — a document the office verified is
+not evidence for a different file that arrived afterwards. The new file is
+written *before* the row is repointed and the old one deleted *after*, so a
+failure anywhere leaves a row pointing at a file that exists.
+
+**`expired` is derived, never stored.** A stored expiry state needs a nightly
+job and is wrong for up to a day every time it runs. `compliance_state` is the
+field to act on: it is the stored status, except that a `verified` document
+past its date reports `expired`. Expiry outranks verification.
+
+**Nothing is auto-verified.** No OCR, no third-party check, no rule that
+accepts a document because its expiry is in the future. `DriverDocumentService`
+requires a `User` on every path that reaches `verified`.
+
+**`index` returns every type, held or not.** A driver opening the screen is
+asking what they still owe the office; the uploaded subset answers a different
+question. An absent type comes back with `document: null`.
+
+**Files are streamed by a controller, never a storage URL** — a signed link to
+somebody's identity document is addressable by anyone who ever saw it.
+`file_path` is `$hidden` on the model *and* absent from the resource, because
+one guard on that is not enough.
+
+**Nothing is gated on a document.** ADR-0033 §6 keeps enforcement out of scope
+deliberately; `DriverDocumentService::complianceFor()` is the seam a future rule
+consults so there is never a second notion of compliance.
+
+### `me/earnings` — the earnings screen
+
+Reads `driver_ledger_entries` (ADR-0029) over a day, a week or a month, and
+returns a total, a breakdown by service type, a trend series and time spent on
+trips. Separate from `me/stats` rather than folded into it: stats is polled by
+the home screen, while this is opened deliberately, takes a period, and carries
+a chart series that a poll would pay for and nobody would read.
+
+Three things about it are worth knowing before changing it.
+
+**"Today" is the driver's local day, not UTC.** Boundaries come from
+`settings.regional.timezone` (default `Africa/Kampala`). `config/app.php` sets
+the app timezone to UTC, so the `Carbon::now()->startOfDay()` this module used
+to call rolled a Kampala driver's day at **03:00 local** — the last two hours
+of an evening shift were filed under the previous day. `DriverStatsService` now
+takes its boundary from `DriverEarningsService::timezone()` so the two surfaces
+cannot disagree about a word they both display.
+
+**Bound Carbon instants must be `->utc()` first.** Laravel binds a Carbon to
+SQL by *formatting* it in its own timezone rather than converting, so a
+`+03:00` boundary arrives as a UTC wall-clock string and shifts the window
+three hours — silently, with every figure still looking plausible. The two
+tests that cross a local midnight are what catch it; the ones that do not cross
+one passed for the wrong reason before the fix.
+
+**The breakdown always sums to the total, by construction.** Both are folds
+over one *un-joined* row set. `order_requests.trip_id` is a nullable FK with no
+unique constraint — the `hasOne` is a model convention, not a database
+guarantee — so a `LEFT JOIN` to classify entries could multiply a row and
+inflate the money. Service types are attached from a second query keyed by
+trip. Entries whose trip has no order request are classified `other` rather
+than dropped, and `DriverEarningsTest` pins the sum.
+
+### `me/trips` — the trips history screen
+
+The third and last of the `/me` reads, and the set now divides cleanly:
+`me/earnings` answers *how much*, `me/ledger-entries` answers *why is my
+balance that*, and this answers **what did I actually do**.
+
+**Not `GET /trips` with a filter.** That endpoint is the dispatch board, and
+`TripResource` cannot serve either fact this screen turns on: `service_type`
+(the All / Rides / Deliveries filter) lives on `order_requests` and is never
+joined there, and `driverEarningsFor()` returns null on any list because the
+`ledgerEntries` relation is unbounded per row — its own docblock names
+`index()` as the reason. Both are one extra query each here, keyed by trip.
+
+Four things are worth knowing before changing it.
+
+**`Trip::forDriver()`, never a plain `where('driver_id', …)`.** `Trip` is
+`BelongsToTenant` and `TenantScope` fails closed: with no tenant bound it
+appends `1 = 0`, and with one bound it appends `tenant_id = X`, which excludes
+every walk-in — a walk-in's `tenant_id` is null by definition. A driver's own
+work is mostly walk-ins, so the obvious query returns a plausible, silently
+incomplete list. The scope is the named opt-out and mirrors `forCustomer`. The
+first test in `DriverTripHistoryTest` exists only to pin this, and removing the
+opt-out fails 12 of 16.
+
+**The money is the driver's share, not the gross fare**, read back from the
+`fare_earned` ledger entry written at completion. A test asserts that summing
+this list equals `/me/earnings` for the same window: two screens about one
+driver's pay disagreeing is the worst defect either can carry, and it is
+invisible until somebody adds the rows up. `cash_collected` is excluded for the
+reason `DriverEarningsService::entries()` gives — summing the pair reports a
+finished ride as roughly minus the commission.
+
+**The day headings are computed server-side.** `local_day` and `local_time`
+come out in `settings.regional.timezone`, and `meta` carries `today` and
+`yesterday` to compare them against. Same UTC-boundary trap as `me/earnings`,
+and worse here: on a screen headed "Today" and "Yesterday", a three-hour shift
+files an evening's work under the wrong one.
+
+**Cancelled, no-show and rejected trips are included**, with `earned_minor`
+null. That is the owner's decision, not an oversight: a driver who drove to a
+pickup and was cancelled on has spent the time, and nothing else in the
+platform lists that trip. Null and never `0` — `docs/screen-rules.md` §1: a
+zero reads as a job done for free.
+
+### Tips and bonuses (ADR-0034)
+
+Both were refused three times, correctly, and the owner has now had them
+built. The refusals were about what the platform *could* produce; this is a
+decision about what it *should*.
+
+**A tip is declared by the driver and confirmed by the office**, reusing
+ADR-0032's pipeline as a third `SettlementRequestKind`. It is the only kind
+that carries `trip_id`, so its one-open-request rule is **per trip** rather
+than per kind — a driver who took three tips in a day has three real
+declarations. The trip is checked to be that driver's own in the controller,
+not the form request: `exists:trips,id` proves only that a trip is real, and a
+confirmed tip writes a credit.
+
+**A tip is commissionable**, which is the owner's ruling and the one that
+decided the data model. It means a tip behaves exactly like a fare and reuses
+the pair that already makes the balance work:
+
+```
+tip 2,000 at 20%
+  tip_earned          + 1,600
+  tip_cash_collected  − 2,000
+  ---------------------------
+  balance               −  400
+```
+
+`tip_cash_collected` is a fourth kind rather than a second `cash_collected`
+row because `(trip_id, kind)` is unique — the index that stops a retried
+completion paying twice. The alternative model, where a driver keeps the whole
+tip, creates **no obligation in either direction**: its effect on the balance
+is zero, so it could not be a ledger entry at all and would have needed its own
+table and been absent from the wallet statement. Same feature, different build.
+
+**A bonus is an automatic weekly trip target**, awarded by
+`drivers:award-weekly-bonuses` over a **closed** week — never the one in
+progress, because a partial week cannot be measured against a weekly target
+and a bonus that later un-awards itself is a lie about money. It is
+**unpaired**: not cash in anybody's hand, so the balance moves by the whole
+amount. No commission is taken — the advertised figure and the paid figure
+must not differ.
+
+Three properties worth knowing before changing any of it:
+
+- **`billing.bonus_enabled` defaults to false.** It creates a liability
+  against every driver on the platform, and a scheme that switches itself on
+  at deploy is an unbudgeted bill. Same argument as `maps.routing_enabled`.
+- **The target and the amount live in settings and are written into the entry
+  that awards them.** Both are admin-settable, so an award explained only by
+  "the current target" is one nobody can defend a year later. The driver app
+  is told neither figure.
+- **Idempotency is a unique index on `(driver_id, week_start)`**, and the
+  awarding code catches the violation rather than pre-checking. A cron can fire
+  twice — overlapping a deploy, re-run after a failure, two app servers — and
+  paying payroll twice is the error nobody notices until reconciliation.
+  Re-running by hand is therefore safe, and `--week=` exists for it.
+
+`DriverEarningsService` sums `LedgerEntryKind::earnings()` — the credit kinds —
+rather than `fare_earned` alone, and groups tips and bonuses **by kind ahead of
+service type**, so a tip is never folded into the Rides row of the trip it was
+given on and a bonus is not filed as unclassifiable work.
+
+### Peak hours (ADR-0036)
+
+A trip completed inside a daily window earns the driver a percentage **on top
+of their own share** of the fare. Written as a `peak_earned` entry inside
+`recordCompletedTrip()`'s existing transaction, so the `(trip_id, kind)` unique
+index covers it — a separate listener would have had its own race.
+
+**Nothing here changes what a passenger pays.** The tariff is untouched and the
+uplift is the platform's own money, which is what separates it from
+`rate_card_versions.night_multiplier_bp`. That column raises the *fare*; the
+driver's share of a larger fare goes up with it, and confusing the two on a
+driver's screen would describe a price rise to the person who does not pay it.
+
+Four things to know before touching it:
+
+- **`billing.peak_enabled` defaults to false**, and this one bills on **every
+  trip** in the window rather than once a week.
+- **Qualification is decided on `completed_at`, never the clock.** A driver
+  finishing at 19:50 in a basement whose outbox drains at 20:30 (ADR-0023) must
+  be paid for the hour they worked, not for the moment their signal returned.
+- **The window is `HH:MM` in the fleet's zone, half open at the top, and may
+  wrap past midnight.** Transcribed from `TripPricingEngine::multiplierFor()`
+  rather than reinvented. **Equal bounds mean an empty window, not a whole
+  day** — reading a typo as "always" is the most expensive interpretation
+  available.
+- **It is its own kind, not a fatter `fare_earned`.** That entry states the
+  driver's share at the commission rate written into its own description
+  (ADR-0029 §3); folding an uplift in would make that sentence stop adding up.
+
+### Referrals (ADR-0037)
+
+A driver introduces another and is paid once the person they introduced has
+completed `billing.referral_trip_target` trips.
+
+**Attached when the office approves the application**, not at sign-up. ADR-0027
+already has a human reading every application, and that approval is the fraud
+control the scheme needs — every other attribution point pays out on something
+a stranger can manufacture. The code is stored **unresolved** at submission:
+validating it there would answer *"is this one of your drivers' codes?"* to an
+unauthenticated caller one guess at a time, which is ADR-0027 §5's leak with a
+working credential as the prize. A code that resolves to nobody is silently
+ignored at approval — the reviewer is giving somebody a job.
+
+**The trip target is the verification, not a hurdle.** A sign-up costs nothing
+to manufacture; ten completed trips means real work dispatched and real fares
+priced.
+
+The schema carries the integrity rather than the service:
+
+- **`referred_driver_id` is unique** — a person is introduced once, ever,
+  including across the duplicate applications ADR-0027 §5 deliberately allows.
+- **A code resolves to an existing driver**, so **cycles are structurally
+  impossible** rather than checked for: nobody can be introduced by somebody who
+  did not exist when they applied. Self-referral is refused explicitly anyway.
+- **`code`, `trip_target` and `amount_minor` are frozen onto the row**, because
+  all three can change afterwards.
+- **`qualified_at` is stamped under a row lock in the same transaction as the
+  credit.** The unique index stops a second *referral*; only the lock stops a
+  second *payment* against one.
+
+`referral` is unpaired, **trip-less** — the trips are the referred driver's, and
+carrying one would file their journey under this driver's history — and
+uncommissioned. The referred driver is **never named** on the statement: it is
+permanent and scrollable, and ADR-0024 §7's principle covers a colleague as much
+as a passenger.
+
+### `me/promotions` — the Promotions screen
+
+The three schemes above, as they apply to one driver right now. The only `/me`
+read that looks *forward*: the others are records of what happened.
+
+**Every scheme is nullable and a switched-off one is `null`, never a zeroed
+card.** `docs/screen-rules.md` §1 refuses a zero standing in for a figure that
+does not exist, and "0 of 40 trips" on a fleet running no bonus scheme is
+exactly that dressed as a measurement.
+
+**The app is never told the rules** — not `peak_starts_at`, not the target as a
+policy to apply. It gets values resolved on the server for this driver at this
+moment, and re-pulls to learn the office changed something.
+
+Not folded into `me/stats`, which the home screen polls every sixty seconds.
+
+### `me/ledger-entries` — the wallet statement
+
+The rows behind `wallet_balance_minor`. That field says *what* the balance is;
+this says **why**, which is the only question a driver actually has about it.
+Cursor-paginated at 25 on the house pattern (`TripEventController`).
+
+**Ordered by `id`, not `created_at`.** The pair written at completion shares a
+timestamp to the second, so a cursor over the timestamp alone has an undefined
+order within the pair and can skip or repeat a row across a page boundary.
+There is a test for it.
+
+**Every entry is served, `cash_collected` included.** Serving only the credits
+would produce a prettier list that does not sum to the balance it sits under —
+and the balance is the thing this endpoint exists to explain.
+
+**`service_type` does not come from an eager-loaded relation, and cannot.**
+The obvious `->with('trip.orderRequest')` returns nothing here, silently:
+`Trip` is `BelongsToTenant` and `TenantScope` *fails closed*, appending
+`1 = 0` when no tenant is bound rather than risking a cross-tenant leak. A
+driver on a walk-in has no tenant context, so every row would lose its label
+with no error anywhere. The controller reads `order_requests` through the
+query builder instead, unscoped and keyed by trip — the same shape
+`DriverEarningsService` uses, and for the same second reason: `trip_id` there
+has no unique constraint, so a join could multiply a row.
+
+**Read-only, and there is deliberately no counterpart write.** ADR-0029 §6
+keeps the platform recording money rather than moving it — no gateway, no
+payout, no top-up. `settlement` rows are the office's to write, and the
+console screen that would write them **does not exist yet**; that is the
+standing gap this module has carried since ADR-0029, and it is now visible to
+drivers on a screen that shows what they owe.
+
+### Settlement requests (ADR-0032) — the loop ADR-0029 §6 left open
+
+§6 said the office would write `settlement` entries when cash changed hands.
+Nothing ever could: `recordSettlement()` had no caller outside a seeder, so no
+settlement was ever recorded and every balance only ever moved one way. A
+driver could see what they owed and had no way to tell anyone they had paid it.
+
+**A driver raises a request; the office confirms it; the confirmation writes
+the ledger entry.** Money still does not move through this platform — cash
+changes hands at the depot exactly as before. Two kinds, mirroring the ledger's
+two directions: `remittance` ("I have handed you cash", credits the driver) and
+`payout` ("please pay me"). Neither is called deposit or withdrawal, because a
+driver is not depositing into an account this platform holds.
+
+Four properties hold this together, and each has a test:
+
+- **A pending request is never a balance.** The wallet total comes from
+  `driver_ledger_entries` alone. If a request moved it, a driver could request
+  their way out of what they owe.
+- **Confirming is idempotent.** The row is locked and re-read *inside* the
+  transaction, and `ledger_entry_id` records what it produced — so a double-tap
+  or a retried request returns the original rather than paying twice. This is
+  the one endpoint here where a lost race means real money.
+- **The amount is stored positive whatever the kind.** A person typing an
+  amount does not type a sign; the direction is `kind`, and
+  `SettlementRequestKind::ledgerSign()` derives the entry's sign — so a wrong
+  sign in this table cannot become a wrong sign in the ledger.
+- **One open request per kind**, held under a lock rather than a unique index:
+  the constraint is "at most one *pending*", which MySQL 8 cannot express as a
+  partial index.
+
+Confirming writes through `DriverLedgerService::recordSettlement()` and never
+by inserting a row, so the sign convention stays in one place.
+
+**Still missing: the console screen.** The office can act only through the API.
+That is a smaller gap than the one it replaces — before this, nothing anywhere
+could record a settlement — but it is the next thing to build, and ADR-0032's
+Consequences says so.
+
+**Absent by design, not pending:** tips, bonuses and online hours. Neither tips
+nor bonuses exist anywhere on this platform. Online hours cannot exist —
+`driver_presence` is one row per driver, upserted on every duty toggle, so the
+previous state is destroyed and no history was ever kept; `driver_shift_windows`
+is a roster, not a timesheet. `on_trip_minutes` is offered instead and is a
+different, smaller figure: time driving, which excludes waiting for a job.
+
+Two judgement calls the arithmetic makes, both fixed by tests. `superseded`
+offers are excluded from acceptance: that status means dispatch pulled the
+offer back, and counting it would penalise a driver for being slower than a
+machine — `expired` *is* counted, because an offer that rang out is a
+passenger left waiting. And `fares_today_minor` sums `fare_minor`, which only
+walk-in rides carry (ADR-0026 §3); a corporate trip is invoiced to the client.
+It is therefore cash taken, deliberately **not** called earnings — there is no
+commission model yet, so no such figure exists.
 
 The account sub-resource takes one of two mutually exclusive bodies:
 `{email, password, role?, name?}` mints a login, `{user_id}` adopts an
@@ -51,6 +469,31 @@ existing unlinked one. `409 DRIVER_ACCOUNT_CONFLICT` if either the profile
 or the account is already spoken for. `DELETE` is idempotent and revokes
 every token the account holds — see ADR-0016 §5 for why that matters more
 than the link itself.
+
+### Driver applications (ADR-0027)
+
+The queue riders put themselves in from the Driver App's sign-up form. An
+application is **not** an account: until a reviewer approves it, the
+applicant has no credentials on the platform at all.
+
+| Method | Path | Auth |
+|---|---|---|
+| POST | `/api/v1/driver-applications` | none — throttled 5/min/IP, in this module's `Routes/public.php` |
+| GET | `/api/v1/driver-applications` | `viewAny` — `drivers.view`. Oldest first; `?status=` filter |
+| GET | `/api/v1/driver-applications/{id}` | `view` — `drivers.view` |
+| POST | `/api/v1/driver-applications/{id}/approve` | `decide` — `drivers.manage` **and** `staff.manage`, role checked against the caller's own (ADR-0004) |
+| POST | `/api/v1/driver-applications/{id}/reject` | `decide` — same pair; takes a required `reason` |
+
+The public POST deliberately answers `202` identically whether or not the
+email is already known — refusing duplicates at submission would be an
+oracle for "does this person drive for KangaruRide" (ADR-0027 §5). The
+duplicate surfaces at approval as `409 DRIVER_ACCOUNT_CONFLICT`. Approval
+creates the driver, mints the account with the password the applicant chose
+at submission (hashed at the edge, cleared from the row once decided), and
+links them in one transaction through `DriverAccountService`. There is no
+public status checker (§6), and nobody is notified automatically — the
+office phones the number the form collected. Notification hangs off SMTP,
+which is ADR-0014 phase 3.
 
 ## Notes
 
@@ -89,6 +532,48 @@ provides no self-service reset. See `mobile/README.md` for the first-test
 walkthrough.
 
 ## What's explicitly deferred
+
+- **~~The console cannot create a driver~~ — built, ADR-0048 (21 August
+  2026).** Worth recording because of how long it hid: `DriverController`
+  has had `store`, `update` and `destroy` since Phase 1, `StoreDriverRequest`
+  has accepted `vehicle_id` since ADR-0009, and **no screen ever called any
+  of them.** `DriversPage` was a read-only table, so every driver in every
+  environment arrived from a seeder — which is exactly why nobody noticed
+  that the API could onboard a driver and the platform could not.
+
+  What shipped: `DriverFormDialog` in the console, an `owns_vehicle` flag,
+  and inline vehicle registration in the same transaction as the driver
+  (ADR-0048 §8), so a clerk onboarding a boda rider does not have to abandon
+  a half-typed form to register the machine on another screen. Un-ticking
+  ownership clears the link and **keeps the vehicle** — a checkbox that
+  destroys a fleet record is the silent destruction ADR-0016 §5 refuses.
+
+  `vehicles.manage` is checked separately from `drivers.manage`, because
+  folding fleet creation into the driver permission is the side door
+  ADR-0016 §1 refuses at length. A clerk holding only `drivers.manage` gets
+  the fleet picker and is told why.
+
+- **~~Documents belong only to a driver, never to an application~~ —
+  amended, ADR-0048 §3.** ADR-0033 argued that an application "is a
+  stranger's row that is deleted or abandoned" and kept documents off it.
+  The owner asked for KYC at both moments, so `driver_documents` gained
+  `driver_application_id` and `driver_id` became nullable — **exactly one of
+  the two is ever set.** One table rather than two, because two tables
+  holding the same file with the same review states is where the second one
+  drifts.
+
+  The catalogue is six, not four: `identity_selfie` and `vehicle_photo`
+  join on the naming rule the original four were chosen under — nothing
+  named for one country.
+
+  ADR-0033 §4 is untouched. **Nothing is auto-verified, ever**, and a selfie
+  makes that easier to reach for, which is why ADR-0048 §2 restates it.
+  Approval carries documents onto the driver and deliberately leaves them
+  `pending`: approval is not review.
+
+  Three endings, all handled — approval carries, rejection destroys, and
+  `drivers:prune-abandoned-application-documents` sweeps the applications
+  nobody ever decided after 90 days (scheduled daily in `routes/console.php`).
 
 - **~~`user_id` cannot be set through the API~~ — built, ADR-0016
   (7 August 2026).** Kept in place rather than deleted because it was the

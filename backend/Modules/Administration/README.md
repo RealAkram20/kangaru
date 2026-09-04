@@ -19,6 +19,16 @@ permission catalogue, and the audit log.
   `invoices.issued_by_user_id` is `restrictOnDelete`, so the database
   refuses it anyway). Suspending revokes the account's Sanctum tokens, so
   it reaches sessions that are already signed in.
+- **The colleague lookup** (`/colleagues`) — the passenger picker behind the
+  booking dialog. A client's booking is for a client's own person, and a
+  bank branch network is thousands of accounts, so the passenger field is a
+  server-side search rather than a dropdown holding the directory. Three
+  fields come back — id, name, work number — and the number is the one
+  collected on the account (`users.phone`), so a driver is dispatched
+  against something checked once instead of retyped from memory. The
+  enforcement is `StoreBookingRequest`: a tenant actor who names nobody gets
+  a 422, and the passenger's *name* is then taken off the account rather
+  than out of the payload, so one employee cannot arrive spelled three ways.
 - **The role catalogue** (`/roles`) — ADR-0004. `App\Enums\Permission` is
   the catalogue of abilities and lives in code; roles are rows carrying a
   JSON permission set. The ten Phase 1 roles are seeded as **system
@@ -57,17 +67,62 @@ permission catalogue, and the audit log.
 | POST | `/api/v1/auth/mfa/recovery-codes` | Sanctum | Regenerates the set, invalidating the old one. Own account only |
 | DELETE | `/api/v1/auth/mfa` | Sanctum | Rate limited 10/min/IP. Removes your own factor against a current TOTP **or recovery** code (ADR-0010). `403` if your role requires one |
 | POST | `/api/v1/auth/logout` | Sanctum | Revokes the current access token |
-| GET | `/api/v1/auth/me` | Sanctum | Returns the authenticated user |
+| GET | `/api/v1/support/act-as` | Sanctum | Whether this request is being made by somebody acting as the account, and until when. **`null` for everybody who is simply themselves**, which is almost every request. A route of its own rather than a field on `UserResource`, because the session is a fact about the *request* — and a field there would append `acting_as: null` to every nested actor in the API |
+| POST | `/api/v1/support/act-as` | Sanctum | Begins a support session (ADR-0056). `support.act-as` **and** `access_level = kangaru`; a reason is required and recorded. Rate limited 10/min. Refuses chaining, a second open session, and acting as yourself |
+| DELETE | `/api/v1/support/act-as` | Sanctum | Ends it. **Idempotent, and deliberately unguarded** — stopping is the one act a support agent must always be able to perform, and a guard here would strand them inside somebody else's account until the thirty minutes ran out |
+| GET | `/api/v1/auth/me` | Sanctum | Returns the authenticated user. `UserResource` carries `tenant_name` (additive) — the client's own name for the console's chrome, null for platform staff |
 | PATCH | `/api/v1/auth/password` | Sanctum | Own password only. Rate limited 5/min. Revokes every token, including the caller's |
-| GET | `/api/v1/users` | Sanctum + tenant | `UserPolicy::viewAny`. Whitelisted filters `status`, `role`, `q`; unknown params → 422. `meta.assignable_roles` carries the roles this actor may hand out |
-| POST | `/api/v1/users` | Sanctum + tenant | `UserPolicy::create`. Administrator sets the initial password |
+| POST | `/api/v1/auth/password/forgot` | none | Rate limited 3/min/IP. ADR-0028 §2: emails a 6-digit code, hashed at rest, 15-min TTL. **Identical 202 whether or not the email exists.** 409 `AUTH_METHOD_DISABLED` until the owner enables it and SMTP is configured |
+| POST | `/api/v1/auth/password/reset` | none | Rate limited 5/min/IP. Exchanges the code for a new password; single-use, five wrong guesses burn it; success revokes every token |
+| POST | `/api/v1/auth/social` | none | Rate limited 5/min/IP. ADR-0028 §3: verifies a Google/Facebook proof server-side against admin-stored credentials. 200 signed_in (driver-scoped token) · 202 sign_up (verified name+email, **nothing created** — ADR-0027 holds) · 409 `MFA_REQUIRED` · 403 `NOT_A_DRIVER` · 401 `SOCIAL_TOKEN_INVALID` |
+| GET | `/api/v1/users` | Sanctum + tenant | `UserPolicy::viewAny`. Whitelisted filters `status`, `role`, `q`; unknown params → 422. `meta.assignable_roles` carries the roles this actor may hand out; `meta.capabilities` the client-capability catalogue (below); `meta.routes` the client's active routes a colleague may be put on (empty for platform staff, who have none) |
+| POST | `/api/v1/users` | Sanctum + tenant | `UserPolicy::create`. Administrator sets the initial password. Required `phone`. Optional `capabilities[]`, `books_without_approval`, `route_ids[]` |
 | GET | `/api/v1/users/{user}` | Sanctum + tenant | `UserPolicy::view` |
-| PATCH | `/api/v1/users/{user}` | Sanctum + tenant | `UserPolicy::update`. Name, email, role, status. Suspension revokes tokens |
+| PATCH | `/api/v1/users/{user}` | Sanctum + tenant | `UserPolicy::update`. Name, email, phone, role, status, `capabilities[]` and `route_ids[]` (each the whole list, replacing), `books_without_approval`. Suspension revokes tokens |
+| GET | `/api/v1/colleagues` | Sanctum + tenant | `BookingPolicy::create` — *you may look up a colleague if you may book a car for one.* Required `q` (min 2), at most 15 results, three fields each. Deliberately **not** a filter on `/users`, which is gated on `staff.view` and answers with roles and MFA state that the Corporate Employee naming a passenger does not hold. Empty for platform staff, who belong to no client |
 | GET | `/api/v1/roles` | Sanctum + tenant | `RolePolicy::viewAny` — `roles.manage` **or** `staff.view`, since whoever assigns a role must be able to read it. `meta.catalogue` (grouped permissions), `meta.grantable` (what this actor may put in a role), `meta.can_manage` |
 | POST | `/api/v1/roles` | Sanctum + tenant | `RolePolicy::create` — `roles.manage`. Slug derived from the name when omitted |
 | PATCH | `/api/v1/roles/{slug}` | Sanctum + tenant | `RolePolicy::update`. A system role's permissions may change; its name may not |
 | DELETE | `/api/v1/roles/{slug}` | Sanctum + tenant | `RolePolicy::delete` — custom roles only, and 409 `ROLE_IN_USE` while anyone holds it |
+| GET | `/api/v1/public/settings` | none | Rate limited 30/min/IP. The branding subset only — what may appear is decided by the catalogue's `public` flags (ADR-0014 §5), never by the controller. Asset paths arrive as absolute URLs |
+| GET | `/api/v1/public/legal` | none | Rate limited 30/min/IP. The Terms and Privacy notices the Driver App's sign-up form requires consent to. Unauthenticated of necessity: it is read on the one screen that exists before an account does. Kept off `/public/settings` because the documents are long and that endpoint is fetched on every page load |
+| GET | `/api/v1/settings` | Sanctum | `settings.manage`. Every group resolved against catalogue defaults; secrets appear as `{configured: bool}`, never as values |
+| PATCH | `/api/v1/settings/{group}` | Sanctum | `settings.manage`. Unknown group or key → 422 rather than a silent skip. Audited with before/after; secrets masked as `***` |
+| POST | `/api/v1/settings/assets/{asset}` | Sanctum | `settings.manage`. Multipart logo/favicon upload to the public disk |
+| POST | `/api/v1/settings/mail/test` | Sanctum | `settings.manage`. Sends a test message using the stored SMTP credentials; refuses until mail is configured |
 | GET | `/api/v1/audit-logs` | Sanctum + tenant | `AuditLogPolicy::viewAny` — `audit.view`. Whitelisted filters: `auditable_type` (any alias in the enforced morph map), `action`, `user_id`, `from`/`to` (`Y-m-d`; `to` includes its whole day). Unknown params → 422. Cursor-paginated. `meta.filters` carries the accepted values plus the actors present in this reader's slice; `meta.scope` is `platform` or `tenant` |
+
+## Client capabilities — a corporate client's own access control
+
+`App\Enums\ClientCapability` (2026-08-19). Roles are platform-wide
+(ADR-0004): one catalogue, seeded by Shanitah, read by every client, so a
+client cannot own a role. What a client's administrator *can* own is a
+person's switches. Each capability is a fixed bundle of existing
+permissions that `User::permissions()` unions onto the role's set:
+
+| Slug | Grants | For |
+|---|---|---|
+| `approves_bookings` | `bookings.approve`, `bookings.view.all`, `trips.view.all` | a branch officer who approves the branch's requests |
+| `sees_finance` | `invoices.view`, `reports.view` | a finance clerk who reconciles the month |
+| `manages_staff` | `staff.view`, `staff.manage` | a deputy who onboards colleagues |
+
+Stored as slugs on `users.capabilities` (JSON). Every policy keeps asking
+`hasPermission()`; nothing new is authorised. Fail-closed on every edge: a
+slug the enum does not know grants nothing, a permission outside a bundle
+cannot arrive, a user with no role gets no capabilities, and the requests
+apply the same escalation rule as roles — nobody grants what they do not
+hold (`holdsAll`). Refused on platform accounts (`tenant_id` null): a
+capability is a client's switch for a client's person. Changes are on the
+audit trail like any user update.
+
+**`users.books_without_approval`** is the one switch that is not a
+permission: `BookingService::create()` approves that person's own bookings
+on their behalf, the same transition and audit rows as a human approver,
+beside the owner's platform-wide `booking.approval_required` waiver.
+
+The console reads `capabilities` off `/auth/me` to widen the client's menu
+(`lib/navigation.ts`), and the Staff page offers the switches from
+`meta.capabilities` — the labels are served, not copied.
 
 ## Frontend
 
@@ -106,6 +161,38 @@ Two things the page states rather than hides:
   on the page.
 
 ## Notes
+
+**One password floor, in `App\Support\Auth\PasswordPolicy` (24 August 2026).**
+Every door on the platform validates against `PasswordPolicy::rule()` — this
+module's `StoreUserRequest`, `ChangePasswordRequest`, `PasswordResetController`,
+`InvitationController` and `CreateKangaruStaff`, plus `StoreDriverAccountRequest`,
+`StoreDriverApplicationRequest` and `RegisterCustomerRequest` in Drivers and
+Customers. The floor is **six**, set by the owner for every door at once.
+
+It is written down here because the previous arrangement was not a policy but
+an accident, and it had already reached users:
+
+- The number lived in **eight** places and disagreed with itself in three —
+  twelve where the office minted an account for somebody else, eight where a
+  person chose their own, a plain `min:8` string rule at the customer register,
+  and an unconfigured `Password::defaults()` in the console command that meant
+  Laravel's own eight by default rather than by decision.
+- `ProfilePage` told staff *"At least 12 characters"* for a door that accepted
+  eight, and the driver sign-in dialog set a password at twelve while telling
+  the office to *"ask them to change it from their own profile afterwards"* —
+  a door with a different rule.
+
+**Adding a ninth place fails a test, not a review.**
+`tests/Feature/Auth/PasswordFloorTest.php` walks the reachable doors as
+boundary tests (one below refused, exactly at it accepted) and then censuses
+the source for any `Password::min(` or `Password::defaults(` outside
+`PasswordPolicy`. The boundary half cannot catch a door that does not exist
+yet; the census is the half that can.
+
+Length is a floor, not the control — there is no complexity requirement at any
+door and never was. The strength meter in both apps
+(`frontend/src/components/forms/PasswordMeter.tsx`,
+`mobile/src/auth/PasswordMeter.tsx`) is what teaches above it.
 
 **A token is now scoped to the app that asked for it (ADR-0022).** `POST
 /auth/login` and `POST /auth/mfa/verify` take an optional
@@ -151,12 +238,39 @@ hand. They now say `isPlatformLevel()` and `forActor()`. Behaviour is
 unchanged by design; the point is that the sixth copy cannot be written
 differently.
 
+**And the third of them was wrong from the day ADR-0055 landed** (ADR-0065).
+`sharesTenant()` returned true for any `isPlatformLevel()` actor — a phrase
+that meant *head office* when ADR-0006 wrote it and *any fleet* once the axes
+split. Since the listing had been narrowed on 23 August but the policy had
+not, and `User` has no global scope to catch it, `GET|PATCH /users/{user}`
+resolved any id in the table and this policy was all that stood after it. It
+is now `sharesOrganisation()`: an exhaustive `match` on `AccessLevel` that
+answers exactly what `User::scopeForActor` answers — a fleet reaches its own
+people plus the people of clients it **actively** serves, a client reaches its
+own, head office reaches head office, an applicant reaches nobody.
+`StoreUserRequest` carries the write mirror, refusing a `tenant_id` the
+actor's fleet does not serve. Proved by five failing tests against the
+unmodified code, and by mutation in both directions.
+
 **Creating a tenant-less account is a serious act.** `UserAdminService`
 lets a platform-level actor pass `tenant_id: null`, which since ADR-0006
 mints Shanitah staff who read across every client. `staff.manage` is the
 gate and ADR-0004's escalation rule is what keeps a Corporate Admin away
 from it — a tenant administrator's new colleagues are always their own
 tenant's, whatever the request body says.
+
+**And head office can now create head office.** `UserAdminService::insert()`
+used to *throw* for a `kangaru` actor: they name neither a fleet nor a client,
+`User::levelFor()` refuses to infer that shape (ADR-0055 §4), and the comment
+said the proper path would "arrive with S1". S1 shipped
+`php artisan kangaru:create-staff` and left the endpoint erroring, so the
+Kangaru staff screen could list people and never add one. The level is now
+**assigned** on the model before save, by a code path only a head-office actor
+reaches — never accepted from the payload, because `access_level` is
+deliberately absent from `User::$fillable`. Naming a client in that request is
+refused rather than ignored: dropping the field and answering 201 would tell
+an administrator the opposite of what happened. The console command stays; it
+is the way in when there is no way in.
 
 **The audit log's platform reader now has a name.** `AuditLog::forActor()`
 replaces the hand-rolled `allTenants()` branch, and `meta.scope` still
@@ -182,6 +296,91 @@ not themselves hold. Enforced twice — when a role is *defined*
 (`StoreRoleRequest`/`UpdateRoleRequest`) and when it is *assigned*
 (`UserPolicy::assignRole`) — because an administrator who sets the new
 account's password could otherwise sign in as it.
+
+## Acting as somebody else (ADR-0056)
+
+Reverses a position this module states twice — `AuthController::changePassword`
+calls an admin resetting somebody's password *"the one act an audit trail
+cannot tell apart from impersonation"*, and `Modules/Customers/Routes/staff.php`
+says *"no impersonation"* outright.
+
+**The objection was never to impersonation. It was to impersonation the trail
+cannot distinguish from the person's own hand.** So that is what was built:
+
+- `audit_logs.impersonator_id`. **`user_id` stays the subject**, so a client's
+  own trail reads chronologically as their account's activity; the new column
+  names who was holding it. Never one without the other when rendered.
+- `impersonation_sessions` — the evidence that a session *happened*. Start and
+  end are audited in their own right, because reading a bank's trip history is
+  the act whether or not anything was written.
+- Thirty minutes, enforced as a **predicate, not a cron**. Nothing sweeps the
+  table, so a scheduler that stops running cannot leave a session standing.
+- `ActAsSubject` middleware swaps the user **before `IdentifyTenant`**. That
+  ordering is the whole of its correctness: after it, a session would carry the
+  *actor's* fleet — a Kangaru account's, which is none — and every scoped read
+  would come back empty while looking like it had worked.
+- The deny-list (§3) is **attached to routes, never matched against route
+  names**. A name-matching deny-list is one rename away from silently
+  permitting what it was written to refuse. It guards the password, MFA, payout
+  destinations, account closure and settlement decisions — the acts whose whole
+  purpose is to prove it was the person.
+- It **never mints a client-app token**. A driver token handed to a support
+  agent would let them register a push device and take a real job off a driver
+  on the road. This is what keeps a session revocable: end it and the reach
+  ends with it, with nothing left in a browser to replay.
+
+### And a walk-in, since ADR-0066
+
+The morph on `impersonation_sessions` always had room for a `Customer`; the
+middleware did not. Now it does, and the four decisions that make it safe are
+worth reading before touching any of them:
+
+- `AuthenticateWalkInOrSupport` replaces `auth:customer` on the customer group.
+  It answers the walk-in's own token first and falls through to a staff token
+  **only** while a live session names that customer. A staff token with no
+  session is refused exactly as before, which is the conditional form of the
+  claim `CustomerGuardIsolationTest` used to make unconditionally.
+- It implements `AuthenticatesRequests`, which declares nothing and is
+  load-bearing: it is the anchor `bootstrap/app.php` hangs `EnforceTokenScope`
+  and friends off. Drop it and the token-scope check stops running on that
+  surface — silently, with nothing failing.
+- **The staff console is shut** while a walk-in is held, against a four-route
+  allow-list in `ActAsSubject`. `ADR-0056 §1` sets the actor's own reach aside;
+  for a `User` subject the swap does that by itself, and a `Customer` has no
+  staff identity to be swapped for. Without this it would be the one session
+  that kept its own powers.
+- **Reach is otherwise full** — the owner's decision, 26 August. Support can
+  cancel a walk-in's ride and order for them. `customer.auth.logout` is denied
+  and the reason is mechanical: it revokes `currentAccessToken()`, which under
+  a session is the agent's own staff token.
+
+### What keeps the grant narrow
+
+Not the permission catalogue — the **level**. Only a `kangaru` account may act
+as anybody, and one can only be created with a shell on the server
+(`php artisan kangaru:create-staff`).
+
+Holding `support.act-as` out of the Super Admin catalogue was tried and
+reverted the same hour: `StoreRoleRequest` refuses to let anybody author a role
+carrying a permission they do not hold themselves, so the exclusion made the
+permission **ungrantable by any screen**. Ungrantable is not stricter; it is
+broken. A fleet Super Admin holds the permission and cannot use it.
+
+### The notification to the person acted upon (§5) — built
+
+This section used to say it was not. `AccountAccessedBySupportNotification`
+reaches a **driver** in their inbox and by email, and since ADR-0066 a
+**walk-in** by email — routed by address rather than to the model, because
+`Customer` is not `Notifiable` and has no in-app inbox to write a row to.
+
+Not sent to a fleet's dispatcher or a client's transport officer, and that is
+§5's own line rather than an omission: they act in a corporate capacity and
+their organisation reads the same event in its own log. An individual's account
+is their livelihood and nobody reads anything on their behalf.
+
+Failure to notify never fails the session. A support agent locked out because a
+mail host is down helps nobody, and the audit row — the load-bearing half — is
+already written.
 
 ## What's explicitly deferred
 
@@ -278,7 +477,21 @@ Named here so a half-built thing is not mistaken for a finished one.
   `/roles` route itself is deliberately not behind `RequireNavAccess` for
   exactly this reason, so such a holder reaches the page by URL and the
   server serves them — but the menu will not offer it.
-- **Per-tenant roles.** Custom roles are platform-wide and Super Admin
-  only, by decision. A tenant cannot compose a permission set for itself.
+- **Per-organisation roles.** Custom roles are platform-wide and composed by
+  head office, by decision. A fleet or a client cannot compose a permission
+  set for itself.
+
+  The *symptom* that made this look like a gap is fixed separately, and the
+  two should not be confused. Every role now carries an `audience` —
+  `kangaru`, `fleet` or `client` — saying which level of account it was
+  written for, so a fleet owner's picker offers no client role and vice versa.
+  That is a property **of the role**, not a scope on it: one catalogue, still
+  platform-wide, still ADR-0004's. What is deferred is *ownership* — a role
+  only one fleet can see and only that fleet can edit — and it stays deferred
+  because no fleet has asked for one.
+
+  Before the column, the only thing keeping `corporate_admin` out of a fleet
+  picker was the escalation subset happening not to contain it. A coincidence
+  is not a boundary, and it was about to stop being true.
 - **Bulk staff operations** — no CSV import, no bulk suspend. Onboarding is
   one account at a time.

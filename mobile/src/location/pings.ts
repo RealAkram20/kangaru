@@ -16,6 +16,13 @@ export type Ping = {
   speedKph: number | null;
   headingDegrees: number | null;
   accuracyMetres: number | null;
+  /**
+   * Whether the OS said this fix came from a mock-location provider —
+   * Android's "fake GPS" apps (ADR-0045). Passed through as reported and
+   * never inferred: the server counts it, and a trace carrying one is not
+   * billed as measured.
+   */
+  isMock: boolean;
 };
 
 /** The wire shape from `docs/api/openapi.yaml`. */
@@ -26,6 +33,7 @@ export type PingBody = {
   speed_kph: number | null;
   heading_degrees: number | null;
   accuracy_metres: number | null;
+  is_mock: boolean;
 };
 
 /**
@@ -47,6 +55,7 @@ export function toPingBody(ping: Ping): PingBody {
     speed_kph: ping.speedKph,
     heading_degrees: ping.headingDegrees,
     accuracy_metres: ping.accuracyMetres,
+    is_mock: ping.isMock,
   };
 }
 

@@ -1,10 +1,13 @@
 <?php
 
 use App\Enums\UserRole;
+use App\Models\Operator;
+use App\Models\Plan;
 use App\Models\Tenant;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Modules\Bookings\Models\Booking;
+use Modules\Dispatch\Services\DispatchRecommender;
 use Modules\Drivers\Models\Driver;
 use Modules\Fleet\Models\AvailabilityBlock;
 use Modules\Fleet\Models\VehicleAllocation;
@@ -228,6 +231,16 @@ it('commits the top suggestion through the same locked path a human uses', funct
     $vehicle = Vehicle::factory()->create(['seating_capacity' => 5]);
     $booking = bookingAt($tenant);
 
+    // **Contracted, because automatic dispatch now only commits a vehicle
+    // the client has set aside** (owner's ruling, 2026-08-28). Without this
+    // the endpoint correctly finds nothing and answers 409.
+    VehicleAllocation::factory()->create([
+        'tenant_id' => $tenant->id,
+        'vehicle_id' => $vehicle->id,
+        'starts_on' => now()->subDay(),
+        'ends_on' => now()->addDay(),
+    ]);
+
     $trip = $this->actingAs(autoDispatcher(), 'sanctum')
         ->postJson("/api/v1/bookings/{$booking->id}/auto-assignment")
         ->assertCreated()
@@ -257,9 +270,20 @@ it('still refuses a booking that is already assigned', function () {
 
     $tenant = Tenant::factory()->create();
     Driver::factory()->create();
-    Vehicle::factory()->create(['seating_capacity' => 5]);
+    $vehicle = Vehicle::factory()->create(['seating_capacity' => 5]);
     $booking = bookingAt($tenant);
     $booking->update(['status' => 'assigned']);
+
+    // Contracted, so the endpoint gets past "nothing can take this" and
+    // refuses for the reason this test is actually about. The candidate
+    // search runs before the transition guard, so without it the 409 would
+    // be the right status for the wrong reason.
+    VehicleAllocation::factory()->create([
+        'tenant_id' => $tenant->id,
+        'vehicle_id' => $vehicle->id,
+        'starts_on' => now()->subDay(),
+        'ends_on' => now()->addDay(),
+    ]);
 
     $this->actingAs(autoDispatcher(), 'sanctum')
         ->postJson("/api/v1/bookings/{$booking->id}/auto-assignment")
@@ -292,4 +316,157 @@ it('is gated on the same ability as the assignment it replaces', function () {
     $this->actingAs($employee, 'sanctum')
         ->postJson("/api/v1/bookings/{$booking->id}/auto-assignment")
         ->assertForbidden();
+});
+
+/*
+  **Offering is not ranking, and the difference is a commercial agreement.**
+
+  `forBooking` is the dispatcher's own board: everything that could take the
+  job, contracted vehicles on top, because a human choosing by hand should see
+  the whole picture. `offerableFor` is what goes out to drivers with nobody
+  watching, and it filters rather than sorts.
+
+  **The filter widened on 2026-08-29 and the ranking did not.** The owner:
+  *"shanitah is the main fleet that has got all the access to both walking and
+  Coporate, the other just need to request another contract."* The house fleet
+  is the platform's own operation and needs no contract with a client it
+  already serves; every other fleet contracts for the work, which is asserted
+  in `MainFleetDispatchTest` because a fleet dispatcher cannot see a rival
+  fleet's vehicles at all (`BelongsToOperator::scopeForActor`) and the case
+  cannot be written from this file's actor.
+
+  What did not move is the thing worth protecting: a contracted vehicle still
+  outranks everything by 1000 points, so a client paying to have vehicles set
+  aside is still served from them first.
+*/
+
+it('offers the contracted vehicle first even when a nearer one could take it', function () {
+    $tenant = Tenant::factory()->create();
+    Driver::factory()->create();
+    Driver::factory()->create();
+
+    $booking = bookingAt($tenant, 0.3476, 32.5825);
+
+    $nearer = Vehicle::factory()->create(['registration_number' => 'UDD 444D', 'seating_capacity' => 5]);
+    $contracted = Vehicle::factory()->create(['registration_number' => 'UCC 333C', 'seating_capacity' => 5]);
+
+    // The uncontracted one is next door and the contracted one is across
+    // town, so distance argues the wrong way and only the ruling can decide.
+    parkVehicleAt($nearer, $tenant, 0.3480, 32.5830);
+    parkVehicleAt($contracted, $tenant, 0.4500, 32.7000);
+
+    VehicleAllocation::factory()->create([
+        'tenant_id' => $tenant->id,
+        'vehicle_id' => $contracted->id,
+        'starts_on' => now()->subDay(),
+        'ends_on' => now()->addDay(),
+    ]);
+
+    $recommender = app(DispatchRecommender::class);
+    $actor = autoDispatcher();
+
+    // The board still shows both, contracted first — that half is unchanged.
+    expect($recommender->forBooking($booking, $actor))->toHaveCount(2);
+
+    $offerable = $recommender->offerableFor($booking, $actor);
+
+    /*
+      Both are offerable now — they are the house fleet's — and the assertion
+      that matters is the **order**. Distance argues the wrong way here by
+      construction, so anything but the contracted vehicle first would mean a
+      heuristic had overridden a commercial agreement.
+    */
+    expect($offerable->first()->vehicle->registration_number)->toBe('UCC 333C');
+    expect($offerable->first()->contracted)->toBeTrue();
+});
+
+it("offers the house fleet's own vehicle when the client contracted nothing", function () {
+    /*
+      The 2026-08-29 change, at the point where it pays for itself. This
+      returned nothing until then, and the booking went back to a desk that
+      would have assigned this very vehicle by hand — the refusal cost a
+      dispatcher's attention and bought the client nothing, because there was
+      no contract for it to protect.
+    */
+    $tenant = Tenant::factory()->create();
+    Driver::factory()->create();
+    Vehicle::factory()->create(['seating_capacity' => 5]);
+
+    $booking = bookingAt($tenant, 0.3476, 32.5825);
+    $recommender = app(DispatchRecommender::class);
+
+    $offerable = $recommender->offerableFor($booking, autoDispatcher());
+
+    expect($offerable)->not->toBeEmpty();
+    // Offered as the house, not as a contract that was never written.
+    expect($offerable->first()->contracted)->toBeFalse();
+    expect($offerable->first()->mainFleet)->toBeTrue();
+});
+
+it('sends a booking back to the desk when nothing at all can take it', function () {
+    /*
+      The refusal path, at the point where it costs something. A vehicle is
+      free, near and big enough — and there is nobody to drive it, so
+      automatic dispatch refuses rather than committing a trip to an empty
+      seat. The job returns to the queue a dispatcher is already watching,
+      which is where an unanswerable one belonged before automatic dispatch
+      existed.
+
+      No driver rather than no contract: since 2026-08-29 the house fleet
+      needs none, so a missing contract is no longer what strands a Shanitah
+      booking. `MainFleetDispatchTest` holds the case that still is — another
+      fleet, free and capable, refused for want of one.
+    */
+    config()->set('dispatch.automatic_enabled', true);
+
+    $tenant = Tenant::factory()->create();
+    Vehicle::factory()->create(['seating_capacity' => 5]);
+    $booking = bookingAt($tenant);
+
+    $this->actingAs(autoDispatcher(), 'sanctum')
+        ->postJson("/api/v1/bookings/{$booking->id}/auto-assignment")
+        ->assertStatus(409)
+        ->assertJsonPath('code', 'NO_DISPATCH_CANDIDATE')
+        // The message names *which* of the refusals this is. One sentence
+        // covering "nothing is free", "nothing is contracted" and "the seats
+        // are too few" sent the owner hunting a permissions problem on
+        // 29 August, and the three have different fixes.
+        ->assertJsonPath('message', fn (string $m) => str_contains($m, 'no vehicle and driver are both free'));
+
+    // Still the desk's to place, and still in the queue.
+    expect($booking->fresh()->status->value)->not->toBe('assigned');
+});
+
+it('names a missing contract as a contract, not as a shortage', function () {
+    /*
+      The other refusal, and the reason they had to be told apart. A fleet
+      that is not the house has vehicles free and no contract with this
+      client: nothing is scarce, a form is missing, and the sentence says so
+      with the fix in it. Told as "no vehicle is free" it reads as a busy
+      morning and a desk waits for one to come back.
+    */
+    config()->set('dispatch.automatic_enabled', true);
+
+    $rival = Operator::create([
+        'name' => 'Second Fleet Ltd',
+        'slug' => 'second-fleet-refusal',
+        'status' => 'active',
+        'plan_id' => Plan::default()?->id,
+    ]);
+
+    $tenant = Tenant::factory()->create();
+    $vehicle = Vehicle::factory()->create(['operator_id' => $rival->id, 'seating_capacity' => 5]);
+    Driver::factory()->create(['operator_id' => $rival->id, 'vehicle_id' => $vehicle->id]);
+
+    $dispatcher = User::factory()->create([
+        'tenant_id' => null,
+        'operator_id' => $rival->id,
+        'role' => UserRole::DISPATCHER,
+    ]);
+
+    $this->actingAs($dispatcher, 'sanctum')
+        ->postJson('/api/v1/bookings/'.bookingAt($tenant)->id.'/auto-assignment')
+        ->assertStatus(409)
+        ->assertJsonPath('code', 'NO_DISPATCH_CANDIDATE')
+        ->assertJsonPath('message', fn (string $m) => str_contains($m, 'none is contracted to this client'));
 });
