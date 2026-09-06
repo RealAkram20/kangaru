@@ -21695,3 +21695,25 @@ Live has no dispatchable driver — two on duty, positions ~45 and ~48 hours
 stale against a 180-second TTL — so every wave will find nobody and every
 booking will still land on the board. That is a fleet and handset question.
 Nor was any of this deployed; live is on `eed8051f`.
+
+
+**Deployed to live, 2026-09-06 ~20:30 UTC — and it caused a ~6 minute outage
+of both domains, which is the part worth reading.** Pushed `f60b64f`, backed
+up (`kangaruride-…20260906T202846Z.sql.gz`, 3 s), checked out the SHA, pinned
+`SOURCE_COMMIT`, then ran a **bare** `docker compose up -d --build`. Every
+container came up healthy; `api.kangaruride.com` and `kangaruride.com` both
+answered 503 from Cloudflare. Cause: the base compose carries no Traefik
+labels on purpose — they live in `deploy/docker-compose.proxy.yml` — so the
+recreated `app` and `web` had no router. `~/.bash_history` on the server shows
+every previous deploy used all three files. Recovery was that command without
+`--build`:
+
+    docker compose -f docker-compose.yml -f deploy/docker-compose.proxy.yml -f deploy/docker-compose.osrm.yml up -d
+
+Labels back (app 14, web 12), both domains 200 on the second sample and
+stable over six more. Live is on `f60b64f`: `booking_auto_offer=true`,
+`walk_in_auto_dispatch=true`, `automatic_enabled=false`, both
+`BookingApproved` listeners registered, `dispatch:advance-offers` ticking,
+OSRM init containers exited 0. No migrations ran. RoleSeeder not re-run —
+nothing new in the permission enum. Recorded in the machine memory as
+`live-deploy-needs-all-three-compose-files`.
