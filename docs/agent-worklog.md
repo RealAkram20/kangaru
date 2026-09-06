@@ -21593,3 +21593,105 @@ all-or-nothing rule holding outside a test.
 
 **Not done:** no other table offers selection yet; the prop is there and unused
 elsewhere on purpose. Nothing on the phone layout.
+
+---
+
+## 2026-09-06 — an approved booking offers itself to drivers (complete)
+
+**Status:** complete
+**Owns:** `backend/Modules/Dispatch/Listeners/OfferApprovedBookingToDrivers.php`,
+`backend/tests/Feature/Dispatch/ApprovedBookingOffersItselfTest.php`,
+`docs/adr/0071-an-approved-booking-offers-itself.md`
+**Shares:** `config/dispatch.php`, `app/Providers/AppServiceProvider.php`,
+`backend/Modules/Dispatch/Services/DispatchRecommender.php` — exact edit: one
+setting appended, one `Event::listen` line beside the existing
+`BookingApproved` listener, and `offerableForFleet` no longer narrowing an
+unclaimed booking to fleetless drivers.
+
+**The report:** "automatic dispatch is not working on live" — creating a
+booking approves it, and the desk still has to open Dispatch and assign the
+vehicle and the driver by hand.
+
+**Diagnosed, and it was never wired.** Nothing carries a booking into
+dispatch. `BookingService::approve()` raises `BookingApproved`, whose only
+listener notifies the requester; neither the service nor any booking
+controller references `DispatchOfferService`. The two existing triggers are
+walk-in order requests (`OrderRequestService::offerToDrivers`, flag on) and
+advancing an offer that **already exists** — a decline, or the ten-second
+`dispatch:advance-offers` sweep, which only touches bookings with a lapsed
+offer. So a booking enters the automatic loop only after a human has made the
+first assignment.
+
+**Separately, live has no dispatchable drivers** and would have had nobody to
+offer to: two drivers on duty, both with positions ~45 and ~48 hours old
+against a 180-second TTL, so `dispatchable()` returns 0 and there have been 0
+offers in 24h. Infrastructure is healthy — the scheduler runs
+`dispatch:advance-offers` every 10s, and the queue container's 108 restarts
+are its `--max-time=3600` hourly recycle, not a crash. Not fixed here; it is a
+fleet/handset question, not a code one.
+
+**Not `autoAssign`, and not for the reason it first looked like.** I read
+`DispatchService` as sending no notification and said so; `DeskAssignmentRings
+Test` corrected it — ADR-0068 routes a driver with a handset through
+`offerBookingToChosen()`, so the desk's assignment rings exactly like a
+walk-in, and only a phone-less driver is assigned outright. The real
+distinction is what has been decided: `autoAssign` commits the top suggestion
+unattended, which is what `dispatch.automatic_enabled` guards and why it is
+off. A wave commits nothing — ranked drivers asked in turn, declines rolling
+on by themselves, a trip only when somebody answers. The offer carries
+`vehicle_id`, so an accept writes a fully assigned trip: both halves the desk
+was doing by hand.
+
+
+**The second fault, and it would have made the first fix do nothing.**
+`offerWaveForBooking` scopes with `offerableForFleet($booking,
+$booking->operator_id)`, and a booking's operator is null until a fleet takes
+it — "NULL means Kangaru's, unclaimed", per the `add_operator_to_the_fleet`
+migration. `forBookingInFleet` renders that null as `drivers.operator_id IS
+NULL`, which is right for an **actor** from head office and wrong for an
+unclaimed **booking**: `drivers.operator_id` is NOT NULL by schema, so the
+predicate matches nobody, ever. Found by probing the recommender directly
+after the first test produced no offer —
+`offerableForFleet($b, null)` returned 0 and
+`offerableForFleet($b, SHANITAH)` returned 1.
+
+**So the decline rotation has been dead for every unclaimed booking**, not
+just this new path: a desk-assigned corporate job that a driver declined
+rolled to nobody. Nothing in the suite caught it because `DeskAssignmentRings
+Test` assigns an explicitly chosen driver through `offerBookingToChosen`,
+which never consults the recommender.
+
+**A correction I made mid-build, recorded because I told the owner the wrong
+thing first.** I read `DispatchService` as sending no notification and said an
+assignment never rings; `DeskAssignmentRingsTest` says otherwise — ADR-0068
+routes a driver with a handset through `offerBookingToChosen()`, and only a
+phone-less driver is assigned outright. It did not change the decision (a wave
+is still the weaker act and the right one to take unattended) but three files
+carried the false claim and were corrected.
+
+**Traps, for whoever is next in this suite:**
+- A driver with no `vehicle_id` is ranked by nobody. `MainFleetDispatchTest`
+  rosters its drivers onto a vehicle; a fixture that omits it produces an
+  empty candidate list and looks like a broken feature.
+- `test()->travel()` ages the presence heartbeat past
+  `presence_ttl_seconds` (180), so a test that jumps forward must report a
+  position again or fail for staleness while appearing to fail about
+  scheduling.
+- The booking endpoint rejects a `scheduled_for` in the past, so the
+  "slot arrived while it waited" case can only be built by creating it
+  pending, travelling, and approving.
+- `Notification::assertNothingSent()` is wrong in this file: approving a
+  booking always notifies the requester. Assert against
+  `TripOfferedNotification` for a named driver instead.
+
+**Verified:** 6 new Pest tests; 182 passing across Dispatch and Bookings; Pint
+and Larastan level 8 clean. Five guards proved by mutation and restored —
+unregistering the listener, swapping `isFuture()` for a null test, removing
+the config gate, dropping the `contracted || mainFleet` filter, and reverting
+the unclaimed widening each fail exactly the tests that name them.
+
+**Not done, and it matters:** nothing here makes live dispatch work *today*.
+Live has no dispatchable driver — two on duty, positions ~45 and ~48 hours
+stale against a 180-second TTL — so every wave will find nobody and every
+booking will still land on the board. That is a fleet and handset question.
+Nor was any of this deployed; live is on `eed8051f`.

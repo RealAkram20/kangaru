@@ -199,6 +199,12 @@ function routeCensus(): array
         'DELETE api/v1/vehicle-categories/{vehicleCategory}' => 'A',
         'GET api/v1/vehicles' => 'A',
         'POST api/v1/vehicles' => 'A',
+        // ADR-0055 §3's disclosure rule is the one that matters here: the
+        // policy answers `deleteAny` before a single id is read, and the
+        // service refuses another fleet's vehicle as *not found* rather
+        // than forbidden, so the batch cannot be used to test whether a
+        // registration is on a rival's fleet.
+        'POST api/v1/vehicles/bulk-delete' => 'A',
         'GET api/v1/vehicles/{vehicle}' => 'A',
         'DELETE api/v1/vehicles/{vehicle}' => 'A',
         'PATCH api/v1/vehicles/{vehicle}' => 'A',
@@ -558,7 +564,9 @@ it('has a census row for every API route and a route for every census row', func
     // add an extension, and the driver's accept/decline of one a passenger
     // asked for. A fifth, the passenger's own proposal, sits on the customer
     // surface and is counted with the rest of `customer/`.
-    expect(count($router))->toBe(246);
+    // 246: the vehicle register's batch delete, 2026-09-04. All or nothing,
+    // capped at 100 ids, and `deleteAny` on the class before any id is read.
+    expect(count($router))->toBe(247);
 });
 
 it('uses only the four idioms, and files sixteen routes as public', function () {
@@ -630,7 +638,9 @@ it('authenticates every route that is not filed as public, and throttles every o
     // than the fleet twin, on `support.act-as` rather than `companies.view`.
     // 225: the extension's four routes, all authenticated. Where a trip is
     // going and what it will cost is not a public question.
-    expect($guarded)->toBe(226);
+    // 227: the vehicle register's batch delete, 2026-09-04. Authenticated,
+    // and it removes rows — the least public thing on the surface.
+    expect($guarded)->toBe(227);
 });
 
 it('binds the actor\'s tenant on every staff route, so TenantScope has something to scope by', function () {
@@ -689,5 +699,7 @@ it('binds the actor\'s tenant on every staff route, so TenantScope has something
     // routes and tenant-bound like the stop routes they sit beside, and for
     // the same reason: a driver's request binds a null tenant, which is the
     // fail-closed state, and a walk-in's stops have no tenant either.
-    expect($staff)->toBe(211);
+    // 212: the vehicle register's batch delete, 2026-09-04 — a staff route
+    // and tenant-bound like every other vehicles route.
+    expect($staff)->toBe(212);
 });

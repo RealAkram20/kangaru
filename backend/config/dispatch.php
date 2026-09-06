@@ -123,6 +123,42 @@ return [
     'walk_in_auto_dispatch' => (bool) env('DISPATCH_WALK_IN_AUTO', true),
 
     /*
+    |--------------------------------------------------------------------------
+    | Offering an approved booking to drivers
+    |--------------------------------------------------------------------------
+    |
+    | The third of these, and it needs distinguishing from both.
+    |
+    | `automatic_enabled` above gates `autoAssign`, which *commits* one
+    | choice — the top suggestion — unattended. This one opens an **offer
+    | wave**: the ranked drivers are asked in turn, a decline rolls to the
+    | next by itself, and nothing is committed until somebody answers. Both
+    | ring the driver (ADR-0068 gave the desk's assignment the same
+    | full-screen offer a walk-in gets), so the distinction is not who hears
+    | about it but what has already been decided when they do. The weaker act
+    | is not folded into that flag: turning on "the matcher may ask" should
+    | not also turn on "the matcher may decide".
+    |
+    | On by default, and that is a departure from `automatic_enabled`'s
+    | caution worth stating. The owner reported on 6 September that creating a
+    | booking still left the desk assigning both halves by hand and asked for
+    | it to be automatic. Shipping it off would ship exactly the feature
+    | nobody can use that the walk-in note above warns against. The failure
+    | mode is bounded: an offer is a question, a driver may decline it, the
+    | desk can still assign by hand, and `DISPATCH_BOOKING_AUTO_OFFER=false`
+    | turns it off without a deploy.
+    |
+    | Only immediate bookings. A booking scheduled for later is left alone,
+    | the same rule and the same reason as the walk-in path: holding an offer
+    | open for six hours, or waking a matcher at 05:00 for an 06:00 pickup,
+    | is a scheduler making its own decisions and is deferred by name in
+    | ADR-0024.
+    |
+    */
+
+    'booking_auto_offer' => (bool) env('DISPATCH_BOOKING_AUTO_OFFER', true),
+
+    /*
     | How long a driver has to answer an offer.
     |
     | The passenger is standing on a kerb watching a spinner, so this is

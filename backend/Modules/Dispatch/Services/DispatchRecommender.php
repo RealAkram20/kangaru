@@ -310,7 +310,35 @@ class DispatchRecommender
      */
     public function offerableForFleet(Booking $booking, ?int $operatorId): Collection
     {
-        return $this->forBookingInFleet($booking, $operatorId)
+        /*
+         * **An unclaimed booking is not a fleetless one**, and reading it as
+         * fleetless is why automatic rotation on a corporate booking found
+         * nobody at all.
+         *
+         * `bookings.operator_id` is null until a fleet takes the job — the
+         * `add_operator_to_the_fleet` migration says so in as many words:
+         * "NULL means Kangaru's, unclaimed". `forBookingInFleet` renders a
+         * null as `drivers.operator_id IS NULL`, which is the right reading
+         * of *an actor* from head office and the wrong reading of *a booking*
+         * nobody has claimed: `drivers.operator_id` is NOT NULL by schema, so
+         * that predicate can never match a single driver. Every wave for such
+         * a booking returned an empty set, silently, and the desk was the only
+         * way the job ever moved.
+         *
+         * So an unclaimed booking narrows to no fleet, and the commercial
+         * filter below decides who may take it — which is the answer the
+         * platform already gives everywhere else. `contracted` is this
+         * client's own contracted vehicles; `mainFleet` is the owner's ruling
+         * of 29 August that Shanitah takes corporate work it holds no
+         * contract for (`MainFleetDispatchTest`). Another operator's free,
+         * nearby, perfectly capable van stays unofferable, which is the case
+         * that file guards and the one this must not break.
+         */
+        $ranked = $operatorId === null
+            ? $this->rank($booking, fn ($query) => $query)
+            : $this->forBookingInFleet($booking, $operatorId);
+
+        return $ranked
             ->filter(fn (DispatchSuggestion $s) => $s->contracted || $s->mainFleet)
             ->values();
     }
