@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\Permission;
+use App\Enums\RoleAudience;
 use App\Enums\UserRole;
 use App\Models\AuditLog;
 use App\Models\Tenant;
@@ -129,6 +130,7 @@ it('refuses a role that grants permissions the author lacks', function () {
     Role::create([
         'slug' => 'role_curator',
         'name' => 'Role Curator',
+        'audience' => RoleAudience::CLIENT,
         'is_system' => false,
         'permissions' => [Permission::ROLES_MANAGE->value, Permission::STAFF_MANAGE->value],
     ]);

@@ -42,6 +42,8 @@ function role(overrides: Partial<Role> = {}): Role {
     name: 'Dispatcher',
     description: 'Assigns drivers and vehicles.',
     is_system: true,
+    audience: 'fleet',
+    audience_label: 'Fleet',
     requires_mfa: false,
     permissions: ['trips.view.all'],
     users_count: 3,
@@ -385,6 +387,84 @@ describe('RolesPage', () => {
    * whether the API answers, so a *custom* role holding `roles.manage` —
    * which no slug list can know about — reaches the editor built for it.
    */
+  it('filters the catalogue to one kind of account', async () => {
+    // The audience is what keeps a client's role out of a fleet's picker.
+    // Before the column, the only thing separating them was whether the
+    // permission sets happened to be subsets of one another — a coincidence
+    // rather than a boundary, and one that stops holding the moment head
+    // office composes the roles it was asked for.
+    catalogue([
+      role({ slug: 'dispatcher', name: 'Dispatcher', audience: 'fleet', audience_label: 'Fleet' }),
+      role({
+        slug: 'corporate_admin',
+        name: 'Corporate Admin',
+        audience: 'client',
+        audience_label: 'Client',
+      }),
+    ])
+
+    const user = userEvent.setup()
+    renderAs(<RolesPage />)
+
+    expect(await screen.findByText('Dispatcher')).toBeInTheDocument()
+    expect(screen.getByText('Corporate Admin')).toBeInTheDocument()
+
+    await user.selectOptions(
+      screen.getByLabelText(/filter roles by the kind of account/i),
+      'client',
+    )
+
+    // Both halves. Asserting only the survivor would pass just as happily
+    // against a filter that did nothing.
+    expect(screen.getByText('Corporate Admin')).toBeInTheDocument()
+    expect(screen.queryByText('Dispatcher')).not.toBeInTheDocument()
+  })
+
+  it('offers the audience picker only to head office', async () => {
+    // Moving a role between audiences decides what appears in another
+    // organisation's picker, so it is head office's call — the same shape the
+    // second-factor switch already has. A control that always refused would
+    // be a trap rather than a rule, so a fleet sees the answer and not the
+    // control.
+    catalogue([role()], { can_manage_audience: false })
+
+    const user = userEvent.setup()
+    renderAs(<RolesPage />)
+
+    await user.click(await screen.findByRole('button', { name: /^edit$/i }))
+    const dialog = screen.getByRole('dialog')
+
+    expect(within(dialog).queryByLabelText(/^For/)).not.toBeInTheDocument()
+    // The role's own audience is still stated, because hiding the control is
+    // not the same as hiding the fact.
+    expect(within(dialog).getByText('Fleet')).toBeInTheDocument()
+  })
+
+  it('sends the audience head office chose', async () => {
+    catalogue([role()], {
+      can_manage_audience: true,
+      audiences: [
+        { value: 'kangaru', label: 'Kangaru' },
+        { value: 'fleet', label: 'Fleet' },
+        { value: 'client', label: 'Client' },
+      ],
+    })
+
+    const user = userEvent.setup()
+    renderAs(<RolesPage />)
+
+    const dialog = await openNewRole(user)
+
+    await user.type(within(dialog).getByLabelText(/^Name/), 'Fleet HR')
+    await user.selectOptions(within(dialog).getByLabelText(/^For/), 'client')
+    await user.click(within(dialog).getByLabelText(/See every trip/))
+    await user.click(within(dialog).getByRole('button', { name: /create role/i }))
+
+    await waitFor(() => expect(post).toHaveBeenCalled())
+
+    expect((post.mock.calls[0][1] as Record<string, unknown>).audience).toBe('client')
+  })
+
   it('treats a 403 as an answer rather than a fault', async () => {
     get.mockRejectedValue(
       apiFailure(403, 'FORBIDDEN', 'You do not have permission to perform this action.'),

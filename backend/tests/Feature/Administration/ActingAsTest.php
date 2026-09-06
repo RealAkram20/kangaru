@@ -2,6 +2,7 @@
 
 use App\Enums\AccessLevel;
 use App\Enums\Permission;
+use App\Enums\RoleAudience;
 use App\Enums\UserRole;
 use App\Models\AuditLog;
 use App\Models\ImpersonationSession;
@@ -32,6 +33,7 @@ function kangaruWith(Permission ...$permissions): User
     $role = Role::create([
         'slug' => 'kangaru-support-'.fake()->unique()->numerify('###'),
         'name' => 'Kangaru Support',
+        'audience' => RoleAudience::KANGARU,
         'description' => 'Head office support.',
         'permissions' => array_map(fn (Permission $p) => $p->value, $permissions),
         'requires_mfa' => false,

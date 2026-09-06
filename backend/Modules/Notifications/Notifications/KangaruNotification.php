@@ -139,6 +139,65 @@ abstract class KangaruNotification extends LaravelNotification implements Should
     }
 
     /**
+     * A second, invisible push sent beside this one, whose only job is to wake
+     * the app's JavaScript.
+     *
+     * ## Why a visible push cannot do this itself
+     *
+     * Because Android never hands it to the app. Proved on a handset, twice,
+     * with the app backgrounded, on duty and its process alive: a push carrying
+     * a title and a body is rendered by Expo's Firebase service natively and
+     * **no line of the app's JavaScript runs**. The same handset, seconds
+     * later, given a push with no title and no body:
+     *
+     *     ReactNativeJS: 'offer.push_task', 'open_offer', 64, 'background'
+     *
+     * `expo-notifications` says as much in one line of its own documentation —
+     * *"When the app is terminated, only a Headless Background Notification
+     * triggers the task execution"* — and the measurement extends it: not only
+     * when terminated, but whenever the driver is not looking at the app.
+     *
+     * That is the whole reason the incoming-call screen has never appeared
+     * outside the app. It is built in JavaScript, and nothing was ever waking
+     * the JavaScript.
+     *
+     * ## Why it is a companion rather than a replacement
+     *
+     * **The visible push is the floor and it stays.** Make the offer push
+     * silent and a handset that cannot run the task — the app force-stopped,
+     * an OEM battery manager, `expo/expo#38223` on a terminated process — gets
+     * *nothing at all*, where today it at least rings. ADR-0025 §3 is the rule
+     * this follows: push is best-effort, and no layer may be the only path.
+     *
+     * So two messages go out. The visible one rings, exactly as it does now.
+     * The invisible one wakes the app, which upgrades the ring into an
+     * answerable call screen and withdraws the visible one it replaced. If the
+     * second never arrives, the driver is left with precisely what they have
+     * today, which is why this is safe to ship.
+     *
+     * ## The two things a caller must get right
+     *
+     * **Its own `collapseId`.** Sharing one with the visible push means FCM
+     * collapses the pair and delivers one of them — silently, and most likely
+     * the wrong one.
+     *
+     * **Its own `ttl`.** A wake-up delivered after the offer died starts a
+     * lookup that correctly finds nothing, which is wasted battery on a
+     * driver's phone.
+     *
+     * Returns null for everything that does not need waking, which is almost
+     * everything: a settlement or a document review has no countdown and can
+     * wait for the driver to open the app. A notification that is already
+     * silent must not return options here — it *is* the wake-up.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function pushWakeOptions(): ?array
+    {
+        return null;
+    }
+
+    /**
      * Whether a push that reached nobody is worth telling the office about.
      *
      * False for everything except a job offer, and the default has to be false

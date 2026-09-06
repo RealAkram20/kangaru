@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Modules\Clients\Models\ClientPlace;
+use Modules\Trips\Enums\TripStopKind;
 use Modules\Trips\Enums\TripStopSource;
 use Modules\Trips\Enums\TripStopStatus;
 
@@ -38,10 +39,13 @@ use Modules\Trips\Enums\TripStopStatus;
  * @property string $label
  * @property float|null $latitude
  * @property float|null $longitude
+ * @property TripStopKind $kind
  * @property TripStopSource $source
+ * @property int|null $added_by_user_id
  * @property TripStopStatus $status
  * @property CarbonInterface|null $arrived_at
  * @property CarbonInterface|null $departed_at
+ * @property CarbonInterface|null $accepted_at
  * @property string|null $skip_reason
  */
 class TripStop extends Model
@@ -56,10 +60,13 @@ class TripStop extends Model
         'label',
         'latitude',
         'longitude',
+        'kind',
         'source',
+        'added_by_user_id',
         'status',
         'arrived_at',
         'departed_at',
+        'accepted_at',
         'skip_reason',
     ];
 
@@ -71,11 +78,52 @@ class TripStop extends Model
             'latitude' => 'float',
             'longitude' => 'float',
             'sequence' => 'integer',
+            'kind' => TripStopKind::class,
             'source' => TripStopSource::class,
             'status' => TripStopStatus::class,
             'arrived_at' => 'datetime',
             'departed_at' => 'datetime',
+            'accepted_at' => 'datetime',
         ];
+    }
+
+    /**
+     * The extensions this trip is actually committed to, in run order.
+     *
+     * **Accepted only, and that is the whole point.** A `PROPOSED` row is a
+     * passenger's request the driver has not agreed to; routing through it
+     * would put an unagreed leg into the reference route and therefore into
+     * the fare. A `SKIPPED` one was declined or never reached.
+     *
+     * Every caller that asks "where is this journey actually going" — the
+     * reference route, the fare, the completion rule — goes through here, so
+     * that the answer cannot drift between them.
+     *
+     * @param  Builder<static>  $query
+     * @return Builder<static>
+     */
+    public function scopeAcceptedExtensions(Builder $query, Trip $trip): Builder
+    {
+        return $query
+            ->forTrip($trip)
+            ->where($this->getTable().'.kind', TripStopKind::EXTENSION)
+            ->whereIn($this->getTable().'.status', [
+                TripStopStatus::PENDING,
+                TripStopStatus::ARRIVED,
+                TripStopStatus::DONE,
+            ]);
+    }
+
+    /** Whether this row moves the end of the journey rather than pausing on it. */
+    public function isExtension(): bool
+    {
+        return $this->kind === TripStopKind::EXTENSION;
+    }
+
+    /** A passenger's request the driver has not yet agreed to. */
+    public function isAwaitingDriver(): bool
+    {
+        return $this->status === TripStopStatus::PROPOSED;
     }
 
     /**

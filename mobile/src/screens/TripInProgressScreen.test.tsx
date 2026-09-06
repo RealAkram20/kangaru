@@ -2,6 +2,7 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import type { ReactElement } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { NetworkError } from '../api/errors';
 import type { Trip, TripEvent, TripStatus, TripStop } from '../api/types';
 import { TripInProgressScreen } from './TripInProgressScreen';
 
@@ -48,6 +49,35 @@ jest.mock('../trips/odometerSetting', () => ({
 }));
 
 jest.mock('../ui/SyncBanner', () => ({ SyncBanner: () => null }));
+
+/*
+  The extension surface (2026-08-28), added by the extension agent. Three
+  mocks, all of them things this screen gained rather than things it changed:
+  it now answers a passenger's request and marks the agreed drop-off, and both
+  post directly rather than through the outbox.
+
+  `useAuth` and `useQueryClient` are the two the screen would otherwise throw
+  on before rendering a single row — which is what 42 of these tests did the
+  moment the screen learned to post.
+*/
+const mockAcceptExtension = jest.fn(async () => ({}));
+const mockDeclineExtension = jest.fn(async () => ({}));
+const mockMarkDropoffReached = jest.fn(async () => ({}));
+const mockInvalidate = jest.fn(async () => undefined);
+
+jest.mock('../api/endpoints', () => ({
+  acceptTripExtension: (...args: unknown[]) => mockAcceptExtension(...(args as [])),
+  declineTripExtension: (...args: unknown[]) => mockDeclineExtension(...(args as [])),
+  markDropoffReached: (...args: unknown[]) => mockMarkDropoffReached(...(args as [])),
+}));
+
+jest.mock('../auth/AuthProvider', () => ({
+  useAuth: () => ({ api: {} }),
+}));
+
+jest.mock('@tanstack/react-query', () => ({
+  useQueryClient: () => ({ invalidateQueries: mockInvalidate }),
+}));
 
 // `mock` prefix required: Jest hoists the factory below above this line.
 const mockQueueTransition = jest.fn(async () => undefined);
@@ -131,6 +161,7 @@ function trip(overrides: Partial<Trip> = {}): Trip {
     gps_distance_km: null,
     distance_variance_flagged: null,
     unplanned_stop_count: 0,
+    dropoff_reached_at: null,
     started_at: STARTED_AT,
     completed_at: null,
     duration_minutes: null,
@@ -550,24 +581,36 @@ function itineraryStop(overrides: Partial<TripStop> = {}): TripStop {
     departed_at: null,
     skip_reason: null,
     client_place_id: 11,
+    kind: 'stop' as const,
+    accepted_at: null,
     ...overrides,
   };
 }
 
-it('offers Add a drop-off on a running trip', async () => {
+/*
+  **The label changed on 2026-08-28 and the behaviour behind it did too.**
+  These fixtures are walk-ins (`tenant_id: null`), and on a walk-in this
+  button now records an *extension* — the passenger going further than the
+  drop-off they agreed to, which is billed — where it used to append an
+  unbilled stop. That was a live defect: the extra kilometres were driven,
+  capped by `ROUTE_CAPPED`, and not paid for. The owner was shown the
+  collision and chose this. A corporate circuit still reads 'Add a drop-off'
+  and still appends a stop; both labels are covered in `extensions.test.ts`.
+*/
+it('offers the extend control on a running trip', async () => {
   const { getByLabelText } = await renderProgress();
 
-  void fireEvent.press(getByLabelText('Add a drop-off'));
+  void fireEvent.press(getByLabelText('Extend the trip'));
 
   expect(navigate).toHaveBeenCalledWith('AddDropoff', { tripId: 42 });
 });
 
-it('offers Add a drop-off while paused too — the bank flow adds the next site at this one', async () => {
+it('offers it while paused too — the bank flow adds the next site at this one', async () => {
   // Hiding the button behind a resume would make the driver lie about where
   // they are to extend their own run (ADR-0045 §4).
   const { getByLabelText } = await renderProgress(pausedTrip(), heldEvents());
 
-  void fireEvent.press(getByLabelText('Add a drop-off'));
+  void fireEvent.press(getByLabelText('Extend the trip'));
 
   expect(navigate).toHaveBeenCalledWith('AddDropoff', { tripId: 42 });
 });
@@ -738,6 +781,8 @@ it('stops asking for a whole leg once the circuit has worked a stop', async () =
           departed_at: null,
           skip_reason: null,
           client_place_id: null,
+          kind: 'stop' as const,
+          accepted_at: null,
         },
       ],
     }),
@@ -848,6 +893,8 @@ it('draws no whole leg mid-circuit even when the cache still holds one', async (
           departed_at: null,
           skip_reason: null,
           client_place_id: null,
+          kind: 'stop' as const,
+          accepted_at: null,
         },
       ],
     }),
@@ -859,4 +906,205 @@ it('draws no whole leg mid-circuit even when the cache still holds one', async (
   // actually is, and is true whatever the circuit has done.
   expect(html).toContain(ROAD_AHEAD);
   expect(html).not.toContain(WHOLE_LEG_POLYLINE);
+});
+
+/*
+  The extension surface (ADR-0045 §4 amendment, 2026-08-28).
+
+  Three things are worth protecting, and each fails in its own way: the
+  request has to reach the driver at all, an answer has to be sent once and
+  once only, and the drop-off boundary has to stop being offered after it is
+  marked — the server ignores a second one, so a button that stayed would be
+  a control that visibly does nothing.
+*/
+
+function extensionRequest(over: Partial<TripStop> = {}): TripStop {
+  return {
+    id: 88,
+    sequence: 1,
+    label: 'Kabalagala',
+    latitude: null,
+    longitude: null,
+    kind: 'extension',
+    source: 'added_by_client',
+    status: 'proposed',
+    arrived_at: null,
+    departed_at: null,
+    accepted_at: null,
+    skip_reason: null,
+    client_place_id: null,
+    ...over,
+  };
+}
+
+it('puts a passenger request in front of the driver, naming the place', async () => {
+  const { getByText } = await renderProgress(trip({ stops: [extensionRequest()] }));
+
+  // The place is the only thing the decision turns on. No fare: nothing can
+  // price an extension before it is driven, and a figure invented here is one
+  // the driver repeats to a passenger and cannot honour.
+  expect(getByText('Kabalagala')).toBeTruthy();
+  expect(getByText('Passenger wants to go further')).toBeTruthy();
+});
+
+it('shows no request card for a stop, or for one already answered', async () => {
+  const answered = await renderProgress(
+    trip({ stops: [extensionRequest({ status: 'pending', accepted_at: '2026-08-28T09:00:00+00:00' })] }),
+  );
+
+  expect(answered.queryByText('Passenger wants to go further')).toBeNull();
+
+  const plainStop = await renderProgress(trip({ stops: [extensionRequest({ kind: 'stop' })] }));
+
+  expect(plainStop.queryByText('Passenger wants to go further')).toBeNull();
+});
+
+it("sends the driver's answer to the office", async () => {
+  const { getByLabelText } = await renderProgress(trip({ stops: [extensionRequest()] }));
+
+  await act(async () => {
+    void fireEvent.press(getByLabelText('Accept'));
+  });
+
+  expect(mockAcceptExtension).toHaveBeenCalledWith({}, 42, 88);
+  expect(mockDeclineExtension).not.toHaveBeenCalled();
+});
+
+it('records a refusal without deleting the request', async () => {
+  const { getByLabelText } = await renderProgress(trip({ stops: [extensionRequest()] }));
+
+  await act(async () => {
+    void fireEvent.press(getByLabelText('Decline'));
+  });
+
+  expect(mockDeclineExtension).toHaveBeenCalledWith({}, 42, 88);
+});
+
+it('marks the agreed drop-off, then stops offering to', async () => {
+  const before = await renderProgress(trip());
+
+  await act(async () => {
+    void fireEvent.press(before.getByLabelText('Arrived at drop-off'));
+  });
+
+  expect(mockMarkDropoffReached).toHaveBeenCalledWith({}, 42);
+
+  const after = await renderProgress(trip({ dropoff_reached_at: '2026-08-28T09:00:00+00:00' }));
+
+  expect(after.queryByLabelText('Arrived at drop-off')).toBeNull();
+  // Extending survives it: the owner's ruling is that extensions matter more
+  // than the mark, and nothing about extending is gated behind it.
+  expect(after.getByLabelText('Extend the trip')).toBeTruthy();
+});
+
+it('says so when an answer does not reach the office', async () => {
+  // A dead zone, which is the case that actually happens: a drop-off is
+  // wherever the passenger asked for, routinely somewhere with no signal.
+  mockAcceptExtension.mockRejectedValueOnce(new NetworkError('offline'));
+
+  const { getByLabelText, findByText } = await renderProgress(
+    trip({ stops: [extensionRequest()] }),
+  );
+
+  await act(async () => {
+    void fireEvent.press(getByLabelText('Accept'));
+  });
+
+  // Swallowed, this is a driver tapping Accept, seeing nothing change, and
+  // concluding the screen is broken while a passenger waits beside them.
+  expect(await findByText(/did not reach the office/)).toBeTruthy();
+});
+
+it('will not report a trip complete while an agreed extension is still to run', async () => {
+  /*
+    **The worst bug this screen has had, and it shipped past every test.**
+
+    The office refuses the completion — `TransitionTripRequest` does — but
+    this screen queues through the outbox and navigates on the *queue*
+    succeeding. So the driver was shown "Great job! Ride completed" with
+    their passenger still in the car waiting to be taken on, and the 422
+    turned up minutes later as a line in Updates & sync.
+
+    Found by pressing End trip on a handset. No test saw it because none had
+    an accepted extension on a trip the driver then tried to finish.
+  */
+  const { getByLabelText, findByText } = await renderProgress(
+    trip({
+      dropoff_reached_at: '2026-08-28T09:00:00+00:00',
+      stops: [extensionRequest({ status: 'pending', accepted_at: '2026-08-28T09:00:00+00:00' })],
+    }),
+  );
+
+  await act(async () => {
+    void fireEvent.press(getByLabelText('End trip'));
+  });
+
+  expect(await findByText(/Kabalagala is still to run/)).toBeTruthy();
+  // Neither queued nor navigated: the office is never offered a write it
+  // would refuse, and the driver is never told they have finished.
+  expect(mockQueueTransition).not.toHaveBeenCalled();
+  expect(replace).not.toHaveBeenCalled();
+});
+
+it('ends the trip once the extension has been run', async () => {
+  const { getByLabelText } = await renderProgress(
+    trip({
+      dropoff_reached_at: '2026-08-28T09:00:00+00:00',
+      stops: [extensionRequest({ status: 'done', accepted_at: '2026-08-28T09:00:00+00:00' })],
+    }),
+  );
+
+  await act(async () => {
+    void fireEvent.press(getByLabelText('End trip'));
+  });
+
+  // Proceeds — which with the odometer on means the closing-reading screen,
+  // exactly as it does on a trip that was never extended.
+  expect(navigate).toHaveBeenCalledWith(
+    'Odometer',
+    expect.objectContaining({ to: 'trip_completed' }),
+  );
+});
+
+it('gives an accepted extension a way to be finished, so the trip is never trapped', async () => {
+  /*
+    **The trap, reported by the owner: "i can not end the trip".**
+
+    `End trip` refuses while an agreed extension is outstanding — correctly —
+    and the extension rows were drawn by a second, simpler loop with no
+    Arrived control on them. So the one leg blocking the trip was the one leg
+    that could not be worked, and the screen offered no way forward at all.
+
+    Both halves of the journey now go through one row, which is what makes
+    that combination impossible to build again.
+  */
+  const { getByLabelText } = await renderProgress(
+    trip({
+      dropoff_reached_at: '2026-08-28T09:00:00+00:00',
+      stops: [extensionRequest({ status: 'pending', accepted_at: '2026-08-28T09:00:00+00:00' })],
+    }),
+  );
+
+  await act(async () => {
+    void fireEvent.press(getByLabelText('Arrived at Kabalagala'));
+  });
+
+  // The same queued pause a stop uses, carrying the leg it is about — which
+  // is what moves it off `pending` and eventually lets the trip end.
+  expect(mockQueueTransition).toHaveBeenCalledWith(
+    expect.objectContaining({ to: 'waiting', stopId: 88 }),
+  );
+});
+
+it('offers no Arrived on an extension the driver has not reached yet', async () => {
+  // Before the agreed drop-off is marked, the extension is not where the
+  // driver is going — offering Arrived on it would record a leg they have
+  // not driven, and the fare follows those legs.
+  const { queryByLabelText } = await renderProgress(
+    trip({
+      stops: [extensionRequest({ status: 'pending', accepted_at: '2026-08-28T09:00:00+00:00' })],
+    }),
+  );
+
+  expect(queryByLabelText('Arrived at Kabalagala')).toBeNull();
 });

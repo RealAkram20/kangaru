@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Modules\Trips\Enums\TripStopKind;
 use Modules\Trips\Enums\TripStopStatus;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Routing\RouteService;
@@ -70,9 +71,31 @@ class TripRouteController extends Controller
          * null unconditionally. With a located stop and the driver's own fix
          * as the origin, the road exists.
          */
+        /*
+         * **An extension does not become the destination until the agreed
+         * one has been reached.**
+         *
+         * Extensions live in this table too, and an accepted one is
+         * `pending` with a pin — so on a walk-in, which carries no other
+         * stops, the query above would find the extension and route the
+         * driver to it while the passenger's own drop-off was still ahead of
+         * them. The trip would navigate past the place it was hired to reach.
+         *
+         * `dropoff_reached_at` is what separates the two halves. Before it is
+         * set, extensions are excluded and the leg falls through to the
+         * order's drop-off pin below; after it, they are exactly what the
+         * driver should be routed to, in run order.
+         *
+         * Ordinary stops are unaffected in both halves: a corporate circuit
+         * has no agreed drop-off pin to protect and never sets this column.
+         */
         $nextStop = $leg === 'dropoff'
             ? $trip->stops()
                 ->where('status', TripStopStatus::PENDING)
+                ->when(
+                    $trip->dropoff_reached_at === null,
+                    fn ($query) => $query->where('kind', TripStopKind::STOP),
+                )
                 ->whereNotNull('latitude')
                 ->whereNotNull('longitude')
                 ->first()

@@ -31,10 +31,20 @@ class TripStopResource extends JsonResource
             'label' => $this->label,
             'latitude' => $located ? $this->latitude : null,
             'longitude' => $located ? $this->longitude : null,
+            // `stop` or `extension`. Every surface that renders these has to
+            // tell them apart: a stop is a pause and costs nothing, an
+            // extension moved the end of the journey and is billed. A client
+            // that showed them alike would be telling a passenger their fare
+            // grew for a reason it cannot point at.
+            'kind' => $this->kind->value,
             'source' => $this->source->value,
             'status' => $this->status->value,
             'arrived_at' => $this->arrived_at?->toIso8601String(),
             'departed_at' => $this->departed_at?->toIso8601String(),
+            // Null on a proposal the driver has not answered, and on every
+            // ordinary stop. The driver app reads it to know which extensions
+            // are waiting on them.
+            'accepted_at' => $this->accepted_at?->toIso8601String(),
             'skip_reason' => $this->skip_reason,
             'client_place_id' => $this->client_place_id,
         ];

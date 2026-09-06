@@ -1,7 +1,7 @@
 import { render } from '@testing-library/react-native';
 import { AccessibilityInfo } from 'react-native';
 
-import { Skeleton, SkeletonCards, SkeletonRows } from './Skeleton';
+import { Skeleton, SkeletonCards, SkeletonRows, SkeletonText } from './Skeleton';
 
 /**
  * The loading placeholder that replaced seven bare spinners.
@@ -46,6 +46,37 @@ it('draws cards where a screen loads cards rather than rows', async () => {
   expect(getByLabelText('Loading')).toBeTruthy();
   // Four per card: the card's own surface, plus the three lines on it.
   expect(countBlocks(toJSON())).toBe(8);
+});
+
+it('draws prose with a short last line, where a screen loads words', async () => {
+  const { getByLabelText, toJSON } = await render(<SkeletonText lines={4} />);
+
+  expect(getByLabelText('Loading')).toBeTruthy();
+  expect(countBlocks(toJSON())).toBe(4);
+
+  /*
+    **The ragged last line is the whole point of this shape.** Four equal bars
+    read as a table or a form; a paragraph stops mid-line, and that single
+    difference is what makes a reader see words rather than blocks. Asserted on
+    the widths because it is the only thing distinguishing this from
+    `SkeletonRows`, and it is one edit away from being lost.
+
+    Mutation check: make every line '100%' and this fails.
+  */
+  const widths = collect(toJSON())
+    .filter((style) => style.backgroundColor !== undefined)
+    .map((style) => style.width);
+
+  expect(widths.slice(0, 3)).toEqual(['100%', '100%', '100%']);
+  expect(widths[3]).toBe('58%');
+});
+
+it('announces prose once, however many lines it draws', async () => {
+  // The same rule the rows follow: a placeholder that linearises into eight
+  // unlabelled views is noise in place of the one fact that matters.
+  const { getAllByLabelText } = await render(<SkeletonText lines={8} />);
+
+  expect(getAllByLabelText('Loading')).toHaveLength(1);
 });
 
 it('holds still, and at full opacity, when the phone asks for reduced motion', async () => {

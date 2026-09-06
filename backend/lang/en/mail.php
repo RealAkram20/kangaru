@@ -95,6 +95,25 @@ return [
     ],
 
     /*
+     | A fleet changing hands (owner's decision, 24 August). The same bones as
+     | `invited` above and for its reasons: it names who arranged it and which
+     | fleet, because a stranger asking for a password is a phishing email and
+     | a named colleague is something the reader can check with.
+     */
+    'ownership' => [
+        'subject' => 'You are the new owner of :fleet',
+        'heading' => ':fleet is being handed to you',
+        'opening' => 'You have been named the new owner of :fleet on :app.',
+        'opening_by' => ':inviter named you the new owner of :fleet on :app.',
+        'body' => 'Choose a password and the fleet is yours. Until you do, nothing changes.',
+        'action' => 'Set your password',
+        'fact_fleet' => 'Fleet',
+        'fact_email' => 'Signs in as',
+        'fact_expires' => 'Link expires',
+        'footnote' => 'If you were not expecting this, ignore it and nothing happens.',
+    ],
+
+    /*
      | A2. One reminder, and never a second. It carries no link because it
      | genuinely cannot: the token is a digest in the database and the
      | plaintext was destroyed when the first email was built.
@@ -125,6 +144,7 @@ return [
         'fact_driver' => 'Driver',
         'fact_fleet' => 'Fleet',
         'fact_limit' => 'Limit',
+        'fact_owner' => 'New owner',
         'fact_plan' => 'Plan',
         'fact_when' => 'Raised',
 
@@ -164,6 +184,13 @@ return [
             'subject' => ':fleet joined the platform',
             'heading' => ':fleet joined the platform',
             'body' => 'Their owner has been emailed an invitation to sign in.',
+            'action' => 'Open the fleet',
+        ],
+
+        'platform_fleet_ownership_transferred' => [
+            'subject' => ':fleet changed hands',
+            'heading' => ':fleet changed hands',
+            'body' => ':owner set their password and now owns the fleet. The previous owner\'s account is suspended.',
             'action' => 'Open the fleet',
         ],
 

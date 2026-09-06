@@ -238,12 +238,39 @@ hand. They now say `isPlatformLevel()` and `forActor()`. Behaviour is
 unchanged by design; the point is that the sixth copy cannot be written
 differently.
 
+**And the third of them was wrong from the day ADR-0055 landed** (ADR-0065).
+`sharesTenant()` returned true for any `isPlatformLevel()` actor — a phrase
+that meant *head office* when ADR-0006 wrote it and *any fleet* once the axes
+split. Since the listing had been narrowed on 23 August but the policy had
+not, and `User` has no global scope to catch it, `GET|PATCH /users/{user}`
+resolved any id in the table and this policy was all that stood after it. It
+is now `sharesOrganisation()`: an exhaustive `match` on `AccessLevel` that
+answers exactly what `User::scopeForActor` answers — a fleet reaches its own
+people plus the people of clients it **actively** serves, a client reaches its
+own, head office reaches head office, an applicant reaches nobody.
+`StoreUserRequest` carries the write mirror, refusing a `tenant_id` the
+actor's fleet does not serve. Proved by five failing tests against the
+unmodified code, and by mutation in both directions.
+
 **Creating a tenant-less account is a serious act.** `UserAdminService`
 lets a platform-level actor pass `tenant_id: null`, which since ADR-0006
 mints Shanitah staff who read across every client. `staff.manage` is the
 gate and ADR-0004's escalation rule is what keeps a Corporate Admin away
 from it — a tenant administrator's new colleagues are always their own
 tenant's, whatever the request body says.
+
+**And head office can now create head office.** `UserAdminService::insert()`
+used to *throw* for a `kangaru` actor: they name neither a fleet nor a client,
+`User::levelFor()` refuses to infer that shape (ADR-0055 §4), and the comment
+said the proper path would "arrive with S1". S1 shipped
+`php artisan kangaru:create-staff` and left the endpoint erroring, so the
+Kangaru staff screen could list people and never add one. The level is now
+**assigned** on the model before save, by a code path only a head-office actor
+reaches — never accepted from the payload, because `access_level` is
+deliberately absent from `User::$fillable`. Naming a client in that request is
+refused rather than ignored: dropping the field and answering 201 would tell
+an administrator the opposite of what happened. The console command stays; it
+is the way in when there is no way in.
 
 **The audit log's platform reader now has a name.** `AuditLog::forActor()`
 replaces the hand-rolled `allTenants()` branch, and `meta.scope` still
@@ -299,7 +326,33 @@ cannot distinguish from the person's own hand.** So that is what was built:
   purpose is to prove it was the person.
 - It **never mints a client-app token**. A driver token handed to a support
   agent would let them register a push device and take a real job off a driver
-  on the road.
+  on the road. This is what keeps a session revocable: end it and the reach
+  ends with it, with nothing left in a browser to replay.
+
+### And a walk-in, since ADR-0066
+
+The morph on `impersonation_sessions` always had room for a `Customer`; the
+middleware did not. Now it does, and the four decisions that make it safe are
+worth reading before touching any of them:
+
+- `AuthenticateWalkInOrSupport` replaces `auth:customer` on the customer group.
+  It answers the walk-in's own token first and falls through to a staff token
+  **only** while a live session names that customer. A staff token with no
+  session is refused exactly as before, which is the conditional form of the
+  claim `CustomerGuardIsolationTest` used to make unconditionally.
+- It implements `AuthenticatesRequests`, which declares nothing and is
+  load-bearing: it is the anchor `bootstrap/app.php` hangs `EnforceTokenScope`
+  and friends off. Drop it and the token-scope check stops running on that
+  surface — silently, with nothing failing.
+- **The staff console is shut** while a walk-in is held, against a four-route
+  allow-list in `ActAsSubject`. `ADR-0056 §1` sets the actor's own reach aside;
+  for a `User` subject the swap does that by itself, and a `Customer` has no
+  staff identity to be swapped for. Without this it would be the one session
+  that kept its own powers.
+- **Reach is otherwise full** — the owner's decision, 26 August. Support can
+  cancel a walk-in's ride and order for them. `customer.auth.logout` is denied
+  and the reason is mechanical: it revokes `currentAccessToken()`, which under
+  a session is the agent's own staff token.
 
 ### What keeps the grant narrow
 
@@ -313,11 +366,21 @@ carrying a permission they do not hold themselves, so the exclusion made the
 permission **ungrantable by any screen**. Ungrantable is not stricter; it is
 broken. A fleet Super Admin holds the permission and cannot use it.
 
-### Not built, and it matters
+### The notification to the person acted upon (§5) — built
 
-The **notification to the person acted upon** (§5). Their own audit trail shows
-it, and the banner shows the agent — but nobody tells the driver or the client
-afterwards. Named here rather than left to be discovered.
+This section used to say it was not. `AccountAccessedBySupportNotification`
+reaches a **driver** in their inbox and by email, and since ADR-0066 a
+**walk-in** by email — routed by address rather than to the model, because
+`Customer` is not `Notifiable` and has no in-app inbox to write a row to.
+
+Not sent to a fleet's dispatcher or a client's transport officer, and that is
+§5's own line rather than an omission: they act in a corporate capacity and
+their organisation reads the same event in its own log. An individual's account
+is their livelihood and nobody reads anything on their behalf.
+
+Failure to notify never fails the session. A support agent locked out because a
+mail host is down helps nobody, and the audit row — the load-bearing half — is
+already written.
 
 ## What's explicitly deferred
 
@@ -414,7 +477,21 @@ Named here so a half-built thing is not mistaken for a finished one.
   `/roles` route itself is deliberately not behind `RequireNavAccess` for
   exactly this reason, so such a holder reaches the page by URL and the
   server serves them — but the menu will not offer it.
-- **Per-tenant roles.** Custom roles are platform-wide and Super Admin
-  only, by decision. A tenant cannot compose a permission set for itself.
+- **Per-organisation roles.** Custom roles are platform-wide and composed by
+  head office, by decision. A fleet or a client cannot compose a permission
+  set for itself.
+
+  The *symptom* that made this look like a gap is fixed separately, and the
+  two should not be confused. Every role now carries an `audience` —
+  `kangaru`, `fleet` or `client` — saying which level of account it was
+  written for, so a fleet owner's picker offers no client role and vice versa.
+  That is a property **of the role**, not a scope on it: one catalogue, still
+  platform-wide, still ADR-0004's. What is deferred is *ownership* — a role
+  only one fleet can see and only that fleet can edit — and it stays deferred
+  because no fleet has asked for one.
+
+  Before the column, the only thing keeping `corporate_admin` out of a fleet
+  picker was the escalation subset happening not to contain it. A coincidence
+  is not a boundary, and it was about to stop being true.
 - **Bulk staff operations** — no CSV import, no bulk suspend. Onboarding is
   one account at a time.

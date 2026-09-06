@@ -158,6 +158,7 @@ allow-list reaches it. `Fn` in a cell points at a finding in §4.
 | `GET api/v1/vehicles` (vehicles.index) | A | `VehiclePolicy::viewAny` → `vehicles.view` (every role); platform fleet, `Vehicle::all()`; emits VIN and plate. | listing scoped by actor | no |
 | `GET api/v1/vehicles/{vehicle}` (vehicles.show) | A | `VehiclePolicy::view` → `vehicles.view`. | platform-owned record; permission decides (403), 404 if missing | no |
 | `PATCH api/v1/vehicles/{vehicle}` (vehicles.update) | A | `VehiclePolicy::update` → `vehicles.manage`. | platform-owned record; permission decides (403), 404 if missing | no |
+| `POST api/v1/vehicles/bulk-delete` (vehicles.bulk-delete) | A | `VehiclePolicy::deleteAny` → `vehicles.manage`, answered on the class **before a single id is read**. Ids are then scoped with `Vehicle::forActor()`, and one that is not on the actor's fleet is refused as *not on your fleet* and named by **id, never registration** — the same refusal an id that never existed gets, so the batch cannot be used to test whether a plate is on a rival's fleet (ADR-0055 §3). All or nothing: a vehicle on an occupying trip refuses the whole batch. Capped at 100 ids, `distinct`. | platform-owned record; permission decides (403) | no |
 | `POST api/v1/vehicles` (vehicles.store) | A | `VehiclePolicy::create` → `vehicles.manage`. | listing scoped by actor | no |
 
 #### Drivers

@@ -270,7 +270,13 @@ export function OnboardClientDialog({ onClose, onDone }: Props) {
             <FormField label="City" htmlFor="oc-city" required error={fields.city}>
               <Input id="oc-city" value={form.city} onChange={set('city')} required />
             </FormField>
-            <FormField label="Country" htmlFor="oc-country" required error={fields.country}>
+            <FormField
+              label="Country"
+              htmlFor="oc-country"
+              required
+              error={fields.country}
+              hint="Two-letter code, e.g. UG."
+            >
               <Input id="oc-country" value={form.country} onChange={set('country')} required maxLength={2} />
             </FormField>
           </div>

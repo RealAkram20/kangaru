@@ -53,6 +53,15 @@ import { loadNotifyKit } from './notifyKit';
  * tree exists, and `theme.ts` imports from `react-native` at module scope.
  * One hex string is a cheaper dependency than a launch-path import.
  */
+/**
+ * Marks a notification as the call screen rather than the plain push.
+ *
+ * Both rows name the same offer, so the id alone cannot separate them. This is
+ * the one field that can — see the `data` block in `showCallNotification`, and
+ * the filter in `dismissPlainPush` that reads it.
+ */
+export const CALL_SURFACE = 'call';
+
 const ACCENT = '#01903D';
 
 /**
@@ -78,21 +87,43 @@ const SMALL_ICON = 'notification_icon';
  * second push for the same job — a retry, a duplicate wave — replaces the
  * notification rather than stacking a second one behind it.
  *
- * Silently does nothing on iOS, in Expo Go, on a simulator, or when the offer
- * has no window left. All four are ordinary and none is an error a driver
- * could act on.
+ * Does nothing on iOS, in Expo Go, on a simulator, or when the offer has no
+ * window left. All four are ordinary and none is an error a driver could act
+ * on.
+ *
+ * ## Why it returns whether it posted, and why that is not a nicety
+ *
+ * **Because the caller withdraws the server's push on the strength of this.**
+ * `raiseOfferCall` takes the plain `offers.v2` notification down the moment
+ * the answerable one is up, so one job is one row.
+ *
+ * While this returned `void`, every one of the four ordinary no-ops above was
+ * indistinguishable from success — so the caller dismissed the floor for an
+ * upgrade that had not happened, and the driver was left with **nothing**: a
+ * ring that started, a screen that woke, and an empty notification shade by
+ * the time they had the phone in their hand.
+ *
+ * That is the failure this codebase keeps re-learning: silence that means
+ * "fine" and silence that means "broken" must not be the same silence.
  */
-export async function showCallNotification(offer: DispatchOffer): Promise<void> {
+export async function showCallNotification(offer: DispatchOffer): Promise<boolean> {
   const content = buildCallContent(offer);
 
   if (content === null) {
-    return;
+    console.warn('offer.call_not_shown', offer.id, 'no_window_left');
+
+    return false;
   }
 
   const notifee = await loadNotifyKit();
 
   if (notifee === null) {
-    return;
+    // iOS, Expo Go, a simulator, or a build without the native module. The
+    // driver keeps the plain push — which is why the caller must not remove
+    // it, and why this says so rather than returning quietly.
+    console.warn('offer.call_not_shown', offer.id, 'no_notify_kit');
+
+    return false;
   }
 
   const { AndroidCategory, AndroidImportance, AndroidVisibility } = await import(
@@ -114,7 +145,21 @@ export async function showCallNotification(offer: DispatchOffer): Promise<void> 
       // versions and a handler that expected a number would work in
       // development and fail on a driver's handset. `routing.ts` already
       // accepts both for exactly this reason.
-      data: { offer_id: String(content.offerId) },
+      //
+      // **`surface` is what stops this notification cancelling itself.**
+      // `dismissPlainPush` finds the row to withdraw by the offer it names,
+      // and this row names the same offer — so without a way to tell the two
+      // apart it matched, and the call screen was dismissed by the very
+      // function that runs immediately after raising it. The symptom is the
+      // one a driver reported: the phone rings, the screen wakes, and there
+      // is nothing to answer by the time they look. Found in logcat as a
+      // cancel 1.7s after `offer.push_task` reported `open_offer`.
+      //
+      // A marker in `data` rather than a channel comparison because the
+      // presented-notification shape Expo returns does not carry the Android
+      // channel on every version, and a filter that silently stops matching
+      // would bring the bug straight back.
+      data: { offer_id: String(content.offerId), surface: CALL_SURFACE },
 
       android: {
         channelId: OFFER_CALL_CHANNEL_ID,
@@ -215,10 +260,20 @@ export async function showCallNotification(offer: DispatchOffer): Promise<void> 
         ],
       },
     });
-  } catch {
+
+
+    return true;
+  } catch (thrown) {
     // The offer is unaffected. It is on `GET /me/offers`, the push has already
     // rung on `offers.v2`, and the app's own overlay paints it the moment the
     // driver looks — ADR-0025 §3, one layer along.
+    //
+    // Reported, not swallowed: `false` keeps the caller from withdrawing the
+    // plain push, and the message is the only account of a notify-kit failure
+    // that will ever exist on a driver's handset.
+    console.warn('offer.call_not_shown', offer.id, String(thrown));
+
+    return false;
   }
 }
 

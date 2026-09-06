@@ -3,7 +3,7 @@ import * as Location from 'expo-location';
 import { useState } from 'react';
 
 import { isApiError } from '../api/errors';
-import { askForLockScreenOnce } from '../push/lockScreenPrompt';
+import { askForLockScreen } from '../push/lockScreenPrompt';
 import { goOffline, goOnline } from './OnlineService';
 import { useDuty, useSetDuty } from './queries';
 
@@ -139,12 +139,15 @@ export function useDutyToggle() {
          * sentence at first launch is an interruption about a thing that has
          * not happened yet.
          *
-         * At most once per install, and never on Android 13 or below where the
-         * permission is granted at install. Not awaited: it puts a dialog in
-         * front of somebody, and the shift has already started either way.
-         * `askForLockScreenOnce` swallows everything.
+         * Asked while the permission is not held, at most once a day, and
+         * never once it is — the state is read from the platform now, so a
+         * driver who said yes is never asked again and one who has not is
+         * reminded each shift. Never on Android 13 or below, where it is
+         * granted at install. Not awaited: it puts a dialog in front of
+         * somebody, and the shift has already started either way.
+         * `askForLockScreen` swallows everything.
          */
-        void askForLockScreenOnce();
+        void askForLockScreen();
       } else {
         // Both the shift ending and the shift the server declined to start
         // (ADR-0017: approved leave, a roster, a suspension). `asked` is what

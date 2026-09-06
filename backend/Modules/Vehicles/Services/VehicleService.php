@@ -4,6 +4,8 @@ namespace Modules\Vehicles\Services;
 
 use App\Models\User;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\DB;
+use Modules\Trips\Enums\TripStatus;
 use Modules\Vehicles\Models\Vehicle;
 use Modules\Vehicles\Requests\StoreVehicleRequest;
 use Modules\Vehicles\Requests\UpdateVehicleRequest;
@@ -56,5 +58,91 @@ class VehicleService
     public function delete(Vehicle $vehicle): void
     {
         $vehicle->delete();
+    }
+
+    /**
+     * Retire several vehicles at once, or none of them.
+     *
+     * ## Why all-or-nothing
+     *
+     * Every other outcome is worse to read. Deleting the nine that were
+     * allowed and skipping the tenth leaves an administrator to work out
+     * *which* nine from a table that has just changed under them — and this
+     * is the one action in the module that removes rows. Refusing the batch
+     * costs a deselect and a second click; a partial batch costs a
+     * reconciliation. The refusals below name every vehicle and its reason,
+     * so the second attempt is informed rather than a guess.
+     *
+     * `SoftDeletes` makes this recoverable either way (`Vehicle` uses it), and
+     * that is a safety net rather than the design: an action nobody can
+     * predict is not made safe by being undoable in a database console.
+     *
+     * ## What is refused, and why each is a refusal rather than an error
+     *
+     * - **Not found, or not this fleet's.** One reason for both, deliberately:
+     *   telling a fleet owner that a vehicle exists but belongs to somebody
+     *   else discloses a competitor's register by id (ADR-0055 §3), which is
+     *   the leak `list()` above was fixed for. The caller filters to the
+     *   actor's own fleet, so an unknown id and a rival's are indistinguishable
+     *   from here — and must stay so.
+     * - **Out on a job.** `TripStatus::occupyingValues()` is the platform's one
+     *   definition of a vehicle that is busy, shared with dispatch's
+     *   availability check rather than restated — a second opinion about what
+     *   "in use" means is how the two would drift. Deleting one mid-trip would
+     *   take the vehicle off a live journey's record.
+     *
+     * @param  array<int, int>  $ids
+     * @return array{deleted: array<int, int>, refused: array<int, array{id: int, registration_number: string|null, reason: string}>}
+     */
+    public function deleteMany(User $user, array $ids): array
+    {
+        // Scoped to the actor's own fleet before anything else, so every id
+        // below is one this user may act on at all.
+        $found = Vehicle::forActor($user)->whereIn('id', $ids)->get()->keyBy('id');
+
+        $busy = DB::table('trips')
+            ->whereNull('deleted_at')
+            ->whereIn('status', TripStatus::occupyingValues())
+            ->whereIn('vehicle_id', $found->keys()->all())
+            ->pluck('vehicle_id')
+            ->map(fn ($id) => (int) $id)
+            ->flip();
+
+        $refused = [];
+
+        foreach ($ids as $id) {
+            $vehicle = $found->get($id);
+
+            if ($vehicle === null) {
+                $refused[] = [
+                    'id' => $id,
+                    'registration_number' => null,
+                    'reason' => 'This vehicle is not on your fleet.',
+                ];
+
+                continue;
+            }
+
+            if ($busy->has($id)) {
+                $refused[] = [
+                    'id' => $id,
+                    'registration_number' => $vehicle->registration_number,
+                    'reason' => 'Out on a job. It can be deleted once the trip is finished.',
+                ];
+            }
+        }
+
+        if ($refused !== []) {
+            return ['deleted' => [], 'refused' => $refused];
+        }
+
+        // One transaction: the promise above is that the batch either happens
+        // or does not, and a failure halfway through the loop would break it
+        // exactly when the database is already unhappy.
+        DB::transaction(function () use ($found) {
+            $found->each(fn (Vehicle $vehicle) => $vehicle->delete());
+        });
+
+        return ['deleted' => array_values($ids), 'refused' => []];
     }
 }

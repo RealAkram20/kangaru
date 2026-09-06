@@ -103,6 +103,12 @@ export function TripsHistoryScreen({ navigation }: Props) {
         contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
         stickySectionHeadersEnabled={false}
+        // Only what fills the first screen mounts during the push; the rest
+        // renders once the slide is over, in small batches the JS thread can
+        // fit between frames. Rows are one shape, so a small window has no gaps.
+        initialNumToRender={10}
+        maxToRenderPerBatch={8}
+        windowSize={7}
         refreshControl={
           <RefreshControl
             refreshing={query.isRefetching && !query.isFetchingNextPage}

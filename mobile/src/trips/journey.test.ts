@@ -34,6 +34,8 @@ function stop(overrides: Partial<TripStop> = {}): TripStop {
     departed_at: null,
     skip_reason: null,
     client_place_id: null,
+    kind: 'stop' as const,
+    accepted_at: null,
     ...overrides,
   };
 }

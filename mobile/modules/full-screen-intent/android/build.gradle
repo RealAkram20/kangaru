@@ -1,0 +1,18 @@
+// A local Expo module — one native call, nothing published. Autolinked from
+// `modules/` at Gradle time (expo-modules-autolinking's `nativeModulesDir`
+// defaults to `./modules`), so it needs no entry in app.json and no prebuild.
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'ug.co.kangaruride'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.fullscreenintent"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}

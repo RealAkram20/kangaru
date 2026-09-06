@@ -25,5 +25,11 @@ Route::patch('vehicle-categories/{vehicleCategory}', [VehicleCategoryController:
 // whole vocabulary — a chooser cannot render one option.
 
 // PATCH only, not PUT|PATCH — see Modules/Clients/Routes/api.php.
+// Before the resource, so `vehicles/bulk-delete` cannot be swallowed by
+// `vehicles/{vehicle}` — the same ordering rule, and the same reason, as
+// `vehicle-categories` above.
+Route::post('vehicles/bulk-delete', [VehicleController::class, 'bulkDestroy'])
+    ->name('vehicles.bulk-delete');
+
 Route::apiResource('vehicles', VehicleController::class)->except(['update']);
 Route::patch('vehicles/{vehicle}', [VehicleController::class, 'update'])->name('vehicles.update');

@@ -3,6 +3,7 @@
 namespace Modules\Administration\Requests;
 
 use App\Enums\ClientCapability;
+use App\Enums\RoleAudience;
 use App\Enums\UserStatus;
 use App\Models\User;
 use Illuminate\Contracts\Validation\Validator;
@@ -113,10 +114,15 @@ class UpdateUserRequest extends FormRequest
             if ($this->filled('role')) {
                 $role = Role::query()->where('slug', $this->input('role'))->first();
 
-                if (! $policy->assignRole($actor, $role)) {
+                // Judged against the account being edited, not against the
+                // administrator: a fleet's office may edit somebody at a
+                // client it serves, and that person's roles are a client's.
+                if (! $policy->assignRole($actor, $role, $subject->access_level)) {
                     $validator->errors()->add(
                         'role',
-                        'You cannot assign that role: it carries permissions you do not hold yourself.',
+                        $role !== null && $role->audience !== RoleAudience::forLevel($subject->access_level)
+                            ? 'That role is for a '.$role->audience->label().' account, not this one.'
+                            : 'You cannot assign that role: it carries permissions you do not hold yourself.',
                     );
                 }
 

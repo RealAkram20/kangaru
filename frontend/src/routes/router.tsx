@@ -35,7 +35,12 @@ const DriverApplicationsPage = page(
 const DriversPage = page(() => import('../pages/DriversPage'), 'DriversPage')
 const InvoicesPage = page(() => import('../pages/InvoicesPage'), 'InvoicesPage')
 const LoginPage = page(() => import('../pages/LoginPage'), 'LoginPage')
+const ForgotPasswordPage = page(
+  () => import('../pages/ForgotPasswordPage'),
+  'ForgotPasswordPage',
+)
 const AcceptInvitePage = page(() => import('../pages/AcceptInvitePage'), 'AcceptInvitePage')
+const AcceptOwnerTransferPage = page(() => import('../pages/AcceptInvitePage'), 'AcceptOwnerTransferPage')
 const NotificationPreferencesPage = page(
   () => import('../pages/NotificationPreferencesPage'),
   'NotificationPreferencesPage',
@@ -108,6 +113,16 @@ export const router = createBrowserRouter([
       </Standalone>
     ),
   },
+  // Public and standalone for the same reason as /login: the reader's whole
+  // problem is that they cannot authenticate (ADR-0028 §2).
+  {
+    path: '/forgot-password',
+    element: (
+      <Standalone>
+        <ForgotPasswordPage />
+      </Standalone>
+    ),
+  },
   // Public, and standalone like /login: the reader has an account and no way
   // into it, so the shell's navigation would be a wall of links that all
   // answer 403. Mail plan M2.
@@ -116,6 +131,17 @@ export const router = createBrowserRouter([
     element: (
       <Standalone>
         <AcceptInvitePage />
+      </Standalone>
+    ),
+  },
+  // The fleet handover's accept page (owner's decision, 24 August). The same
+  // page as the invitation — to the reader both are "choose a password" —
+  // pointed at the transfer's own endpoints, which also name the fleet.
+  {
+    path: '/owner/:token',
+    element: (
+      <Standalone>
+        <AcceptOwnerTransferPage />
       </Standalone>
     ),
   },
@@ -285,20 +311,26 @@ export const router = createBrowserRouter([
           </RequireNavAccess>
         ),
       },
-      {
-        path: 'staff',
-        element: (
-          <RequireNavAccess id="staff">
-            <StaffPage />
-          </RequireNavAccess>
-        ),
-      },
-      // Deliberately unguarded, unlike Staff. RequireNavAccess decides by
-      // role slug, and this page exists to create roles no slug list can
-      // know about — a custom role holding `roles.manage` would be turned
-      // away from the one screen built for it. The page gates on whether
-      // the API answers instead, which is the rule itself rather than a
-      // copy of it.
+      // Unguarded, and it used to be the counter-example the comment below
+      // pointed at. What changed is the premise, not the rule.
+      //
+      // A slug list was the whole truth while `staff.manage` was held by
+      // exactly two seeded roles. It is not any more: head office composes
+      // fleet-audience and client-audience roles carrying it — a "Fleet HR"
+      // that hires but does not dispatch is the request this feature exists
+      // to answer — and RequireNavAccess, which decides by role slug, would
+      // turn every one of them away from the one screen built for it. That is
+      // precisely the argument already written under `/roles`.
+      //
+      // The page gates on whether the API answers, which is the rule itself
+      // rather than a copy of it, and `UserPolicy` is unchanged either way:
+      // menu visibility was never authorization.
+      { path: 'staff', element: <StaffPage /> },
+      // Deliberately unguarded. RequireNavAccess decides by role slug, and
+      // this page exists to create roles no slug list can know about — a
+      // custom role holding `roles.manage` would be turned away from the one
+      // screen built for it. The page gates on whether the API answers
+      // instead, which is the rule itself rather than a copy of it.
       { path: 'roles', element: <RolesPage /> },
       // Unguarded for the same reason as Roles: `audit.view` is a
       // permission, and a custom role holding it is invisible to

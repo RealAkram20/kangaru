@@ -47,6 +47,7 @@ function tripWith(status: TripStatus, allowed: TripStatus[]): Trip {
     gps_distance_km: null,
     distance_variance_flagged: null,
     unplanned_stop_count: 0,
+    dropoff_reached_at: null,
     started_at: null,
     completed_at: null,
     duration_minutes: null,

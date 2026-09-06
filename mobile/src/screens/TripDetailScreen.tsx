@@ -127,7 +127,15 @@ export function TripDetailScreen({ route, navigation }: Props) {
       onBack={() => navigation.goBack()}
       action={
         <HelpPill
-          onPress={() => navigation.getParent()?.navigate('Profile', { screen: 'Support' })}
+          // `initial: false` for `DrawerContent.go`'s reason, and found by
+          // sweeping for it after the same omission on `HomeScreen`'s bell
+          // reached a handset: without it the Profile stack is created as
+          // `["Support"]` at index 0, with `ProfileHome` never in it — nothing
+          // to pop, so the Profile tab looks dead and the back gesture leaves
+          // the app. `nestedNavigate.test.tsx` documents the mechanism.
+          onPress={() =>
+            navigation.getParent()?.navigate('Profile', { screen: 'Support', initial: false })
+          }
         />
       }
     />

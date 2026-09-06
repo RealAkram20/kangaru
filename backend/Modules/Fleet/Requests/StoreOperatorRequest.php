@@ -34,6 +34,13 @@ class StoreOperatorRequest extends FormRequest
             'slug' => ['nullable', 'string', 'max:255', 'alpha_dash', Rule::unique('operators', 'slug')],
             'owner_name' => ['required', 'string', 'max:255'],
             'owner_email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')],
+            /*
+             * Optional: absent means the default plan, which `Operator::
+             * booted()` assigns and which throws when none is flagged
+             * (ADR-0058 §1). No `PlanAllowance` check here, unlike a move —
+             * a fleet being born has nothing to exceed a limit with.
+             */
+            'plan_id' => ['sometimes', 'integer', Rule::exists('plans', 'id')],
         ];
     }
 

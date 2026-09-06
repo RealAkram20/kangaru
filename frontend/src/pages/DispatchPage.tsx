@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useDriverAnswer } from '../dispatch/useDriverAnswer'
 import { apiClient } from '../lib/apiClient'
 import { apiError } from '../lib/apiError'
 import { bookingStatusLabel, bookingStatusTone, pickupLabel } from '../lib/bookingStatus'
+import { categoryLabel, useVehicleCategories } from '../lib/vehicleCategories'
 import type { ApiSuccess, FilterOption, ScopedCursorMeta, TenancyScope } from '../types/api'
 import type { Booking } from '../types/booking'
 import type { CandidateDriver, CandidateVehicle } from '../types/dispatch'
 import type { Driver } from '../types/driver'
 import type { Trip } from '../types/trip'
 import type { Vehicle } from '../types/vehicle'
+import type { VehicleCategory } from '../types/vehicleCategory'
 import { Badge } from '../components/core/Badge'
 import { Button } from '../components/core/Button'
 import { Card } from '../components/core/Card'
@@ -123,7 +126,21 @@ export function DispatchPage() {
   // queue, which is what a cross-client board is for.
   const [client, setClient] = useState('')
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [assigned, setAssigned] = useState<{ booking: Booking; trip: Trip } | null>(null)
+  /*
+    `trip: null` is the ordinary outcome since ADR-0068 — the driver's phone
+    is ringing and no trip exists yet. `driver` is carried from the form
+    rather than read off a response, because the offer payload deliberately
+    names no driver: it is built to be safe on a lock screen, and the desk
+    already knows who it just chose.
+  */
+  const [assigned, setAssigned] = useState<
+    { booking: Booking; trip: Trip | null; driver: string } | null
+  >(null)
+
+  // One fetch for the board, passed down. The picker labels a vehicle by
+  // category and used to print the stored key at a dispatcher — `boda`,
+  // where the office says "Boda boda" (ADR-0050).
+  const { categories } = useVehicleCategories()
 
   // Kept free of setState so the effect below only ever sets state from a
   // promise callback, never synchronously in its body.
@@ -178,8 +195,8 @@ export function DispatchPage() {
   // another dispatcher may have taken something else while this one was
   // deciding, and a stale queue is exactly what causes a 409 on the next
   // click.
-  const onAssigned = async (booking: Booking, trip: Trip) => {
-    setAssigned({ booking, trip })
+  const onAssigned = async (booking: Booking, trip: Trip | null, driver: string) => {
+    setAssigned({ booking, trip, driver })
     setSelected(null)
     await load()
   }
@@ -193,11 +210,12 @@ export function DispatchPage() {
       )}
 
       {assigned && (
-        <Alert tone="success" title="Booking dispatched" onDismiss={() => setAssigned(null)}>
-          {assigned.booking.origin} → {assigned.booking.destination} is now trip #{assigned.trip.id}
-          , assigned to {assigned.trip.driver?.name ?? 'the selected driver'} in{' '}
-          {assigned.trip.vehicle?.registration_number ?? 'the selected vehicle'}.
-        </Alert>
+        <DispatchedNotice
+          booking={assigned.booking}
+          trip={assigned.trip}
+          driver={assigned.driver}
+          onDismiss={() => setAssigned(null)}
+        />
       )}
 
       <div
@@ -271,6 +289,7 @@ export function DispatchPage() {
             booking={selected}
             vehicles={vehicles}
             drivers={drivers}
+            categories={categories}
             onCancel={() => setSelected(null)}
             onAssigned={onAssigned}
           />
@@ -350,9 +369,21 @@ function QueueRow({
           {booking.passenger_count > 1 && ` (${booking.passenger_count})`}
         </span>
       </span>
-      <Badge tone={bookingStatusTone(booking.status)} size="sm">
-        {bookingStatusLabel(booking.status)}
-      </Badge>
+      {/*
+        A ringing phone outranks the status, and replaces it rather than
+        sitting beside it: while a driver is deciding, "Approved" is true and
+        useless, and two badges on one row is the dispatcher reading twice to
+        learn once.
+      */}
+      {booking.is_ringing ? (
+        <Badge tone="info" size="sm">
+          Ringing a driver
+        </Badge>
+      ) : (
+        <Badge tone={bookingStatusTone(booking.status)} size="sm">
+          {bookingStatusLabel(booking.status)}
+        </Badge>
+      )}
     </button>
   )
 }
@@ -383,14 +414,16 @@ function AssignmentPanel({
   booking,
   vehicles,
   drivers,
+  categories,
   onCancel,
   onAssigned,
 }: {
   booking: Booking
   vehicles: Vehicle[]
   drivers: Driver[]
+  categories: VehicleCategory[] | null
   onCancel: () => void
-  onAssigned: (booking: Booking, trip: Trip) => void
+  onAssigned: (booking: Booking, trip: Trip | null, driver: string) => void
 }) {
   const [vehicleId, setVehicleId] = useState('')
   const [driverId, setDriverId] = useState('')
@@ -445,18 +478,18 @@ function AssignmentPanel({
     if (candidates === null || candidates.vehicles.length === 0) {
       return vehicles.map((v) => ({
         value: String(v.id),
-        label: `${v.registration_number} · ${v.make} ${v.model} · ${v.category} (${v.seating_capacity} seats)`,
+        label: `${v.registration_number} · ${v.make} ${v.model} · ${categoryLabel(categories, v.category)} (${v.seating_capacity} seats)`,
       }))
     }
 
     return candidates.vehicles.map((v) =>
       candidateOption(
         v.id,
-        `${v.registration_number} · ${v.make} ${v.model} · ${v.category} (${v.seating_capacity} seats)`,
+        `${v.registration_number} · ${v.make} ${v.model} · ${categoryLabel(categories, v.category)} (${v.seating_capacity} seats)`,
         v,
       ),
     )
-  }, [candidates, vehicles])
+  }, [candidates, vehicles, categories])
 
   const driverOptions = useMemo(() => {
     if (candidates === null || candidates.drivers.length === 0) {
@@ -473,7 +506,7 @@ function AssignmentPanel({
     setConflict(null)
 
     try {
-      const response = await apiClient.post<ApiSuccess<Trip>>(
+      const response = await apiClient.post<ApiSuccess<Trip | DispatchOffer>>(
         `/bookings/${booking.id}/assignment`,
         {
           vehicle_id: Number(vehicleId),
@@ -482,7 +515,19 @@ function AssignmentPanel({
       )
 
       setConfirming(false)
-      onAssigned(booking, response.data.data)
+
+      /*
+        **202 means a phone is ringing; 201 means a trip exists** (ADR-0068).
+        Branching on the status code rather than sniffing the body: the two
+        payloads both carry an `id` and a `status`, so a shape check would be
+        a guess where HTTP is already telling us plainly.
+
+        201 is the driver-has-no-app case, where the desk still has to
+        telephone them — the message in `DispatchedNotice` says so.
+      */
+      const trip = response.status === 202 ? null : (response.data.data as Trip)
+
+      onAssigned(booking, trip, driverName(driverOptions, driverId))
     } catch (error) {
       // VEHICLE_UNAVAILABLE / DRIVER_UNAVAILABLE / INVALID_BOOKING_TRANSITION
       // all land here. The server's message names the conflicting trip, so
@@ -629,5 +674,122 @@ function Fact({ label, value }: { label: string; value: string }) {
       <p style={{ font: 'var(--type-caption)', color: 'var(--text-secondary)' }}>{label}</p>
       <p style={{ font: 'var(--type-label)', color: 'var(--text-body)', marginTop: 2 }}>{value}</p>
     </div>
+  )
+}
+
+/**
+ * What happened to the booking that was just dispatched.
+ *
+ * ## Why it is not the success alert it replaced
+ *
+ * That one said *"Booking dispatched"* and never changed. But `assigned` is
+ * the office putting a job on somebody's name — the driver still has to
+ * accept, and may decline or never look. A job nobody took therefore read
+ * exactly like a job already being driven, and the desk learned the
+ * difference when the client rang.
+ *
+ * ## Three states, three tones, and one of them is an instruction
+ *
+ * Waiting is `info` and says who is being waited on. Accepted is `success`
+ * and is the end of it. **Declined is `warning` and names the next act** —
+ * it is the only one of the three the dispatcher has to do something about,
+ * and a notice that reported a refusal without saying so would leave them
+ * reading it twice.
+ *
+ * No countdown. An assignment has no deadline in this platform — unlike a
+ * walk-in offer, which expires in `dispatch.offer_ttl_seconds` — so a clock
+ * here would be inventing a rule the platform does not have
+ * (`docs/screen-rules.md` §1).
+ *
+ * Dismissable throughout. The job carries on without this panel; a
+ * dispatcher who has seen it and moved on should not have to keep it.
+ */
+/**
+ * The label of the driver the dispatcher just chose.
+ *
+ * Read from the form's own options rather than from the response, because a
+ * ringing offer names no driver — `DispatchOfferResource` is built to be safe
+ * on a lock screen and withholds everything it can.
+ */
+function driverName(options: { value: string; label: string }[], id: string): string {
+  return options.find((o) => o.value === id)?.label.split(' · ')[0] ?? 'the driver'
+}
+
+/**
+ * The 202 body: an offer put in front of a driver, with a clock on it.
+ *
+ * Only the fields this page reads. The board does not render the offer —
+ * `is_ringing` on the booking row is what carries the state — so a fuller
+ * mirror of `DispatchOfferResource` here would be a second copy to keep in
+ * step for no reader.
+ */
+type DispatchOffer = {
+  id: number
+  status: string
+  expires_in_seconds: number
+}
+
+function DispatchedNotice({
+  booking,
+  trip,
+  driver: chosen,
+  onDismiss,
+}: {
+  booking: Booking
+  trip: Trip | null
+  driver: string
+  onDismiss: () => void
+}) {
+  const answer = useDriverAnswer(trip)
+
+  const route = `${booking.origin} → ${booking.destination}`
+
+  /*
+    No trip yet: the assignment is a question the driver has not answered.
+    The board's own row carries the standing state (a "Ringing a driver"
+    badge, refreshed on every load); this notice is the acknowledgement of
+    the press, and it says what is actually true rather than "Booking
+    dispatched", which is the sentence that sent an owner looking for a
+    delivery nobody had been asked about.
+  */
+  if (trip === null) {
+    return (
+      <Alert tone="info" title={`Ringing ${chosen}`} onDismiss={onDismiss}>
+        {route}. They have not answered yet — if they decline, it goes to the
+        next driver.
+      </Alert>
+    )
+  }
+
+  const driver = trip.driver?.name ?? chosen
+  const vehicle = trip.vehicle?.registration_number ?? 'the selected vehicle'
+
+  if (answer === 'declined') {
+    return (
+      <Alert tone="warning" title={`${driver} declined trip #${trip.id}`} onDismiss={onDismiss}>
+        {route} still needs a vehicle. Assign somebody else from the queue.
+      </Alert>
+    )
+  }
+
+  if (answer === 'accepted') {
+    return (
+      <Alert tone="success" title={`${driver} accepted trip #${trip.id}`} onDismiss={onDismiss}>
+        {route}, in {vehicle}.
+      </Alert>
+    )
+  }
+
+  /*
+    A trip existed the moment the desk pressed Assign, which since ADR-0068
+    means one thing: this driver has no app account, so nothing rang and
+    nothing is going to. Telling a dispatcher to wait for an acceptance that
+    cannot arrive is the failure this whole change was made to remove, in
+    miniature.
+  */
+  return (
+    <Alert tone="warning" title={`${driver} has no app — call them`} onDismiss={onDismiss}>
+      {route}, in {vehicle}. Trip #{trip.id} is on their name already.
+    </Alert>
   )
 }

@@ -101,6 +101,23 @@ final class ClientScope
                 'trips.stop-candidates.index',
                 'trips.place-suggestions.index',
 
+                // The extension (ADR-0045 §4 amendment): the passenger going
+                // past the drop-off they agreed to, the driver's answer to
+                // one their passenger asked for, and the mark that says the
+                // agreed destination was reached.
+                //
+                // **This list caught them.** They were written, tested and
+                // built into an APK without being named here, and the driver
+                // app answered a passenger's request with a 403 the first
+                // time the button was pressed on a handset — the eighth time
+                // this array has done exactly what the comment above it
+                // describes. Backend tests cannot catch it: they mint an
+                // unscoped console token, so every one of them passed.
+                'trips.dropoff-arrival.store',
+                'trips.extensions.store',
+                'trips.extensions.acceptance.store',
+                'trips.extensions.decline.store',
+
                 // GPS, which is the whole point of the device being there.
                 'trips.locations.store',
                 'trips.locations.index',

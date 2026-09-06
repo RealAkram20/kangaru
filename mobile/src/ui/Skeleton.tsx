@@ -123,6 +123,57 @@ export function SkeletonCards({ count = 2, style }: { count?: number; style?: Vi
 }
 
 /**
+ * A paragraph that has not arrived: full-width lines with a short last one.
+ *
+ * The third shape this app loads, and the one that was still drawing a
+ * spinner. `SkeletonRows` stands in for a list and `SkeletonCards` for a
+ * panel; the safety guidance, the legal notices and a payout account are
+ * **prose and fields**, and a placeholder shaped like a list would promise a
+ * screen that is not coming.
+ *
+ * The ragged last line is the whole tell. Equal-length bars read as a table
+ * or a form; text stops mid-line, and that single difference is what makes a
+ * reader see "words, still loading" rather than "some blocks".
+ *
+ * The line height is the body style's, so the block occupies the space the
+ * paragraph will and nothing moves when it arrives.
+ */
+export function SkeletonText({ lines = 4, style }: { lines?: number; style?: ViewStyle }) {
+  return (
+    <View
+      style={[styles.prose, style]}
+      accessible
+      accessibilityLabel="Loading"
+      accessibilityRole="progressbar"
+    >
+      {/*
+        One wrapper for the blocks, as `SkeletonRows` does: the announcement
+        belongs to the group, and the lines under it are decoration a screen
+        reader should never enumerate.
+      */}
+      <View style={styles.prose} importantForAccessibility="no-hide-descendants">
+        {Array.from({ length: lines }, (_, index) => (
+          <Skeleton
+            key={index}
+            // The last line stops short, the way a sentence does. Every other
+            // line runs the full measure.
+            width={index === lines - 1 ? '58%' : '100%'}
+            height={LINE}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+/**
+ * The body text's own line height, stated rather than guessed: a placeholder
+ * that is not the height of the text it replaces is a layout jump dressed up
+ * as a loading state.
+ */
+const LINE = 14;
+
+/**
  * The pulse, or a steady value when the phone asks for less motion.
  *
  * `useNativeDriver` because opacity is one of the two properties the native
@@ -195,6 +246,9 @@ const styles = StyleSheet.create({
   },
   rows: {
     gap: spacing.md,
+  },
+  prose: {
+    gap: spacing.sm,
   },
   row: {
     flexDirection: 'row',

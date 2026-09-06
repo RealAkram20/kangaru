@@ -25,17 +25,6 @@ use Modules\Fleet\Services\OperatorService;
  * **The refusals are the deliverable, not the endpoints.** A test that head
  * office can onboard a fleet proves nothing about who else can.
  */
-function headOffice(): User
-{
-    return User::factory()->create([
-        'role' => UserRole::SUPER_ADMIN,
-        'status' => UserStatus::ACTIVE,
-        'tenant_id' => null,
-        'operator_id' => null,
-        'access_level' => AccessLevel::KANGARU,
-    ]);
-}
-
 function fleetSuperAdmin(): User
 {
     return User::factory()->create([
@@ -166,6 +155,35 @@ it('offers no way to delete a fleet, only to suspend one', function () {
     // Suspending is commercial, not destructive: the fleet and everything
     // that explains its past survive it.
     expect(Operator::query()->find($operator->id))->not->toBeNull();
+});
+
+it('lets head office rename a fleet, and refuses the PATCH a way around the plan guard', function () {
+    $operator = Operator::query()->findOrFail(Operator::SHANITAH);
+    $before = $operator->plan_id;
+
+    $this->actingAs(headOffice(), 'sanctum')
+        ->patchJson("/api/v1/operators/{$operator->id}", ['name' => 'Shanitah General Enterprises Limited'])
+        ->assertOk()
+        ->assertJsonPath('data.name', 'Shanitah General Enterprises Limited');
+
+    // The slug survives a rename: it names the fleet in URLs and in an
+    // invoice series, so a corrected trading name must not re-key either.
+    expect($operator->refresh()->slug)->toBe('shanitah');
+
+    /*
+     * `plan_id` used to be accepted here, and the controller's bare
+     * `update()` moved the fleet without `PlanAllowance` — the ADR-0058 §4
+     * downgrade refusal only `PUT /operators/{operator}/plan` runs. The
+     * field is now simply not validated, so Laravel discards it: the PATCH
+     * succeeds and the plan does not move.
+     */
+    $other = Plan::query()->where('id', '!=', $before)->firstOrFail();
+
+    $this->actingAs(headOffice(), 'sanctum')
+        ->patchJson("/api/v1/operators/{$operator->id}", ['plan_id' => $other->id])
+        ->assertOk();
+
+    expect($operator->refresh()->plan_id)->toBe($before);
 });
 
 /**

@@ -19,6 +19,7 @@ import { isCorporateRole } from '../lib/navigation'
 import { Badge } from '../components/core/Badge'
 import { Button } from '../components/core/Button'
 import { Card } from '../components/core/Card'
+import { BookingDispatchNotice } from '../dispatch/BookingDispatchNotice'
 import { Alert } from '../components/feedback/Alert'
 import { Dialog } from '../components/feedback/Dialog'
 import { DataTable, type DataColumn } from '../components/data/DataTable'
@@ -183,6 +184,8 @@ export function BookingsPage() {
   // order — "E" resolving after "Entebbe" leaves the wrong rows on screen.
   const search = useDebouncedValue(query.trim())
   const [creating, setCreating] = useState(false)
+  // The booking just raised here, while its dispatch is being watched.
+  const [dispatched, setDispatched] = useState<Booking | null>(null)
   const [decision, setDecision] = useState<{
     booking: Booking
     kind: 'rejection' | 'cancellation'
@@ -433,6 +436,16 @@ export function BookingsPage() {
 
   return (
     <PageFill>
+      {/*
+        Above the table, because it is about the thing the dispatcher just
+        did and the table is where they were already looking. It stays until
+        dismissed: the driver's answer arrives seconds or minutes later, and
+        a panel that vanished on its own would take the answer with it.
+      */}
+      {dispatched && (
+        <BookingDispatchNotice booking={dispatched} onDismiss={() => setDispatched(null)} />
+      )}
+
       {loadError && (
         <Alert tone="error" title="Bookings unavailable">
           {loadError}
@@ -521,8 +534,11 @@ export function BookingsPage() {
           categoriesError={categoriesError}
           clients={bookableClients}
           onClose={() => setCreating(false)}
-          onCreated={async () => {
+          onCreated={async (booking) => {
             setCreating(false)
+            // Shown before the reload, so the panel is up while the board
+            // refreshes underneath it rather than appearing after a pause.
+            setDispatched(booking)
             await load()
           }}
         />
@@ -564,7 +580,7 @@ function NewBookingDialog({
    */
   clients: FilterOption[]
   onClose: () => void
-  onCreated: () => Promise<void>
+  onCreated: (booking: Booking) => Promise<void>
 }) {
   const { user: me } = useAuth()
   /**
@@ -684,7 +700,7 @@ function NewBookingDialog({
     const journeys = service !== 'self_drive'
 
     try {
-      await apiClient.post('/bookings', {
+      const created = await apiClient.post<ApiSuccess<Booking>>('/bookings', {
         service_type: service,
         // Which client this is for — a fleet desk's required answer, and
         // not an input at all from a client's own user (ADR-0064).
@@ -737,7 +753,10 @@ function NewBookingDialog({
           : {}),
       })
 
-      await onCreated()
+      // Handed back so the page can dispatch it and say what happened. The
+      // response used to be discarded, which is why raising a booking looked
+      // from here like nothing happening at all.
+      await onCreated(created.data.data)
     } catch (error) {
       const failure = apiError(error, 'Could not create this booking.')
       // A service-area refusal (ADR-0021) rejects `origin_latitude`, and

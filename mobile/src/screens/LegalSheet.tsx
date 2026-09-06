@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
 import {
-  ActivityIndicator,
   Modal,
   Pressable,
   ScrollView,
@@ -14,6 +13,7 @@ import { fetchLegalDocuments } from '../api/endpoints';
 import { useAuth } from '../auth/AuthProvider';
 import { Notice } from '../ui/components';
 import { ChevronLeftIcon } from '../ui/icons';
+import { SkeletonText } from '../ui/Skeleton';
 import { colors, MIN_TOUCH_HEIGHT, spacing, typography } from '../ui/theme';
 
 export type LegalDocument = 'terms' | 'privacy';
@@ -90,7 +90,12 @@ export function LegalSheet({
         <ScrollView
           contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + spacing.xl }]}
         >
-          {isPending && <ActivityIndicator color={colors.primary} style={styles.spinner} />}
+          {/*
+            These are pages of prose, so the placeholder is prose-shaped. The
+            spinner it replaces gave no sense that a long document was on its
+            way, on the one screen where that is the whole expectation.
+          */}
+          {isPending && <SkeletonText lines={8} style={styles.spinner} />}
 
           {isError && (
             <Notice

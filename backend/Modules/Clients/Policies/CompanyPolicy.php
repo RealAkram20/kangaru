@@ -65,4 +65,24 @@ class CompanyPolicy
         return $user->access_level === AccessLevel::KANGARU
             && $user->hasPermission(Permission::COMPANIES_UPDATE);
     }
+
+    /**
+     * Reading this client's roster of named people, to pick one to become
+     * (ADR-0056, ADR-0062).
+     *
+     * Not `view`. `companies.view` is held by a client's own administrator for
+     * their own profile, and by head office for the directory — neither of
+     * which is a reason to be handed a list of somebody's employees. The
+     * act-as grant is the only reason this list exists, so it is the gate.
+     *
+     * The level **and** the permission, exactly as `ImpersonationService`
+     * checks them before starting the session. Gating the list more loosely
+     * than the act it serves would disclose the roster to people who could
+     * never use it, which is the whole cost with none of the benefit.
+     */
+    public function actAsSomebody(User $user, Company $company): bool
+    {
+        return $user->access_level === AccessLevel::KANGARU
+            && $user->hasPermission(Permission::SUPPORT_ACT_AS);
+    }
 }

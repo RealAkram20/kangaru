@@ -103,6 +103,24 @@ describe('filterSections', () => {
   })
 })
 
+describe('staff', () => {
+  it('offers the staff screen to a fleet owner, who now runs their own people', () => {
+    // `fleet_owner` held fourteen permissions and not one of them concerned
+    // staff, so the second fleet on the platform had exactly one usable
+    // account and no way to make another. It holds `staff.view` and
+    // `staff.manage` now, and a menu that did not offer the door would leave
+    // the screen reachable only by typing the URL.
+    expect(canUseNavItem('fleet_owner', 'staff')).toBe(true)
+  })
+
+  it('still keeps the staff screen from a dispatcher', () => {
+    // The other direction, because a list that says yes to everybody proves
+    // nothing. Dispatch is not staff administration.
+    expect(canUseNavItem('dispatcher', 'staff')).toBe(false)
+    expect(canUseNavItem('driver', 'staff')).toBe(false)
+  })
+})
+
 describe('isCorporateRole', () => {
   it('names exactly the two client roles', () => {
     expect(isCorporateRole('corporate_admin')).toBe(true)

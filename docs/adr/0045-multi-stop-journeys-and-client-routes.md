@@ -117,6 +117,42 @@ This is `distance_variance_flagged`'s posture, and it is the platform's
 general answer to operational reality: record it, show it, do not hide it and
 do not quietly monetise it.
 
+#### Amendment, 2026-08-28: the extension, and the one row this no longer covers
+
+The owner asked for a second thing the passenger can do, and it is the
+opposite of a stop: **travelling past the drop-off they agreed to**. A stop is
+a pause on the way to a destination nobody changed; an extension *moves the
+end of the journey*, so §3's "one base fare, total distance" prices it by
+simply being longer — nothing new is charged, the same journey is measured
+further.
+
+It lives in `trip_stops`, which the owner chose over a table of its own having
+been shown this cost: **§4's "never billed" is now a claim about `kind =
+stop`, not about every row in the table.** A `kind = extension` row is billed,
+by way of the distance it adds.
+
+Three consequences follow, and each is load-bearing:
+
+- **`unplanned_stop_count` excludes extensions.** The counter means "deviated
+  from the plan and nobody billed for it". An extension is billed, so counting
+  it there would make the note say the opposite of what happened.
+- **The reference route is drawn through accepted extensions**
+  (`RouteReference::extensionWaypoints`). Without this, §2's `ROUTE_CAPPED`
+  grade — of the *other* ADR-0045, on measured distance — holds the billed
+  figure at the reference plus a detour allowance, and a passenger who
+  travelled twenty kilometres further produces a trace the resolver reads as
+  implausible. The extension would be driven and not paid for, and the trip
+  would land in Distance Review as a variance for the office to investigate.
+  That failure is silent, which is why it is written down here.
+- **Consent is asymmetric.** A driver or a dispatcher adding an extension is
+  recording a decision already taken in the car. A passenger asking for one is
+  making a request, because it changes where the driver is going and what they
+  are owed — so it lands `proposed` and the driver answers it. Nothing routes
+  through, bills, or waits at completion for an extension nobody agreed to.
+
+§7's refusal to reorder is untouched: extensions append, like everything else
+in this table.
+
 ### 5. Distance stays start-and-end on the odometer; per-leg is GPS
 
 The Bank's six data points are untouched. `odometer_start` and `odometer_end`

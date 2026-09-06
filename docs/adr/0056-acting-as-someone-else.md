@@ -13,6 +13,13 @@ impersonation, so this module does not offer it."*
 staff to be able to do anything at all; ADR-0006, whose principle about a
 client seeing who touched their data is the load-bearing rule here.
 
+**Extended by:** ADR-0066 (26 August 2026), which delivers the **walk-in** of
+the four populations quoted below. This ADR's morph anticipated it and its
+middleware did not, so `ActAsSubject` carried a comment saying so; that comment
+is gone. Nothing here is reversed — §3's rule, §5's time-box and disclosure and
+§6's grant all apply unchanged to a `Customer` subject. §4's driver read-only
+rule deliberately does **not** transfer, and ADR-0066 §2 argues why.
+
 ## Context
 
 ADR-0055 gives Kangaru no fleet, no cross-fleet read and no operational console

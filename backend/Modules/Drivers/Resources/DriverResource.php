@@ -60,6 +60,16 @@ class DriverResource extends JsonResource
                 'registration_number' => $this->vehicle->registration_number,
                 'make' => $this->vehicle->make,
                 'model' => $this->vehicle->model,
+                /*
+                 * The category, so the office can ask "who is free on a
+                 * boda" without loading the fleet beside the roster.
+                 *
+                 * Allow-listed like everything above it rather than spread
+                 * from the model (`docs/screen-rules.md` §2): a vehicle row
+                 * carries a VIN and an owner among other things, and none of
+                 * that belongs on a driver list.
+                 */
+                'category' => $this->vehicle->category,
             ]),
             // Whether this driver can sign in, and as whom (ADR-0016).
             //

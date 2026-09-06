@@ -308,6 +308,47 @@ it('drops a token the push service says is dead', function () {
     expect(DeviceToken::query()->where('user_id', $user->id)->count())->toBe(0);
 });
 
+it('says so when the push service refuses the send itself', function () {
+    /*
+     * The other silence, one layer past the empty-token guard. Expo answers
+     * 200 whether or not anything can be delivered; the failure arrives
+     * inside the ticket. Every push this platform ever sent died with
+     * `InvalidCredentials` — no FCM service key on EAS — and nothing said
+     * so, because the receipt loop reacted only to `DeviceNotRegistered`.
+     * Found 24 August 2026 by probing the live pipeline by hand, which is
+     * exactly the visit this warning exists to replace.
+     *
+     * The whole argument list spelled out, per the lesson two tests up.
+     */
+    Log::spy();
+    Http::fake([
+        'exp.host/*' => Http::response([
+            'data' => [[
+                'status' => 'error',
+                'message' => "Unable to retrieve the FCM server key for the recipient's app.",
+                'details' => ['error' => 'InvalidCredentials'],
+            ]],
+        ]),
+    ]);
+
+    [$user] = driverWithDevice();
+    $offer = DispatchOffer::factory()->create();
+    $offer->load('orderRequest');
+
+    $user->notify(TripOfferedNotification::for($offer));
+
+    // The token survives: it is not dead, the credential is. Deleting it
+    // would make the fix (uploading the key) invisible until every driver
+    // reinstalled.
+    expect(DeviceToken::query()->where('user_id', $user->id)->count())->toBe(1);
+
+    Log::shouldHaveReceived('warning')
+        ->withArgs(fn (string $message, array $context = []) => $message === 'push.ticket_error'
+            && $context['error'] === 'InvalidCredentials'
+            && $context['count'] === 1)
+        ->once();
+});
+
 it('sends an offer by push and in-app, and never by mail', function () {
     // An offer expires in well under a minute. An email about one would
     // arrive as an apology. The in-app row is what a driver who refused the
@@ -347,13 +388,12 @@ it('expires the push with the offer, so a late ring is never delivered', functio
     });
 });
 
-it('names the ringtone channel the app created, not a default one', function () {
-    // Android puts the sound, the importance and the vibration on the
-    // *channel*, not the message, so a push without this rings with whatever
-    // the fallback channel was set to — which is silence on many handsets.
-    // The other half of this pair is `mobile/src/push/channels.ts`, and the
-    // string has to match it exactly; nothing at either end can check that,
-    // so it is written down in both places and asserted here.
+it('names no ringtone channel, because nothing is rendered from this message', function () {
+    // The ring moved entirely onto the app's own call notification
+    // (`offers.call.v2` in `mobile/src/push/channels.ts`) when the offer push
+    // went headless — owner's decision, 31 August 2026, recorded on
+    // `TripOfferedNotification::pushIsSilent`. A `channelId` reappearing here
+    // means somebody is rendering the plain banner again.
     Http::fake(['exp.host/*' => Http::response(['data' => []])]);
 
     [$user] = driverWithDevice();
@@ -363,13 +403,12 @@ it('names the ringtone channel the app created, not a default one', function () 
     $user->notify(TripOfferedNotification::for($offer));
 
     Http::assertSent(function ($request) use ($offer) {
-        // `v2` since ADR-0049 §4 — a channel cannot be edited to stop
-        // bypassing Do Not Disturb, so respecting silent mode meant a new id.
-        // If this assertion is ever changed, `OFFER_CHANNEL_ID` in
-        // `mobile/src/push/channels.ts` has to change in the same commit.
-        expect($request['0']['channelId'])->toBe('offers.v2');
+        expect($request['0'])->not->toHaveKey('channelId');
         // One live offer per handset, replacing rather than stacking: a
         // driver back from a dead zone should not find a column of dead jobs.
+        // Also the key `TripOfferWithdrawnNotification` sends under, which is
+        // what lets a withdrawal replace an undelivered wake-up in FCM's
+        // queue rather than landing beside it.
         expect($request['0']['collapseId'])->toBe('offer-'.$offer->id);
 
         return true;
@@ -523,4 +562,171 @@ it('lets a driver-scoped token register and unregister its handset', function ()
     expect(ClientScope::routesFor(ClientScope::DRIVER))
         ->toContain('me.devices.store')
         ->toContain('me.devices.destroy');
+});
+
+/* ------------------------------------------------------------------ *
+ * The offer push is headless (ADR-0049 §3, proved on a handset; owner's
+ * decision 31 August 2026)
+ *
+ * The incoming-call screen is built in JavaScript, so something has to be
+ * running to build it. Measured on an Android 15 handset with the app
+ * backgrounded, on duty and its process alive: a push carrying a title and a
+ * body produced **no line of app JavaScript at all** — Expo's Firebase service
+ * rendered it natively and never woke the app. A push with no title and no
+ * body, same handset, seconds later:
+ *
+ *     ReactNativeJS: 'offer.push_task', 'open_offer', 64, 'background'
+ *
+ * The offer therefore ships as ONE headless message. The visible "New job"
+ * banner that used to ride beside it is gone at the owner's request — the
+ * call screen, with Decline and Accept on it, is the only offer surface.
+ * These tests hold the details that would silently revert that.
+ * ------------------------------------------------------------------ */
+
+it('sends one headless push, so the call screen is the only thing a driver sees', function () {
+    Http::fake(['exp.host/*' => Http::response(['data' => []])]);
+
+    [$user] = driverWithDevice();
+    $offer = DispatchOffer::factory()->create();
+    $offer->load('orderRequest');
+
+    $user->notify(TripOfferedNotification::for($offer));
+
+    Http::assertSent(function ($request) use ($offer) {
+        // One message for one handset. A second one reappearing here is the
+        // plain banner coming back.
+        expect($request->data())->toHaveCount(1);
+
+        // **No title and no body**, because that — not a flag — is what makes
+        // Android hand the message to the app instead of drawing it. A title
+        // here silently reverts the whole feature: the app never wakes, no
+        // call screen, and the driver sees an un-answerable banner.
+        expect($request['0'])->not->toHaveKey('title');
+        expect($request['0'])->not->toHaveKey('body');
+
+        // The app reads the job out of the payload.
+        expect($request['0']['to'])->toBe('ExponentPushToken[test-handset]');
+        expect($request['0']['data']['offer_id'])->toBe($offer->id);
+
+        // High priority, or Android may hold it until the next maintenance
+        // window — which for a 45-second offer is the same as never.
+        expect($request['0']['priority'])->toBe('high');
+
+        // No noise from the transport: the ring belongs to the app's call
+        // notification, which loops it. The channel would otherwise default
+        // this to 'default'.
+        expect($request['0']['sound'])->toBeNull();
+
+        // iOS delivers a payload with nothing to show only when told so.
+        expect($request['0']['_contentAvailable'])->toBeTrue();
+
+        return true;
+    });
+});
+
+it('sends one message for a notification that does not need waking', function () {
+    // Almost everything on this platform. A settlement or a document review
+    // has no countdown and can wait until the driver opens the app, and waking
+    // a handset for one spends a driver's battery for nothing.
+    Http::fake(['exp.host/*' => Http::response(['data' => []])]);
+
+    [$user] = driverWithDevice();
+    $offer = DispatchOffer::factory()->create();
+    $offer->load('orderRequest');
+
+    $user->notify(TripOfferWithdrawnNotification::for($offer));
+
+    Http::assertSent(function ($request) {
+        // A withdrawal is already silent — it *is* a wake-up, so it must not
+        // be given a second one.
+        expect($request->data())->toHaveCount(1);
+
+        return true;
+    });
+});
+
+it('deletes the token the dead receipt actually belongs to, not the one at that index', function () {
+    /*
+     * **The sharpest edge of `pushWakeOptions`: two messages per handset.**
+     *
+     * Expo returns receipts positionally, and `pruneDeadTokens` reads the
+     * token for a `DeviceNotRegistered` out of a parallel list by index. While
+     * that list was one-entry-per-handset, a notification adding a companion
+     * message per handset silently shifted every index past the first — so a
+     * dead receipt for one driver's handset would have deleted **a different
+     * driver's** device token, and that driver would simply stop receiving
+     * jobs with nothing logged anywhere.
+     *
+     * `TripOfferedNotification` no longer sends a pair — the offer went
+     * headless and single on 31 August 2026 — but the channel's
+     * `pushWakeOptions` hook remains for any notification that does, so the
+     * guard is exercised through one built here rather than deleted with the
+     * caller that used to prove it.
+     *
+     * Two handsets, four messages, and the dead receipt is at **index 2** —
+     * the first handset's *companion*. That index is the whole point: it
+     * exists only in the per-message list. Read against a per-handset list it
+     * falls off the end, `isset` fails, and nothing is deleted at all — so a
+     * test placing the error at index 0 or 1 passes under both mappings and
+     * proves nothing. (Checked by mutation: it did.)
+     */
+    [$user] = driverWithDevice();
+
+    DeviceToken::create([
+        'user_id' => $user->id,
+        'provider' => 'expo',
+        'token' => 'ExponentPushToken[second-handset]',
+        'platform' => 'android',
+        'last_seen_at' => now(),
+    ]);
+
+    Http::fake(['exp.host/*' => Http::response(['data' => [
+        ['status' => 'ok'],
+        ['status' => 'ok'],
+        // Index 2: the first handset's companion message.
+        ['status' => 'error', 'details' => ['error' => 'DeviceNotRegistered']],
+        ['status' => 'ok'],
+    ]])]);
+
+    $paired = new class extends KangaruNotification
+    {
+        public function type(): NotificationType
+        {
+            return NotificationType::TRIP_OFFERED;
+        }
+
+        public function subject(): string
+        {
+            return 'New job';
+        }
+
+        public function body(): string
+        {
+            return 'A passenger is waiting.';
+        }
+
+        public function url(): ?string
+        {
+            return null;
+        }
+
+        public function context(): array
+        {
+            return [];
+        }
+
+        public function pushWakeOptions(): array
+        {
+            return ['collapseId' => 'wake-guard-test'];
+        }
+    };
+
+    app(ExpoPushChannel::class)->send($user, $paired);
+
+    $left = DeviceToken::query()->where('user_id', $user->id)->pluck('token')->all();
+
+    // The first handset is the dead one and must be gone; the second must not
+    // be touched. A mapping that reads index 2 against the two-entry handset
+    // list deletes nothing and leaves both, which is what this catches.
+    expect($left)->toBe(['ExponentPushToken[second-handset]']);
 });

@@ -37,7 +37,12 @@ class TripOfferedNotification extends KangaruNotification
     {
         return new self(
             $offer->id,
-            $offer->orderRequest?->pickup_location,
+            // Either owner (ADR-0068). `DispatchOffer::pickup()` is what
+            // knows that a walk-in calls this `pickup_location` and a
+            // booking calls it `origin`; asking here would put a second
+            // opinion about that in a second file, and the ring is the one
+            // path where the two channels must stay identical.
+            $offer->pickup(),
             $offer->pickup_distance_km === null ? null : (float) $offer->pickup_distance_km,
             // Computed here rather than sent as a timestamp: a push is read
             // on a handset whose clock may be minutes out, and "45 seconds"
@@ -146,57 +151,58 @@ class TripOfferedNotification extends KangaruNotification
     }
 
     /**
-     * The one message in this platform that is allowed to ring (ADR-0046 §2).
+     * Headless, so the only thing a driver ever sees is the call screen.
      *
-     * AGENTS.md asks for an argument rather than a use case, and ADR-0025 §5
-     * already made it: this is a message with a countdown on it, which the
-     * recipient must act on within seconds, and which is the only reason the
-     * app is installed. Everything below follows from that sentence.
+     * ## The decision this records (owner, 31 August 2026, asked twice)
+     *
+     * The offer used to go out as a *pair*: a visible "New job — tap to
+     * accept" push as the floor, and an invisible companion that woke the
+     * app's JavaScript to raise the answerable incoming-call notification,
+     * which then withdrew the visible one. The owner watched that replacement
+     * fail on a handset — wake-up delayed, call screen skipped, the plain
+     * banner sitting there un-answerable — and made the call the design had
+     * been avoiding: **no plain push at all.** One headless message *is* the
+     * wake-up; the call screen, with Decline and Accept on it, is the only
+     * surface an offer ever has.
+     *
+     * ## What was knowingly given up
+     *
+     * The floor. A handset whose JavaScript cannot run — force-stopped, an
+     * OEM battery manager, expo/expo#38223 on a terminated process — used to
+     * at least ring with the plain banner. It now gets nothing until the app
+     * is next opened, where `GET /me/offers` still has the job (ADR-0025 §3).
+     * Do not quietly reinstate a visible variant to soften that: it is the
+     * exact notification the owner asked to see gone.
+     */
+    public function pushIsSilent(): bool
+    {
+        return true;
+    }
+
+    /**
+     * How the one headless message is delivered (ADR-0046 §2, ADR-0049 §3).
+     *
+     * No `channelId` and no ringtone here: nothing is rendered from this
+     * message, so Android never consults a channel for it. The ring now
+     * belongs entirely to the app's own call notification —
+     * `mobile/src/push/channels.ts` creates `offers.call.v2`, and
+     * `showCallNotification` loops the sound on it.
      *
      * @return array<string, mixed>
      */
     public function pushOptions(): array
     {
         return [
-            // **The Android notification channel, and therefore the ringtone.**
-            // The sound, importance and vibration all belong to the channel
-            // rather than to the message — Android has worked that way since
-            // Oreo, and a `sound` on the ticket is ignored without it.
-            //
-            // Versioned because **a channel is immutable once created**: past
-            // its name and description, the OS refuses changes so a user's own
-            // settings cannot be overridden. Changing the ringtone therefore
-            // means a new id, created alongside, and this string is the half
-            // of that pair the server holds. It must match
-            // `mobile/src/push/channels.ts`.
-            //
-            // **`v2` since ADR-0049 §4**, and the reason is the immutability
-            // above rather than anything wrong with `v1`. The owner asked for
-            // a ring that falls silent under silent mode and Do Not Disturb;
-            // `offers.v1` was created with `bypassDnd: true` and no call can
-            // change that on a handset that has already run the app. So the
-            // id moved, the app creates `v2` and deletes `v1` in the same
-            // release, and this line moved with it.
-            //
-            // **These two ends have to ship together.** A server naming a
-            // channel the installed app has not created does not fail — the
-            // push is delivered on the default channel, silently and at
-            // ordinary importance, which presents as "push works, it just
-            // never rings". `TripOfferedPushTest` asserts this string; it
-            // cannot assert the app's half.
-            'channelId' => 'offers.v2',
-            // iOS, where there are no channels and the sound rides on the
-            // message. Bundled by the `expo-notifications` config plugin,
-            // named without its path.
-            'sound' => 'offer_ring.wav',
+            // Explicitly silent. `ExpoPushChannel` defaults every push to
+            // `'default'`, and a headless message must not carry a noise.
+            'sound' => null,
 
             // **Dies with the offer.** Expo keeps a message deliverable for
             // long enough that a push held while a handset was in a dead zone
-            // would arrive afterwards and ring for a job somebody else has
-            // been driving for ten minutes. That is worse than never ringing:
-            // the driver reaches for a phone, reads a pickup, taps, and is
-            // told they were too late for something they were never offered
-            // in time.
+            // would arrive afterwards and wake the app for a job somebody
+            // else has been driving for ten minutes. `raiseOfferCall` would
+            // find nothing live and stay silent — battery spent, no harm —
+            // but there is no reason to deliver it at all.
             //
             // The same number the countdown is seeded from, so the push and
             // the screen agree about the window (ADR-0024 §5 — expiry is a
@@ -204,20 +210,16 @@ class TripOfferedNotification extends KangaruNotification
             'ttl' => $this->expiresInSeconds,
             'expiration' => now()->addSeconds($this->expiresInSeconds)->getTimestamp(),
 
-            // One live offer per notification, replacing rather than stacking.
-            // Without this a driver who was out of coverage during two waves
-            // comes back to a column of job offers, all but one of them dead,
-            // and has to work out which. It is also what lets a withdrawal
-            // replace the ring rather than sit under it.
+            // One live offer per handset, replacing rather than stacking, and
+            // **the same key `TripOfferWithdrawnNotification` sends under** —
+            // that is what lets a withdrawal replace an undelivered wake-up
+            // in FCM's queue instead of landing beside it.
             'collapseId' => 'offer-'.$this->offerId,
 
-            // iOS: breaks through a Focus mode, which is what a driver at the
-            // wheel will have on. Requires the time-sensitive entitlement on
-            // the provisioning profile; without it APNs downgrades the level
-            // rather than refusing the push, so a build that lost the
-            // entitlement degrades quietly instead of failing loudly — worth
-            // checking on a real handset rather than trusting.
-            'interruptionLevel' => 'time-sensitive',
+            // iOS: the flag that makes APNs deliver a payload with nothing to
+            // show. Without it a body-less push is simply dropped. Same line
+            // the withdrawal carries, for the same reason.
+            '_contentAvailable' => true,
         ];
     }
 }

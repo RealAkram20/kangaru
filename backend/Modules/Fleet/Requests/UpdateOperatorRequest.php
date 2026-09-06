@@ -27,10 +27,16 @@ class UpdateOperatorRequest extends FormRequest
         return [
             'name' => ['sometimes', 'string', 'max:255'],
             'status' => ['sometimes', Rule::in(['active', 'suspended'])],
-            // The plan a fleet is on (ADR-0058). Editable here so head office
-            // can move a fleet between tiers; what each tier *means* —
-            // limits, price, period — is K7's and nothing here presumes it.
-            'plan_id' => ['sometimes', 'integer', Rule::exists('plans', 'id')],
+            /*
+             * No `plan_id`. It was accepted here once, and the controller's
+             * bare `update()` meant it moved a fleet between tiers without
+             * `PlanAllowance` — the ADR-0058 §4 refusal ("a move to a plan
+             * smaller than the fleet's current usage is refused, and the
+             * refusal names the figures") that only `PlanController::assign`
+             * runs. Two routes to one column, one guarded, is how a fleet
+             * quietly ends up on a plan its own roster already exceeds; a
+             * plan move goes through `PUT /operators/{operator}/plan` alone.
+             */
         ];
     }
 }

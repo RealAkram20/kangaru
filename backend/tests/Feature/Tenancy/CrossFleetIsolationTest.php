@@ -411,3 +411,227 @@ it('still lets a fleet manage its own vehicle and its own driver', function () {
     $this->actingAs($owner, 'sanctum')
         ->getJson("/api/v1/drivers/{$myDriver->id}")->assertOk();
 });
+
+/*
+|--------------------------------------------------------------------------
+| Accounts: the write mirror
+|--------------------------------------------------------------------------
+|
+| Everything above this line proves a fleet cannot *read* another fleet's
+| rows. These prove it cannot reach another fleet's **people** — by id, by
+| edit, or by creating somebody inside a client it has no contract with.
+|
+| The listing was narrowed on 23 August. `UserPolicy` was not, and it is the
+| only thing standing after route-model binding: `User` carries no global
+| scope, so `GET|PATCH /users/{user}` resolves any id in the table.
+|
+| `sharesTenant()` returns true for every `isPlatformLevel()` actor — a
+| predicate that meant "head office" when ADR-0006 wrote it, and has meant
+| "any fleet" since ADR-0055 split the axes. The tenant-less Super Admin these
+| tests act as is exactly the shape of the live `help@kangaruride.com`: the
+| factory gives a fleet to any account that names no client, so this actor
+| holds `staff.manage` *and* a fleet, which is the whole of the problem.
+*/
+
+/** A fleet-level administrator holding `staff.manage`, at the named fleet. */
+function fleetAdministrator(Operator $operator): User
+{
+    return User::factory()->create([
+        'operator_id' => $operator->id,
+        'role' => UserRole::SUPER_ADMIN,
+    ]);
+}
+
+it('refuses a fleet administrator the sight of a rival fleet s account', function () {
+    $admin = fleetAdministrator($this->shanitah);
+
+    $this->actingAs($admin, 'sanctum')
+        ->getJson("/api/v1/users/{$this->rivalStaff->id}")
+        ->assertForbidden();
+});
+
+it('refuses a fleet administrator the right to edit a rival fleet s account', function () {
+    $admin = fleetAdministrator($this->shanitah);
+
+    $this->actingAs($admin, 'sanctum')
+        ->patchJson("/api/v1/users/{$this->rivalStaff->id}", ['name' => 'Renamed By A Rival'])
+        ->assertForbidden();
+
+    // The assertion that matters. A 403 with the write already committed is
+    // the failure that looks like a pass, and this one would not look like a
+    // security failure from the inside either — it would look like a
+    // colleague whose account changed for no reason anyone at their own fleet
+    // did.
+    expect($this->rivalStaff->fresh()->name)->not->toBe('Renamed By A Rival');
+});
+
+it('refuses a fleet administrator the right to suspend a rival fleet s account', function () {
+    $admin = fleetAdministrator($this->shanitah);
+
+    $this->actingAs($admin, 'sanctum')
+        ->patchJson("/api/v1/users/{$this->rivalStaff->id}", ['status' => 'suspended'])
+        ->assertForbidden();
+
+    expect($this->rivalStaff->fresh()->status->value)->toBe('active');
+});
+
+it('refuses a fleet an account inside a client it does not serve', function () {
+    $admin = fleetAdministrator($this->shanitah);
+
+    // A client on the platform with no contract to Shanitah at all.
+    $stranger = Tenant::factory()->create();
+
+    $this->actingAs($admin, 'sanctum')
+        ->postJson('/api/v1/users', [
+            'name' => 'Planted By A Rival',
+            'email' => 'planted@example.com',
+            'phone' => '+256700000111',
+            'role' => UserRole::CORPORATE_EMPLOYEE->value,
+            'password' => 'correct-horse-battery-staple',
+            'tenant_id' => $stranger->id,
+        ])
+        ->assertStatus(422);
+
+    // The mirror of the read leak, and the reason it is a *write* mirror: an
+    // account planted inside a client is a standing credential in somebody
+    // else's organisation, which outlives the request that created it.
+    expect(User::query()->where('tenant_id', $stranger->id)->count())->toBe(0);
+});
+
+it('refuses a fleet an account inside a client that has only asked to be served', function () {
+    $admin = fleetAdministrator($this->shanitah);
+
+    $prospect = Tenant::factory()->create();
+    OperatorClient::create([
+        'operator_id' => $this->shanitah->id,
+        'tenant_id' => $prospect->id,
+        'status' => OperatorClient::REQUESTED,
+    ]);
+
+    // ADR-0060 §4, one level up from the read: asking grants no write either.
+    // Otherwise a fleet reaches into any organisation on the platform by
+    // requesting it, and requesting is free and needs nobody's consent.
+    $this->actingAs($admin, 'sanctum')
+        ->postJson('/api/v1/users', [
+            'name' => 'Planted On A Request',
+            'email' => 'planted-on-request@example.com',
+            'phone' => '+256700000112',
+            'role' => UserRole::CORPORATE_EMPLOYEE->value,
+            'password' => 'correct-horse-battery-staple',
+            'tenant_id' => $prospect->id,
+        ])
+        ->assertStatus(422);
+
+    expect(User::query()->where('tenant_id', $prospect->id)->count())->toBe(0);
+});
+
+it('still lets a fleet administrator manage their own colleague and a served client s', function () {
+    // The other direction. Five refusals prove nothing on their own — they
+    // pass just as happily against a policy that refuses everybody, which is
+    // the failure this whole package could ship without noticing.
+    $admin = fleetAdministrator($this->shanitah);
+
+    $colleague = User::factory()->create(['operator_id' => $this->shanitah->id]);
+
+    $client = Tenant::factory()->create();
+    OperatorClient::create([
+        'operator_id' => $this->shanitah->id,
+        'tenant_id' => $client->id,
+        'status' => OperatorClient::ACTIVE,
+    ]);
+    $clientStaff = User::factory()->create([
+        'tenant_id' => $client->id,
+        'role' => UserRole::CORPORATE_EMPLOYEE,
+    ]);
+
+    $this->actingAs($admin, 'sanctum')
+        ->getJson("/api/v1/users/{$colleague->id}")->assertOk();
+
+    $this->actingAs($admin, 'sanctum')
+        ->getJson("/api/v1/users/{$clientStaff->id}")->assertOk();
+
+    $this->actingAs($admin, 'sanctum')
+        ->postJson('/api/v1/users', [
+            'name' => 'Sarah Nabirye',
+            'email' => 'sarah.nabirye@example.com',
+            'phone' => '+256700000113',
+            'role' => UserRole::CORPORATE_EMPLOYEE->value,
+            'password' => 'correct-horse-battery-staple',
+            'tenant_id' => $client->id,
+        ])
+        ->assertCreated();
+});
+
+it('lets a fleet owner add a colleague to their own fleet', function () {
+    // `R2`, and the owner's original request: until `fleet_owner` carried
+    // `staff.*`, the second fleet on the platform had exactly one usable
+    // account and no way to make another. Najjemba's owner is this test.
+    $owner = User::factory()->create([
+        'operator_id' => $this->rival->id,
+        'role' => UserRole::FLEET_OWNER,
+    ]);
+
+    $this->actingAs($owner, 'sanctum')
+        ->postJson('/api/v1/users', [
+            'name' => 'Sarah Nabirye',
+            'email' => 'sarah.nabirye@rival.test',
+            'phone' => '+256700000210',
+            'role' => UserRole::DISPATCHER->value,
+            'password' => 'correct-horse-battery-staple',
+        ])
+        ->assertCreated();
+
+    $hired = User::query()->where('email', 'sarah.nabirye@rival.test')->sole();
+
+    // The fleet is the assertion. A colleague created into the wrong fleet —
+    // or into none, which is head office — is the silent promotion ADR-0055 §4
+    // exists to make impossible.
+    expect($hired->operator_id)->toBe($this->rival->id)
+        ->and($hired->tenant_id)->toBeNull()
+        ->and($hired->access_level)->toBe(AccessLevel::FLEET);
+});
+
+it('offers a fleet owner only the roles written for a fleet', function () {
+    $owner = User::factory()->create([
+        'operator_id' => $this->rival->id,
+        'role' => UserRole::FLEET_OWNER,
+    ]);
+
+    $offered = array_column(
+        $this->actingAs($owner, 'sanctum')->getJson('/api/v1/users')->json('meta.assignable_roles'),
+        'value',
+    );
+
+    // Two gates, and this asserts both. The audience keeps a bank's roles out;
+    // the escalation subset keeps out the fleet roles carrying more than an
+    // owner holds. `super_admin` fails both, which is the point — a fleet's
+    // top account cannot mint one.
+    expect($offered)->not->toContain('corporate_admin', 'corporate_employee', 'super_admin')
+        ->and($offered)->toContain('dispatcher', 'driver');
+});
+
+it('refuses a fleet owner a colleague at another fleet, even by naming one', function () {
+    $owner = User::factory()->create([
+        'operator_id' => $this->rival->id,
+        'role' => UserRole::FLEET_OWNER,
+    ]);
+
+    // There is no `operator_id` field on this endpoint at all — the fleet is
+    // taken from the actor, never from the payload — so the interesting
+    // question is whether naming one anyway changes anything. It must not:
+    // an ignored field that looked honoured would be the quietest way to
+    // plant an account in a competitor.
+    $this->actingAs($owner, 'sanctum')
+        ->postJson('/api/v1/users', [
+            'name' => 'Planted At Shanitah',
+            'email' => 'planted@shanitah.test',
+            'phone' => '+256700000211',
+            'role' => UserRole::DISPATCHER->value,
+            'password' => 'correct-horse-battery-staple',
+            'operator_id' => $this->shanitah->id,
+        ])
+        ->assertCreated();
+
+    expect(User::query()->where('email', 'planted@shanitah.test')->sole()->operator_id)
+        ->toBe($this->rival->id);
+});

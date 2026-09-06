@@ -569,13 +569,10 @@ export function ProfileScreen({ navigation }: Props) {
             something they already have is an instruction that makes the app
             look broken.
 
-            **Worded as an action, not as a state**, and that is a limitation
-            rather than a style choice: nothing in this stack can read whether
-            the permission was granted. `canUseFullScreenIntent()` is the
-            platform call and neither `expo-notifications` nor
-            `react-native-notify-kit` exposes it. A "Not allowed" label we
-            cannot verify would be wrong on every handset that had already
-            said yes, so the row says what tapping it does and stops there.
+            It was worded as an action rather than a state because nothing in
+            the stack could read whether the permission was granted. That is
+            no longer true — `modules/full-screen-intent` reads it — and the
+            state now lives on `PermissionsScreen` with the other five.
 
             It sits under the ringtone switch on purpose: both are about how
             loudly a job is allowed to arrive, and a driver who has just turned

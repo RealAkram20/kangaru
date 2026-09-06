@@ -70,6 +70,12 @@ function familyOf(NotificationType $type): ?string
         NotificationType::ACCOUNT_ACCESSED_BY_SUPPORT,
         NotificationType::ACCOUNT_INVITED,
         NotificationType::ACCOUNT_INVITATION_EXPIRING,
+        // The fleet handover's welcome email. Its sentences live in
+        // `FleetOwnershipInvitedNotification` + `mail.ownership.*`, not under
+        // the office family its `platform.` prefix would suggest — the same
+        // false-positive shape `driver_application.document.rejected` is on
+        // this list for.
+        NotificationType::PLATFORM_FLEET_OWNERSHIP_INVITED,
     ];
 
     if (in_array($type, $bespoke, true)) {

@@ -42,6 +42,19 @@ class OperatorResource extends JsonResource
                 'name' => $this->plan->name,
                 'is_default' => $this->plan->is_default,
             ] : null),
+            // The handover nobody has confirmed yet (owner's decision, 24
+            // August). Name, address and expiry — enough for the record page
+            // to say an invitation is out and to whom, and for head office to
+            // notice one that lapsed. Never the token, which exists only
+            // inside the email.
+            'pending_owner' => $this->whenLoaded(
+                'pendingOwnershipTransfer',
+                fn () => $this->pendingOwnershipTransfer === null ? null : [
+                    'name' => $this->pendingOwnershipTransfer->name,
+                    'email' => $this->pendingOwnershipTransfer->email,
+                    'expires_at' => $this->pendingOwnershipTransfer->expires_at->toIso8601String(),
+                ],
+            ),
             'users_count' => $this->whenCounted('users'),
             'drivers_count' => $this->whenCounted('drivers'),
             'vehicles_count' => $this->whenCounted('vehicles'),

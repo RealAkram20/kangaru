@@ -3,7 +3,15 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ActingAsBanner } from './ActingAsBanner'
 
-const session = { subject_name: 'Joan Okello', expires_at: '2026-08-22T05:12:00Z' }
+const session = {
+  subject_name: 'Joan Okello',
+  // A staff subject. The banner reads the same either way — it names a
+  // person, and a walk-in is no less one — so the kind is here to satisfy
+  // the type rather than to be asserted on. Where it decides anything is
+  // `useActingAs`, and the surface the session lives on (ADR-0066).
+  subject_kind: 'user' as const,
+  expires_at: '2026-08-22T05:12:00Z',
+}
 
 describe('ActingAsBanner', () => {
   it('names the person whose account is being held', () => {

@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\Permission;
+use App\Enums\RoleAudience;
 use App\Enums\UserRole;
 use App\Models\User;
 use Illuminate\Support\Facades\Event;
@@ -65,6 +66,7 @@ function clerkWithoutTheFleet(): User
     Role::create([
         'slug' => 'driver_clerk',
         'name' => 'Driver Clerk',
+        'audience' => RoleAudience::FLEET,
         'is_system' => false,
         'permissions' => [
             Permission::DRIVERS_VIEW->value,

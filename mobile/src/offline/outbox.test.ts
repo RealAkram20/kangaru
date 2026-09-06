@@ -51,6 +51,7 @@ const KAMPALA_TRIP: Trip = {
   gps_distance_km: null,
   distance_variance_flagged: null,
   unplanned_stop_count: 0,
+  dropoff_reached_at: null,
   started_at: '2026-08-07T08:00:00Z',
   completed_at: null,
   duration_minutes: null,

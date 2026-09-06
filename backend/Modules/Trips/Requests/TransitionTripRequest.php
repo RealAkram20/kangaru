@@ -224,6 +224,38 @@ class TransitionTripRequest extends FormRequest
                     $validator->errors()->add('stop_id', 'That stop is not waiting to be visited on this trip.');
                 }
             }
+
+            /*
+             * **A journey with an agreed extension still ahead of it is not
+             * over**, whatever the driver just tapped.
+             *
+             * The refusal is narrow on purpose, and each exclusion is a
+             * decision:
+             *
+             * - Only `EXTENSION` rows. An unvisited *stop* may survive to
+             *   completion and stay pending — §6's posture, quoted in
+             *   `TripStopService::applyTransition`: a run that ended before
+             *   its itinerary did is evidence, not a loose end. That stays
+             *   true, because a stop does not move the end of the journey.
+             * - Only accepted ones. A `PROPOSED` extension is a passenger's
+             *   request the driver never answered; holding the trip open for
+             *   it would let a back-seat tap prevent a driver ever finishing
+             *   their shift. It is left as it is, unanswered and recorded.
+             * - `SKIPPED` is already an answer, so it does not hold anything.
+             *
+             * Completing is otherwise unchanged for every trip that has no
+             * extensions, which is every trip in the database today.
+             */
+            if ($this->input('to') === TripStatus::TRIP_COMPLETED->value
+                && $trip !== null
+                && TripStop::query()->acceptedExtensions($trip)
+                    ->whereIn('status', [TripStopStatus::PENDING, TripStopStatus::ARRIVED])
+                    ->exists()) {
+                $validator->errors()->add(
+                    'to',
+                    'This trip has an extension still to run. Finish it, or skip it, before completing the trip.',
+                );
+            }
         });
     }
 

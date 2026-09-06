@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Enums\Permission as P;
+use App\Enums\RoleAudience as A;
 use App\Enums\UserRole;
 use Illuminate\Database\Seeder;
 use Modules\Administration\Models\Role;
@@ -36,6 +37,14 @@ class RoleSeeder extends Seeder
                     'name' => $definition['name'],
                     'description' => $definition['description'],
                     'is_system' => true,
+                    // Which level of account the role was written for
+                    // (ADR-0004, `RoleAudience`). Seeded here as well as
+                    // backfilled by the migration, for the same reason
+                    // `requires_mfa` is: the migration covers a database that
+                    // already had roles, this covers every fresh install and
+                    // every test run. Without it the column would fail its own
+                    // NOT NULL on a fresh seed.
+                    'audience' => $definition['audience'],
                     'permissions' => array_map(fn (P $p) => $p->value, $definition['permissions']),
                     // ADR-0008. Seeded here as well as set by the migration,
                     // and both are needed: the migration covers a database
@@ -55,6 +64,7 @@ class RoleSeeder extends Seeder
      * @return array<string, array{
      *     name: string,
      *     description: string,
+     *     audience: A,
      *     permissions: array<int, P>,
      *     requires_mfa?: bool
      * }>
@@ -94,6 +104,7 @@ class RoleSeeder extends Seeder
 
         return [
             UserRole::SUPER_ADMIN->value => [
+                'audience' => A::KANGARU,
                 'name' => 'Super Admin',
                 'description' => 'Platform owner. Every permission, including managing roles.',
                 // AGENTS.md: "MFA is required for Super Admin and Finance
@@ -123,6 +134,7 @@ class RoleSeeder extends Seeder
             ],
 
             UserRole::OPERATIONS_MANAGER->value => [
+                'audience' => A::FLEET,
                 'name' => 'Operations Manager',
                 'description' => 'Runs operations across the platform: dispatch, fleet and reporting.',
                 'permissions' => [
@@ -142,6 +154,7 @@ class RoleSeeder extends Seeder
             ],
 
             UserRole::DISPATCHER->value => [
+                'audience' => A::FLEET,
                 'name' => 'Dispatcher',
                 'description' => 'Assigns drivers and vehicles. Cannot approve the bookings they dispatch.',
                 'permissions' => [
@@ -165,6 +178,7 @@ class RoleSeeder extends Seeder
             ],
 
             UserRole::FINANCE->value => [
+                'audience' => A::FLEET,
                 'name' => 'Finance',
                 'description' => 'Invoices, credit notes and rate cards. Cannot dispatch.',
                 'requires_mfa' => true,
@@ -176,15 +190,79 @@ class RoleSeeder extends Seeder
             ],
 
             UserRole::FLEET_OWNER->value => [
+                'audience' => A::FLEET,
                 'name' => 'Fleet Owner',
-                'description' => 'Manages owned fleets and dispatches them.',
+                'description' => 'Runs a fleet company: its people, its vehicles and its dispatch.',
                 'permissions' => [
-                    ...$everyoneReads, ...$dispatch, ...$fleetManage,
-                    P::BOOKINGS_CREATE, P::TRIPS_VIEW_ALL, P::REPORTS_VIEW,
+                    /*
+                     * The union of every other fleet role, and that is a
+                     * requirement rather than generosity.
+                     *
+                     * ADR-0004: *nobody may grant a permission they do not
+                     * themselves hold.* So an owner who cannot dispatch cannot
+                     * hire a Dispatcher — the subset test refuses the role, and
+                     * `staff.manage` on its own would produce an Add colleague
+                     * button whose every choice was rejected. ADR-0004 says
+                     * exactly this and calls it the remedy: *"a Super Admin
+                     * composes a role that holds `staff.manage` **and** the
+                     * permissions that role should be able to hand out."*
+                     *
+                     * Computed against the six roles below rather than picked
+                     * by feel: Operations Manager, Dispatcher, Finance, Branch
+                     * Manager, Depot Manager and Driver. Branch and Depot are
+                     * already inside Operations Manager's set, so the union is
+                     * the first three plus the driver's own transition.
+                     *
+                     * What bounds this is the **fleet**, not the catalogue. An
+                     * owner holding all of it still reaches only their own
+                     * company's rows (ADR-0065), which is what makes "can do
+                     * anything within their fleet" a safe sentence to write.
+                     */
+                    ...$everyoneReads, ...$desk, ...$dispatch, ...$fleetManage, ...$billingRead,
+                    P::BOOKINGS_CREATE, P::BOOKINGS_APPROVE, P::TRIPS_VIEW_ALL, P::REPORTS_VIEW,
+                    P::CUSTOMERS_VIEW, P::ZONES_MANAGE, P::ROUTES_VIEW,
+                    // Dispatcher's, beyond the shared dispatch set.
+                    P::ORDER_REQUESTS_MANAGE,
+                    // Finance's. A fleet bills its own corporate clients
+                    // (ADR-0055 §5), so its owner must be able to hire
+                    // somebody who can.
+                    P::TRIPS_TRANSITION_FINANCE, P::INVOICES_CREATE, P::INVOICES_CREDIT,
+                    P::RATECARDS_MANAGE,
+                    // The driver's own transition, which is the only thing in
+                    // that role an owner did not already hold.
+                    P::TRIPS_TRANSITION_OWN,
+                    /*
+                     * A fleet's own staff, and the reason this plan exists.
+                     *
+                     * Until now the owner of a fleet could hire drivers and
+                     * buy vehicles but could not add a dispatcher — Najjemba's
+                     * owner held fourteen permissions and not one of them was
+                     * `staff.*`, so the second fleet on the platform had
+                     * exactly one usable account. Every fleet has an owner by
+                     * construction (ADR-0059 §5), which makes this the right
+                     * role to carry it: it is the account that always exists
+                     * and the one support acts as.
+                     *
+                     * **This is what makes ADR-0065 load-bearing rather than
+                     * theoretical.** Before it, `UserPolicy` let any
+                     * fleet-level holder of `staff.manage` read and edit every
+                     * other fleet's accounts; nothing exploited it only
+                     * because no fleet role held the permission. This line is
+                     * what would have made it live, so it does not land
+                     * without that fix — see the plan's S0.
+                     *
+                     * `roles.manage` is deliberately **not** here. A fleet
+                     * composes no roles; the catalogue is Kangaru's and every
+                     * organisation picks from it (ADR-0004). What a fleet
+                     * needs is to put its people into roles that already
+                     * exist, which is `staff.manage` and nothing more.
+                     */
+                    P::STAFF_VIEW, P::STAFF_MANAGE,
                 ],
             ],
 
             UserRole::BRANCH_MANAGER->value => [
+                'audience' => A::FLEET,
                 'name' => 'Branch Manager',
                 'description' => 'Branch operations: approves, dispatches and manages the branch fleet.',
                 'permissions' => [
@@ -194,6 +272,7 @@ class RoleSeeder extends Seeder
             ],
 
             UserRole::DEPOT_MANAGER->value => [
+                'audience' => A::FLEET,
                 'name' => 'Depot Manager',
                 'description' => 'Depot vehicles and drivers. Dispatches but does not approve.',
                 'permissions' => [
@@ -203,6 +282,7 @@ class RoleSeeder extends Seeder
             ],
 
             UserRole::CORPORATE_ADMIN->value => [
+                'audience' => A::CLIENT,
                 'name' => 'Corporate Admin',
                 'description' => 'Manages their company\'s staff and bookings. Never dispatches the fleet.',
                 'permissions' => [
@@ -224,6 +304,7 @@ class RoleSeeder extends Seeder
             ],
 
             UserRole::CORPORATE_EMPLOYEE->value => [
+                'audience' => A::CLIENT,
                 'name' => 'Corporate Employee',
                 'description' => 'Requests transport. Sees only their own bookings and trips.',
                 'permissions' => [
@@ -233,6 +314,7 @@ class RoleSeeder extends Seeder
             ],
 
             UserRole::DRIVER->value => [
+                'audience' => A::FLEET,
                 'name' => 'Driver',
                 'description' => 'Drives assigned trips and records their progress.',
                 'permissions' => [

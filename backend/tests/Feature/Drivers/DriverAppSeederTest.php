@@ -83,17 +83,22 @@ it('leaves the driver a trip they can act on', function () {
 
     $driver = Driver::query()->whereHas('user', fn ($q) => $q->where('email', 'driver@kangaruride.test'))->sole();
 
+    // `accepted`, not `assigned`, since ADR-0068. The desk's assignment now
+    // rings, so no trip exists until the driver answers — and the seeder had
+    // to answer for them, because an offer expires in well under a minute and
+    // a seeded ringing phone would be silent by the time anybody looked.
     $live = Trip::allTenants()
         ->where('driver_id', $driver->id)
-        ->where('status', TripStatus::ASSIGNED->value)
+        ->where('status', TripStatus::ACCEPTED->value)
         ->get();
 
     expect($live)->toHaveCount(1);
 
-    // Assigned offers accept and decline to a driver, which is the lifecycle's
-    // front door. A seeder that parked the trip in a terminal status would
-    // hand the tester a screen with no buttons on it.
-    expect(TripStatus::ASSIGNED->allowedTransitions())->toContain(TripStatus::ACCEPTED);
+    // The point the original assertion was making, at the status the trip
+    // now holds: the tester opens the app onto a job with something to press.
+    // A seeder that parked the trip in a terminal status would hand them a
+    // screen with no buttons on it.
+    expect(TripStatus::ACCEPTED->allowedTransitions())->toContain(TripStatus::DRIVER_EN_ROUTE);
 });
 
 it('seeds finished trips carrying both odometer readings', function () {

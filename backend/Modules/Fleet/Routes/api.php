@@ -8,6 +8,7 @@ use Modules\Fleet\Controllers\KangaruOverviewController;
 use Modules\Fleet\Controllers\OnDutyDriverController;
 use Modules\Fleet\Controllers\OperatorAccountController;
 use Modules\Fleet\Controllers\OperatorController;
+use Modules\Fleet\Controllers\OwnershipTransferController;
 use Modules\Fleet\Controllers\PlanController;
 use Modules\Fleet\Controllers\VehicleAllocationController;
 use Modules\Fleet\Controllers\ZoneController;
@@ -23,6 +24,16 @@ Route::get('operators', [OperatorController::class, 'index'])->name('operators.i
 Route::post('operators', [OperatorController::class, 'store'])->name('operators.store');
 Route::get('operators/{operator}', [OperatorController::class, 'show'])->name('operators.show');
 Route::patch('operators/{operator}', [OperatorController::class, 'update'])->name('operators.update');
+
+// A fleet changing hands (owner's decision, 24 August). Its own routes, not a
+// field on the PATCH above, because naming who owns a fleet is a different
+// act from correcting its name — and it is *pending*: the PUT sends an
+// invitation, the DELETE withdraws it, and nothing about the fleet changes
+// until the new owner sets a password on the public half (Routes/public.php).
+Route::put('operators/{operator}/owner', [OwnershipTransferController::class, 'propose'])
+    ->name('operators.owner.propose');
+Route::delete('operators/{operator}/owner', [OwnershipTransferController::class, 'withdraw'])
+    ->name('operators.owner.withdraw');
 
 // Who head office can act as at this fleet (ADR-0056). A person, never an
 // organisation — so Log in as needs somebody to name. Separate from

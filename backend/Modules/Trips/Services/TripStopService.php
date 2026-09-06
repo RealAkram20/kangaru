@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Modules\Clients\Models\ClientPlace;
 use Modules\Trips\Enums\TripStatus;
+use Modules\Trips\Enums\TripStopKind;
 use Modules\Trips\Enums\TripStopSource;
 use Modules\Trips\Enums\TripStopStatus;
 use Modules\Trips\Models\Trip;
@@ -51,11 +52,16 @@ class TripStopService
      *
      * @param  array<string, mixed>  $attributes
      */
-    public function add(Trip $trip, array $attributes, User $actor, TripStopSource $source): TripStop
-    {
+    public function add(
+        Trip $trip,
+        array $attributes,
+        ?User $actor,
+        TripStopSource $source,
+        TripStopKind $kind = TripStopKind::STOP,
+    ): TripStop {
         $place = $this->resolvePlace($trip, $attributes);
 
-        return DB::transaction(function () use ($trip, $attributes, $place, $source) {
+        return DB::transaction(function () use ($trip, $attributes, $place, $actor, $source, $kind) {
             // Serialises concurrent adds on one trip. The stops themselves
             // cannot be locked — a first add has no rows to lock.
             Trip::query()->withoutGlobalScopes()->whereKey($trip->getKey())->lockForUpdate()->first();
@@ -70,16 +76,118 @@ class TripStopService
                 'label' => $place->name ?? $attributes['label'],
                 'latitude' => $place->latitude ?? $attributes['latitude'] ?? null,
                 'longitude' => $place->longitude ?? $attributes['longitude'] ?? null,
+                'kind' => $kind,
                 'source' => $source,
+                // Null when a passenger asked. A `Customer` is its own
+                // authenticatable and is not a `users` row, so there is no id
+                // to store — and none is needed: `ADDED_BY_CLIENT` already
+                // says who, and the trip carries which passenger.
+                'added_by_user_id' => $actor?->id,
                 'status' => TripStopStatus::PENDING,
             ]);
 
-            if ($source === TripStopSource::ADDED_BY_DRIVER) {
+            if ($source === TripStopSource::ADDED_BY_DRIVER && $kind === TripStopKind::STOP) {
+                // **`kind` is in this condition on purpose.** §4's counter is
+                // "a note, not a charge", and an extension is a charge. A
+                // driver adding one must not raise a flag that the office
+                // reads as "departed from the plan without billing for it".
                 $trip->newQueryWithoutScopes()->whereKey($trip->getKey())->increment('unplanned_stop_count');
             }
 
             return $stop;
         });
+    }
+
+    /**
+     * Records that the passenger is going further than the drop-off they
+     * agreed to.
+     *
+     * ## Why this is not just `add()` with a different enum
+     *
+     * Because an extension has a consent question that a stop does not. A
+     * driver or a dispatcher adding one is recording a decision already
+     * taken — the passenger is in the car and has said where they now want to
+     * go. A *passenger* adding one is making a request: it changes where the
+     * driver is going and what they are owed, and the owner's answer to that
+     * was that the driver must accept it first.
+     *
+     * So the status is decided here rather than by the caller, from the one
+     * fact that determines it. `ADDED_BY_CLIENT` lands `PROPOSED`; everything
+     * else lands `PENDING` and is stamped accepted at the moment it is made,
+     * because the person who added it is the person whose agreement it needed.
+     *
+     * Everything downstream — `RouteReference`, the fare, the completion
+     * rule — reads `scopeAcceptedExtensions`, so a proposal costs nothing and
+     * changes nothing until it is answered.
+     *
+     * @param  array<string, mixed>  $attributes
+     */
+    public function addExtension(Trip $trip, array $attributes, ?User $actor, TripStopSource $source): TripStop
+    {
+        $proposal = $source === TripStopSource::ADDED_BY_CLIENT;
+
+        $stop = $this->add($trip, $attributes, $actor, $source, TripStopKind::EXTENSION);
+
+        $stop->forceFill([
+            'status' => $proposal ? TripStopStatus::PROPOSED : TripStopStatus::PENDING,
+            'accepted_at' => $proposal ? null : now(),
+        ])->save();
+
+        return $stop;
+    }
+
+    /**
+     * The driver agrees to carry a passenger's extension.
+     *
+     * Idempotent by way of the status filter rather than by checking and
+     * throwing: two taps on one Accept button, or a tap racing the poll that
+     * refreshed the screen, must not produce two answers to one request. A
+     * row that is no longer `PROPOSED` has already been answered, and the
+     * caller is told so it can show the driver what happened rather than
+     * silently appearing to succeed.
+     */
+    public function acceptExtension(Trip $trip, TripStop $stop, User $driver): TripStop
+    {
+        $answered = TripStop::query()->forTrip($trip)
+            ->whereKey($stop->getKey())
+            ->where('status', TripStopStatus::PROPOSED)
+            ->update(['status' => TripStopStatus::PENDING, 'accepted_at' => now()]);
+
+        if ($answered === 0) {
+            throw ValidationException::withMessages([
+                'stop' => 'That request has already been answered.',
+            ]);
+        }
+
+        return $stop->refresh();
+    }
+
+    /**
+     * The driver refuses one.
+     *
+     * `SKIPPED` with a reason, which is §6's existing answer for a row that
+     * was on the run and did not happen — there is no need for a second
+     * vocabulary. The row stays: a passenger asking to be taken somewhere and
+     * being refused is exactly the kind of thing the desk gets asked about,
+     * and deleting it would leave the office with nothing to look at.
+     */
+    public function declineExtension(Trip $trip, TripStop $stop, User $driver, ?string $reason): TripStop
+    {
+        $answered = TripStop::query()->forTrip($trip)
+            ->whereKey($stop->getKey())
+            ->where('status', TripStopStatus::PROPOSED)
+            ->update([
+                'status' => TripStopStatus::SKIPPED,
+                'skip_reason' => $reason ?? 'The driver could not take this extension.',
+            ]);
+
+        if ($answered === 0) {
+            throw ValidationException::withMessages([
+                'stop' => 'That request has already been answered.',
+            ]);
+        }
+
+        return $stop->refresh();
     }
 
     /**

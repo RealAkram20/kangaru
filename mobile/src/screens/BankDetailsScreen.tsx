@@ -19,6 +19,7 @@ import {
 } from '../wallet/payoutQueries';
 import { Button, Card, Field, Notice, Screen, ScreenHeader } from '../ui/components';
 import { BanknoteIcon, SmartphoneIcon } from '../ui/icons';
+import { SkeletonText } from '../ui/Skeleton';
 import { colors, radius, spacing, typography } from '../ui/theme';
 
 type Props = NativeStackScreenProps<ProfileStackParams, 'BankDetails'>;
@@ -227,20 +228,31 @@ export function BankDetailsScreen({ navigation }: Props) {
           ) : account === null || account === undefined ? (
             <Card>
               {/*
-                An empty state that says what to do, not "no data". A driver
-                reading this has probably just been told by the office that
-                they need it.
+                **An empty state and a loading state are different answers, and
+                this card used to give the first while meaning the second.** The
+                title flipped to "Loading…" inside a card otherwise shaped like
+                "the office has nothing for you" — so a driver waiting on their
+                payout details read, for as long as the request took, a screen
+                that appeared to say there were none.
+
+                Now the placeholder carries it: three fields' worth of prose
+                while the account is arriving, and the empty state only once the
+                answer is genuinely "none". The empty state below still says
+                what to do rather than "no data" — a driver reading it has
+                probably just been told by the office that they need it.
               */}
-              <Text style={styles.emptyTitle}>
-                {isLoading ? 'Loading…' : 'The office has no details for you'}
-              </Text>
-              {!isLoading && (
-                <Text style={styles.emptyBody}>
-                  Add a bank account or a mobile money number so the office knows where to send what
-                  you are owed.
-                </Text>
+              {isLoading ? (
+                <SkeletonText lines={3} />
+              ) : (
+                <>
+                  <Text style={styles.emptyTitle}>The office has no details for you</Text>
+                  <Text style={styles.emptyBody}>
+                    Add a bank account or a mobile money number so the office knows where to send
+                    what you are owed.
+                  </Text>
+                  <Button label="Add payout details" onPress={beginEdit} />
+                </>
               )}
-              {!isLoading && <Button label="Add payout details" onPress={beginEdit} />}
             </Card>
           ) : (
             <Card>

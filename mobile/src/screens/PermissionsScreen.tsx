@@ -50,13 +50,13 @@ type Props = NativeStackScreenProps<ProfileStackParams, 'Permissions'>;
  *
  * ## The rule it is built around, and the one thing it must never do
  *
- * **Two of the six cannot be read, and this screen does not pretend
- * otherwise.** `permissions.ts` argues it at length and
- * `fullScreenIntent.ts` argued it first: a "Not allowed" label that cannot be
- * verified would be wrong on every handset that had already granted it. Those
- * rows carry an action and no status word, and they are never counted in the
- * summary at the top — a driver whose phone is perfectly set up must not be
- * told that two things are broken every time they open this.
+ * **One of the six cannot be read, and this screen does not pretend
+ * otherwise.** `permissions.ts` argues it at length: the battery exemption
+ * has no readable state, so that row carries an action and no status word,
+ * and it is never counted in the summary at the top. The lock-screen row used
+ * to be the second such row; `modules/full-screen-intent` now reads it, so it
+ * shows "Allowed" or "Not allowed" like the rest — and still says nothing
+ * where it genuinely cannot know, rather than guessing.
  *
  * ## Why it re-reads on focus
  *

@@ -28,6 +28,24 @@ import './src/duty/PresenceTask';
  * an Accept button that works on a desk and does nothing on a lock screen.
  */
 import { registerOfferBackgroundHandler } from './src/push/offerBackgroundHandler';
+
+/*
+ * **The third thing on this path that must exist before React, and the newest.**
+ *
+ * `TaskManager.defineTask` inside `offerPushTask` runs on this import, at
+ * module scope, because the OS starts the app *into* the task when a push
+ * arrives at a process that is not running. That is the whole point of it: the
+ * call notification is built in JavaScript, so without something alive to build
+ * it a driver gets the server's plain push — no buttons, and a ring that plays
+ * once.
+ *
+ * Same warning as the two above, and it applies to both halves. Removing the
+ * import fails nothing and leaves a task that is registered and undefined;
+ * removing the `registerOfferPushTask()` call below fails nothing and leaves a
+ * task that is defined and never triggered. Either way the app works perfectly
+ * on a desk, where the process is always running.
+ */
+import { registerOfferPushTask } from './src/push/offerPushTask';
 import { enableFreeze } from 'react-native-screens';
 import * as Sentry from '@sentry/react-native';
 import { startObservability } from './src/observability';
@@ -62,6 +80,7 @@ startObservability();
 startTracing();
 
 registerOfferBackgroundHandler();
+registerOfferPushTask();
 
 /*
  * **`Sentry.wrap`, and it is not decoration.**

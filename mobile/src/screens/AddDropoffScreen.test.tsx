@@ -19,6 +19,7 @@ const METRICS = {
 
 // `mock` prefix required: Jest hoists the factories above these declarations.
 const mockAddTripStop = jest.fn(async () => ({}));
+const mockAddTripExtension = jest.fn(async () => ({}));
 const mockUseTrip = jest.fn();
 const mockUseCandidates = jest.fn();
 const mockUseSuggestions = jest.fn();
@@ -26,6 +27,7 @@ const mockInvalidate = jest.fn(async () => undefined);
 
 jest.mock('../api/endpoints', () => ({
   addTripStop: (...args: unknown[]) => mockAddTripStop(...(args as [])),
+  addTripExtension: (...args: unknown[]) => mockAddTripExtension(...(args as [])),
 }));
 
 jest.mock('../auth/AuthProvider', () => ({
@@ -93,6 +95,8 @@ beforeEach(() => {
   navigate.mockClear();
   goBack.mockClear();
   mockAddTripStop.mockClear();
+  mockAddTripExtension.mockClear();
+  mockAddTripExtension.mockResolvedValue({});
   mockAddTripStop.mockResolvedValue({});
   mockInvalidate.mockClear();
 });
@@ -243,4 +247,95 @@ it('shows no Suggestions heading when the geocoder has nothing', async () => {
   const { queryByText } = await renderAdd();
 
   expect(queryByText('Suggestions')).toBeNull();
+});
+
+/*
+  **Which of the two this screen sends, and why it is the whole point.**
+
+  Before 2026-08-28 it always appended a stop, and ADR-0045 §4 is explicit
+  that a stop is never billed. On a walk-in that was a live defect rather
+  than a missing feature: a passenger asking to be carried further produced
+  kilometres the reference route never drew, which `ROUTE_CAPPED` then capped
+  away — driven, and not paid for. The owner was shown the collision and
+  chose that a walk-in's mid-run place is an extension.
+
+  A corporate circuit is untouched. Its five ATMs are the route the client
+  contracted, and turning those into extensions would start charging for
+  them.
+*/
+
+it('bills a walk-in passenger who asks to go further', async () => {
+  const { getByPlaceholderText, getByLabelText } = await renderAdd(
+    {
+      id: 42,
+      tenant_id: null,
+      dropoff: { label: 'Wandegeya', latitude: null, longitude: null },
+    },
+    { data: [], isSuccess: true },
+  );
+
+  await fireEvent.changeText(getByPlaceholderText('Type the next drop-off'), 'Kabalagala');
+  void fireEvent.press(getByLabelText('Add Kabalagala as the next drop-off'));
+
+  await waitFor(() => expect(goBack).toHaveBeenCalled());
+
+  expect(mockAddTripExtension).toHaveBeenCalledWith({}, 42, { label: 'Kabalagala' });
+  expect(mockAddTripStop).not.toHaveBeenCalled();
+});
+
+it("leaves a corporate circuit's stops unbilled", async () => {
+  const { getByLabelText } = await renderAdd();
+
+  void fireEvent.press(getByLabelText('Add Ntinda ATM as the next drop-off'));
+
+  await waitFor(() => expect(goBack).toHaveBeenCalled());
+
+  expect(mockAddTripStop).toHaveBeenCalled();
+  expect(mockAddTripExtension).not.toHaveBeenCalled();
+});
+
+/*
+  **The toggle, which is the half an inference cannot do** (owner, 2026-08-28).
+
+  The trip kind gives the right default almost every time, and "almost" is the
+  problem: a walk-in passenger sometimes asks the car to wait somewhere on the
+  way, and a corporate driver sometimes genuinely carries somebody past the
+  contracted route. Only the person in the car knows, and getting it wrong is
+  money in both directions — an unbilled extension the driver covers, or a
+  client charged for a stop they contracted.
+*/
+
+it('lets the driver bill a corporate trip they really did extend', async () => {
+  const { getByLabelText } = await renderAdd();
+
+  // Defaulted to a stop, because it is a circuit — then corrected.
+  await fireEvent.press(getByLabelText('Extension'));
+  void fireEvent.press(getByLabelText('Add Ntinda ATM as the next drop-off'));
+
+  await waitFor(() => expect(goBack).toHaveBeenCalled());
+
+  expect(mockAddTripExtension).toHaveBeenCalled();
+  expect(mockAddTripStop).not.toHaveBeenCalled();
+});
+
+it('lets the driver record an unbilled pause on a walk-in', async () => {
+  const { getByPlaceholderText, getByLabelText } = await renderAdd(
+    {
+      id: 42,
+      tenant_id: null,
+      dropoff: { label: 'Wandegeya', latitude: null, longitude: null },
+    },
+    { data: [], isSuccess: true },
+  );
+
+  // Defaulted to an extension, because it is a walk-in — then corrected.
+  await fireEvent.press(getByLabelText('Drop-off'));
+
+  await fireEvent.changeText(getByPlaceholderText('Type the next drop-off'), 'Chemist');
+  void fireEvent.press(getByLabelText('Add Chemist as the next drop-off'));
+
+  await waitFor(() => expect(goBack).toHaveBeenCalled());
+
+  expect(mockAddTripStop).toHaveBeenCalledWith({}, 42, { label: 'Chemist' });
+  expect(mockAddTripExtension).not.toHaveBeenCalled();
 });

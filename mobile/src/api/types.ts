@@ -103,16 +103,31 @@ export type TripStop = {
   label: string;
   latitude: number | null;
   longitude: number | null;
+  /**
+   * Whether this row paused the journey or moved its end.
+   *
+   * A `stop` is ADR-0045 §4's subject — recorded, shown, never billed. An
+   * `extension` is the passenger travelling past the drop-off they agreed
+   * to: the reference route is drawn through it and the fare follows the
+   * longer distance. A screen that rendered the two alike would be showing a
+   * passenger a fare it could not point at.
+   */
+  kind: 'stop' | 'extension';
   /** Who put it on the run. Only `added_by_driver` counts as unplanned. */
   source: 'planned' | 'added_by_driver' | 'added_by_dispatch' | 'added_by_client';
   /**
    * Moved only by the transitions §2 reuses: the pause that carries a
    * `stop_id` marks `arrived`, the resume marks `done`. `skipped` is §6's
-   * case and no surface writes it yet.
+   * case, and is also where a declined extension lands.
+   *
+   * `proposed` appears on extensions alone: a passenger has asked and the
+   * driver has not answered. Nothing is routed through or billed for one.
    */
-  status: 'pending' | 'arrived' | 'done' | 'skipped';
+  status: 'proposed' | 'pending' | 'arrived' | 'done' | 'skipped';
   arrived_at: string | null;
   departed_at: string | null;
+  /** When the driver agreed. Null on a proposal and on every ordinary stop. */
+  accepted_at: string | null;
   skip_reason: string | null;
   client_place_id: number | null;
 };
@@ -379,6 +394,15 @@ export type Trip = {
    * never a charge — the client sees the run deviated; nobody bills for it.
    */
   unplanned_stop_count: number;
+  /**
+   * When the vehicle reached the destination the trip was agreed for.
+   *
+   * Null until it does, and on every trip that simply ended there — arriving
+   * and finishing were one act until extensions separated them. The screen
+   * reads it to know which half of the journey it is rendering, and the map
+   * routes to the agreed drop-off before it is set.
+   */
+  dropoff_reached_at: string | null;
   /**
    * `ride`, `delivery` or `self_drive` — what kind of job this was.
    *
@@ -671,6 +695,37 @@ export type DispatchOffer = {
   dropoff: OfferPlace;
   service_type: string | null;
   reference: string | null;
+  /**
+   * The client this job belongs to, on a desk assignment (ADR-0068).
+   *
+   * Null on a walk-in, which belongs to no client — so its presence is also
+   * how the screen tells the two kinds of offer apart, and it does not need
+   * a second flag to do it.
+   *
+   * A company name, never a passenger's: ADR-0024 §7 withholds who is
+   * travelling until the driver has accepted, and that applies to both
+   * channels equally.
+   */
+  client: string | null;
+  /**
+   * When the desk booked this for, on a desk assignment. Null on a walk-in,
+   * which is always now.
+   *
+   * The single fact that decides whether a driver can say yes — accepting
+   * "now" and accepting "Tuesday at four" are different answers to the same
+   * ringing phone.
+   */
+  scheduled_for: string | null;
+  /**
+   * The same moment, already written out in the fleet's timezone.
+   *
+   * **Render this, never `scheduled_for`.** `trips/history.ts` records the
+   * reason at length: the server runs in UTC so an hour computed here rolls
+   * at the wrong moment, and Hermes ships an `Intl` whose locale data varies
+   * by platform and build — two phones in one fleet would show one job at two
+   * different times.
+   */
+  scheduled_for_label: string | null;
   /**
    * How far the driver is from the pickup. Straight-line, not road distance
    * — a ranking, not a promised ETA.

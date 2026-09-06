@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Clients\Controllers\ClientAccountController;
 use Modules\Clients\Controllers\ClientFleetController;
 use Modules\Clients\Controllers\ClientLookupController;
 use Modules\Clients\Controllers\ClientPlaceController;
@@ -31,6 +32,13 @@ Route::delete('contracts/{contract}', [ContractController::class, 'destroy'])->n
 
 Route::apiResource('companies', CompanyController::class)->except(['update']);
 Route::patch('companies/{company}', [CompanyController::class, 'update'])->name('companies.update');
+
+// Who head office can act as at this client (ADR-0056). Its own route rather
+// than a field on `CompanyResource`, for the reason `OperatorAccountController`
+// gives about the fleet twin: that resource is deliberately thin (ADR-0062),
+// and the easiest way to breach a line like that is one more useful field.
+Route::get('companies/{company}/accounts', [ClientAccountController::class, 'index'])
+    ->name('companies.accounts.index');
 
 // Which fleets serve a client (owner's decision, 24 August). Its own route
 // rather than a field on the PATCH above: editing a client's city and ending

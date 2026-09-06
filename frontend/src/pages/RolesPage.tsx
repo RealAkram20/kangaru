@@ -10,12 +10,46 @@ import { EmptyState } from '../components/feedback/EmptyState'
 import { Checkbox } from '../components/forms/Checkbox'
 import { FormField } from '../components/forms/FormField'
 import { Input } from '../components/forms/Input'
+import { Select } from '../components/forms/Select'
 import { Switch } from '../components/forms/Switch'
 import { PageFill } from '../components/layout/PageFill'
 import { apiClient } from '../lib/apiClient'
 import { apiError, fieldErrors } from '../lib/apiError'
 import type { ApiSuccess } from '../types/api'
-import type { Role, RolesMeta } from '../types/role'
+import type { AudienceOption, Role, RoleAudience, RolesMeta } from '../types/role'
+
+/**
+ * How each audience is drawn.
+ *
+ * Tone helps the eye group a long catalogue; the badge always carries the
+ * word, so nothing here is meaning conveyed by colour alone. Icons are
+ * borrowed from the menu's own vocabulary — a fleet is a truck, a client is a
+ * briefcase — so the same thing looks the same in both places.
+ */
+const AUDIENCE_TONE: Record<RoleAudience, 'brand' | 'info' | 'neutral'> = {
+  kangaru: 'brand',
+  fleet: 'info',
+  client: 'neutral',
+}
+
+const AUDIENCE_ICON: Record<RoleAudience, string> = {
+  kangaru: 'shield-check',
+  fleet: 'truck',
+  client: 'briefcase',
+}
+
+/**
+ * The fallback picker, for an API older than the audience column.
+ *
+ * The server sends `meta.audiences` and that is the list the screen shows;
+ * this exists so the filter still renders three sensible options rather than
+ * one, and never so the screen learns to build the list itself.
+ */
+const AUDIENCE_FALLBACK: AudienceOption[] = [
+  { value: 'kangaru', label: 'Kangaru' },
+  { value: 'fleet', label: 'Fleet' },
+  { value: 'client', label: 'Client' },
+]
 
 async function fetchRoles(): Promise<{ roles: Role[]; meta: RolesMeta | null }> {
   const response = await apiClient.get<ApiSuccess<Role[], RolesMeta>>('/roles')
@@ -58,6 +92,7 @@ export function RolesPage() {
   const [refused, setRefused] = useState(false)
   const [editing, setEditing] = useState<Role | 'new' | null>(null)
   const [deleting, setDeleting] = useState<Role | null>(null)
+  const [audience, setAudience] = useState<RoleAudience | 'all'>('all')
 
   const apply = useCallback((result: { roles: Role[]; meta: RolesMeta | null }) => {
     setRoles(result.roles)
@@ -90,9 +125,14 @@ export function RolesPage() {
   }, [load])
 
   const canManage = meta?.can_manage ?? false
+  const audienceOptions = meta?.audiences ?? AUDIENCE_FALLBACK
   const mfaEnforced = meta?.mfa_enforced ?? true
 
-  const rows = useMemo(() => (roles ?? []).map((role) => ({ ...role, id: role.slug })), [roles])
+  const rows = useMemo(() => {
+    const all = (roles ?? []).map((role) => ({ ...role, id: role.slug }))
+
+    return audience === 'all' ? all : all.filter((role) => role.audience === audience)
+  }, [roles, audience])
 
   const columns = useMemo<DataColumn<(typeof rows)[number]>[]>(
     () => [
@@ -141,6 +181,23 @@ export function RolesPage() {
               Custom
             </Badge>
           ),
+      },
+      {
+        key: 'audience',
+        card: 'meta',
+        header: 'For',
+        // Which kind of account the role was written for. A fleet owner is
+        // never offered a client's role and vice versa, and the server is
+        // what enforces that — this column is so the person composing the
+        // catalogue can see the answer without opening each row.
+        //
+        // Tone aids scanning; the word carries the meaning, so the badge
+        // still reads correctly in monochrome (WCAG AA, DESIGN.md).
+        render: (row) => (
+          <Badge tone={AUDIENCE_TONE[row.audience]} icon={AUDIENCE_ICON[row.audience]} size="sm">
+            {row.audience_label}
+          </Badge>
+        ),
       },
       {
         key: 'permissions',
@@ -235,11 +292,28 @@ export function RolesPage() {
         }
         padding="none"
         actions={
-          canManage ? (
-            <Button iconLeft="plus" onClick={() => setEditing('new')}>
-              New role
-            </Button>
-          ) : undefined
+          <>
+            {/* Client-side: the catalogue is ten-odd rows and already loaded,
+                so a round-trip per filter change would buy nothing. */}
+            <Select
+              aria-label="Filter roles by the kind of account they are for"
+              value={audience}
+              onChange={(e) => setAudience(e.target.value as RoleAudience | 'all')}
+              options={[
+                { value: 'all', label: 'All accounts' },
+                ...audienceOptions.map((option) => ({
+                  value: option.value,
+                  label: option.label,
+                })),
+              ]}
+              style={{ width: 180 }}
+            />
+            {canManage && (
+              <Button iconLeft="plus" onClick={() => setEditing('new')}>
+                New role
+              </Button>
+            )}
+          </>
         }
       >
         <DataTable
@@ -304,6 +378,7 @@ function RoleDialog({
   const [name, setName] = useState(role?.name ?? '')
   const [slug, setSlug] = useState('')
   const [description, setDescription] = useState(role?.description ?? '')
+  const [audience, setAudience] = useState<RoleAudience>(role?.audience ?? 'fleet')
   // ADR-0061. Defaults to what the role already says; a new role starts
   // without the requirement, which is the same direction `RoleSeeder`
   // takes for anything it did not name explicitly.
@@ -335,6 +410,10 @@ function RoleDialog({
           // name, and an empty string would fail the slug pattern.
           ...(slug.trim() === '' ? {} : { slug: slug.trim() }),
           description: description.trim() === '' ? null : description,
+          // Head office only. Everybody else composes for their own level and
+          // the server decides that from the actor — sending the field would
+          // be refused, and the control is not rendered for them either.
+          ...(meta.can_manage_audience ? { audience } : {}),
           permissions: selected,
         })
       } else {
@@ -342,6 +421,7 @@ function RoleDialog({
         // sent — PATCH carries only what may actually change.
         await apiClient.patch(`/roles/${role.slug}`, {
           ...(meta.can_manage_mfa ? { requires_mfa: requiresMfa } : {}),
+          ...(meta.can_manage_audience ? { audience } : {}),
           ...(role.is_system ? {} : { name }),
           description: description.trim() === '' ? null : description,
           permissions: selected,
@@ -418,6 +498,34 @@ function RoleDialog({
             disabled={readOnly || (!isNew && role.is_system)}
           />
         </FormField>
+
+        {/* Which kind of account this role is for. Head office's decision:
+            moving a role between audiences changes what appears in another
+            organisation's picker. Everybody else composes for their own level,
+            and a control that always refused would be a trap rather than a
+            rule — so it renders as a read-only row instead. */}
+        {meta.can_manage_audience ? (
+          <FormField label="For" htmlFor="r-audience" required={!readOnly} error={errors.audience}>
+            <Select
+              id="r-audience"
+              value={audience}
+              onChange={(e) => setAudience(e.target.value as RoleAudience)}
+              disabled={readOnly}
+              options={(meta.audiences ?? AUDIENCE_FALLBACK).map((option) => ({
+                value: option.value,
+                label: option.label,
+              }))}
+            />
+          </FormField>
+        ) : (
+          !isNew && (
+            <FormField label="For">
+              <Badge tone={AUDIENCE_TONE[role.audience]} icon={AUDIENCE_ICON[role.audience]}>
+                {role.audience_label}
+              </Badge>
+            </FormField>
+          )
+        )}
 
         {isNew && (
           <FormField

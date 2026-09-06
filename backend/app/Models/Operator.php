@@ -5,7 +5,9 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Modules\Drivers\Models\Driver;
+use Modules\Fleet\Models\OwnershipTransfer;
 use Modules\Vehicles\Models\Vehicle;
 use RuntimeException;
 
@@ -38,6 +40,7 @@ use RuntimeException;
  * @property string $name
  * @property string $slug
  * @property string $status
+ * @property bool $is_main_fleet
  * @property int $plan_id
  */
 class Operator extends Model
@@ -111,6 +114,40 @@ class Operator extends Model
     ];
 
     /**
+     * Deliberately **not** fillable.
+     *
+     * Being the main fleet is the right to take any client's corporate work
+     * without contracting for it, and the docblock at the top of this class
+     * says mass assignment is not the risk here — a second row is. This is the
+     * exception: a fleet that could set the flag on itself through whatever
+     * endpoint eventually creates fleets would be granting itself the house's
+     * standing. It is set by migration, and changed by somebody looking at the
+     * database on purpose.
+     *
+     * @var array<string, string>
+     */
+    protected $casts = [
+        'is_main_fleet' => 'boolean',
+    ];
+
+    /**
+     * Whether this fleet may take corporate work it holds no contract for.
+     *
+     * The owner's rule, 29 August 2026: the house fleet serves both walk-ins
+     * and every corporate client; a fleet that joined to serve one client
+     * contracts for the work. Read by `DispatchRecommender::offerableFor`,
+     * which is the only place that commits a booking to a vehicle on its own.
+     *
+     * A method rather than reading the column at the call site, so the
+     * question is asked in the platform's own words and there is one place to
+     * change if being the house ever means more than one column.
+     */
+    public function isMainFleet(): bool
+    {
+        return $this->is_main_fleet;
+    }
+
+    /**
      * Staff and drivers both. A driver is a `users` row with
      * `access_level = 'fleet'` like a dispatcher is — the three demo drivers
      * being null-client accounts is what made ADR-0055 §4's hazard real.
@@ -149,6 +186,22 @@ class Operator extends Model
     public function vehicles(): HasMany
     {
         return $this->hasMany(Vehicle::class);
+    }
+
+    /**
+     * The handover nobody has confirmed yet, if there is one.
+     *
+     * `whereNull('accepted_at')` and nothing about expiry: a lapsed proposal
+     * still renders on the record page — with its date visibly in the past —
+     * because "it expired and nobody noticed" is exactly what head office
+     * needs to see to send a fresh one. A completed transfer stops being
+     * pending the moment it completes.
+     *
+     * @return HasOne<OwnershipTransfer, $this>
+     */
+    public function pendingOwnershipTransfer(): HasOne
+    {
+        return $this->hasOne(OwnershipTransfer::class)->whereNull('accepted_at');
     }
 
     /**

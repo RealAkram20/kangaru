@@ -921,7 +921,85 @@ export function Empty({ message }: { message: string }) {
   );
 }
 
+
+/**
+ * A two-or-three-way choice, as tabs.
+ *
+ * Shared because it is now the second one: `EarningsScreen`'s Day / Week /
+ * Month has carried this exact shape since it was built, and AGENTS.md's rule
+ * is that the second occurrence becomes the component. `PeriodTabs` is not
+ * refactored onto this here — it belongs to another agent's screen and a
+ * rewrite is not a minimal diff — but it should adopt this when somebody is
+ * next in that file.
+ *
+ * `accessibilityRole="tab"` with a selected state rather than N buttons, so a
+ * screen reader says "Extension, tab, 2 of 2, selected" instead of reading
+ * two unrelated controls. The selection is a fill **and** the selected state,
+ * never colour alone (DESIGN.md §8).
+ */
+export function SegmentedTabs<T extends string>({
+  options,
+  value,
+  onChange,
+  label,
+}: {
+  options: readonly { value: T; label: string }[];
+  value: T;
+  onChange: (next: T) => void;
+  /** Names the choice itself, for the screen reader that meets the group. */
+  label: string;
+}) {
+  return (
+    <View style={styles.tabs} accessibilityRole="tablist" accessibilityLabel={label}>
+      {options.map((option) => {
+        const selected = option.value === value;
+
+        return (
+          <Pressable
+            key={option.value}
+            accessibilityRole="tab"
+            accessibilityState={{ selected }}
+            accessibilityLabel={option.label}
+            onPress={() => onChange(option.value)}
+            style={[styles.tab, selected && styles.tabSelected]}
+          >
+            <Text style={[styles.tabLabel, selected && styles.tabLabelSelected]}>
+              {option.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
 const styles = StyleSheet.create({
+  tabs: {
+    flexDirection: 'row',
+    backgroundColor: colors.surfaceSunken,
+    borderRadius: radius.pill,
+    padding: spacing.xs,
+    gap: spacing.xs,
+  },
+  tab: {
+    flex: 1,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.pill,
+  },
+  tabSelected: {
+    // `primaryCta`, not `primary`: white on `primary` is 4.15:1 and fails AA
+    // for a label this size. `theme.ts` says so in as many words.
+    backgroundColor: colors.primaryCta,
+  },
+  tabLabel: {
+    ...typography.label,
+    fontSize: 16,
+    color: colors.textBody,
+  },
+  tabLabelSelected: {
+    color: colors.onPrimary,
+  },
   screen: {
     flex: 1,
     backgroundColor: colors.background,

@@ -1,5 +1,6 @@
 import { useMemo, useState, type HTMLAttributes, type ReactNode } from 'react'
 import { Icon } from '../core/Icon'
+import { Checkbox } from '../forms/Checkbox'
 import { useIsCompact } from '../../lib/useMediaQuery'
 import { DataCards } from './DataCards'
 import './dataTable.css'
@@ -96,6 +97,26 @@ export interface DataTableProps<T extends { id?: string | number }> extends HTML
    * table scrolling inside some other bounded box.
    */
   stickyHeader?: boolean
+  /**
+   * The ids currently ticked, when this table offers selection.
+   *
+   * Selection is **opt-in and controlled**: passing this (with `onSelectionChange`)
+   * grows a checkbox column at the head of every row and a select-all in the
+   * heading. Omit both and the table renders exactly as it always did, which
+   * is why this could be added without touching the pages that do not want it.
+   *
+   * Controlled rather than internal state, because the thing that acts on a
+   * selection — a delete bar, a count in a dialog — lives outside the table
+   * and has to clear it after the action.
+   *
+   * **Only in the table.** Below the compact breakpoint a row is a card, and
+   * a card with a checkbox is a different design question than this component
+   * should answer on its own; a page offering bulk actions has to say what it
+   * does on a phone. `VehiclesPage` hides its delete bar there.
+   */
+  selectedIds?: Array<string | number>
+  /** Called with the next selection. Required for selection to appear. */
+  onSelectionChange?: (ids: Array<string | number>) => void
 }
 
 /**
@@ -113,6 +134,8 @@ export function DataTable<T extends { id?: string | number }>({
   emptyMessage = 'No records',
   fill = false,
   stickyHeader = fill,
+  selectedIds,
+  onSelectionChange,
   style,
   className,
   ...rest
@@ -142,6 +165,44 @@ export function DataTable<T extends { id?: string | number }>({
       return String(left).localeCompare(String(right)) * dir
     })
   }, [rows, sort, columns])
+
+  /*
+    Selection is offered only when the caller supplies both halves. Asking
+    for `onSelectionChange` too means a table cannot end up with checkboxes that
+    change nothing — the shape of a control that looks live and is not.
+  */
+  const selectable = selectedIds !== undefined && onSelectionChange !== undefined
+  const ticked = useMemo(() => new Set(selectedIds ?? []), [selectedIds])
+
+  /*
+    The rows a select-all takes: the ones this table was handed, and only
+    those. A page that filters its list filters `rows`, so "all" means **what
+    is on screen** — a select-all reaching past the filter is how a bulk
+    action deletes something its operator never saw. `VehiclesPage` proves it
+    from the other side, by filtering the table and counting the selection.
+
+    A row without an `id` cannot be selected because there is nothing to send
+    for it; that is the only exclusion. Whether a vehicle may actually be
+    deleted is the server's answer, not this table's — the client has no field
+    telling it which vehicle is out on a job — so the refusal arrives as a
+    named list after the attempt rather than as a greyed-out checkbox here.
+  */
+  const selectableRows = useMemo(
+    () => (selectable ? sorted.filter((row) => row.id !== undefined) : []),
+    [selectable, sorted],
+  )
+
+  const allTicked = selectableRows.length > 0 && selectableRows.every((row) => ticked.has(row.id!))
+  const someTicked = selectableRows.some((row) => ticked.has(row.id!))
+
+  const toggleRow = (id: string | number) => {
+    const next = new Set(ticked)
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- a set toggle reads better than an if/else here
+    next.has(id) ? next.delete(id) : next.add(id)
+
+    onSelectionChange?.([...next])
+  }
 
   /*
     Below the breakpoint this is not a table at all.
@@ -193,6 +254,25 @@ export function DataTable<T extends { id?: string | number }>({
       <table style={{ width: '100%', borderCollapse: 'collapse', font: 'var(--type-body-dense)' }}>
         <thead>
           <tr style={{ background: 'var(--surface-sunken)' }}>
+            {selectable && (
+              <th style={{ ...selectCellStyle(pad, stickyHeader), width: 1 }}>
+                {/*
+                  Select-all covers **this table**, not "every record matching
+                  the filter" — there is no such thing here, and a control that
+                  silently reaches beyond what is on screen is how a bulk action
+                  deletes something nobody looked at.
+                */}
+                <Checkbox
+                  aria-label={allTicked ? 'Clear selection' : 'Select all rows'}
+                  checked={allTicked}
+                  indeterminate={!allTicked && someTicked}
+                  disabled={selectableRows.length === 0}
+                  onChange={() =>
+                    onSelectionChange?.(allTicked ? [] : selectableRows.map((row) => row.id!))
+                  }
+                />
+              </th>
+            )}
             {columns.map((c) => (
               <th
                 key={c.id ?? c.key}
@@ -255,7 +335,7 @@ export function DataTable<T extends { id?: string | number }>({
           {sorted.length === 0 && (
             <tr>
               <td
-                colSpan={columns.length}
+                colSpan={columns.length + (selectable ? 1 : 0)}
                 style={{ padding: 'var(--space-10)', textAlign: 'center', color: 'var(--text-secondary)' }}
               >
                 {emptyMessage}
@@ -274,6 +354,24 @@ export function DataTable<T extends { id?: string | number }>({
                 transition: 'background-color var(--dur-fast) var(--ease-standard)',
               }}
             >
+              {selectable && (
+                <td
+                  style={{
+                    padding: pad,
+                    borderBottom: '1px solid var(--border-default)',
+                    width: 1,
+                  }}
+                  /* The tick must not also open the row. */
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <Checkbox
+                    aria-label={`Select ${String(row[columns[0]?.key as keyof T] ?? row.id)}`}
+                    checked={row.id !== undefined && ticked.has(row.id)}
+                    disabled={row.id === undefined}
+                    onChange={() => row.id !== undefined && toggleRow(row.id)}
+                  />
+                </td>
+              )}
               {columns.map((c) => (
                 <td
                   key={c.id ?? c.key}
@@ -296,4 +394,24 @@ export function DataTable<T extends { id?: string | number }>({
       </table>
     </div>
   )
+}
+
+/**
+ * The heading cell's own styling, shared by the select-all so it sits on the
+ * same rule and sticks with the rest of the row rather than scrolling out
+ * from under it. The reasoning for the inset shadow is on the column heading.
+ */
+function selectCellStyle(pad: string, stickyHeader: boolean) {
+  return {
+    padding: pad,
+    ...(stickyHeader
+      ? {
+          position: 'sticky' as const,
+          top: 0,
+          background: 'var(--surface-sunken)',
+          zIndex: 1,
+          boxShadow: 'inset 0 -1px 0 var(--border-default)',
+        }
+      : { borderBottom: '1px solid var(--border-default)' }),
+  }
 }

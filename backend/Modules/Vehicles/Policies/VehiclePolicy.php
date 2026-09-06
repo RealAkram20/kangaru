@@ -41,6 +41,24 @@ class VehiclePolicy
     }
 
     /**
+     * May this user delete vehicles at all — the class-level half of `delete`.
+     *
+     * The bulk endpoint cannot use `delete()`: that one takes a `Vehicle`, and
+     * loading a batch by raw id *before* scoping them to the actor's fleet is
+     * precisely the shape of the leak the comment below records. So the
+     * permission is asked here, and ownership is enforced by building the batch
+     * from `Vehicle::forActor()` — the same scope the listing goes through.
+     *
+     * Not a weaker rule than `delete`, and it must never become one: whoever
+     * adds a per-vehicle condition to `delete` has to decide what it means for
+     * a batch, because this method will not inherit it.
+     */
+    public function deleteAny(User $user): bool
+    {
+        return $this->create($user);
+    }
+
+    /**
      * Whose vehicle it is — the question all three methods above discarded.
      *
      * Every one of them took a `Vehicle` and ignored it: `view` deferred to

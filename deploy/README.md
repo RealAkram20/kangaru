@@ -74,6 +74,36 @@ routes, events and views at start (`10-kangaruride-optimize.sh`).
 5. **Prove it** — §3. Do not skip this; a default deploy that runs only
    `app` looks perfectly healthy.
 
+### 2b · Deploying by hand on the owner's server
+
+The live stack at `/opt/kangaruride` is **not** managed by Coolify's UI —
+Coolify runs on the box but owns a different project, and its Traefik is
+shared. So the Traefik labels Coolify would write itself come from
+`deploy/docker-compose.proxy.yml`, and OSRM from `deploy/docker-compose.osrm.yml`.
+Every deploy is therefore this, and only this:
+
+```sh
+docker exec kangaruride-backup-1 /bin/bash /opt/kangaruride/backup.sh --once
+git fetch origin <branch> && git checkout --detach <sha>
+sed -i "s/^SOURCE_COMMIT=.*/SOURCE_COMMIT=<sha>/" .env
+docker compose -f docker-compose.yml -f deploy/docker-compose.proxy.yml -f deploy/docker-compose.osrm.yml up -d --build
+```
+
+**A bare `docker compose up` takes both domains down.** On 2026-09-06 it
+recreated `app` and `web` with no labels; every healthcheck stayed green
+while Traefik answered 503 and Cloudflare relayed it, for about six minutes.
+The images already exist for the SHA, so the recovery is the same command
+without `--build`. Prove the labels before proving anything else:
+
+```sh
+docker inspect kangaruride-app-1 --format '{{json .Config.Labels}}' | tr ',' '
+' | grep -c traefik   # 14
+docker inspect kangaruride-web-1 --format '{{json .Config.Labels}}' | tr ',' '
+' | grep -c traefik   # 12
+```
+
+then §3. Rollback is the same four lines with the previous SHA.
+
 ---
 
 ## 3 · Is it actually running?

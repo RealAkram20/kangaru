@@ -172,6 +172,24 @@ enum ErrorCode: string
     case DRIVER_ACCOUNT_CONFLICT = 'DRIVER_ACCOUNT_CONFLICT';
 
     /**
+     * The address named for a fleet handover belongs to an account that may
+     * not take the fleet over — another fleet's staff, a client's, or head
+     * office (ADR-0065).
+     *
+     * An account that is *free to move* — a driver applicant, or somebody
+     * already at this fleet — is promoted instead, so this is only ever the
+     * cross-organisation case. 409 for the reason the codes around it are:
+     * the request is well formed and it is the world that disagrees, and the
+     * fix is another address rather than an edited field.
+     *
+     * **Separate from `INVITATION_EXPIRED`, which it used to be reported as.**
+     * The two send the reader to different places — one waits for a new link,
+     * the other needs a different address — and collapsing them told an
+     * incoming fleet owner that a four-hour-old link had lapsed.
+     */
+    case OWNER_ADDRESS_IN_USE = 'OWNER_ADDRESS_IN_USE';
+
+    /**
      * Somebody already approved or rejected this driver application
      * (ADR-0027 §4). 409 for the same reason as the two codes either side
      * of it: the request is well formed and the world has moved, and the

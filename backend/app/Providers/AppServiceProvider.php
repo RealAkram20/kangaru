@@ -53,6 +53,7 @@ use Modules\Clients\Policies\ClientRoutePolicy;
 use Modules\Clients\Policies\CompanyPolicy;
 use Modules\Clients\Policies\OperatorClientPolicy;
 use Modules\Customers\Policies\CustomerPolicy;
+use Modules\Dispatch\Listeners\OfferApprovedBookingToDrivers;
 use Modules\Dispatch\Models\DispatchOffer;
 use Modules\Drivers\Listeners\CreditDriverForCompletedTrip;
 use Modules\Drivers\Listeners\QualifyReferralForCompletedTrip;
@@ -377,6 +378,12 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(TripCompleted::class, ScheduleDistanceResolution::class);
 
         Event::listen(BookingApproved::class, [SendBookingDecisionNotification::class, 'approved']);
+
+        // An approved booking looks for a driver by itself, instead of
+        // waiting on the board for somebody to assign one. Behind
+        // `dispatch.booking_auto_offer`; the listener records why it is an
+        // offer wave rather than `autoAssign`.
+        Event::listen(BookingApproved::class, OfferApprovedBookingToDrivers::class);
         Event::listen(BookingRejected::class, [SendBookingDecisionNotification::class, 'rejected']);
         // The requester of a corporate booking hears when their car is
         // assigned, when the driver arrives, and when the trip completes.
