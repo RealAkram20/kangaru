@@ -2,15 +2,18 @@
 
 namespace Modules\Administration\Controllers;
 
+use App\Enums\AccessLevel;
 use App\Enums\ErrorCode;
 use App\Http\Controllers\Controller;
+use App\Models\User;
 use App\Support\Api\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Validator;
 use Modules\Administration\Models\Setting;
 use Modules\Administration\Services\SettingsService;
+use Modules\Notifications\Mail\MailContent;
+use Modules\Notifications\Mail\MailRenderer;
 use Throwable;
 
 /**
@@ -40,6 +43,28 @@ class SettingsController extends Controller
         $catalogue = SettingsService::catalogue()[$group] ?? null;
 
         if ($catalogue === null) {
+            return ApiResponse::error(
+                ErrorCode::NOT_FOUND,
+                'The requested resource could not be found.',
+                [],
+                404,
+            );
+        }
+
+        // ADR-0059. Four groups are Kangaru's copy of itself — its name, its
+        // legal notices, its public order page, and how people sign in — and
+        // a fleet has no business in any of them.
+        //
+        // A 404 rather than a 403, matching the unknown-group branch above and
+        // the menu's own stance: at this level the group **does not exist**,
+        // which is the difference between a locked door and no door. Telling a
+        // fleet "forbidden" would confirm there is a platform-branding surface
+        // to go looking for.
+        /** @var User $actor */
+        $actor = $request->user();
+
+        if (in_array($group, SettingsService::KANGARU_ONLY_GROUPS, true)
+            && $actor->access_level !== AccessLevel::KANGARU) {
             return ApiResponse::error(
                 ErrorCode::NOT_FOUND,
                 'The requested resource could not be found.',
@@ -79,9 +104,7 @@ class SettingsController extends Controller
 
         $validated = $request->validate(['to' => ['nullable', 'email']]);
 
-        $mail = $this->settings->all()['mail'];
-
-        if ($mail['enabled'] !== true || blank($mail['host']) || blank($mail['from_address'])) {
+        if (! $this->settings->mailConfigured()) {
             return ApiResponse::error(
                 ErrorCode::VALIDATION_FAILED,
                 'Fill in and save the mail settings first: at least host and from address, with mail enabled.',
@@ -93,22 +116,48 @@ class SettingsController extends Controller
         $to = $validated['to'] ?? $this->settings->get('branding', 'contact_email');
 
         try {
-            Mail::build([
-                'transport' => 'smtp',
-                'host' => $mail['host'],
-                'port' => $mail['port'],
-                'username' => $mail['username'] ?: null,
-                'password' => $this->settings->secret('mail', 'password'),
-                'encryption' => $mail['encryption'] === 'tls' ? 'tls' : null,
-                'timeout' => 10,
-            ])->raw(
-                'This is a test email from your KangaruRide platform settings. If you are reading it, SMTP is configured correctly.',
-                function ($message) use ($mail, $to) {
-                    $message->to($to)
-                        ->from($mail['from_address'], $mail['from_name'] ?: null)
-                        ->subject('KangaruRide test email');
-                },
+            // The same mailer every real send uses (the reset codes of
+            // ADR-0028 among them) — so a green test here vouches for the
+            // path that matters, not for a lookalike.
+            ['mailer' => $mailer, 'from_address' => $from, 'from_name' => $fromName] =
+                $this->settings->smtpMailer();
+
+            $renderer = app(MailRenderer::class);
+            $appName = $renderer->appName();
+
+            /*
+             * The real template, not a line of raw text.
+             *
+             * The point of a test send is to answer "will the emails this
+             * platform sends arrive and look right", and a plain-text probe
+             * answers only the first half. A branded template can fail on its
+             * own terms — a logo path that 404s, a client that mangles the
+             * layout, a dark-mode inversion that hides the button — and none
+             * of that shows up in a message that has none of those things in
+             * it.
+             */
+            $content = new MailContent(
+                subject: __('mail.test.subject', ['app' => $appName]),
+                heading: __('mail.test.heading'),
+                paragraphs: [__('mail.test.body')],
+                facts: [
+                    __('mail.test.fact_host') => (string) $this->settings->get('mail', 'host'),
+                    __('mail.test.fact_from') => $from,
+                ],
+                footnote: __('mail.test.footnote'),
             );
+
+            ['html' => $html, 'text' => $text] = $renderer->render(
+                $content,
+                __('mail.test.reason', ['app' => $appName]),
+            );
+
+            $mailer->html($html, function ($message) use ($from, $fromName, $to, $content, $text) {
+                $message->to($to)
+                    ->from($from, $fromName)
+                    ->subject($content->subject)
+                    ->text($text);
+            });
         } catch (Throwable $e) {
             return ApiResponse::error(
                 ErrorCode::MAIL_DELIVERY_FAILED,
@@ -131,6 +180,24 @@ class SettingsController extends Controller
         $this->authorize('update', Setting::class);
 
         if (! in_array($asset, ['logo', 'favicon'], true)) {
+            return ApiResponse::error(
+                ErrorCode::NOT_FOUND,
+                'The requested resource could not be found.',
+                [],
+                404,
+            );
+        }
+
+        // The same gate as the `branding` group itself, and it needs saying
+        // here separately because this route writes that group by another
+        // door. Gating the PATCH and leaving the upload open would have let a
+        // fleet replace the platform's logo while being refused its name —
+        // the kind of half-closed rule that reads as a bug in whichever
+        // direction somebody finds it from.
+        /** @var User $actor */
+        $actor = $request->user();
+
+        if ($actor->access_level !== AccessLevel::KANGARU) {
             return ApiResponse::error(
                 ErrorCode::NOT_FOUND,
                 'The requested resource could not be found.',

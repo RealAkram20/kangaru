@@ -89,3 +89,65 @@ export function formatDistance(km: string | null): string {
 export function formatOdometer(reading: number | null): string {
   return reading === null ? '—' : reading.toLocaleString('en-US')
 }
+
+/**
+ * The verdict on a finished trip's mileage record, for the reader who is
+ * billed by it (Centenary's letter, points 4–6).
+ *
+ * - `verified`   — both odometer readings present and the GPS trace agrees
+ *                  with them (ADR-0016's reconciliation did not flag it).
+ * - `check`      — the readings and the GPS trace disagree beyond the
+ *                  tolerance; the platform flagged it itself, and the client
+ *                  should see that before they ask.
+ * - `unverified` — the readings are there but no GPS trace exists to check
+ *                  them against (a handset with no fix, an old record).
+ * - `incomplete` — a reading is missing, so there is no distance to bill.
+ * - `null`       — the trip has not finished; there is nothing to judge yet.
+ *
+ * Read from what the API stores, never inferred: `distance_variance_flagged`
+ * is the server's own verdict and this only names it.
+ */
+export type RecordVerdict = 'verified' | 'check' | 'unverified' | 'incomplete'
+
+const FINISHED: TripStatus[] = ['trip_completed', 'invoice_generated', 'closed']
+
+export function recordVerdict(trip: {
+  status: TripStatus
+  odometer_start: number | null
+  odometer_end: number | null
+  gps_distance_km: string | null
+  distance_variance_flagged: boolean
+}): RecordVerdict | null {
+  if (!FINISHED.includes(trip.status)) return null
+  if (trip.odometer_start === null || trip.odometer_end === null) return 'incomplete'
+  if (trip.distance_variance_flagged) return 'check'
+  if (trip.gps_distance_km === null) return 'unverified'
+  return 'verified'
+}
+
+export const RECORD_VERDICT: Record<RecordVerdict, { label: string; tone: Tone; icon: string; explain: string }> = {
+  verified: {
+    label: 'Verified',
+    tone: 'success',
+    icon: 'shield-check',
+    explain: 'Both odometer readings were captured and the GPS trace agrees with them.',
+  },
+  check: {
+    label: 'Check',
+    tone: 'warning',
+    icon: 'triangle-alert',
+    explain: 'The odometer readings and the GPS trace disagree beyond tolerance. Flagged by the platform for review.',
+  },
+  unverified: {
+    label: 'Unverified',
+    tone: 'neutral',
+    icon: 'shield-question-mark',
+    explain: 'Both readings were captured, but no GPS trace exists to check them against.',
+  },
+  incomplete: {
+    label: 'Incomplete',
+    tone: 'error',
+    icon: 'circle-alert',
+    explain: 'An odometer reading is missing, so no distance can be established for this trip.',
+  },
+}

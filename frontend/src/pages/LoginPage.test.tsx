@@ -8,6 +8,17 @@ import { MemoryRouter } from 'react-router-dom'
 import { apiFailure } from '../test/harness'
 import { LoginPage } from './LoginPage'
 
+vi.mock('../lib/publicSettings', async () => {
+  const actual = await vi.importActual<typeof import('../lib/publicSettings')>(
+    '../lib/publicSettings',
+  )
+
+  return { ...actual, fetchPublicSettings: vi.fn() }
+})
+
+const { fetchPublicSettings, DEFAULT_PUBLIC_SETTINGS } = await import('../lib/publicSettings')
+const publicSettings = vi.mocked(fetchPublicSettings)
+
 /**
  * ADR-0008's two-step login, from the screen's side.
  *
@@ -48,6 +59,9 @@ async function signIn(email = 'finance@kangaruride.test', password = 'password')
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Fail closed, like the page itself: the flag is off until a test says
+  // otherwise, so every existing test exercises the login without the link.
+  publicSettings.mockResolvedValue(DEFAULT_PUBLIC_SETTINGS)
 })
 
 describe('LoginPage', () => {
@@ -120,6 +134,31 @@ describe('LoginPage', () => {
     await userEvent.click(await screen.findByRole('button', { name: /Back to sign in/i }))
 
     expect(screen.getByLabelText(/Work email/i)).toBeVisible()
+  })
+
+  /**
+   * ADR-0028 §4: the client reads the flag before showing the flow. Both
+   * directions asserted, because the interesting bug in each is different —
+   * shown-while-off resurrects a door the owner closed; hidden-while-on is
+   * the owner's original complaint (no way to reset) surviving the fix.
+   */
+  it('offers Forgot password only when the owner has the method on', async () => {
+    publicSettings.mockResolvedValue({
+      ...DEFAULT_PUBLIC_SETTINGS,
+      auth: { password_reset_enabled: true },
+    })
+
+    renderLogin({})
+
+    expect(await screen.findByRole('link', { name: /Forgot password/i })).toBeVisible()
+  })
+
+  it('shows no Forgot password link while the method is off', async () => {
+    renderLogin({})
+
+    // The settings fetch resolves off; the link must never appear.
+    await screen.findByLabelText(/Work email/i)
+    expect(screen.queryByRole('link', { name: /Forgot password/i })).toBeNull()
   })
 
   it('explains a throttled login rather than calling it a typo', async () => {

@@ -3,9 +3,16 @@
 use Illuminate\Support\Facades\Route;
 use Modules\Administration\Controllers\AuditLogController;
 use Modules\Administration\Controllers\AuthController;
+use Modules\Administration\Controllers\ColleagueController;
+use Modules\Administration\Controllers\ImpersonationController;
+use Modules\Administration\Controllers\InvitationController;
+use Modules\Administration\Controllers\MailDnsController;
+use Modules\Administration\Controllers\PasswordResetController;
+use Modules\Administration\Controllers\PublicLegalController;
 use Modules\Administration\Controllers\PublicSettingsController;
 use Modules\Administration\Controllers\RoleController;
 use Modules\Administration\Controllers\SettingsController;
+use Modules\Administration\Controllers\SocialAuthController;
 use Modules\Administration\Controllers\UserController;
 
 // The branding subset, unauthenticated (ADR-0014 §5): the landing page,
@@ -16,9 +23,59 @@ Route::get('/public/settings', [PublicSettingsController::class, 'index'])
     ->middleware('throttle:30,1')
     ->name('public.settings');
 
+// The Terms and Privacy notices the Driver App's sign-up form requires
+// consent to (ADR-0014, `legal` group). Unauthenticated of necessity: it is
+// read on the one screen that exists before anybody has an account.
+Route::get('/public/legal', [PublicLegalController::class, 'index'])
+    ->middleware('throttle:30,1')
+    ->name('public.legal');
+
 Route::post('/auth/login', [AuthController::class, 'login'])
     ->middleware('throttle:5,1')
     ->name('auth.login');
+
+// Forgot-password by emailed code (ADR-0028 §2). Unauthenticated: the
+// caller's whole problem is that they cannot authenticate. The forgot leg
+// is throttled below even auth's rate — each hit can send an email, and
+// outbound mail is the resource being defended.
+Route::post('/auth/password/forgot', [PasswordResetController::class, 'forgot'])
+    ->middleware('throttle:3,1')
+    ->name('auth.password.forgot');
+Route::post('/auth/password/reset', [PasswordResetController::class, 'reset'])
+    ->middleware('throttle:5,1')
+    ->name('auth.password.reset');
+
+// The invitation link (mail plan M2). Unauthenticated for the same reason the
+// two routes above are: the caller has an account and no way into it, which is
+// the entire subject of the request. The 48-character token in the URL is the
+// only credential, and it is single use.
+//
+// Neither route sends an email, so the resource being defended is guessing
+// attempts rather than outbound mail, and guessing is already hopeless against
+// 48 random characters. The throttles are here because
+// `docs/security-gate.md` requires one on every public route and a route that
+// is safe today should not be the one nobody notices when it changes.
+//
+// The read is 20/min and the write is 5/min, and the asymmetry was measured
+// rather than reasoned. At 5/min the read tripped while a person was simply
+// looking at the page: React's StrictMode fires the effect twice in
+// development, so two reloads exhausted it and the invitee was told to wait a
+// minute before they could see whose account it was. An idempotent read that
+// reveals nothing new to the holder of the token does not need the write's
+// budget.
+Route::get('/invitations/{token}', [InvitationController::class, 'show'])
+    ->middleware('throttle:20,1')
+    ->name('invitations.show');
+Route::post('/invitations/{token}/accept', [InvitationController::class, 'accept'])
+    ->middleware('throttle:5,1')
+    ->name('invitations.accept');
+
+// "Continue with Google / Facebook" (ADR-0028 §3). Unauthenticated — it IS
+// authentication — and throttled at the login rate, because that is what it
+// is.
+Route::post('/auth/social', [SocialAuthController::class, 'store'])
+    ->middleware('throttle:5,1')
+    ->name('auth.social');
 Route::post('/auth/logout', [AuthController::class, 'logout'])
     ->middleware('auth:sanctum')
     ->name('auth.logout');
@@ -29,7 +86,7 @@ Route::get('/auth/me', [AuthController::class, 'me'])
 // Changing your own password needs authentication but not a tenant: a
 // Super Admin has none, and every other route below would 404 for them.
 Route::patch('/auth/password', [AuthController::class, 'changePassword'])
-    ->middleware(['auth:sanctum', 'throttle:5,1'])
+    ->middleware(['auth:sanctum', 'throttle:5,1', 'not-acting-as'])
     ->name('auth.password.change');
 
 /*
@@ -58,16 +115,17 @@ Route::post('/auth/mfa/verify', [AuthController::class, 'verifyMfa'])
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/auth/mfa/enrol', [AuthController::class, 'beginMfaEnrolment'])
+        ->middleware('not-acting-as')
         ->name('auth.mfa.enrol');
     Route::post('/auth/mfa/enrol/confirm', [AuthController::class, 'confirmMfaEnrolment'])
-        ->middleware('throttle:10,1')
+        ->middleware(['throttle:10,1', 'not-acting-as'])
         ->name('auth.mfa.enrol.confirm');
 
     // Not on the forced-enrolment allowlist: you cannot regenerate codes
     // you do not have yet, and the enrolment response is where the first
     // set comes from.
     Route::post('/auth/mfa/recovery-codes', [AuthController::class, 'regenerateRecoveryCodes'])
-        ->middleware('throttle:5,1')
+        ->middleware(['throttle:5,1', 'not-acting-as'])
         ->name('auth.mfa.recovery-codes');
 
     // ADR-0010 decision 2: voluntary means voluntary in both directions.
@@ -97,6 +155,13 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::get('/users/{user}', [UserController::class, 'show'])->name('users.show');
     Route::patch('/users/{user}', [UserController::class, 'update'])->name('users.update');
 
+    // The passenger picker behind the booking dialog: your own
+    // organisation's people, by name, three fields each. Deliberately not a
+    // filter on `/users` — that one is gated on `staff.view` and answers
+    // with roles and MFA state, and the Corporate Employee raising a
+    // booking holds neither. See ColleagueController.
+    Route::get('/colleagues', [ColleagueController::class, 'index'])->name('colleagues.index');
+
     // Platform settings (ADR-0014), behind `settings.manage` via
     // SettingPolicy. PATCH takes the group name so each save is one
     // audited, validated write of related keys.
@@ -110,6 +175,17 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         ->middleware('throttle:5,1')
         ->name('settings.mail.test');
 
+    // The DNS side of email: whether SPF, DKIM and DMARC are actually there,
+    // and the one record this platform can compose for you.
+    //
+    // Throttled for the same reason the test send is, and it is the same
+    // class of hazard rather than a lesser one: each call makes outbound DNS
+    // lookups against a host derived from a stored setting. Unthrottled, an
+    // account that can edit settings becomes a resolver-probe primitive.
+    Route::get('/settings/mail/dns', [MailDnsController::class, 'show'])
+        ->middleware('throttle:10,1')
+        ->name('settings.mail.dns');
+
     // The role catalogue (ADR-0004). Platform-wide and curated by whoever
     // holds `roles.manage` — Super Admin alone, as seeded. Route key is the
     // slug, which is what `users.role` stores.
@@ -117,4 +193,34 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::post('/roles', [RoleController::class, 'store'])->name('roles.store');
     Route::patch('/roles/{role}', [RoleController::class, 'update'])->name('roles.update');
     Route::delete('/roles/{role}', [RoleController::class, 'destroy'])->name('roles.destroy');
+
+    /*
+    |----------------------------------------------------------------------
+    | Acting as somebody else (ADR-0056)
+    |----------------------------------------------------------------------
+    |
+    | Two verbs and no listing: `impersonation_sessions` is the evidence and
+    | the audit log is where it is read, so a reader here would be a second
+    | answer to one question.
+    |
+    | `POST` is throttled because it is the one act on this platform that
+    | hands an account somebody else's reach, and a loop of start/stop against
+    | different subjects is what enumeration would look like.
+    |
+    | `DELETE` deliberately carries **no** `not-acting-as` guard. Stopping is
+    | the one thing a support agent must always be able to do; a guard that
+    | refused it would strand them inside somebody else's account until the
+    | thirty minutes ran out.
+    */
+    // Read first: the console asks this on every load to know whether to draw
+    // the banner. Unthrottled and ungated beyond authentication — it answers
+    // `null` for everybody who is simply themselves, which is almost every
+    // request, and telling somebody they are themselves reveals nothing.
+    Route::get('/support/act-as', [ImpersonationController::class, 'show'])
+        ->name('support.act-as.show');
+    Route::post('/support/act-as', [ImpersonationController::class, 'store'])
+        ->middleware('throttle:10,1')
+        ->name('support.act-as.store');
+    Route::delete('/support/act-as', [ImpersonationController::class, 'destroy'])
+        ->name('support.act-as.destroy');
 });

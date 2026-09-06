@@ -183,7 +183,8 @@ The trip lifecycle is an enforced state machine, not a convention.
 Corporate clients (Centenary Bank requirement) need physically verifiable mileage:
 
 - **Opening odometer reading** is captured at `Trip Started`; **closing reading** at `Trip Completed`. Driver-entered value plus a dashboard photo.
-- Odometer distance is automatically reconciled against GPS-calculated distance; variances beyond a configurable threshold are flagged for review.
+- A reading is refused outright if it is below the opening one, or if it makes the journey longer than the configured ceiling (ADR-0035). Refused at the transition, so an impossible reading never becomes a fare — the flag below cannot do this job, because it needs a GPS trace and is a review signal rather than a refusal.
+- Odometer distance is automatically reconciled against GPS-calculated distance; variances beyond a configurable threshold are flagged for review. Both the threshold and the ceiling are operator settings, not env vars — an office must be able to change them without a deploy, and the change must be audited.
 - Odometer values are stored on the trip record and included in trip reports and invoices.
 
 ---
@@ -333,7 +334,7 @@ Every mutation to rate cards, contracts, invoices, payments, roles/permissions, 
 ## Technical requirements
 
 - TLS everywhere; HSTS on.
-- Passwords via Laravel defaults (bcrypt/argon2). **MFA is required for Super Admin and Finance roles in Phase 1** — these roles can move money and change rates.
+- Passwords via Laravel defaults (bcrypt/argon2). **MFA defaults to required for Super Admin and Finance** — these roles can move money and change rates. Since ADR-0061 it is a **setting, not a constant**: a platform switch (`auth.mfa_enforced`) and a per-role one (`roles.requires_mfa`), resolved in exactly one place, `User::requiresMfa()`. Never read either column directly to decide whether somebody needs a second factor — two callers combining two gates themselves is how they drift apart.
 - Encryption at rest: MySQL tablespace encryption, R2 default encryption; driver documents (IDs, licenses) additionally app-level encrypted.
 - Secrets via environment from a managed store — never in the repo.
 - Sanitize inputs, escape outputs. Prevent SQL injection, XSS, CSRF.
@@ -359,6 +360,8 @@ Every mutation to rate cards, contracts, invoices, payments, roles/permissions, 
 # Frontend Standards
 
 Design for enterprise users. Interfaces must be clean, spacious, accessible, responsive, and keyboard friendly. Consistency is more important than decoration.
+
+**Building a screen? Read `docs/screen-rules.md` first.** It is the checklist over this document and DESIGN.md, and it exists because two mistakes keep arriving disguised as faithful work: putting a number on screen the platform cannot produce, and showing data an ADR deliberately withholds. Those rules outrank any mockup — where the two disagree, raise it rather than resolving it silently.
 
 ## Accessibility
 

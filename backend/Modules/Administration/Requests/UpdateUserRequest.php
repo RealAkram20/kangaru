@@ -2,6 +2,8 @@
 
 namespace Modules\Administration\Requests;
 
+use App\Enums\ClientCapability;
+use App\Enums\RoleAudience;
 use App\Enums\UserStatus;
 use App\Models\User;
 use Illuminate\Contracts\Validation\Validator;
@@ -46,9 +48,46 @@ class UpdateUserRequest extends FormRequest
                 'max:255',
                 Rule::unique('users', 'email')->ignore($subject?->id),
             ],
+            // Not nullable: an administrator may correct a number, and may
+            // leave the field alone, but "save this person with no way to
+            // reach them" is not a thing this screen offers.
+            'phone' => ['sometimes', 'string', 'max:32'],
             'role' => ['sometimes', 'string', Rule::exists('roles', 'slug')],
             'status' => ['sometimes', Rule::enum(UserStatus::class)],
+            // What a client's administrator may switch on for one of their
+            // people (App\Enums\ClientCapability). The full list each time,
+            // like `role`: a switch panel is saved whole, not one toggle at a
+            // time, and "absent" must never mean "keep whatever was there"
+            // for something that grants permissions.
+            'capabilities' => ['sometimes', 'array'],
+            'capabilities.*' => ['string', Rule::enum(ClientCapability::class)],
+            'books_without_approval' => ['sometimes', 'boolean'],
+            // Saved whole like `capabilities`, and for a weaker version of
+            // the same reason: a roster edited one entry at a time cannot
+            // express "took them off the Monday run". See StoreUserRequest
+            // for why this carries no escalation check.
+            'route_ids' => ['sometimes', 'array', 'max:50'],
+            'route_ids.*' => ['required', 'integer', Rule::exists('client_routes', 'id')],
         ];
+    }
+
+    /**
+     * The capabilities named in this request, as enum cases. Empty when the
+     * field is absent or empty.
+     *
+     * @return array<int, ClientCapability>
+     */
+    public function capabilities(): array
+    {
+        $slugs = $this->input('capabilities');
+        if (! is_array($slugs)) {
+            return [];
+        }
+
+        return array_values(array_filter(array_map(
+            fn ($slug) => is_string($slug) ? ClientCapability::tryFrom($slug) : null,
+            $slugs,
+        )));
     }
 
     public function withValidator(Validator $validator): void
@@ -75,10 +114,15 @@ class UpdateUserRequest extends FormRequest
             if ($this->filled('role')) {
                 $role = Role::query()->where('slug', $this->input('role'))->first();
 
-                if (! $policy->assignRole($actor, $role)) {
+                // Judged against the account being edited, not against the
+                // administrator: a fleet's office may edit somebody at a
+                // client it serves, and that person's roles are a client's.
+                if (! $policy->assignRole($actor, $role, $subject->access_level)) {
                     $validator->errors()->add(
                         'role',
-                        'You cannot assign that role: it carries permissions you do not hold yourself.',
+                        $role !== null && $role->audience !== RoleAudience::forLevel($subject->access_level)
+                            ? 'That role is for a '.$role->audience->label().' account, not this one.'
+                            : 'You cannot assign that role: it carries permissions you do not hold yourself.',
                     );
                 }
 
@@ -86,6 +130,29 @@ class UpdateUserRequest extends FormRequest
                 // out of its own administration.
                 if ($actor->id === $subject->id && $role?->slug !== $actor->roleSlug()) {
                     $validator->errors()->add('role', 'You cannot change your own role.');
+                }
+            }
+
+            // Capabilities widen a person's permissions, so they answer to
+            // the same escalation rule as roles (ADR-0004): nobody grants
+            // what they do not hold. And they are a client's switches for a
+            // client's people — a platform account has no client, and its
+            // abilities are its role's.
+            if ($this->has('capabilities') || $this->has('books_without_approval')) {
+                if ($subject->isPlatformLevel()) {
+                    $validator->errors()->add(
+                        'capabilities',
+                        "Capabilities apply to a client's own staff, not to platform accounts.",
+                    );
+                }
+                foreach ($this->capabilities() as $capability) {
+                    if (! $actor->holdsAll(array_map(fn ($p) => $p->value, $capability->permissions()))) {
+                        $validator->errors()->add(
+                            'capabilities',
+                            'You cannot grant "'.$capability->label().'": it carries permissions you do not hold yourself.',
+                        );
+                        break;
+                    }
                 }
             }
 

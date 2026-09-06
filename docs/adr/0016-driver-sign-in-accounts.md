@@ -1,6 +1,21 @@
 # ADR-0016: The account a driver signs in with
 
-**Status:** Accepted (7 August 2026)
+**Status:** Accepted (7 August 2026), amended by ADR-0027 and ADR-0028
+(10 August 2026)
+
+**Amendment:** ADR-0027 withdraws one sentence from the Consequences below —
+"There is no self-service driver sign-up: accounts are issued, like every
+other account here." Drivers may now apply for themselves. Everything else
+here stands, and ADR-0027 §2 depends on it: an application is not an account,
+approval still runs through `DriverAccountService`, and the link is still what
+grants a driver authority over a trip.
+
+**Second amendment:** ADR-0028 §2 adds a self-service password reset by
+emailed code, admin-enabled and live only when SMTP is configured. The
+sentence that falls is "a driver who forgets theirs gets a new one issued";
+the principle it served — an administrator must never silently change
+another person's credentials — stands untouched, and the emailed code
+exists precisely because it proves mailbox possession rather than power.
 
 ## Context
 

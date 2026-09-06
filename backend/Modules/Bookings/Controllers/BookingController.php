@@ -11,6 +11,7 @@ use App\Support\Database\SearchTerm;
 use App\Support\Tenancy\ClientOptions;
 use Illuminate\Http\JsonResponse;
 use Modules\Bookings\Enums\BookingStatus;
+use Modules\Bookings\Enums\OrderRequestServiceType;
 use Modules\Bookings\Models\Booking;
 use Modules\Bookings\Requests\BookingDecisionRequest;
 use Modules\Bookings\Requests\BookingIndexRequest;
@@ -18,6 +19,7 @@ use Modules\Bookings\Requests\StoreBookingRequest;
 use Modules\Bookings\Resources\BookingResource;
 use Modules\Bookings\Services\BookingService;
 use Modules\Bookings\Services\InvalidBookingTransitionException;
+use Modules\Dispatch\Enums\DispatchOfferStatus;
 
 class BookingController extends Controller
 {
@@ -89,10 +91,33 @@ class BookingController extends Controller
                 });
             })
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
+            ->when($request->filled('service_type'), fn ($q) => $q->where('service_type', $request->string('service_type')))
             ->when(
                 $request->boolean('dispatchable'),
-                fn ($q) => $q->whereIn('status', [BookingStatus::PENDING->value, BookingStatus::APPROVED->value])
+                // Awaiting a vehicle AND a service a driver is sent to. A
+                // self-drive rental must never reach the dispatch board:
+                // the walk-in queue already dispatched a driver to a car
+                // somebody else was going to drive, and the enum's
+                // docblock records how quietly that failed (ADR-0064).
+                fn ($q) => $q
+                    ->whereIn('status', [BookingStatus::PENDING->value, BookingStatus::APPROVED->value])
+                    ->whereIn('service_type', OrderRequestServiceType::dispatchableToDriver())
             )
+            // Is a phone ringing for this one right now (ADR-0068)?
+            //
+            // Loaded as an aggregate rather than left to `BookingResource`'s
+            // fallback, because this listing is a page of rows and the board
+            // re-fetches it every few seconds — the shape an N+1 does the
+            // most damage in.
+            //
+            // The predicate is spelled out rather than calling the model's
+            // `live()` scope: inside a relation-existence closure the builder
+            // is typed against the base Model, so a model scope is not
+            // visible to it. `retryUnoffered()` records learning the same
+            // thing.
+            ->withExists(['offers as offers_live_exists' => fn ($q) => $q
+                ->where('status', DispatchOfferStatus::OFFERED)
+                ->where('expires_at', '>', now())])
             // Soonest scheduled pickup first, immediate bookings ahead of
             // them — a dispatch queue ordered by creation time would bury
             // an urgent "now" request behind next week's airport runs.
@@ -117,6 +142,12 @@ class BookingController extends Controller
                 // its own filter values. Empty for a client's own user,
                 // who has no choice of client to make.
                 'filters' => ['clients' => ClientOptions::forActor($user)],
+                // Who a *new* booking may be raised for (ADR-0064 §5) —
+                // active contracts only, so the dialog never offers a
+                // client the store endpoint would refuse. Narrower than
+                // the filter list above on purpose: the queue can hold an
+                // ended contract's history, but no new car goes out to one.
+                'bookable_clients' => ClientOptions::bookableBy($user),
             ],
         );
     }
@@ -137,7 +168,23 @@ class BookingController extends Controller
         /** @var User $user */
         $user = $request->user();
 
-        $booking = $this->bookings->create($request->validated(), $user);
+        $attributes = $request->validated();
+
+        // The name comes off the account, never off the payload. Half the
+        // point of naming a colleague is that "J. Mukasa" and "Joseph
+        // Mukasa" stop being two passengers, and a client-supplied name
+        // beside a client-supplied id would let them diverge on the one
+        // record a driver is dispatched against. The *number* is still the
+        // caller's to set — the account's is prefilled, and the person
+        // raising it may know a better one for today.
+        $passenger = $request->passenger();
+
+        if ($passenger !== null) {
+            $attributes['passenger_user_id'] = $passenger->id;
+            $attributes['passenger_name'] = $passenger->name;
+        }
+
+        $booking = $this->bookings->create($attributes, $user);
 
         return ApiResponse::success(
             new BookingResource($booking->load('requestedBy')),

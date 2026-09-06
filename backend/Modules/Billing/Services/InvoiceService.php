@@ -2,18 +2,25 @@
 
 namespace Modules\Billing\Services;
 
+use App\Models\OperatorClient;
 use App\Models\User;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Modules\Billing\Enums\DocumentType;
 use Modules\Billing\Models\Invoice;
 use Modules\Billing\Models\InvoiceLine;
 use Modules\Billing\Models\RateCard;
+use Modules\Billing\Pricing\DistanceGate;
 use Modules\Billing\Pricing\PricedLine;
 use Modules\Billing\Pricing\RateCardNotConfiguredException;
 use Modules\Billing\Pricing\RateCardResolver;
 use Modules\Billing\Pricing\TripPricingEngine;
 use Modules\Billing\Repositories\InvoiceRepository;
+use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Mail\ClientRecipient;
+use Modules\Notifications\Mail\MailMoney;
+use Modules\Notifications\Notifications\ClientEventNotification;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
 use Modules\Trips\Services\TripStateMachine;
@@ -47,6 +54,7 @@ class InvoiceService
         private readonly DocumentNumberGenerator $numbers,
         private readonly InvoiceRepository $invoices,
         private readonly TripStateMachine $trips,
+        private readonly DistanceGate $distances,
     ) {}
 
     /**
@@ -86,22 +94,45 @@ class InvoiceService
             throw new WalkInTripNotInvoiceableException($trip);
         }
 
+        // The fleet that did the work, and therefore the fleet whose invoice
+        // series this document belongs to (ADR-0055 §6).
+        //
+        // Taken from the trip, which `TripService` stamps from the assigned
+        // driver — not from the Finance officer generating the invoice, who
+        // could belong to a different fleet once Kangaru can act as one
+        // (ADR-0056), and not from the request context, which is unbound on
+        // any queued or scheduled path.
+        $operatorId = $trip->operator_id;
+
+        if ($operatorId === null) {
+            // A corporate trip with no fleet is a row F0 backfilled and
+            // nothing has since stamped, or one created down a path that
+            // never named a driver. Either way the honest answer to "whose
+            // invoice series is this?" is that nobody knows, and guessing
+            // would put a number in one fleet's ledger and the work in
+            // another's.
+            throw new \RuntimeException(
+                "Trip {$trip->id} names no fleet, so no invoice series can be chosen for it "
+                .'(ADR-0055 §6). It predates the fleet model or was created without a driver.'
+            );
+        }
+
         $issuedAt = now();
 
         // Outside the transaction, deliberately: creating the counter row
         // inside it makes two simultaneous first-ever invoices deadlock on
         // its unique index. Observed, not theorised — see
         // DocumentNumberSequenceRepository.
-        $this->numbers->ensureSeries($tenantId, DocumentType::INVOICE, $issuedAt);
+        $this->numbers->ensureSeries($operatorId, $tenantId, DocumentType::INVOICE, $issuedAt);
 
-        return DB::transaction(function () use ($trip, $tenantId, $idempotencyKey, $actor, $rateCard, $issuedAt) {
+        return DB::transaction(function () use ($trip, $tenantId, $operatorId, $idempotencyKey, $actor, $rateCard, $issuedAt) {
             // The serialisation point, and the first statement in the
             // transaction. Everything below reads or writes rows that do
             // not exist yet, and locking reads on absent rows take gap
             // locks that two concurrent generators deadlock on as soon as
             // both insert. Holding the tenant's counter first means only
             // one generation per tenant is ever in flight.
-            $this->numbers->lockSeries($tenantId, DocumentType::INVOICE, $issuedAt);
+            $this->numbers->lockSeries($operatorId, $tenantId, DocumentType::INVOICE, $issuedAt);
 
             // Serialises every generator working on this trip specifically.
             /** @var Trip $locked */
@@ -117,7 +148,7 @@ class InvoiceService
                 throw new TripNotInvoiceableException($locked);
             }
 
-            return $this->issue($locked, $tenantId, $idempotencyKey, $actor, $rateCard, $issuedAt);
+            return $this->issue($locked, $tenantId, $operatorId, $idempotencyKey, $actor, $rateCard, $issuedAt);
         });
     }
 
@@ -163,23 +194,35 @@ class InvoiceService
      *                         caller's walk-in guard (ADR-0024) — passed rather
      *                         than re-read off the trip so that proof travels
      *                         with it instead of having to be repeated here
+     * @param  int  $operatorId  the fleet whose driver ran the trip, proved
+     *                           non-null by the caller for the same reason and
+     *                           passed the same way (ADR-0055 §6)
      *
      * @throws RateCardNotConfiguredException
      */
     private function issue(
         Trip $trip,
         int $tenantId,
+        int $operatorId,
         string $idempotencyKey,
         User $actor,
         ?RateCard $rateCard,
         CarbonInterface $issuedAt,
     ): Invoice {
         $version = $this->rateCards->resolveFor($trip, $rateCard);
+
+        // ADR-0045 §2: a trace-priced contract does not invoice an unresolved
+        // trip, and no contract invoices a held one. Refused here, inside the
+        // lock and before a number is drawn, so a refusal costs no sequence
+        // gap.
+        $this->distances->assertBillable($trip, $version);
+
         $price = $this->pricing->price($trip, $version);
 
         $invoice = Invoice::create([
             'tenant_id' => $tenantId,
-            'invoice_number' => $this->numbers->next($tenantId, DocumentType::INVOICE, $issuedAt),
+            'operator_id' => $operatorId,
+            'invoice_number' => $this->numbers->next($operatorId, $tenantId, DocumentType::INVOICE, $issuedAt),
             'trip_id' => $trip->id,
             'rate_card_version_id' => $version->id,
             'currency' => $version->currency,
@@ -205,7 +248,86 @@ class InvoiceService
         // every other one.
         $this->trips->transition($trip, TripStatus::INVOICE_GENERATED, $actor);
 
-        return $invoice->load('lines');
+        $invoice->load('lines');
+
+        $this->announce($invoice);
+
+        return $invoice;
+    }
+
+    /**
+     * Tells the client their invoice is ready (mail plan C7).
+     *
+     * ## To the billing address, not to whoever books the cars
+     *
+     * `ClientRecipient::finance()` resolves it: the contract's
+     * `billing_email` where there is one, the client's administrators
+     * otherwise. A transport officer has no purchase-order process and no
+     * reason to forward what reads as a receipt for a trip they already took,
+     * which is how an invoice sent to them goes unpaid.
+     *
+     * ## The PDF and the link, both
+     *
+     * The owner's decision. Finance staff forward the file and attach it to a
+     * payment request; auditors follow the link to the live record, which is
+     * the reproducible one.
+     *
+     * ## Best effort, and outside the transaction
+     *
+     * Called after the invoice is committed. An invoice is a financial
+     * document and it must not fail to exist because a PDF renderer threw or
+     * a mail server was unreachable — the record is the thing, the email is
+     * how somebody hears about it. A failure is logged and the delivery row
+     * says so.
+     */
+    private function announce(Invoice $invoice): void
+    {
+        $contract = OperatorClient::query()
+            ->where('tenant_id', $invoice->tenant_id)
+            ->where('operator_id', $invoice->operator_id)
+            ->first();
+
+        if ($contract === null) {
+            return;
+        }
+
+        try {
+            $pdf = app(InvoicePdf::class);
+
+            $attachment = [[
+                'name' => $pdf->filename($invoice),
+                // Base64: this notification is queued and its payload is JSON,
+                // which refuses raw PDF bytes as malformed UTF-8.
+                'base64' => base64_encode($pdf->render($invoice)),
+                'mime' => 'application/pdf',
+            ]];
+        } catch (\Throwable $e) {
+            // The email still goes, carrying the link alone. A missing
+            // attachment is a degraded message; a missing message is a client
+            // who does not know they have been billed.
+            Log::warning('invoice.pdf_failed', [
+                'invoice' => $invoice->invoice_number,
+                'error' => $e->getMessage(),
+            ]);
+
+            $attachment = [];
+        }
+
+        app(ClientRecipient::class)->finance($contract, fn (?string $to) => new ClientEventNotification(
+            NotificationType::CLIENT_INVOICE_ISSUED,
+            facts: [
+                __('mail.client.fact_number') => (string) $invoice->invoice_number,
+                __('mail.client.fact_total') => MailMoney::format(
+                    (int) $invoice->total_minor->getMinorAmount()->toInt(),
+                    (string) $invoice->currency,
+                ),
+                __('mail.client.fact_issued') => $invoice->issued_at->isoFormat('D MMMM YYYY'),
+            ],
+            url: '/invoices/'.$invoice->getKey(),
+            attachments: $attachment,
+            sendTo: $to,
+            replacements: ['number' => (string) $invoice->invoice_number],
+        ));
     }
 
     private function writeLine(Invoice $invoice, PricedLine $line, int $lineNumber): void

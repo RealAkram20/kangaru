@@ -7,6 +7,7 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Modules\Administration\Services\SettingsService;
 use Modules\Bookings\Enums\OrderRequestServiceType;
+use Modules\Bookings\Enums\RideVehicleClass;
 use Modules\Fleet\Services\ZoneResolver;
 
 /**
@@ -71,9 +72,9 @@ class StorePublicOrderRequest extends FormRequest
             'details' => ['nullable', 'array'],
             // Ride
             'details.passengers' => ['nullable', 'integer', 'min:1', 'max:14'],
-            'details.vehicle_class' => [
-                'nullable', Rule::in(['economy', 'standard', 'xl', 'boda', 'electric_boda']),
-            ],
+            // From the enum, so the classes the form may send, the classes the
+            // quote endpoint prices, and the category each maps to cannot drift.
+            'details.vehicle_class' => ['nullable', Rule::in(RideVehicleClass::values())],
             // Delivery
             'details.item_type' => [
                 'nullable',

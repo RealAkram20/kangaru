@@ -36,5 +36,37 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'error',
     },
   },
+  /**
+   * Vendored source, held to a different standard — deliberately.
+   *
+   * `components/animate-ui/` and the hook it ships with are Animate UI's
+   * code, pulled in through the shadcn registry. We own the files in the
+   * sense that they sit in this repo, and we do not own them in the sense
+   * that matters here: adding another icon re-downloads them, and any
+   * hand-fix would be silently reverted by the next `shadcn add`.
+   *
+   * So the rules that encode *our* conventions are switched off over this
+   * directory rather than across the project. The React Compiler rules are
+   * the substantive ones — Animate UI's `icon.tsx` writes state from effects
+   * and reads refs during render, which is real and which we are not going
+   * to hand-fork a 650-line library to fix. `react-refresh` is a dev-server
+   * ergonomic that has no bearing on a shipped build.
+   *
+   * Type checking is **not** relaxed: `tsc -b` covers this directory like
+   * any other, and the two places the sources genuinely disagreed with this
+   * project's compiler settings are patched and commented in-file.
+   *
+   * If Animate UI code is ever edited into something we maintain ourselves,
+   * move it out of this directory and let the normal rules apply again.
+   */
+  {
+    files: ['src/components/animate-ui/**/*.{ts,tsx}', 'src/hooks/use-is-in-view.tsx'],
+    rules: {
+      'react-hooks/set-state-in-effect': 'off',
+      'react-hooks/refs': 'off',
+      'react-hooks/static-components': 'off',
+      'react-refresh/only-export-components': 'off',
+    },
+  },
   eslintConfigPrettier,
 )

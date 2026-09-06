@@ -2,7 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/assets/favicon.png" />
+    <!--
+      favicon.png is the 1024x1024 source and is 1,025,543 bytes — it was
+      being fetched on every page load to fill a 16px tab slot. These are
+      generated from it by tools/resize-brand-assets.mjs; regenerate rather
+      than hand-editing.
+    -->
+    <link rel="icon" type="image/png" sizes="64x64" href="/assets/favicon-64.png" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>KangaruRide</title>
     <script>

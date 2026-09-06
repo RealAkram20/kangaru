@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Modules\Administration\Resources\UserResource;
 use Modules\Bookings\Models\Booking;
+use Modules\Bookings\Support\BookingDetails;
 use Modules\Trips\Resources\TripResource;
 
 /**
@@ -46,9 +47,28 @@ class BookingResource extends JsonResource
             }),
             'requested_by_user_id' => $this->requested_by_user_id,
             'requested_by' => new UserResource($this->whenLoaded('requestedBy')),
+            // The colleague this was raised for, when a client raised it.
+            // The name and number below stay authoritative — they are the
+            // snapshot the driver was dispatched against — and this is what
+            // lets a queue be read by employee rather than by spelling.
+            'passenger_user_id' => $this->passenger_user_id,
             'passenger_name' => $this->passenger_name,
             'passenger_phone' => $this->passenger_phone,
             'passenger_count' => $this->passenger_count,
+            // ADR-0051. Null means no preference was stated, which is not
+            // the same as a preference that was overridden — the office and
+            // a client's auditor both need to be able to tell those apart,
+            // so this is never coerced to a default.
+            'vehicle_category' => $this->vehicle_category,
+            // ADR-0064: which of the three services this asks for.
+            'service_type' => $this->service_type->value,
+            // Allow-listed per service, never the column wholesale — the
+            // OrderDetails lesson: a JSON column named `details` is exactly
+            // where a personal number leaks looking innocent in review.
+            // Null on a ride, whose absence of details is the fact itself.
+            'details' => BookingDetails::for($this->resource),
+            // Null on a self-drive rental, which has no route — the hire
+            // period in `details` is that service's when-and-where.
             'origin' => $this->origin,
             'destination' => $this->destination,
             'scheduled_for' => $this->scheduled_for,
@@ -57,6 +77,26 @@ class BookingResource extends JsonResource
             // contradict the first.
             'is_immediate' => $this->isImmediate(),
             'status' => $this->status->value,
+
+            /*
+             * Whether a driver's phone is ringing for this right now
+             * (ADR-0068).
+             *
+             * **Derived, never stored**, for `DispatchOfferService::
+             * searchState()`'s reason: every part of the answer is already a
+             * fact in `dispatch_offers`, and a cached copy of a fact is a
+             * copy that goes wrong at the moment a driver accepts while a
+             * board is refreshing.
+             *
+             * The board needs it because a desk assignment no longer takes
+             * effect at the press. Without it an unanswered booking looks
+             * exactly like an untouched one, and the next dispatcher along
+             * assigns over the top of a phone that is already ringing —
+             * which is the failure ADR-0024 §4 recorded on the walk-in
+             * queue, arriving a second time by the other door.
+             */
+            'is_ringing' => $this->isRinging(),
+
             'approved_by_user_id' => $this->approved_by_user_id,
             'approved_by' => new UserResource($this->whenLoaded('approvedBy')),
             'approved_at' => $this->approved_at,
@@ -66,5 +106,25 @@ class BookingResource extends JsonResource
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];
+    }
+
+    /**
+     * The aggregate the board loads, or the query when nobody loaded it.
+     *
+     * The dispatch board renders a page of these and re-fetches every few
+     * seconds, so a per-row `exists()` here would be an N+1 on the hottest
+     * listing the desk has. `BookingController` supplies
+     * `offers_live_exists` through `withExists`; the fallback keeps every
+     * other caller correct rather than fast, which is the right way round —
+     * a resource that is only true when somebody remembered to eager-load is
+     * a resource that is sometimes false.
+     */
+    private function isRinging(): bool
+    {
+        $loaded = $this->resource->getAttribute('offers_live_exists');
+
+        return $loaded === null
+            ? $this->offers()->live()->exists()
+            : (bool) $loaded;
     }
 }

@@ -9,7 +9,6 @@ use Modules\Billing\Models\RateCard;
 use Modules\Billing\Models\RateCardRate;
 use Modules\Billing\Models\RateCardVersion;
 use Modules\Billing\Pricing\RateCardNotConfiguredException;
-use Modules\Billing\Services\RateCardService;
 use Modules\Billing\Services\WalkInFareService;
 use Modules\Drivers\Models\Driver;
 use Modules\Trips\Enums\TripStatus;
@@ -26,55 +25,12 @@ use Tests\Support\BillingFixtures;
  */
 function publicTariff(array $rates = ['sedan' => [2_000, 1_500]]): RateCard
 {
-    // Through `RateCardService`, never straight into `rate_card_versions`.
-    //
-    // `RateCardFactory`'s own docblock refuses to build versions for exactly
-    // this reason: the service allocates the version number under a lock and
-    // seals a version once used, so a hand-written row is a history no
-    // service could have produced — and a test standing on one proves
-    // nothing about the code that actually runs.
-    //
-    // The card itself is created with a null tenant, which is what makes it
-    // the public tariff (ADR-0026 §1).
-    // The service audits who set a price, so it needs an actor. A platform
-    // Super Admin is who would set the public tariff in practice
-    // (ADR-0026 §4 — `rate_cards.manage`, held by platform staff).
-    $actor = User::factory()->create(['tenant_id' => null, 'role' => UserRole::SUPER_ADMIN]);
-
-    $card = app(RateCardService::class)->create([
-        'name' => 'Public tariff',
-        'is_default' => true,
-        'version' => [
-            'effective_from' => '2020-01-01',
-            'rounding_mode' => 'half_up',
-            'free_waiting_minutes' => 0,
-            'night_starts_at' => null,
-            'night_ends_at' => null,
-            'night_multiplier_bp' => RateCardVersion::NO_MULTIPLIER_BP,
-            'rates' => collect($rates)->map(fn (array $pair, string $category) => [
-                'vehicle_category' => $category,
-                'base_fare_minor' => $pair[0],
-                'per_km_minor' => $pair[1],
-                'per_waiting_minute_minor' => 0,
-                'minimum_charge_minor' => 0,
-                'maximum_charge_minor' => null,
-            ])->values()->all(),
-        ],
-    ], $actor);
-
-    // The service fills `tenant_id` from the ambient context, which is
-    // correct for every client card and cannot be right for this one. Moved
-    // to the platform after the fact rather than by teaching the service a
-    // special case — that belongs in the service's own change, and this
-    // fixture is not it.
-    $card->forceFill(['tenant_id' => null])->save();
-    RateCardVersion::query()->where('rate_card_id', $card->id)->update(['tenant_id' => null]);
-    RateCardRate::query()->whereIn(
-        'rate_card_version_id',
-        RateCardVersion::query()->where('rate_card_id', $card->id)->pluck('id'),
-    )->update(['tenant_id' => null]);
-
-    return $card->refresh();
+    // Delegated to `BillingFixtures` because Dispatch needs the same card:
+    // Billing asks what a walk-in ride costs, and the driver's offer payload
+    // asks what a driver is shown before accepting one. Two copies would
+    // drift. Kept as a local name because every `it()` below reads better
+    // saying `publicTariff()` than the class path.
+    return BillingFixtures::publicTariff($rates);
 }
 
 function completedWalkInTrip(string $category = 'sedan', string $distanceKm = '10.00'): Trip

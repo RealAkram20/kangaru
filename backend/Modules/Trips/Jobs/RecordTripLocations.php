@@ -4,6 +4,7 @@ namespace Modules\Trips\Jobs;
 
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Modules\Trips\Distance\DistanceResolutionScheduler;
 use Modules\Trips\Services\TripRouteRecorder;
 
 /**
@@ -49,8 +50,14 @@ class RecordTripLocations implements ShouldQueue
         private readonly array $pings,
     ) {}
 
-    public function handle(TripRouteRecorder $recorder): void
+    public function handle(TripRouteRecorder $recorder, DistanceResolutionScheduler $scheduler): void
     {
         $recorder->record($this->tenantId, $this->tripId, $this->pings);
+
+        // ADR-0045: pings that land after the trip completed — a device
+        // draining its outbox — re-run the distance resolution, so the
+        // figure reflects the whole trace and not whatever had arrived by
+        // the grace deadline. A no-op for a trip still in progress.
+        $scheduler->afterPings($this->tripId);
     }
 }

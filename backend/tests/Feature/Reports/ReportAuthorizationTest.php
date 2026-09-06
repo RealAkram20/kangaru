@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\Permission;
+use App\Enums\RoleAudience;
 use App\Enums\UserRole;
 use App\Models\Tenant;
 use App\Models\User;
@@ -42,8 +43,23 @@ function reportAuthFixture(): array
 it('refuses the financial report to a role that may run reports but not see invoices', function () {
     ['user' => $user] = reportAuthFixture();
 
-    // All four hold `reports.view` and not `invoices.view`.
-    foreach ([UserRole::DISPATCHER, UserRole::BRANCH_MANAGER, UserRole::DEPOT_MANAGER, UserRole::FLEET_OWNER] as $role) {
+    /*
+     * All three hold `reports.view` and not `invoices.view`.
+     *
+     * `FLEET_OWNER` was here and is deliberately not any more. It now holds
+     * the union of the fleet roles, `invoices.view` included, because ADR-0004
+     * will not let an administrator hand out a permission they lack — an owner
+     * who could not see an invoice could not hire the Finance officer who
+     * issues them, and `staff.manage` would have produced an Add colleague
+     * button whose every choice was refused.
+     *
+     * That is a widening of the role and it is the right one: a fleet company
+     * bills its own corporate clients (ADR-0055 §5), so its owner reading its
+     * own money is the ordinary case rather than an exception. What bounds
+     * them is the fleet, not the catalogue (ADR-0065) — the test below is that
+     * half.
+     */
+    foreach ([UserRole::DISPATCHER, UserRole::BRANCH_MANAGER, UserRole::DEPOT_MANAGER] as $role) {
         $actor = $user($role->value);
 
         $this->actingAs($actor, 'sanctum')
@@ -56,6 +72,22 @@ it('refuses the financial report to a role that may run reports but not see invo
             ->postJson('/api/v1/reports/exports', ['format' => 'xlsx', 'report' => 'financial'])
             ->assertForbidden();
     }
+});
+
+it('lets a fleet owner read their own company s financial report', function () {
+    ['user' => $user] = reportAuthFixture();
+
+    // The other half of the change above, and the reason it is not simply a
+    // relaxation: the owner of a fleet company reads that company's money.
+    // Three refusals with nothing granted would pass just as well against a
+    // role that had lost `reports.view` altogether.
+    $owner = $user(UserRole::FLEET_OWNER->value);
+
+    $this->actingAs($owner, 'sanctum')->getJson('/api/v1/reports/financial')->assertOk();
+
+    $this->actingAs($owner, 'sanctum')
+        ->postJson('/api/v1/reports/exports', ['format' => 'xlsx', 'report' => 'financial'])
+        ->assertStatus(202);
 });
 
 it('still lets those roles run and export the reports they are entitled to', function () {
@@ -156,6 +188,7 @@ it('holds the line for a custom role, not just the seeded ten', function () {
     Role::create([
         'slug' => 'regional_analyst',
         'name' => 'Regional Analyst',
+        'audience' => RoleAudience::CLIENT,
         'is_system' => false,
         'permissions' => [Permission::REPORTS_VIEW->value, Permission::TRIPS_VIEW_ALL->value],
     ]);
@@ -170,6 +203,7 @@ it('holds the line for a custom role, not just the seeded ten', function () {
     Role::create([
         'slug' => 'invoice_reader',
         'name' => 'Invoice Reader',
+        'audience' => RoleAudience::CLIENT,
         'is_system' => false,
         'permissions' => [Permission::INVOICES_VIEW->value],
     ]);

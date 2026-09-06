@@ -21,6 +21,12 @@ export function notificationIcon(type: NotificationType): string {
       return 'circle-x'
     case 'report.export.ready':
       return 'download'
+    case 'trip.assigned':
+      return 'car'
+    case 'trip.driver_arrived':
+      return 'map-pin-check'
+    case 'trip.completed':
+      return 'flag'
     default:
       // An unknown type is a server that has shipped ahead of this client.
       // A generic icon renders it honestly; a thrown error would blank the
@@ -37,6 +43,11 @@ export function notificationTone(type: NotificationType): 'success' | 'warning' 
       return 'warning'
     case 'report.export.ready':
       return 'info'
+    case 'trip.assigned':
+    case 'trip.driver_arrived':
+      return 'info'
+    case 'trip.completed':
+      return 'success'
     default:
       return 'neutral'
   }

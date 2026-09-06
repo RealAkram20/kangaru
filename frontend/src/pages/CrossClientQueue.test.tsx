@@ -10,6 +10,9 @@ import { BookingsPage } from './BookingsPage'
 import { DispatchPage } from './DispatchPage'
 import { TripsPage } from './TripsPage'
 
+// TripsPage's panel navigates to the trip record; no router is mounted here.
+vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }))
+
 vi.mock('../lib/apiClient', () => ({
   apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn() },
 }))
@@ -52,14 +55,22 @@ function booking(
     ...(client ? { client } : {}),
     requested_by_user_id: 9,
     requested_by: { id: 9, name: 'Moses Kato', email: 'moses@x.test', role: 'corporate_admin' },
+    passenger_user_id: null,
     passenger_name: 'Grace Amongin',
     passenger_phone: '+256700000000',
     passenger_count: 2,
+    // ADR-0051: required on the wire — `BookingResource` sends it
+    // unconditionally, and null is the "no preference" case.
+    vehicle_category: null,
+    // ADR-0064: every booking names its service; details is null on a ride.
+    service_type: 'ride',
+    details: null,
     origin,
     destination: 'Entebbe',
     scheduled_for: null,
     is_immediate: true,
     status: 'pending',
+    is_ringing: false,
     approved_by_user_id: null,
     approved_at: null,
     decision_reason: null,
@@ -127,6 +138,8 @@ const driver: Driver = {
   license_number: 'DL-99881',
   license_expiry: '2028-01-01',
   status: 'active',
+  vehicle_id: null,
+  owns_vehicle: false,
   account: null,
   created_at: '2026-01-01T00:00:00.000000Z',
   updated_at: '2026-01-01T00:00:00.000000Z',

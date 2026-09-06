@@ -167,13 +167,23 @@ it('gives the customer the captain and a number to ring', function () {
         ->assertJsonPath('data.captain.phone', '+256700000111');
 });
 
-it('takes the captain\'s number away when the ride is over', function () {
-    [$customer] = walkInTripInProgress(TripStatus::TRIP_COMPLETED);
+it('keeps a just-finished ride on the screen long enough to read, then lets it go', function () {
+    [$customer, , , $trip] = walkInTripInProgress(TripStatus::TRIP_COMPLETED);
 
     // `trip_completed` is deliberately still "live" for contact purposes —
     // it is exactly when a passenger rings back about a bag on the seat —
-    // but the ride itself is finished, so it is no longer the *active* one
-    // and the screen returns to the order form.
+    // and the ride stays *active* for a short afterglow so the screen can
+    // render the ending it is watching for (fare, rating). This asserted
+    // `null` the instant the trip completed, and that null is what left the
+    // passenger's screen on "on trip" after the driver had finished: the web
+    // poll ignores null on purpose. Past the window, the order form.
+    $this->withToken($customer->createToken('customer')->plainTextToken)
+        ->getJson('/api/v1/customer/rides/active')
+        ->assertOk()
+        ->assertJsonPath('data.phase', 'trip_completed');
+
+    Trip::withoutGlobalScopes()->whereKey($trip->id)->update(['updated_at' => now()->subMinutes(31)]);
+
     $this->withToken($customer->createToken('customer')->plainTextToken)
         ->getJson('/api/v1/customer/rides/active')
         ->assertOk()

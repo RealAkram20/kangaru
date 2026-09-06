@@ -282,7 +282,7 @@ describe('AuditLogPage', () => {
     renderAs(<AuditLogPage />)
 
     expect(
-      await screen.findByText(/Every tenant, plus platform-level changes/i),
+      await screen.findByText(/Every client, plus platform-level changes/i),
     ).toBeInTheDocument()
 
     trail([entry()], meta({ scope: 'tenant' }))

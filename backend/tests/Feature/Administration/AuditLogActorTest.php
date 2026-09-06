@@ -39,6 +39,7 @@ it('renders the actor on an audit entry', function () {
     // do — they read the audit log (AuditLogPolicy) but do not manage the
     // fleet, so creating a vehicle here would 403 and test nothing.
     $this->actingAs($admin, 'sanctum')->postJson('/api/v1/bookings', [
+        'passenger_user_id' => $admin->id,
         'passenger_name' => 'Grace Amongin',
         'passenger_phone' => '+256700000000',
         'passenger_count' => 1,

@@ -1,4 +1,5 @@
 import { Children, cloneElement, isValidElement, useId, type CSSProperties, type HTMLAttributes, type ReactElement } from 'react'
+import './formField.css'
 
 /**
  * Clipped, not hidden: `display:none` and `visibility:hidden` both remove
@@ -37,6 +38,17 @@ export interface FormFieldProps extends HTMLAttributes<HTMLDivElement> {
   hint?: string
   error?: string
   required?: boolean
+  /**
+   * `stack` (the default) puts the label above the control — the shape every
+   * existing form in the console uses.
+   *
+   * `split` puts label and hint in a left column and the control and its error
+   * in a right one, so a long list of settings reads as rows rather than as a
+   * tall stack, and every control on the page starts on the same vertical
+   * line. Collapses back to a stack below `COMPACT_MAX_WIDTH`, in
+   * `formField.css`.
+   */
+  layout?: 'stack' | 'split'
 }
 
 /**
@@ -78,8 +90,10 @@ export function FormField({
   hint,
   error,
   required = false,
+  layout = 'stack',
   children,
   style,
+  className,
   ...rest
 }: FormFieldProps) {
   // Stable across renders and unique per field, so two fields on the same
@@ -100,51 +114,80 @@ export function FormField({
     // worth surfacing: the field still renders, it just does not annotate.
   }
 
+  const labelNode = label ? (
+    <label
+      htmlFor={htmlFor}
+      style={
+        labelHidden ? SR_ONLY : { font: 'var(--type-label)', color: 'var(--text-body)' }
+      }
+    >
+      {label}
+      {required && (
+        <>
+          {/* The asterisk is a sighted convention and nothing else. Left
+              in the accessible name it was read out literally — a
+              screen reader announced the passenger field as "Passenger
+              star" — so it is hidden and the meaning it stands for is
+              supplied as words instead. Dropping it without the
+              replacement would have been the other failure: a required
+              field that never says it is required. */}
+          <span aria-hidden="true" style={{ color: 'var(--kr-error)', marginLeft: 3 }}>
+            *
+          </span>
+          {/* The separating space is a text node in the label rather
+              than the first character of the clipped span: inside it,
+              accessible-name computation collapses it away and the
+              field announces as "Passenger(required)". */}{' '}
+          <span style={SR_ONLY}>(required)</span>
+        </>
+      )}
+    </label>
+  ) : null
+
+  // One paragraph, error winning over hint, in both layouts: two live
+  // messages would need two ids on `aria-describedby` and would read the
+  // field's explanation out again at the moment the reader wants the fix.
+  const messageNode =
+    error || hint ? (
+      <p
+        id={messageId}
+        style={{
+          font: 'var(--type-caption)',
+          color: error ? 'var(--kr-error)' : 'var(--text-secondary)',
+        }}
+      >
+        {error || hint}
+      </p>
+    ) : null
+
+  if (layout === 'split') {
+    return (
+      <div className={['kr-field-split', className].filter(Boolean).join(' ')} style={style} {...rest}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+          {labelNode}
+          {/* The hint sits under the label rather than under the control:
+              it explains what the setting is, which is the question being
+              asked on the left. The error goes on the right, next to the
+              value that caused it. */}
+          {!error && messageNode}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
+          {control}
+          {error && messageNode}
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, ...style }} {...rest}>
-      {label && (
-        <label
-          htmlFor={htmlFor}
-          style={
-            labelHidden
-              ? SR_ONLY
-              : { font: 'var(--type-label)', color: 'var(--text-body)' }
-          }
-        >
-          {label}
-          {required && (
-            <>
-              {/* The asterisk is a sighted convention and nothing else. Left
-                  in the accessible name it was read out literally — a
-                  screen reader announced the passenger field as "Passenger
-                  star" — so it is hidden and the meaning it stands for is
-                  supplied as words instead. Dropping it without the
-                  replacement would have been the other failure: a required
-                  field that never says it is required. */}
-              <span aria-hidden="true" style={{ color: 'var(--kr-error)', marginLeft: 3 }}>
-                *
-              </span>
-              {/* The separating space is a text node in the label rather
-                  than the first character of the clipped span: inside it,
-                  accessible-name computation collapses it away and the
-                  field announces as "Passenger(required)". */}{' '}
-              <span style={SR_ONLY}>(required)</span>
-            </>
-          )}
-        </label>
-      )}
+    <div
+      className={className}
+      style={{ display: 'flex', flexDirection: 'column', gap: 6, ...style }}
+      {...rest}
+    >
+      {labelNode}
       {control}
-      {(error || hint) && (
-        <p
-          id={messageId}
-          style={{
-            font: 'var(--type-caption)',
-            color: error ? 'var(--kr-error)' : 'var(--text-secondary)',
-          }}
-        >
-          {error || hint}
-        </p>
-      )}
+      {messageNode}
     </div>
   )
 }

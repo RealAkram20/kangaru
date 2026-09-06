@@ -81,12 +81,15 @@ jobs:
     name: Backend (Pint, Larastan, Pest)
     runs-on: ubuntu-latest
 
-    # Targets the production spec (PHP 8.4, MySQL 8 — AGENTS.md Technology
-    # Stack) even though local dev currently runs PHP 8.3 / MariaDB via
-    # XAMPP. CI is where that gap gets caught before it matters.
+    # Targets the production spec (PHP 8.4, MySQL 8.4 LTS — AGENTS.md
+    # Technology Stack; the same image the deploy-stack job runs) even though
+    # local dev currently runs PHP 8.3 / MariaDB via XAMPP. CI is where that
+    # gap gets caught before it matters. 8.0 left support in April 2026; the
+    # bump means every isolation test in the suite runs against the engine
+    # production actually uses (W1-c).
     services:
       mysql:
-        image: mysql:8.0
+        image: mysql:8.4
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: kangaruride_ci
@@ -220,3 +223,179 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # W1-a — the production stack, stood up on the runner from the same
+  # docker-compose.yml Coolify deploys, and proved rather than assumed:
+  # both images build; all seven containers come up healthy with limits;
+  # `schedule:list` shows the six commands; a queued job is completed by the
+  # queue container through the dedicated Redis; a backup is taken and a
+  # RESTORE IS PERFORMED and timed (master-plan.md §3: "an untested backup
+  # is not a backup"). deploy/smoke.sh holds the assertions.
+  #
+  # This is not the Coolify server. It is the closest thing CI can be to it:
+  # a Docker host running the identical file with placeholder secrets.
+  deploy-stack:
+    name: Deploy stack (compose up, smoke, backup + restore)
+    runs-on: ubuntu-latest
+
+    env:
+      COMPOSE_FILE: docker-compose.yml:deploy/docker-compose.ci.yml
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # deploy/ci.env holds placeholders only; APP_KEY is minted here so no
+      # key of any kind, even a throwaway, lives in the repository.
+      - name: Prepare environment
+        run: |
+          cp deploy/ci.env .env
+          echo "APP_KEY=base64:$(openssl rand -base64 32)" >> .env
+          echo "SOURCE_COMMIT=${GITHUB_SHA::12}" >> .env
+          docker compose config --quiet
+
+      - name: Build images
+        run: docker compose build --pull
+
+      - name: Start the stack
+        run: docker compose up -d --wait --wait-timeout 300
+
+      - name: Smoke test
+        run: bash deploy/smoke.sh
+
+      - name: Container logs
+        if: failure()
+        run: docker compose logs --no-color --tail=150
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans
+
+  # W1-d — the rollback, rehearsed. AGENTS.md Delivery requires the procedure
+  # "written down and rehearsed before first client onboarding", and an
+  # unrehearsed rollback is a wish. This performs one end to end on a Docker
+  # host and times it:
+  #
+  #   1. build v1, bring the stack up, migrate
+  #   2. add a migration and build v2 — a deploy that carries a schema change
+  #   3. roll the schema back WHILE v2 IS STILL RUNNING, then put v1 back
+  #   4. assert the table is gone, APP_BUILD is v1 again, and /up answers
+  #
+  # Step 3's order is the whole lesson and the reason this job exists: the
+  # `down()` method lives in the NEW image. Swap the image back first and the
+  # migration class is no longer there to roll back — you are left with a new
+  # schema, old code, and no way down that does not involve hand-written SQL.
+  #
+  # This proves the PROCEDURE, on the same compose file. It proves nothing
+  # about the owner's Coolify server; docs/runbook.md §1 says so plainly.
+  rollback-rehearsal:
+    name: Rollback rehearsal (schema down, image back, timed)
+    runs-on: ubuntu-latest
+
+    env:
+      COMPOSE_FILE: docker-compose.yml:deploy/docker-compose.ci.yml
+      APP_URL: http://localhost:18080
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare environment
+        run: |
+          cp deploy/ci.env .env
+          echo "APP_KEY=base64:$(openssl rand -base64 32)" >> .env
+          echo "SOURCE_COMMIT=v1" >> .env
+
+      - name: Deploy v1
+        run: |
+          docker compose build --pull
+          docker compose up -d --wait --wait-timeout 300
+          docker compose exec -T app printenv APP_BUILD
+
+      - name: Write the migration that v2 carries
+        run: |
+          cat > backend/database/migrations/2099_01_01_000000_rehearsal_widgets.php <<'PHP'
+          <?php
+
+          use Illuminate\Database\Migrations\Migration;
+          use Illuminate\Database\Schema\Blueprint;
+          use Illuminate\Support\Facades\Schema;
+
+          // Exists only inside the rollback rehearsal (CI). It stands in for a
+          // real deploy's schema change: reversible, as AGENTS.md requires of
+          // every migration, so the rehearsal exercises a genuine down().
+          return new class extends Migration
+          {
+              public function up(): void
+              {
+                  Schema::create('rehearsal_widgets', function (Blueprint $table) {
+                      $table->id();
+                      $table->string('label');
+                      $table->timestamps();
+                  });
+              }
+
+              public function down(): void
+              {
+                  Schema::dropIfExists('rehearsal_widgets');
+              }
+          };
+          PHP
+
+      - name: Deploy v2 (carries the migration)
+        run: |
+          sed -i 's/^SOURCE_COMMIT=v1$/SOURCE_COMMIT=v2/' .env
+          docker compose build app
+          docker compose up -d --wait --wait-timeout 300 app queue scheduler
+          test "$(docker compose exec -T app printenv APP_BUILD | tr -d '\r')" = v2
+          docker compose exec -T app php artisan tinker --execute='echo Schema::hasTable("rehearsal_widgets") ? "present" : "absent";' | grep -q present
+
+      - name: Status before rolling back
+        run: bash deploy/rollback.sh --status
+
+      - name: Roll back — schema down while v2 still runs, then v1 back
+        run: |
+          # Without pipefail a failing rollback.sh is swallowed by `| tee` and
+          # the step passes — proved in run 32127105596, where the script
+          # printed FAILED and CI carried on to fail two steps later on a
+          # different assertion. The guard is only load-bearing if the step
+          # it runs in actually fails.
+          set -eo pipefail
+          start=$(date +%s)
+
+          # Schema first, and only because the down() lives in v2's image.
+          # Reversing these two blocks is the mistake docs/runbook.md §5.3
+          # warns about; it was rehearsed deliberately in runs 32126492421
+          # and 32127105596, and this job caught it both times.
+          bash deploy/rollback.sh --schema 1 --yes | tee /tmp/rollback.txt
+
+          # Then the code. On Coolify this is "redeploy the previous commit";
+          # on a plain Docker host it is the image tag going back.
+          sed -i 's/^SOURCE_COMMIT=v2$/SOURCE_COMMIT=v1/' .env
+          docker compose up -d --wait --wait-timeout 300 app queue scheduler
+
+          end=$(date +%s)
+          echo "TOTAL_ROLLBACK_SECONDS=$((end - start))" | tee -a /tmp/rollback.txt
+
+      - name: Verify the rollback actually landed
+        run: |
+          bash deploy/rollback.sh --verify v1
+          gone=$(docker compose exec -T app php artisan tinker --execute='echo Schema::hasTable("rehearsal_widgets") ? "present" : "absent";' | tr -d '\r')
+          test "$gone" = absent || { echo "the table survived the rollback — that is not a rollback"; exit 1; }
+
+          # The workers must be back, or the rollback traded an outage for a
+          # silent one: dispatch stalls with nothing in the logs.
+          test "$(docker compose exec -T scheduler sh -c "pgrep -f '[a]rtisan schedule:work' | wc -l" | tr -d '\r ')" = 1
+          test "$(docker compose exec -T queue sh -c "pgrep -f '[a]rtisan queue:work' | wc -l" | tr -d '\r ')" = 1
+
+          # And the pre-rollback backup exists, because the script takes one
+          # before it touches the schema.
+          test "$(docker compose exec -T backup sh -c 'ls -1 /backups/kangaruride-*.sql.gz | wc -l' | tr -d '\r ')" -ge 1
+
+          echo "ROLLBACK REHEARSED —$(grep -o 'TOTAL_ROLLBACK_SECONDS=[0-9]*' /tmp/rollback.txt)"
+
+      - name: Container logs
+        if: failure()
+        run: docker compose logs --no-color --tail=150
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans

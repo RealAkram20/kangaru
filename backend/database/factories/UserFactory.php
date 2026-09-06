@@ -4,6 +4,7 @@ namespace Database\Factories;
 
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
+use App\Models\Operator;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
@@ -29,6 +30,20 @@ class UserFactory extends Factory
     {
         return [
             'tenant_id' => null,
+            // A tenant-less fixture in this suite has always meant "one of
+            // Shanitah's own people", and since ADR-0055 that has to be said
+            // rather than implied — two nulls are Kangaru, and `User::saving`
+            // refuses to guess.
+            //
+            // The closure is what keeps the 200-odd existing fixtures green.
+            // Laravel merges the attributes passed to `create()` as a state
+            // *before* expanding closures, so this sees the caller's override:
+            // `->create(['tenant_id' => $tenant->id])` yields a client account
+            // with no fleet, exactly as it did before this column existed, and
+            // no test had to be edited to say so.
+            'operator_id' => fn (array $attributes) => ($attributes['tenant_id'] ?? null) !== null
+                ? null
+                : Operator::SHANITAH,
             'name' => fake()->name(),
             'email' => fake()->unique()->safeEmail(),
             'email_verified_at' => now(),

@@ -9,6 +9,14 @@ use Modules\Billing\Controllers\RateCardController;
 // PATCH and no DELETE — AGENTS.md requires a rate card to be immutable
 // once used, so the only way to change prices is a new version.
 Route::apiResource('rate-cards', RateCardController::class)->only(['index', 'show', 'store']);
+
+// PATCH, and PATCH only — the card's *label*, never its prices. A version is
+// immutable (`PricedRate` throws) and changing what a client is charged is
+// `storeVersion` below. There is deliberately no `destroy`: a rate card that
+// priced an invoice is evidence, and `status: archived` is how one is taken
+// out of the way.
+Route::patch('rate-cards/{rateCard}', [RateCardController::class, 'update'])
+    ->name('rate-cards.update');
 Route::post('rate-cards/{rateCard}/versions', [RateCardController::class, 'storeVersion'])
     ->name('rate-cards.versions.store');
 Route::put('rate-cards/{rateCard}/default', [RateCardController::class, 'makeDefault'])

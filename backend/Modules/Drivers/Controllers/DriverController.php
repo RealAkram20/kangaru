@@ -12,6 +12,7 @@ use Modules\Drivers\Requests\StoreDriverRequest;
 use Modules\Drivers\Requests\UpdateDriverRequest;
 use Modules\Drivers\Resources\DriverResource;
 use Modules\Drivers\Services\DriverService;
+use Modules\Fleet\Services\PlanAllowance;
 
 class DriverController extends Controller
 {
@@ -37,6 +38,21 @@ class DriverController extends Controller
     public function store(StoreDriverRequest $request): JsonResponse
     {
         $this->authorize('create', Driver::class);
+
+        /** @var User $actor */
+        $actor = $request->user();
+
+        // ADR-0058 §4. The limit is checked **here, at the point of adding**,
+        // and nowhere else — a driver who cannot work because of their
+        // employer's billing is a support call that takes an hour to diagnose
+        // and reaches the wrong team twice on the way. Exceeding a limit never
+        // touches what already exists.
+        //
+        // Head office has no fleet of its own, so there is nothing to charge
+        // and nothing to check.
+        if ($actor->operator_id !== null && $actor->operator !== null) {
+            app(PlanAllowance::class)->require($actor->operator, PlanAllowance::DRIVERS);
+        }
 
         $driver = $this->drivers->create($request);
 

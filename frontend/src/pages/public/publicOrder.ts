@@ -54,3 +54,40 @@ export const SERVICE_META: Record<
     short: 'Rent a vehicle and drive',
   },
 }
+
+/** One class's quote from GET /public/fare-quotes — the tariff, before a vehicle exists. */
+export interface FareQuote {
+  vehicle_category: string
+  distance_km: number
+  total_minor: number
+  currency: string
+  is_estimate: true
+  basis: string
+}
+
+export type RideClass = 'economy' | 'standard' | 'xl' | 'boda' | 'electric_boda'
+
+/**
+ * The public tariff (ADR-0026) answering the order form, one figure per ride
+ * class — the same `WalkInFareService::quote()` the driver is quoted from, so
+ * the two people in the car are told one number. Null per class where the
+ * tariff is silent; the form falls back to its "from" figure there.
+ *
+ * Coordinates are `[lng, lat]`, as everything from the geocoder is here.
+ */
+export async function fetchFareQuotes(
+  from: [number, number],
+  to: [number, number],
+  signal?: AbortSignal,
+): Promise<Record<RideClass, FareQuote | null>> {
+  const response = await apiClient.get('/public/fare-quotes', {
+    params: {
+      pickup_longitude: from[0],
+      pickup_latitude: from[1],
+      dropoff_longitude: to[0],
+      dropoff_latitude: to[1],
+    },
+    signal,
+  })
+  return response.data.data.quotes as Record<RideClass, FareQuote | null>
+}

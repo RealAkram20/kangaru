@@ -5,6 +5,7 @@ namespace Modules\Vehicles\Requests;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Modules\Vehicles\Models\Vehicle;
+use Modules\Vehicles\Rules\ActiveVehicleCategory;
 
 class UpdateVehicleRequest extends FormRequest
 {
@@ -39,7 +40,15 @@ class UpdateVehicleRequest extends FormRequest
             'make' => ['sometimes', 'string', 'max:100'],
             'model' => ['sometimes', 'string', 'max:100'],
             'year' => ['sometimes', 'integer', 'min:1980', 'max:'.(date('Y') + 1)],
-            'category' => ['sometimes', 'string', Rule::in(Vehicle::CATEGORIES)],
+            // ADR-0050 §4. The vehicle's **own** category is allowed through
+            // even when retired: otherwise retiring `tricycle` would make
+            // every tricycle in the fleet uneditable, and a clerk correcting
+            // a colour would be refused over a field they did not touch.
+            'category' => [
+                'sometimes',
+                'string',
+                new ActiveVehicleCategory($vehicle instanceof Vehicle ? $vehicle->category : null),
+            ],
             'seating_capacity' => ['sometimes', 'integer', 'min:1', 'max:100'],
             'color' => ['sometimes', 'nullable', 'string', 'max:50'],
             'vin' => ['sometimes', 'nullable', 'string', 'max:50'],

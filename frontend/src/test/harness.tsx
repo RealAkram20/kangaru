@@ -16,6 +16,7 @@ export function makeUser(overrides: Partial<User> = {}): User {
   return {
     id: 1,
     tenant_id: 1,
+    tenant_name: 'Centenary Bank',
     name: 'Ada Nakato',
     email: 'ada@centenary-bank.test',
     role: 'corporate_admin',

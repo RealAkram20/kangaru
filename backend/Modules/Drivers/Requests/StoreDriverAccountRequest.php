@@ -3,10 +3,10 @@
 namespace Modules\Drivers\Requests;
 
 use App\Models\User;
+use App\Support\Auth\PasswordPolicy;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
-use Illuminate\Validation\Rules\Password;
 use Modules\Administration\Models\Role;
 use Modules\Administration\Policies\UserPolicy;
 use Modules\Drivers\Services\DriverAccountService;
@@ -64,7 +64,7 @@ class StoreDriverAccountRequest extends FormRequest
                 'max:255',
                 Rule::unique('users', 'email'),
             ],
-            'password' => [Rule::requiredIf(! $adopting), 'string', Password::min(12)],
+            'password' => [Rule::requiredIf(! $adopting), 'string', PasswordPolicy::rule()],
             // Defaults to the seeded `driver` role. Named as a field rather
             // than hardcoded so ADR-0004's custom roles are reachable — a
             // "Relief Driver" carrying the same transition permission is a

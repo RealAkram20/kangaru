@@ -2,6 +2,7 @@
 
 namespace Modules\Customers\Requests;
 
+use App\Support\Auth\PasswordPolicy;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Modules\Customers\Enums\CustomerGender;
@@ -40,7 +41,11 @@ class RegisterCustomerRequest extends FormRequest
             // over phone formatting is a customer lost.
             'phone' => ['required', 'string', 'min:9', 'max:32', 'regex:/^[+0-9 ()-]+$/'],
             'email' => ['required', 'email', 'max:190', 'unique:customers,email'],
-            'password' => ['required', 'string', 'min:8', 'max:255'],
+            // `PasswordPolicy::rule()` rather than a bare `min:`, so this door
+            // inherits anything the platform adds to the rule later. The custom
+            // message below still applies: Laravel hands the outer request's
+            // `customMessages` to the nested validator the rule builds.
+            'password' => ['required', 'string', PasswordPolicy::rule(), 'max:255'],
         ];
     }
 
@@ -51,7 +56,9 @@ class RegisterCustomerRequest extends FormRequest
     {
         return [
             'email.unique' => 'An account with this email already exists. Log in instead.',
-            'password.min' => 'Please choose a password of at least 8 characters.',
+            // `:min` rather than the number written out. The one thing worse than
+            // a floor nobody can state is a sentence that states the old one.
+            'password.min' => 'Please choose a password of at least :min characters.',
         ];
     }
 }

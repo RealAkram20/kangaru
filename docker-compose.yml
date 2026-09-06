@@ -1,0 +1,387 @@
+# =============================================================================
+# KangaruRide — the isolated production stack (W1-a)
+# =============================================================================
+#
+# What Coolify deploys ("Docker Compose" build pack, this file at the repo
+# root). Seven containers, all of them this project's own — its own MySQL 8,
+# its own Redis, its own volumes. Nothing is shared with a neighbour, and
+# nothing publishes a host port: Coolify's proxy reaches `app` and `web` by
+# the domains set in the Coolify UI, and MySQL and Redis are reachable only
+# on this project's network. (master-plan.md §1 decision 4.)
+#
+# The app is FIVE processes, not one — the table in master-plan.md §3:
+#
+#   app        nginx + php-fpm, the API                    <- domain: api.…
+#   queue      queue:work — GPS batch-insert, notifications
+#   scheduler  schedule:work — AdvanceDispatchOffers every 10 s, and the rest
+#   mysql      MySQL 8, dedicated
+#   redis      live positions, presence, cache, scheduler locks — dedicated
+#
+# plus the two the table does not name:
+#
+#   web        the SPA (console + public site), static nginx  <- domain: www.…
+#   backup     nightly mysqldump to its own volume, and the restore script
+#
+# Every service has CPU and memory limits (deploy.resources), so a runaway
+# query here cannot starve a neighbour and a neighbour cannot starve
+# dispatch. The numbers are starting points sized for a small VPS and are all
+# overridable from Coolify's environment (the ${…_CPUS} / ${…_MEM} keys).
+#
+# Environment: every ${VAR} below is a key Coolify shows in its UI. The
+# application keys are backend/.env.production.example (W1-b) — same names,
+# same decided defaults. Keys that exist only for this file (DB_ROOT_PASSWORD,
+# the VITE_* build args, the sizing knobs) are listed in deploy/README.md.
+# =============================================================================
+
+x-app-image: &app-image
+  build:
+    context: ./backend
+    dockerfile: Dockerfile
+    args:
+      # Baked in so a running container can say which build it is —
+      # `docker compose exec app printenv APP_BUILD`. It is what makes a
+      # rollback verifiable rather than merely performed (docs/runbook.md).
+      APP_BUILD: ${SOURCE_COMMIT:-local}
+  image: kangaruride/api:${SOURCE_COMMIT:-local}
+
+# The application environment, once, shared by app / queue / scheduler.
+# Values with a default here are W1-b's decided production values; values
+# without one are the template's <<OWNER>> keys and must be set in Coolify —
+# an empty APP_KEY or DB_PASSWORD fails at start, loudly.
+x-app-env: &app-env
+  APP_NAME: ${APP_NAME:-KangaruRide}
+  APP_ENV: ${APP_ENV:-production}
+  APP_DEBUG: ${APP_DEBUG:-false}
+  APP_URL: ${APP_URL}
+  APP_KEY: ${APP_KEY}
+  APP_PREVIOUS_KEYS: ${APP_PREVIOUS_KEYS:-}
+  APP_LOCALE: ${APP_LOCALE:-en}
+  APP_FALLBACK_LOCALE: ${APP_FALLBACK_LOCALE:-en}
+  BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}
+
+  FRONTEND_URL: ${FRONTEND_URL}
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+
+  # The service names below are this file's, not the owner's to choose.
+  DB_CONNECTION: mysql
+  DB_HOST: mysql
+  DB_PORT: "3306"
+  DB_DATABASE: ${DB_DATABASE}
+  DB_USERNAME: ${DB_USERNAME}
+  DB_PASSWORD: ${DB_PASSWORD}
+
+  REDIS_CLIENT: phpredis
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: ${REDIS_PASSWORD}
+  REDIS_PREFIX: ${REDIS_PREFIX:-kangaruride_}
+
+  # ADR-0003 — both must be redis, or the dedicated Redis sits idle while
+  # live positions go to MySQL. (.env.production.example explains the trap.)
+  TRACKING_LIVE_POSITIONS_DRIVER: ${TRACKING_LIVE_POSITIONS_DRIVER:-redis}
+  DISPATCH_PRESENCE_DRIVER: ${DISPATCH_PRESENCE_DRIVER:-redis}
+
+  CACHE_STORE: ${CACHE_STORE:-redis}
+  QUEUE_CONNECTION: ${QUEUE_CONNECTION:-database}
+  SESSION_DRIVER: ${SESSION_DRIVER:-database}
+  SESSION_LIFETIME: ${SESSION_LIFETIME:-120}
+  SESSION_ENCRYPT: ${SESSION_ENCRYPT:-false}
+  SESSION_SECURE_COOKIE: ${SESSION_SECURE_COOKIE:-true}
+  SESSION_SAME_SITE: ${SESSION_SAME_SITE:-lax}
+
+  # stack -> stderr keeps the JSON tap; LOG_CHANNEL=stderr would drop it.
+  LOG_CHANNEL: ${LOG_CHANNEL:-stack}
+  LOG_STACK: ${LOG_STACK:-stderr}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  LOG_DEPRECATIONS_CHANNEL: ${LOG_DEPRECATIONS_CHANNEL:-null}
+
+  # `local` = storage/app/private, which is the `app-storage` volume below.
+  FILESYSTEM_DISK: ${FILESYSTEM_DISK:-local}
+
+  MAIL_MAILER: ${MAIL_MAILER}
+  MAIL_HOST: ${MAIL_HOST}
+  MAIL_PORT: ${MAIL_PORT:-587}
+  MAIL_SCHEME: ${MAIL_SCHEME:-smtp}
+  MAIL_USERNAME: ${MAIL_USERNAME}
+  MAIL_PASSWORD: ${MAIL_PASSWORD}
+  MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS}
+  MAIL_FROM_NAME: ${MAIL_FROM_NAME:-KangaruRide}
+
+  SANCTUM_TOKEN_EXPIRATION_MINUTES: ${SANCTUM_TOKEN_EXPIRATION_MINUTES:-1440}
+  SANCTUM_STATEFUL_DOMAINS: ${SANCTUM_STATEFUL_DOMAINS:-}
+
+  TRACKING_RETENTION_MONTHS: ${TRACKING_RETENTION_MONTHS:-12}
+  TRACKING_PARTITIONS_AHEAD: ${TRACKING_PARTITIONS_AHEAD:-3}
+  NOTIFICATION_RETENTION_DAYS: ${NOTIFICATION_RETENTION_DAYS:-90}
+
+  MONEY_CURRENCY: ${MONEY_CURRENCY:-UGX}
+  MONEY_DEFAULT_ROUNDING: ${MONEY_DEFAULT_ROUNDING:-half_up}
+  BILLING_TIMEZONE: ${BILLING_TIMEZONE:-Africa/Kampala}
+  BILLING_INVOICE_PREFIX: ${BILLING_INVOICE_PREFIX:-INV}
+  BILLING_CREDIT_NOTE_PREFIX: ${BILLING_CREDIT_NOTE_PREFIX:-CRN}
+
+# Container logs go to Coolify via the json-file driver; rotated so a chatty
+# worker cannot fill the disk (AGENTS.md alerts: disk > 80%).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # app — the API. The only container that runs the release step.
+  # ---------------------------------------------------------------------------
+  app:
+    <<: *app-image
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      # migrate --force + storage:link, here and nowhere else. Never --seed.
+      RELEASE_TASKS: "true"
+      # php-fpm workers are bounded to what the CPU limit can actually run
+      # (APP_CPUS). The serversideup image defaults this to 20, which on a
+      # one- or two-core limit lets a burst spawn more workers than there are
+      # cores to run them: they thrash, request latency climbs past
+      # Cloudflare's timeout, and *some* users get 52x while the container's
+      # own health check — one light request every 15s — stays green, so
+      # nothing restarts. Twelve fits two cores and 1 GiB (12 x ~80 MiB) with
+      # room to spare. Raise it together with APP_CPUS, never past it.
+      PHP_FPM_PM_MAX_CHILDREN: ${PHP_FPM_PM_MAX_CHILDREN:-12}
+    expose:
+      - "8080"
+    volumes:
+      - app-storage:/var/www/html/storage/app
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # Laravel's own health route: the framework booted, not just nginx.
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/up"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          cpus: ${APP_CPUS:-1.0}
+          memory: ${APP_MEM:-768M}
+    logging: *logging
+
+  # ---------------------------------------------------------------------------
+  # queue — GPS batch-insert (ADR-0003), notifications, report exports.
+  # Found stopped once already (worklog, 15 Aug). `restart: unless-stopped`
+  # plus --max-time means it recycles itself hourly and comes back if it dies.
+  # ---------------------------------------------------------------------------
+  queue:
+    <<: *app-image
+    restart: unless-stopped
+    command:
+      - php
+      - /var/www/html/artisan
+      - queue:work
+      - --sleep=3
+      - --tries=3
+      - --timeout=90
+      - --max-time=3600
+      - --no-interaction
+    environment: *app-env
+    volumes:
+      # Shared with app: report exports are written here by a job and
+      # downloaded through the API.
+      - app-storage:/var/www/html/storage/app
+    depends_on:
+      app:
+        condition: service_healthy
+    # Longer than --timeout, so an in-flight GPS batch finishes on redeploy.
+    stop_grace_period: 100s
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f '[a]rtisan queue:work' >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: ${QUEUE_CPUS:-0.5}
+          memory: ${QUEUE_MEM:-512M}
+    logging: *logging
+
+  # ---------------------------------------------------------------------------
+  # scheduler — AdvanceDispatchOffers every ten seconds, CloseStaleDutySessions
+  # every minute, and the nightly/weekly jobs. Without it dispatch stalls with
+  # no error anywhere. schedule:work handles the sub-minute cadence itself.
+  # ---------------------------------------------------------------------------
+  scheduler:
+    <<: *app-image
+    restart: unless-stopped
+    command:
+      - php
+      - /var/www/html/artisan
+      - schedule:work
+      - --no-interaction
+    environment: *app-env
+    volumes:
+      - app-storage:/var/www/html/storage/app
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f '[a]rtisan schedule:work' >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: ${SCHEDULER_CPUS:-0.5}
+          memory: ${SCHEDULER_MEM:-384M}
+    logging: *logging
+
+  # ---------------------------------------------------------------------------
+  # mysql — dedicated. 8.4 LTS (8.0 left support in April 2026); the CI
+  # deploy-stack job proves the migrations against it on every run.
+  # No published port. Binary log off: there is no replica, and an unbounded
+  # binlog is the classic way a small VPS runs out of disk.
+  # ---------------------------------------------------------------------------
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    command:
+      - mysqld
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb-buffer-pool-size=${MYSQL_BUFFER_POOL:-512M}
+      - --max-connections=${MYSQL_MAX_CONNECTIONS:-150}
+      - --disable-log-bin
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE}
+      # The application user — least privilege, ALL on this database only.
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      # Root is used by the restore script only, never by the application.
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: ${MYSQL_CPUS:-1.5}
+          memory: ${MYSQL_MEM:-1536M}
+    logging: *logging
+
+  # ---------------------------------------------------------------------------
+  # redis — live positions, driver presence, cache, and the scheduler's
+  # onOneServer / withoutOverlapping locks. `noeviction`, deliberately: an LRU
+  # policy would silently drop a driver's last position or a schedule lock
+  # under memory pressure. Full memory here fails loudly instead.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD}
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-256mb}
+      - --maxmemory-policy
+      - noeviction
+      - --save
+      - "60 1000"
+      - --appendonly
+      - "no"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: ${REDIS_CPUS:-0.25}
+          memory: ${REDIS_MEM:-320M}
+    logging: *logging
+
+  # ---------------------------------------------------------------------------
+  # web — the SPA. Static files; the API origin is baked in at build.
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+        VITE_GOOGLE_MAPS_API_KEY: ${VITE_GOOGLE_MAPS_API_KEY:-}
+        VITE_MAPBOX_TOKEN: ${VITE_MAPBOX_TOKEN:-}
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+    image: kangaruride/web:${SOURCE_COMMIT:-local}
+    restart: unless-stopped
+    expose:
+      - "80"
+    deploy:
+      resources:
+        limits:
+          cpus: ${WEB_CPUS:-0.25}
+          memory: ${WEB_MEM:-64M}
+    logging: *logging
+
+  # ---------------------------------------------------------------------------
+  # backup — nightly mysqldump into its own volume, 14 days kept, and the
+  # restore script. An untested backup is not a backup: deploy/README.md has
+  # the restore rehearsal, and CI performs one on every run.
+  # ---------------------------------------------------------------------------
+  backup:
+    image: mysql:8.4
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "/opt/kangaruride/backup.sh"]
+    command: ["--loop"]
+    environment:
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      BACKUP_DIR: /backups
+      # 23:15 UTC = 02:15 Africa/Kampala, before PruneReportExports at 02:30.
+      BACKUP_UTC_TIME: ${BACKUP_UTC_TIME:-23:15}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      - ./deploy:/opt/kangaruride:ro
+      - backups:/backups
+    depends_on:
+      mysql:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: ${BACKUP_CPUS:-0.25}
+          memory: ${BACKUP_MEM:-256M}
+    logging: *logging
+
+volumes:
+  # Driver documents (ADR-0033, app-level encrypted), odometer photos, branding
+  # uploads, report exports. Survives redeploys. Back this volume up at the
+  # host level too — the nightly dump covers MySQL only.
+  app-storage:
+  mysql-data:
+  redis-data:
+  backups:

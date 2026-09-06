@@ -54,7 +54,7 @@ export function Select({
     border: 'none',
     outline: 'none',
     background: 'transparent',
-    font: size === 'lg' ? 'var(--type-body)' : 'var(--type-body-dense)',
+    font: size === 'lg' ? 'var(--type-body)' : 'var(--type-control)',
     color: value || defaultValue ? 'var(--text-body)' : 'var(--text-placeholder)',
     cursor: disabled ? 'not-allowed' : 'pointer',
   }

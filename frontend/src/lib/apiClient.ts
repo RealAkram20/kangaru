@@ -54,12 +54,27 @@ apiClient.interceptors.request.use((config) => {
     return config
   }
 
-  // The customer surface answers only to a customer token; sending the
-  // staff one would be a 401 that logs the dispatcher out of their own app.
+  /*
+   * The customer surface takes the customer token, and falls back to the
+   * staff one (ADR-0066 §3).
+   *
+   * The fallback is the whole of the console's half of acting-as-a-walk-in.
+   * The server accepts a staff token here **only** while a live acting-as
+   * session names a `Customer` as its subject, and refuses it with a plain
+   * 401 otherwise — so the worst this can do for an ordinary dispatcher who
+   * wanders onto the order page is the 401 the original rule was avoiding,
+   * and the interceptor below already keeps that from clearing their session
+   * or bouncing them to the staff login.
+   *
+   * Customer token first, so a real walk-in signed in on this browser is
+   * never displaced by a staff session that happens to share it. Starting a
+   * walk-in support session clears that key for the same reason, from the
+   * other direction.
+   */
   if (url.startsWith('/customer/')) {
-    const customerToken = localStorage.getItem(CUSTOMER_TOKEN_KEY)
-    if (customerToken) {
-      config.headers.Authorization = `Bearer ${customerToken}`
+    const bearer = localStorage.getItem(CUSTOMER_TOKEN_KEY) ?? localStorage.getItem(TOKEN_KEY)
+    if (bearer) {
+      config.headers.Authorization = `Bearer ${bearer}`
     }
     return config
   }

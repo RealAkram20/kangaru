@@ -140,6 +140,15 @@ class DatabaseDriverPresenceStore implements DriverPresenceStore
             ->map(fn (object $row) => DriverPresence::fromRow((array) $row));
     }
 
+    public function onDuty(): Collection
+    {
+        return DB::table('driver_presence')
+            ->where('on_duty', true)
+            ->orderBy('driver_id')
+            ->get()
+            ->map(fn (object $row) => DriverPresence::fromRow((array) $row));
+    }
+
     public function forget(int $driverId): void
     {
         DB::table('driver_presence')->where('driver_id', $driverId)->delete();

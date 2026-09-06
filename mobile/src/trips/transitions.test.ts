@@ -1,5 +1,16 @@
 import type { Trip, TripStatus } from '../api/types';
-import { driverActions, isInProgress, shouldStreamGps, streamingTripId } from './transitions';
+import {
+  activeTripRoute,
+  driverActions,
+  isInProgress,
+  isLiveLeg,
+  isPickupPhase,
+  isTripInProgress,
+  isWaitingForPassenger,
+  shouldStreamGps,
+  streamingTripId,
+  tripDestination,
+} from './transitions';
 
 function tripWith(status: TripStatus, allowed: TripStatus[]): Trip {
   return {
@@ -11,8 +22,23 @@ function tripWith(status: TripStatus, allowed: TripStatus[]): Trip {
     driver_id: 1,
     origin: 'Nakawa',
     destination: 'Jinja',
+    pickup: { label: 'Kampala', latitude: null, longitude: null },
+    dropoff: { label: 'Jinja', latitude: null, longitude: null },
+    service_type: null,
+    reference: null,
+    package: null,
+    fare: null,
+    estimated_fare: null,
+    earnings: null,
     status,
     allowed_transitions: allowed,
+    pickup_wait_target_seconds: 300,
+    odometer_max_km_per_trip: 2000,
+  variance_threshold_percent: 10,
+  provisional_fare: null,
+  distance: null,
+    payment: null,
+
     odometer_start: null,
     odometer_end: null,
     odometer_start_photo_url: null,
@@ -20,6 +46,8 @@ function tripWith(status: TripStatus, allowed: TripStatus[]): Trip {
     distance_km: null,
     gps_distance_km: null,
     distance_variance_flagged: null,
+    unplanned_stop_count: 0,
+    dropoff_reached_at: null,
     started_at: null,
     completed_at: null,
     duration_minutes: null,
@@ -105,6 +133,51 @@ describe('driverActions', () => {
     const accepted = driverActions(tripWith('accepted', ['driver_en_route']));
 
     expect(accepted[0]?.requires).toBeNull();
+  });
+
+  /**
+   * ADR-0047: with `tracking.odometer_enabled` off, the server prices the
+   * trip from its GPS trace and never asks for a reading. Continuing to
+   * demand one would put a form in front of a driver for a number nobody
+   * wants — and, worse, the action stays behind that form.
+   */
+  it('drops the reading requirement when the office has switched the odometer off', () => {
+    const onboard = driverActions(tripWith('passenger_onboard', ['trip_started']), {
+      odometerEnabled: false,
+    });
+
+    expect(onboard[0]?.requires).toBeNull();
+    // The *action* survives — this is the difference between "no reading" and
+    // "no way to start the trip".
+    expect(onboard[0]?.to).toBe('trip_started');
+
+    const resumed = driverActions(tripWith('trip_resumed', ['waiting', 'trip_completed']), {
+      odometerEnabled: false,
+    });
+
+    expect(resumed.find((action) => action.to === 'trip_completed')?.requires).toBeNull();
+  });
+
+  it('still demands a reason to decline when the odometer is off', () => {
+    // The two requirements are unrelated and the switch must not conflate
+    // them: a rejection needs a reason because the office has to read it,
+    // which has nothing to do with mileage.
+    const assigned = driverActions(tripWith('assigned', ['accepted', 'rejected']), {
+      odometerEnabled: false,
+    });
+
+    expect(assigned.find((action) => action.to === 'rejected')?.requires).toBe('notes');
+  });
+
+  it('keeps asking for a reading when the caller says nothing about the setting', () => {
+    // The default matters more than it looks. A screen that has not been
+    // taught about the setting must keep the behaviour the app has always
+    // had — defaulting the other way would silently drop the reading from
+    // any surface somebody forgot to update, and the symptom is a 422 the
+    // driver reads on the sync queue hours after leaving the vehicle.
+    const onboard = driverActions(tripWith('passenger_onboard', ['trip_started']), {});
+
+    expect(onboard[0]?.requires).toBe('odometer_start');
   });
 });
 
@@ -193,5 +266,140 @@ describe('isInProgress', () => {
     expect(isInProgress('assigned')).toBe(false);
     expect(isInProgress('accepted')).toBe(false);
     expect(isInProgress('trip_completed')).toBe(false);
+  });
+});
+
+describe('activeTripRoute', () => {
+  it('sends each live status to the screen that owns it', () => {
+    expect(activeTripRoute('accepted')).toBe('Pickup');
+    expect(activeTripRoute('driver_en_route')).toBe('Pickup');
+    expect(activeTripRoute('driver_arrived')).toBe('WaitingForPassenger');
+    expect(activeTripRoute('trip_started')).toBe('TripInProgress');
+    expect(activeTripRoute('waiting')).toBe('TripInProgress');
+    expect(activeTripRoute('trip_resumed')).toBe('TripInProgress');
+  });
+
+  it('sends passenger_onboard to the odometer, not to the record', () => {
+    // The gap this function was extracted to close. It fell through every
+    // predicate and landed on TripDetail — a page read at a standstill — when
+    // the only legal move from that state is `trip_started`, and the opening
+    // reading is the only thing standing in the way. Found on a real handset
+    // after a driver backed out of the odometer modal.
+    expect(activeTripRoute('passenger_onboard')).toBe('Odometer');
+  });
+
+  it('falls back to the record for anything with no live screen', () => {
+    expect(activeTripRoute('assigned')).toBe('TripDetail');
+    expect(activeTripRoute('trip_completed')).toBe('TripDetail');
+    expect(activeTripRoute('cancelled')).toBe('TripDetail');
+    expect(activeTripRoute('no_show')).toBe('TripDetail');
+  });
+
+  it('never sends one status to two screens', () => {
+    // The invariant `docs/agent-worklog.md` keeps as a table. Asserted here so
+    // widening a predicate cannot quietly take a status off another screen.
+    const live: TripStatus[] = [
+      'accepted',
+      'driver_en_route',
+      'driver_arrived',
+      'passenger_onboard',
+      'trip_started',
+      'waiting',
+      'trip_resumed',
+    ];
+
+    const pairs = live.filter(
+      (s) =>
+        [isPickupPhase(s), isWaitingForPassenger(s), isTripInProgress(s), s === 'passenger_onboard']
+          .filter(Boolean).length !== 1,
+    );
+
+    expect(pairs).toEqual([]);
+  });
+});
+
+describe('isLiveLeg', () => {
+  it('counts an accepted trip as live, which isInProgress does not', () => {
+    // The bug, in one assertion. A driver accepted a real offer, the trip
+    // landed in `accepted`, and HomeScreen — which picked its active trip with
+    // `isInProgress` — rendered no card at all. The passenger was waiting and
+    // the app looked idle.
+    expect(isLiveLeg('accepted')).toBe(true);
+    expect(isInProgress('accepted')).toBe(false);
+  });
+
+  it('covers every status that has a screen of its own', () => {
+    for (const status of [
+      'accepted',
+      'driver_en_route',
+      'driver_arrived',
+      'passenger_onboard',
+      'trip_started',
+      'waiting',
+      'trip_resumed',
+    ] as TripStatus[]) {
+      expect(isLiveLeg(status)).toBe(true);
+      expect(activeTripRoute(status)).not.toBe('TripDetail');
+    }
+  });
+
+  it('leaves anything the driver is not doing alone', () => {
+    for (const status of [
+      'assigned',
+      'rejected',
+      'no_show',
+      'trip_completed',
+      'cancelled',
+    ] as TripStatus[]) {
+      expect(isLiveLeg(status)).toBe(false);
+    }
+  });
+
+  it('does not widen isInProgress, which orders the list', () => {
+    // `ordering.ts` groups `assigned` and `accepted` as *upcoming*. A
+    // corporate trip accepted for four o'clock is not something the driver is
+    // doing at ten, and pinning it as in-progress would say otherwise.
+    expect(isInProgress('assigned')).toBe(false);
+    expect(isInProgress('accepted')).toBe(false);
+  });
+});
+
+describe('tripDestination', () => {
+  it('never sends a live trip to the record view', () => {
+    // The whole point. Today's list sent every trip to `TripDetail`, so
+    // tapping a live job landed a driver on an odometer table of em dashes
+    // with a "Start trip" button on a trip whose passenger was already
+    // aboard. Reported from a handset as "wrong and misleading".
+    for (const status of [
+      'accepted',
+      'driver_en_route',
+      'driver_arrived',
+      'passenger_onboard',
+      'trip_started',
+      'waiting',
+      'trip_resumed',
+    ] as TripStatus[]) {
+      expect(tripDestination(status, 42).screen).not.toBe('TripDetail');
+    }
+  });
+
+  it('carries the odometer its transition, which a bare trip id cannot', () => {
+    const to = tripDestination('passenger_onboard', 42);
+
+    expect(to).toEqual({
+      screen: 'Odometer',
+      params: { tripId: 42, to: 'trip_started', from: 'passenger_onboard' },
+    });
+  });
+
+  it('keeps the record for trips that are over, or never started', () => {
+    // `TripDetail` is not removed and should not be — the timeline and the
+    // odometer pair are exactly what a finished trip is read for.
+    for (const status of ['assigned', 'trip_completed', 'cancelled', 'no_show'] as TripStatus[]) {
+      expect(tripDestination(status, 42)).toEqual({
+        screen: 'TripDetail',
+        params: { tripId: 42 },
+      });
+    }
   });
 });

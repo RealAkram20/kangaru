@@ -2,6 +2,7 @@
 
 namespace Modules\Dispatch\Services;
 
+use App\Models\User;
 use Illuminate\Support\Collection;
 use Modules\Bookings\Models\Booking;
 use Modules\Fleet\Services\AllocationLookup;
@@ -49,7 +50,7 @@ class VehicleCandidates
     /**
      * @return Collection<int, array{vehicle: Vehicle, allocated: bool, dispatchable: bool, requires_override_reason: bool, note: string|null}>
      */
-    public function forBooking(Booking $booking): Collection
+    public function forBooking(Booking $booking, User $actor): Collection
     {
         $on = $booking->scheduled_for ?? now();
 
@@ -63,7 +64,25 @@ class VehicleCandidates
         // Only vehicles that could actually take the trip. The dispatch board
         // filtered this client-side, which meant every caller had to know the
         // rule and a mobile client would have had to reimplement it.
-        $vehicles = Vehicle::query()->where('status', 'active')->orderBy('registration_number')->get();
+        //
+        // **`forActor`, not a bare query.** `BelongsToOperator` carries no
+        // global scope — deliberately, and it argues the case at length — so
+        // the whole burden falls on call sites opting in, and this one never
+        // did. It offered every active vehicle on the platform, so a second
+        // fleet's van appeared on this fleet's board with its registration
+        // and category, which is precisely what `VehicleService::list` had
+        // already shipped once and now warns about: *"A correct scope nothing
+        // calls is not a defence; it is a defence that has never been
+        // deployed."*
+        //
+        // The dead Assign button was the visible half. `/vehicles` is scoped
+        // correctly, so the board could not resolve the foreign vehicle it had
+        // just offered, and the button never enabled — a leak that presented
+        // as a broken control.
+        $vehicles = Vehicle::forActor($actor)
+            ->where('status', 'active')
+            ->orderBy('registration_number')
+            ->get();
 
         return $vehicles
             ->map(function (Vehicle $vehicle) use ($booking, $contracted, $on, $unavailable) {

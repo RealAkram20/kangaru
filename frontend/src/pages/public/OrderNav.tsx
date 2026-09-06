@@ -25,7 +25,7 @@ export function OrderNav({
     >
       <div className="flex h-14 items-center justify-between px-4 lg:h-16 lg:px-10">
         <Link to="/" className="flex items-center gap-2">
-          <img src="/assets/logo-mark.png" alt="" className="h-7 w-7" />
+          <img src="/assets/logo-mark-web.png" alt="" className="h-7 w-7" />
           <span className="font-display font-bold text-text-heading">
             Kangaru<span className="text-brand-green">Ride</span>
           </span>

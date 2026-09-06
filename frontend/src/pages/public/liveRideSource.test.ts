@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { apiClient } from '../../lib/apiClient'
+import { apiFailure } from '../../test/harness'
 import { liveRideSource } from './liveRideSource'
 import type { RideState } from './ride'
 
@@ -30,6 +31,8 @@ function ride(overrides: Record<string, unknown> = {}) {
       plate: 'UBK 123X',
       vehicle_colour: 'White',
     },
+    estimated_fare: null,
+    fare: null,
     created_at: '2026-08-09T10:00:00.000Z',
     ...overrides,
   }
@@ -63,7 +66,9 @@ afterEach(() => {
 const POLL_INTERVAL_MS = 4_000
 
 it('maps the server phase straight through, with no translation table', async () => {
-  vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: ride({ phase: 'driver_arrived' }) } })
+  vi.spyOn(apiClient, 'get').mockResolvedValue({
+    data: { data: ride({ phase: 'driver_arrived' }) },
+  })
 
   const state = await firstServerState()
 
@@ -73,14 +78,36 @@ it('maps the server phase straight through, with no translation table', async ()
 })
 
 it('never invents a fare or an estimate', async () => {
-  vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: ride({ phase: 'trip_completed' }) } })
+  vi.spyOn(apiClient, 'get').mockResolvedValue({
+    data: { data: ride({ phase: 'trip_completed' }) },
+  })
 
   const state = await firstServerState()
 
-  // ADR-0024 defers walk-in settlement by name, and `invoices` are
-  // tenant-owned. A number here would be one this screen made up about
-  // somebody's money.
+  // A number here would be one this screen made up about somebody's money:
+  // with the server sending none, there is none.
   expect(state.fare).toBeNull()
+  expect(state.estimate).toBeNull()
+})
+
+it('carries the fare and the estimate the platform serves, and no breakdown it did not', async () => {
+  // `CustomerRideResource` sends both now (ADR-0026 §2: a quote and a bill
+  // are different claims). Before it did, this source hard-coded null and the
+  // completion card — fare, pay, rate — could never appear.
+  vi.spyOn(apiClient, 'get').mockResolvedValue({
+    data: {
+      data: ride({
+        phase: 'trip_completed',
+        fare: { total_minor: 18_500, currency: 'UGX', distance_km: 6.2, is_estimate: false },
+        estimated_fare: null,
+      }),
+    },
+  })
+
+  const state = await firstServerState()
+
+  expect(state.fare).toEqual({ total: 18_500, distanceKm: 6.2 })
+  expect(state.fare?.breakdown).toBeUndefined()
   expect(state.estimate).toBeNull()
 })
 
@@ -131,7 +158,18 @@ it('lets the next poll decide when a cancellation is refused', async () => {
   vi.spyOn(apiClient, 'get').mockResolvedValue({
     data: { data: ride({ phase: 'trip_started' }) },
   })
-  vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('409'))
+  vi.spyOn(apiClient, 'post').mockRejectedValue(
+    Object.assign(new Error('409'), {
+      isAxiosError: true,
+      response: {
+        status: 409,
+        data: {
+          message:
+            'Your trip has already started, so it cannot be cancelled here. Please speak to your Captain.',
+        },
+      },
+    }),
+  )
 
   const source = liveRideSource()
   const states: RideState[] = []
@@ -142,8 +180,11 @@ it('lets the next poll decide when a cancellation is refused', async () => {
 
   // The driver started the journey between the sheet opening and the tap
   // landing. Forcing `cancelled` locally would tell somebody sitting in a
-  // moving car that their ride was called off.
-  await vi.waitFor(() => expect(states.length).toBeGreaterThan(1))
+  // moving car that their ride was called off — but silence read as a broken
+  // button, so the server's own sentence is shown while the phase stands.
+  await vi.waitFor(() =>
+    expect(states.some((s) => s.notice?.includes('speak to your Captain'))).toBe(true),
+  )
   expect(states.every((s) => s.phase !== 'cancelled')).toBe(true)
   stop()
 })
@@ -279,4 +320,68 @@ it('holds the last known state when a poll fails', async () => {
   get.mockRejectedValue(new Error('offline'))
 
   expect(state.phase).toBe('driver_en_route')
+})
+
+// ── Rating (ADR-0030) — the call the first rating card never made ────────
+
+it('carries the trip id, so the rating knows what to file against', async () => {
+  vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: ride() } })
+
+  const state = await firstServerState()
+
+  expect(state.tripId).toBe(12)
+})
+
+it('files the stars against the trip and reports them recorded', async () => {
+  vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: ride() } })
+  const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+    data: { success: true, message: 'Thank you — your rating has been recorded.', data: { stars: 4 } },
+  })
+
+  const source = liveRideSource()
+  const stop = source.subscribe(() => {})
+  await vi.waitFor(() => expect(vi.mocked(apiClient.get)).toHaveBeenCalled())
+
+  const outcome = await source.rate(4)
+
+  expect(post).toHaveBeenCalledWith('/customer/trips/12/rating', { stars: 4 })
+  expect(outcome).toEqual({ recorded: true, message: 'Thank you — your rating has been recorded.' })
+  stop()
+})
+
+it('hands back the server refusal as a sentence, never as a silent success', async () => {
+  // The first rating card flipped a local flag and thanked the passenger
+  // for a rating that had gone nowhere. The contract now: `recorded` is
+  // only ever true when the platform said so.
+  vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: ride() } })
+  vi.spyOn(apiClient, 'post').mockRejectedValue(
+    apiFailure(422, 'VALIDATION_FAILED', 'You can rate a ride once it has been completed.'),
+  )
+
+  const source = liveRideSource()
+  const stop = source.subscribe(() => {})
+  await vi.waitFor(() => expect(vi.mocked(apiClient.get)).toHaveBeenCalled())
+
+  const outcome = await source.rate(5)
+
+  expect(outcome).toEqual({
+    recorded: false,
+    message: 'You can rate a ride once it has been completed.',
+  })
+  stop()
+})
+
+it('refuses to rate before there is a trip, without asking the server', async () => {
+  vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: ride({ phase: 'searching', trip_id: null, captain: null }) } })
+  const post = vi.spyOn(apiClient, 'post')
+
+  const source = liveRideSource()
+  const stop = source.subscribe(() => {})
+  await vi.waitFor(() => expect(vi.mocked(apiClient.get)).toHaveBeenCalled())
+
+  const outcome = await source.rate(5)
+
+  expect(outcome.recorded).toBe(false)
+  expect(post).not.toHaveBeenCalled()
+  stop()
 })

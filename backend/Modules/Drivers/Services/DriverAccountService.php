@@ -153,6 +153,17 @@ class DriverAccountService
             // pinning the account to a tenant would both be false and hand
             // that tenant's scoped reads to somebody who is not theirs.
             'tenant_id' => null,
+            // Whose employee, now that "the platform" is one fleet among
+            // several (ADR-0055). Taken from the driver's own row rather than
+            // from the actor: an office administrator creating the login is
+            // not necessarily who the driver drives for, and the profile
+            // already knows the answer.
+            //
+            // Without this the account would name neither a client nor a fleet
+            // — which is **Kangaru**, head office. Three of the six null-client
+            // accounts on the development database are drivers, so this is the
+            // exact row the ADR-0055 §4 hazard was written about.
+            'operator_id' => $driver->operator_id,
         ]);
     }
 

@@ -33,3 +33,28 @@
   --content-max:1440px;
   --page-gutter:var(--space-8);
 }
+
+/*
+ * Controls grow for a finger.
+ *
+ * `sm` is 32px and `md` 40px, both under the 44px minimum a touch target
+ * needs, and the console is full of `size="sm"` buttons — the Drivers list
+ * alone put 51 of them on screen (Documents / Payout / Give sign-in on every
+ * row). Raising the tokens fixes Button, IconButton, Select and Input at
+ * once, rather than each component learning about touch separately.
+ *
+ * Keyed on `pointer: coarse`, not on a width. The rule is about what is doing
+ * the pointing, not how wide the screen is: a 1024px tablet is driven by a
+ * finger and needs the same floor, while a narrow desktop window driven by a
+ * mouse does not. It also means this cannot drift from `COMPACT_MAX_WIDTH`,
+ * because it is deliberately a different question.
+ *
+ * The step between sizes is kept so `sm` still reads as the quieter control.
+ */
+@media (pointer: coarse) {
+  :root {
+    --control-h-sm:44px;
+    --control-h-md:48px;
+    --control-h-lg:52px;
+  }
+}

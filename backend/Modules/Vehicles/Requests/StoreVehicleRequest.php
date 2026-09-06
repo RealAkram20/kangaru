@@ -4,7 +4,7 @@ namespace Modules\Vehicles\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
-use Modules\Vehicles\Models\Vehicle;
+use Modules\Vehicles\Rules\ActiveVehicleCategory;
 
 class StoreVehicleRequest extends FormRequest
 {
@@ -32,7 +32,10 @@ class StoreVehicleRequest extends FormRequest
             'make' => ['required', 'string', 'max:100'],
             'model' => ['required', 'string', 'max:100'],
             'year' => ['required', 'integer', 'min:1980', 'max:'.(date('Y') + 1)],
-            'category' => ['required', 'string', Rule::in(Vehicle::CATEGORIES)],
+            // ADR-0050: the table, not the constant. One rule object across
+            // all four call sites, because four hand-mirrored lists drifting
+            // apart is the failure that ADR exists to end.
+            'category' => ['required', 'string', new ActiveVehicleCategory],
             'seating_capacity' => ['required', 'integer', 'min:1', 'max:100'],
             'color' => ['nullable', 'string', 'max:50'],
             'vin' => ['nullable', 'string', 'max:50'],

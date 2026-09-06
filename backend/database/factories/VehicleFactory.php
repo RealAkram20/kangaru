@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Models\Operator;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Modules\Vehicles\Models\Vehicle;
 
@@ -22,6 +23,11 @@ class VehicleFactory extends Factory
     public function definition(): array
     {
         return [
+            // Every vehicle belongs to a fleet (ADR-0055). The registration
+            // number stays globally unique — a plate is unique in Uganda under
+            // any reading, and ADR-0055 accepts the existence oracle that
+            // creates across fleets rather than allow two to claim one plate.
+            'operator_id' => Operator::SHANITAH,
             'registration_number' => fake()->unique()->regexify('U[A-Z]{2} [0-9]{3}[A-Z]'),
             'make' => 'Toyota',
             'model' => fake()->randomElement(['Hiace', 'Corolla', 'Land Cruiser', 'Noah']),

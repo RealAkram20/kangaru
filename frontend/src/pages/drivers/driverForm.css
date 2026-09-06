@@ -1,0 +1,129 @@
+/*
+ * The driver form (ADR-0048 §8).
+ *
+ * A stylesheet because this layout is responsive, and a media query is the one
+ * thing a React style object cannot hold. Everything is a token — DESIGN.md §8.
+ */
+
+.kr-driver-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* ------------------------------------------------------------ sections -- */
+
+.kr-driver-form__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  /* No border and no card. Two headed groups inside a dialog that is already a
+     card would be cards inside a card — the nesting that makes a form look
+     like an org chart. A heading and the space around it separate them. */
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.kr-driver-form__legend {
+  font: var(--type-label);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0;
+  margin-bottom: var(--space-1);
+}
+
+/* ---------------------------------------------------------------- grid -- */
+
+/*
+ * Two columns on anything wider than a phone, one below.
+ *
+ * `auto-fit` with a `minmax` floor rather than a breakpoint list: the dialog is
+ * 640px on a laptop and full-width on a phone, and the fields should reflow on
+ * the *dialog's* width rather than the viewport's — a container query in all
+ * but name, and supported everywhere this app runs.
+ */
+.kr-driver-form__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: var(--space-3) var(--space-4);
+}
+
+/* Fields that read badly at half width: a full name, an address-like string. */
+.kr-driver-form__wide { grid-column: 1 / -1; }
+
+/* ------------------------------------------------------------ vehicle --- */
+
+/*
+ * The revealed vehicle panel.
+ *
+ * Sunken rather than outlined, so it reads as *inside* the ownership question
+ * rather than as a second form of equal weight. The left rule is what carries
+ * the relationship at a glance.
+ */
+.kr-driver-form__vehicle {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-card);
+  border-left: 2px solid var(--border-strong);
+  padding: var(--space-4);
+}
+
+.kr-driver-form__vehicle-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.kr-driver-form__vehicle-title {
+  font: var(--type-label);
+  color: var(--text-body);
+}
+
+/* The vehicle already on file, when editing somebody who has one. */
+.kr-driver-form__linked {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.kr-driver-form__plate {
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  color: var(--text-heading);
+}
+
+.kr-driver-form__linked-meta {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+/* ------------------------------------------------------------- footer --- */
+
+.kr-driver-form__footer {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/*
+ * Delete sits away from Save, not beside it.
+ *
+ * The destructive action and the confirming action must not be adjacent in a
+ * dialog somebody is tabbing through quickly.
+ */
+.kr-driver-form__footer-spacer { flex: 1 1 auto; }
+
+@media (max-width: 520px) {
+  .kr-driver-form__footer > button { flex: 1 1 auto; }
+  .kr-driver-form__footer-spacer { flex-basis: 100%; }
+}

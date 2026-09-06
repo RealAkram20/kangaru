@@ -113,7 +113,15 @@ class TripPricingEngine
         string $category,
         int $multiplierBp,
     ): array {
-        $distanceKm = (string) ($trip->distance_km ?? '0.00');
+        // The resolver's figure when it has one (ADR-0045): the measured
+        // trace, or the odometer held inside the road's corridor, according
+        // to the version's `distance_policy`. Falls back to `distance_km` —
+        // the odometer delta — for a trip the resolver has not answered for,
+        // which under the odometer policy is the same figure, and for the
+        // unsaved trips the walk-in quote and the provisional fare price
+        // through here. `DistanceGate` is what stops a trace-priced contract
+        // billing an unresolved trip; this line does not judge, it reads.
+        $distanceKm = (string) ($trip->billed_distance_km ?? $trip->distance_km ?? '0.00');
         $night = $multiplierBp !== RateCardVersion::NO_MULTIPLIER_BP;
         $zone = $rate->pricingZoneName();
 

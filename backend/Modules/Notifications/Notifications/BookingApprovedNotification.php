@@ -17,8 +17,13 @@ class BookingApprovedNotification extends KangaruNotification
 {
     public function __construct(
         private readonly int $bookingId,
-        private readonly string $origin,
-        private readonly string $destination,
+        // The phrase the sentence is built around — the model's
+        // requestDescription(), which knows a rental has no route to name
+        // (ADR-0064). Origin and destination still travel separately below
+        // for context(), where they are data rather than prose.
+        private readonly string $description,
+        private readonly ?string $origin,
+        private readonly ?string $destination,
         private readonly ?string $scheduledFor,
     ) {}
 
@@ -26,6 +31,7 @@ class BookingApprovedNotification extends KangaruNotification
     {
         return new self(
             $booking->id,
+            $booking->requestDescription(),
             $booking->origin,
             $booking->destination,
             $booking->scheduled_for?->toIso8601String(),
@@ -48,11 +54,18 @@ class BookingApprovedNotification extends KangaruNotification
         // bookings open needs to know which one this is without following
         // the link — the whole point of a notification is that it is read
         // in a list.
+        // A rental has no pickup moment and no driver coming — its period
+        // is in the booking itself, so the sentence stops at the approval.
+        if ($this->origin === null) {
+            return "Your {$this->description} has been approved. "
+                .'The desk will confirm collection with you.';
+        }
+
         $when = $this->scheduledFor === null
             ? 'as an immediate request'
             : 'for '.date('j M Y \a\t H:i', (int) strtotime($this->scheduledFor));
 
-        return "Your transport request from {$this->origin} to {$this->destination} "
+        return "Your {$this->description} "
             ."has been approved {$when}. A dispatcher will assign a vehicle and driver.";
     }
 

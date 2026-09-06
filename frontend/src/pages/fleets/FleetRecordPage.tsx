@@ -1,0 +1,319 @@
+import { useCallback, useEffect, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { apiClient } from '../../lib/apiClient'
+import { apiError } from '../../lib/apiError'
+import { formatTimestamp } from '../../lib/format'
+import type { ApiSuccess } from '../../types/api'
+import type { User } from '../../types/auth'
+import type { Operator } from '../../types/operator'
+import { Badge } from '../../components/core/Badge'
+import { Button } from '../../components/core/Button'
+import { Card } from '../../components/core/Card'
+import { DataTable, type DataColumn } from '../../components/data/DataTable'
+import { KPIStat } from '../../components/data/KPIStat'
+import { StatGrid } from '../../components/data/StatGrid'
+import { Alert } from '../../components/feedback/Alert'
+import { Dialog } from '../../components/feedback/Dialog'
+import { RouteFallback } from '../../components/feedback/RouteFallback'
+import { ActAsDialog } from '../../components/security/ActAsDialog'
+import { EditFleetDialog } from './EditFleetDialog'
+import { TransferOwnershipDialog } from './TransferOwnershipDialog'
+
+/**
+ * One fleet company (ADR-0055, ADR-0059).
+ *
+ * ## What this page is not
+ *
+ * It is not a window into the fleet. There are no trips here, no drivers by
+ * name, no clients by name, no revenue — head office counts what a fleet has
+ * and reads none of it (ADR-0055 §2). The way in is **Log in as**, which is
+ * announced to the subject, time-boxed and recorded against both names.
+ *
+ * That is a stronger position than a register, not a weaker one: a
+ * cross-fleet read is silent and unbounded, and an acting-as session answers
+ * "why did this driver's job fail?" with the fleet's own dispatch board
+ * rather than a row with no context around it.
+ *
+ * The accounts table is the one thing here that names people, and it exists
+ * because acting as needs somebody to become.
+ */
+const ACCOUNT_COLUMNS: DataColumn<User>[] = [
+  { key: 'name', card: 'title', header: 'Name', sortable: true },
+  { key: 'email', card: 'meta', header: 'Email' },
+  {
+    key: 'role_label',
+    card: 'meta',
+    header: 'Role',
+    render: (row) => <>{row.role_label ?? row.role}</>,
+  },
+  {
+    key: 'status',
+    card: 'status',
+    header: 'Status',
+    // Never colour alone — the badge carries the word (DESIGN.md, WCAG AA).
+    render: (row) => (
+      <Badge tone={row.status === 'suspended' ? 'warning' : 'success'}>
+        {row.status ?? 'active'}
+      </Badge>
+    ),
+  },
+]
+
+export function FleetRecordPage() {
+  const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+  const [fleet, setFleet] = useState<Operator | null>(null)
+  const [accounts, setAccounts] = useState<User[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [actingAs, setActingAs] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [transferring, setTransferring] = useState(false)
+  const [confirmSuspend, setConfirmSuspend] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  const load = useCallback(() => {
+    apiClient
+      .get<ApiSuccess<Operator>>(`/operators/${id}`)
+      .then((response) => {
+        setFleet(response.data.data)
+        setError(null)
+      })
+      .catch((caught: unknown) => setError(apiError(caught, 'Could not load this fleet.').message))
+
+    apiClient
+      .get<ApiSuccess<User[]>>(`/operators/${id}/accounts`)
+      .then((response) => setAccounts(response.data.data))
+      .catch(() => setAccounts([]))
+  }, [id])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  /**
+   * Sends the same person a fresh link.
+   *
+   * `PUT /operators/{id}/owner` replaces the pending row rather than adding
+   * one, so this issues a new token, restarts the seven days, and kills the
+   * old link — which is what "resend" has to mean for a single-use
+   * credential.
+   *
+   * Asked for after a handover went wrong on live: the only control here was
+   * Withdraw, so the way to re-send was to withdraw and retype the address
+   * into the transfer dialog, and that path refused the very address it had
+   * accepted the day before.
+   */
+  async function resendTransfer() {
+    if (!fleet?.pending_owner) return
+
+    setSaving(true)
+    setError(null)
+    try {
+      const response = await apiClient.put<ApiSuccess<Operator>>(`/operators/${id}/owner`, {
+        name: fleet.pending_owner.name,
+        email: fleet.pending_owner.email,
+      })
+      setFleet(response.data.data)
+    } catch (caught) {
+      // The server's own sentence, verbatim: it is the only thing that knows
+      // whether the address has since been claimed, and by what.
+      setError(apiError(caught, 'Could not send that invitation again.').message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function withdrawTransfer() {
+    setSaving(true)
+    try {
+      const response = await apiClient.delete<ApiSuccess<Operator>>(`/operators/${id}/owner`)
+      setFleet(response.data.data)
+    } catch (caught) {
+      setError(apiError(caught, 'Could not withdraw the transfer.').message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function setStatus(status: Operator['status']) {
+    setSaving(true)
+    try {
+      const response = await apiClient.patch<ApiSuccess<Operator>>(`/operators/${id}`, { status })
+      setFleet(response.data.data)
+      setConfirmSuspend(false)
+    } catch (caught) {
+      setError(apiError(caught, 'Could not change this fleet’s status.').message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (error !== null && fleet === null) {
+    return (
+      <Alert tone="error" action={<Button variant="secondary" onClick={() => navigate('/fleets')}>Back to fleets</Button>}>
+        {error}
+      </Alert>
+    )
+  }
+
+  if (fleet === null) return <RouteFallback />
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
+      {error && <Alert tone="error">{error}</Alert>}
+
+      <Card
+        title={fleet.name}
+        subtitle={fleet.created_at ? `On Kangaru since ${formatTimestamp(fleet.created_at)}` : undefined}
+        actions={
+          <span style={{ display: 'inline-flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+            <Badge tone={fleet.is_active ? 'success' : 'warning'}>{fleet.status}</Badge>
+            <Button variant="secondary" onClick={() => setEditing(true)}>
+              Edit
+            </Button>
+            <Button variant="secondary" onClick={() => setActingAs(true)}>
+              Log in as
+            </Button>
+            {fleet.is_active ? (
+              <Button variant="destructive" onClick={() => setConfirmSuspend(true)}>
+                Suspend
+              </Button>
+            ) : (
+              <Button variant="secondary" disabled={saving} onClick={() => void setStatus('active')}>
+                Reinstate
+              </Button>
+            )}
+          </span>
+        }
+      >
+        <StatGrid aria-label="This fleet at a glance">
+          <KPIStat label="Drivers" value={fleet.drivers_count ?? '—'} icon="users" />
+          <KPIStat label="Vehicles" value={fleet.vehicles_count ?? '—'} icon="truck" />
+          <KPIStat label="Corporate clients" value={fleet.clients_count ?? '—'} icon="building-2" />
+          <KPIStat label="Accounts" value={fleet.users_count ?? '—'} icon="user-cog" />
+          <KPIStat label="Plan" value={fleet.plan?.name ?? '—'} icon="tags" />
+        </StatGrid>
+      </Card>
+
+      {/* The handover nobody has confirmed yet. Rendered where it will be
+          seen — above the people it is about — with its expiry visible, so
+          one that lapsed reads as lapsed rather than as silence. */}
+      {fleet.pending_owner && (
+        <Alert
+          title="Ownership transfer pending"
+          action={
+            <span style={{ display: 'inline-flex', gap: 'var(--space-2)' }}>
+              <Button
+                size="sm"
+                variant="secondary"
+                iconLeft="send"
+                disabled={saving}
+                onClick={() => void resendTransfer()}
+              >
+                Resend
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={saving}
+                onClick={() => void withdrawTransfer()}
+              >
+                Withdraw
+              </Button>
+            </span>
+          }
+        >
+          {fleet.pending_owner.name} · {fleet.pending_owner.email} — invitation expires{' '}
+          {formatTimestamp(fleet.pending_owner.expires_at)}
+        </Alert>
+      )}
+
+      <Card
+        title="Accounts"
+        subtitle="Who support can act as here"
+        padding="none"
+        actions={
+          <Button variant="secondary" onClick={() => setTransferring(true)}>
+            Transfer ownership
+          </Button>
+        }
+      >
+        <DataTable<User>
+          columns={ACCOUNT_COLUMNS}
+          rows={accounts ?? []}
+          emptyMessage={accounts === null ? 'Loading…' : 'No accounts at this fleet'}
+        />
+      </Card>
+
+      {actingAs && (
+        <ActAsDialog
+          title={fleet.name}
+          accountsUrl={`/operators/${fleet.id}/accounts`}
+          emptyDescription="Onboarding creates a fleet’s first account with the fleet, so this is worth reporting."
+          onClose={() => setActingAs(false)}
+        />
+      )}
+
+      {editing && (
+        <EditFleetDialog
+          fleet={fleet}
+          // The active Fleet Owner, so the dialog can say who owns the fleet
+          // — the owner looked for the email here first (24 August). The
+          // founding fleet was seeded with a fleet Super Admin and no
+          // FLEET_OWNER at all, so that role is the fallback rather than a
+          // dash that reads as "nobody".
+          owner={
+            accounts === null
+              ? undefined
+              : (accounts.find(
+                  (account) => account.role === 'fleet_owner' && account.status !== 'suspended',
+                ) ??
+                accounts.find(
+                  (account) => account.role === 'super_admin' && account.status !== 'suspended',
+                ) ??
+                null)
+          }
+          onClose={() => setEditing(false)}
+          onDone={(saved) => {
+            setEditing(false)
+            setFleet(saved)
+          }}
+          onTransfer={() => {
+            setEditing(false)
+            setTransferring(true)
+          }}
+        />
+      )}
+
+      {transferring && (
+        <TransferOwnershipDialog
+          fleet={fleet}
+          onClose={() => setTransferring(false)}
+          onDone={(saved) => {
+            setTransferring(false)
+            setFleet(saved)
+          }}
+        />
+      )}
+
+      {confirmSuspend && (
+        <Dialog
+          title={`Suspend ${fleet.name}?`}
+          tone="destructive"
+          onClose={() => setConfirmSuspend(false)}
+          description="They stop being offered work. Their trips, invoices and drivers are untouched."
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setConfirmSuspend(false)} disabled={saving}>
+                Cancel
+              </Button>
+              <Button variant="destructive" disabled={saving} onClick={() => void setStatus('suspended')}>
+                {saving ? 'Suspending…' : 'Suspend fleet'}
+              </Button>
+            </>
+          }
+        />
+      )}
+    </div>
+  )
+}

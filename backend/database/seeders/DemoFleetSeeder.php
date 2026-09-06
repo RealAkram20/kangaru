@@ -100,6 +100,10 @@ class DemoFleetSeeder extends Seeder
             'tenant_id' => $tenant->id,
             'name' => 'Staff Requester',
             'email' => 'staff@'.$tenant->slug.'.test',
+            // The booking dialog prefills the contact number off the picked
+            // colleague (ADR-0064); derived from the tenant id so the two
+            // tenants' requesters do not share a number.
+            'phone' => '+25670020'.str_pad((string) $tenant->id, 4, '0', STR_PAD_LEFT),
             'role' => UserRole::CORPORATE_EMPLOYEE,
         ]);
 

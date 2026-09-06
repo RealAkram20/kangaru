@@ -19,6 +19,16 @@ Route::prefix('v1')->group(function () {
     // assume a user or a tenant.
     require base_path('Modules/Bookings/Routes/public.php');
 
+    // Unauthenticated by design (ADR-0027): a rider applying to drive, from
+    // the Driver App's sign-up form. It writes an application and nothing
+    // else — no account exists until somebody in the office approves it.
+    require base_path('Modules/Drivers/Routes/public.php');
+
+    // Unauthenticated by design: the anonymized nearby-vehicles read the
+    // order page's ambient fleet and the client live map draw from. Serves
+    // positions and silhouettes only — no identity of any kind.
+    require base_path('Modules/Fleet/Routes/public.php');
+
     // The customer surface (ADR-0013). Deliberately outside the staff
     // middleware group below: customers have no tenant, and their guard
     // (`auth:customer`) is applied inside the module's own route file so
@@ -47,5 +57,10 @@ Route::prefix('v1')->group(function () {
         require base_path('Modules/Billing/Routes/api.php');
         require base_path('Modules/Reports/Routes/api.php');
         require base_path('Modules/Notifications/Routes/api.php');
+        // ADR-0044. Both halves of driver issue reporting — the driver's `/me`
+        // writes and the office queue — in one module, because they are one
+        // feature and splitting them is how the office half comes to be
+        // skipped.
+        require base_path('Modules/Support/Routes/api.php');
     });
 });

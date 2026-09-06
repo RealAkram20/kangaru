@@ -40,6 +40,11 @@ class StoreTripLocationsRequest extends FormRequest
             'pings.*.speed_kph' => ['nullable', 'numeric', 'min:0', 'max:400'],
             'pings.*.heading_degrees' => ['nullable', 'integer', 'min:0', 'max:359'],
             'pings.*.accuracy_metres' => ['nullable', 'numeric', 'min:0', 'max:10000'],
+            // Whether the OS marked the fix as coming from a mock-location
+            // provider (ADR-0045). Optional, so a handset that predates the
+            // field still posts; absent is stored as false, which is the
+            // honest reading of "the device did not say so".
+            'pings.*.is_mock' => ['nullable', 'boolean'],
         ];
     }
 

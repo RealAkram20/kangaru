@@ -10,6 +10,8 @@ use Illuminate\Http\JsonResponse;
 use Modules\Billing\Models\Invoice;
 use Modules\Billing\Models\RateCard;
 use Modules\Billing\Pricing\RateCardNotConfiguredException;
+use Modules\Billing\Pricing\TripDistanceHeldException;
+use Modules\Billing\Pricing\TripDistanceUnresolvedException;
 use Modules\Billing\Repositories\InvoiceRepository;
 use Modules\Billing\Requests\GenerateInvoiceRequest;
 use Modules\Billing\Requests\InvoiceIndexRequest;
@@ -104,6 +106,11 @@ class InvoiceController extends Controller
             return ApiResponse::error(ErrorCode::TRIP_NOT_INVOICEABLE_WALK_IN, $e->getMessage(), [], 409);
         } catch (TripNotInvoiceableException $e) {
             return ApiResponse::error(ErrorCode::TRIP_NOT_INVOICEABLE, $e->getMessage(), [], 409);
+        } catch (TripDistanceUnresolvedException $e) {
+            // "Not yet", like the sibling above (ADR-0045).
+            return ApiResponse::error(ErrorCode::TRIP_DISTANCE_UNRESOLVED, $e->getMessage(), [], 409);
+        } catch (TripDistanceHeldException $e) {
+            return ApiResponse::error(ErrorCode::TRIP_DISTANCE_HELD, $e->getMessage(), [], 409);
         } catch (InvoiceAlreadyIssuedException $e) {
             return ApiResponse::error(ErrorCode::TRIP_ALREADY_INVOICED, $e->getMessage(), [], 409);
         } catch (IdempotencyKeyReusedException $e) {

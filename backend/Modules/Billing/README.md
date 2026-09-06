@@ -50,11 +50,27 @@ a client owes. There is deliberately no editing path for it to compete with.
 Order is fixed, and is the invoice's own reading order:
 
 1. **Base fare** × night multiplier
-2. **Distance** (`trips.distance_km`, from the odometer readings) × night multiplier
+2. **Distance** (`trips.billed_distance_km ?? distance_km`) × night multiplier
 3. **Waiting time** — billable minutes × per-minute rate, never multiplied
 4. **Minimum or maximum charge adjustment** against the sum of 1–3
 
-Three decisions worth knowing:
+**Which distance, and who decides (ADR-0045).** `billed_distance_km` is the
+distance resolver's figure: the map-matched trace when it is trustworthy, the
+odometer held inside the road's corridor when it is not, according to
+`rate_card_versions.distance_policy` — `gps_primary`, `route_capped`, or
+`odometer`. It **defaults to `odometer`**, under which that figure is the
+odometer delta, so this line changed no fare when it landed. Issuing a
+version that says `gps_primary` is the flip: dated, immutable once used, and
+reversible by issuing another.
+
+`Pricing\DistanceGate` is the guard in front of both billing paths: a
+trace-priced contract does not bill an unresolved trip, and no contract bills
+a **held** one — grade C anywhere, or grade U (nothing vouches for it, nothing
+contradicts it) on a trace-priced contract. `tracking.held_blocks_billing`
+switches it; `POST /trips/{trip}/distance/clearance` is how finance lifts a
+hold, with a reason, audited.
+
+Three further decisions worth knowing:
 
 - **The night rate is a multiplier on lines, not a separate surcharge line.**
   Every line's amount is `unit × quantity × multiplier_bp / 10000`, one
@@ -182,6 +198,8 @@ replay, with the same body either way.
 | `TRIP_ALREADY_INVOICED` | 409 | already billed, under a different idempotency key |
 | `IDEMPOTENCY_KEY_REUSED` | 409 | that key belongs to a different trip's invoice, or a different invoice's credit note |
 | `CREDIT_NOTE_EXCEEDS_INVOICE` | 422 | the running credit total would exceed what the invoice charged |
+| `TRIP_DISTANCE_UNRESOLVED` | 409 | the contract prices the measured distance and the resolver has not answered for this trip yet (ADR-0045) |
+| `TRIP_DISTANCE_HELD` | 409 | the trip's distance is held for review; finance must clear it first |
 
 ## Effect on Modules/Trips
 

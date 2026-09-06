@@ -7,6 +7,7 @@ use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Modules\Bookings\Enums\BookingStatus;
+use Modules\Bookings\Enums\OrderRequestServiceType;
 
 class BookingIndexRequest extends FormRequest
 {
@@ -14,7 +15,7 @@ class BookingIndexRequest extends FormRequest
      * Query params this endpoint recognizes. Anything else fails
      * validation — AGENTS.md: "unknown filters return 422, not silence."
      */
-    private const ALLOWED_KEYS = ['status', 'dispatchable', 'q', 'cursor'];
+    private const ALLOWED_KEYS = ['status', 'service_type', 'dispatchable', 'q', 'cursor'];
 
     public function authorize(): bool
     {
@@ -28,7 +29,10 @@ class BookingIndexRequest extends FormRequest
     {
         return [
             'status' => ['sometimes', Rule::enum(BookingStatus::class)],
-            // The dispatch queue: everything still awaiting a vehicle.
+            // ADR-0064: narrow a mixed queue to one service.
+            'service_type' => ['sometimes', Rule::enum(OrderRequestServiceType::class)],
+            // The dispatch queue: everything still awaiting a vehicle. Since
+            // ADR-0064 that excludes self-drive by definition — see index().
             'dispatchable' => ['sometimes', 'boolean'],
             // Free text across route, passenger, status and — for a reader
             // whose queue spans clients — the client's name. Bounded so a

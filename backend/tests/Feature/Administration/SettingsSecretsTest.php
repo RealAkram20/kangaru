@@ -81,6 +81,12 @@ it('refuses a test email until mail is actually configured', function () {
 });
 
 it('surfaces the transport error when the SMTP server is unreachable', function () {
+    // The suite runs the settings mailer on the `array` transport so tests can
+    // reach that code path without a mail server (see config/mail.php). This
+    // one case is *about* a real SMTP server refusing, so it asks for the real
+    // transport back and then points it at a closed port.
+    config(['mail.settings_transport' => 'smtp']);
+
     app(SettingsService::class)->setGroup('mail', [
         'enabled' => true,
         'host' => '127.0.0.1',

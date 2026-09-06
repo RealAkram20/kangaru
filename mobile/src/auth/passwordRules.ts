@@ -2,7 +2,7 @@
  * The password rules, mirrored from `ChangePasswordRequest`.
  *
  * A deliberate duplication, and a narrow one: `['required', 'string',
- * 'confirmed', Password::min(12), 'different:current_password']`. The server
+ * 'confirmed', PasswordPolicy::rule(), 'different:current_password']`. The server
  * remains the authority — a 422 is handled like any other refusal — but these
  * three checks are cheap to make locally and expensive to learn remotely,
  * because the round trip that teaches them also happens to be the one that
@@ -14,8 +14,22 @@
  * and the driver would have no way to tell which of the two was wrong.
  */
 
-/** `Password::min(12)`. */
-export const MINIMUM_PASSWORD_LENGTH = 12;
+/**
+ * `App\Support\Auth\PasswordPolicy::MINIMUM_LENGTH`.
+ *
+ * **Six, and the spread this comment used to describe is gone.** It read:
+ * eight at the three doors this app can reach, twelve at the office's own
+ * account-minting rules "which this app never touches". That was true and it
+ * was still a trap — a driver handed a twelve-character password by the office
+ * and told to change it from their profile walked from one rule to another
+ * inside a minute. Every door now holds this one number, named once on the
+ * server.
+ *
+ * The floor is a floor. Length is what the strength meter is for, and it keeps
+ * asking for more long after this number is satisfied — which matters more at
+ * six than it did at eight.
+ */
+export const MINIMUM_PASSWORD_LENGTH = 6;
 
 export type PasswordProblem =
   | 'current_missing'

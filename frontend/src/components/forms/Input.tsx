@@ -86,7 +86,7 @@ export function Input({
             border: 'none',
             outline: 'none',
             background: 'transparent',
-            font: mono ? 'var(--type-identifier)' : size === 'lg' ? 'var(--type-body)' : 'var(--type-body-dense)',
+            font: mono ? 'var(--type-identifier)' : size === 'lg' ? 'var(--type-body)' : 'var(--type-control)',
             color: 'var(--text-body)',
             fontVariantNumeric: type === 'number' || mono ? 'tabular-nums' : 'normal',
           } as CSSProperties

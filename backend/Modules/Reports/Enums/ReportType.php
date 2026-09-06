@@ -57,7 +57,18 @@ enum ReportType: string
     public function permissions(): array
     {
         return match ($this) {
-            self::TRIPS, self::DRIVERS, self::VEHICLES => [Permission::REPORTS_VIEW],
+            self::TRIPS, self::VEHICLES => [Permission::REPORTS_VIEW],
+            // The driver report is a view of the *roster* — a row per
+            // driver, with their licence number — and the same reasoning
+            // that gates the financial report on `invoices.view` gates this
+            // one on `drivers.view`. A corporate client holds `reports.view`
+            // for their own trips and not `drivers.view` (RoleSeeder
+            // `$clientReads`; docs/security-gate.md F2), so they get the
+            // trip, vehicle and financial reports and not Shanitah's HR.
+            // The vehicle report stays on `reports.view` alone: a plate, its
+            // category and its mileage are the "mileage monitoring" the
+            // client is owed, and nothing on that row is a person.
+            self::DRIVERS => [Permission::REPORTS_VIEW, Permission::DRIVERS_VIEW],
             self::FINANCIAL => [Permission::REPORTS_VIEW, Permission::INVOICES_VIEW],
         };
     }

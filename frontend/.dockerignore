@@ -1,0 +1,12 @@
+# What never enters the web-app image (W1-a).
+node_modules
+dist
+coverage
+.env
+.env.*
+.git
+.github
+.vscode
+.idea
+.DS_Store
+*.md

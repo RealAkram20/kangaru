@@ -56,11 +56,24 @@ export async function openDatabase(): Promise<SQLite.SQLiteDatabase> {
       recorded_at TEXT NOT NULL,
       speed_kph   REAL,
       heading_degrees INTEGER,
-      accuracy_metres REAL
+      accuracy_metres REAL,
+      is_mock     INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE INDEX IF NOT EXISTS gps_pings_trip ON gps_pings (trip_id, id);
   `);
+
+  // `CREATE TABLE IF NOT EXISTS` above does nothing on a handset that
+  // already has the table, so a column added later has to be added
+  // explicitly (ADR-0045). SQLite has no `ADD COLUMN IF NOT EXISTS`, and a
+  // driver mid-trip must not be locked out by a schema error, so the
+  // duplicate-column failure is the expected outcome on every run after the
+  // first and is swallowed.
+  try {
+    await opened.execAsync(`ALTER TABLE gps_pings ADD COLUMN is_mock INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Already there.
+  }
 
   database = opened;
 

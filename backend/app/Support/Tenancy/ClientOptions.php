@@ -2,6 +2,7 @@
 
 namespace App\Support\Tenancy;
 
+use App\Models\OperatorClient;
 use App\Models\Tenant;
 use App\Models\User;
 
@@ -43,6 +44,41 @@ final class ClientOptions
         }
 
         return Tenant::query()
+            ->orderBy('name')
+            ->get(['id', 'name'])
+            ->map(fn (Tenant $tenant) => ['value' => $tenant->id, 'label' => $tenant->name])
+            ->all();
+    }
+
+    /**
+     * The clients a fleet may raise **new** work for — active contracts only
+     * (ADR-0064 §5; owner's instruction, 24 Aug: the desk books only for the
+     * clients it is assigned).
+     *
+     * Deliberately narrower than `forActor()`, and a separate method rather
+     * than a flag, because the two answer different questions. `forActor()`
+     * lists whose *existing* rows a reader may narrow to, which for a fleet
+     * includes clients whose contract has ended — ADR-0060 §7 lets a
+     * departed fleet keep reading its completed work. This lists who a
+     * booking may be raised *for*, and an ended contract is precisely a
+     * client no new car goes out to.
+     *
+     * `StoreBookingRequest` enforces the same predicate server-side
+     * (`OperatorClient::servedBy`); this is the list that stops the dialog
+     * offering an answer the server would refuse.
+     *
+     * @return array<int, array{value: int, label: string}>
+     */
+    public static function bookableBy(User $actor): array
+    {
+        if (! $actor->isPlatformLevel()) {
+            return [];
+        }
+
+        return Tenant::query()
+            ->whereIn('id', OperatorClient::query()
+                ->servedBy((int) $actor->operator_id)
+                ->select('tenant_id'))
             ->orderBy('name')
             ->get(['id', 'name'])
             ->map(fn (Tenant $tenant) => ['value' => $tenant->id, 'label' => $tenant->name])

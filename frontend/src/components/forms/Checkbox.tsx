@@ -1,4 +1,4 @@
-import { useState, type InputHTMLAttributes, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type InputHTMLAttributes, type ReactNode } from 'react'
 import { Icon } from '../core/Icon'
 
 export interface CheckboxProps extends Omit<
@@ -9,6 +9,16 @@ export interface CheckboxProps extends Omit<
   label?: ReactNode
   /** Second line under the label — what the permission actually allows. */
   hint?: ReactNode
+  /**
+   * Neither ticked nor clear — "some of the rows below", on a select-all.
+   *
+   * A prop rather than a ref the caller sets, because `indeterminate` exists
+   * only as a DOM property: there is no attribute for it, so it cannot be
+   * expressed in JSX at all and every caller would otherwise need its own
+   * ref and effect. The docblock below keeps the native input precisely so
+   * this state is real to a screen reader rather than drawn.
+   */
+  indeterminate?: boolean
 }
 
 /**
@@ -29,11 +39,19 @@ export function Checkbox({
   hint,
   checked,
   disabled = false,
+  indeterminate = false,
   id,
   style,
   ...rest
 }: CheckboxProps) {
   const [focus, setFocus] = useState(false)
+  const box = useRef<HTMLInputElement>(null)
+
+  // The one property with no attribute. Written after every render, because a
+  // select-all flips between all three states as rows are ticked.
+  useEffect(() => {
+    if (box.current) box.current.indeterminate = indeterminate
+  }, [indeterminate, checked])
 
   return (
     <label
@@ -51,6 +69,7 @@ export function Checkbox({
       }}
     >
       <input
+        ref={box}
         id={id}
         type="checkbox"
         checked={checked}

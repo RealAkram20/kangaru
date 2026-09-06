@@ -182,6 +182,24 @@ it('forbids roles that should not see the whole fleet', function () {
     }
 });
 
+it('gives a corporate admin the vehicle report and refuses them the driver report', function () {
+    ['tenant' => $tenant] = fleetFixture();
+
+    // A client's transport officer holds `reports.view` — the mileage of
+    // the vehicles supplied to them is theirs to monitor — and not
+    // `drivers.view`: the driver report is a row per driver with a licence
+    // number on it, and that is Shanitah's roster (security-gate F2).
+    $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::CORPORATE_ADMIN]);
+
+    $this->actingAs($admin, 'sanctum')->getJson('/api/v1/reports/vehicles')->assertOk();
+    $this->actingAs($admin, 'sanctum')->getJson('/api/v1/reports/drivers')->assertForbidden();
+    // The export path is gated by the same rule, so a refused report cannot
+    // be obtained as a file instead.
+    $this->actingAs($admin, 'sanctum')
+        ->postJson('/api/v1/reports/exports', ['report' => 'drivers', 'format' => 'csv'])
+        ->assertForbidden();
+});
+
 it('never totals another tenant\'s fleet into this one', function () {
     ['manager' => $managerA] = fleetFixture();
     fleetFixture();

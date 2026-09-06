@@ -2,29 +2,73 @@ import { Navigate, createBrowserRouter } from 'react-router-dom'
 import { ProtectedRoute } from '../auth/ProtectedRoute'
 import { RequireNavAccess } from './RequireNavAccess'
 import { AppShell } from '../components/layout/AppShell'
-import { AuditLogPage } from '../pages/AuditLogPage'
-import { BookingsPage } from '../pages/BookingsPage'
-import { CompaniesPage } from '../pages/CompaniesPage'
-import { CustomersPage } from '../pages/CustomersPage'
-import { DashboardPage } from '../pages/DashboardPage'
-import { DispatchPage } from '../pages/DispatchPage'
-import { DriversPage } from '../pages/DriversPage'
-import { InvoicesPage } from '../pages/InvoicesPage'
-import { LoginPage } from '../pages/LoginPage'
-import { MfaEnrolmentPage } from '../pages/MfaEnrolmentPage'
-import { NotificationsPage } from '../pages/NotificationsPage'
-import { OrderRequestsPage } from '../pages/OrderRequestsPage'
-import { RateCardsPage } from '../pages/RateCardsPage'
-import { ReportsPage } from '../pages/ReportsPage'
-import { RolesPage } from '../pages/RolesPage'
-import { ProfilePage } from '../pages/ProfilePage'
-import { SystemSettingsPage } from '../pages/SystemSettingsPage'
-import { StaffPage } from '../pages/StaffPage'
-import { LiveMapPage } from '../pages/LiveMapPage'
-import { TripsPage } from '../pages/TripsPage'
-import { VehiclesPage } from '../pages/VehiclesPage'
-import { LandingPage } from '../pages/public/LandingPage'
-import { OrderPage } from '../pages/public/OrderPage'
+import { Standalone } from './lazyRoute'
+import { RouteBuilderPage } from '../pages/routes/RouteBuilderPage'
+import { RoutesPage } from '../pages/routes/RoutesPage'
+import { page } from './page'
+
+/**
+ * Every page below is code-split.
+ *
+ * These were 27 static imports, which meant one 1.37 MB chunk containing the
+ * whole console: an anonymous visitor reading the landing page downloaded and
+ * parsed SystemSettingsPage (1,713 lines) and OrderPage (2,659 lines) before
+ * anything rendered. Splitting them means a route costs its own JavaScript and
+ * nobody else's.
+ */
+
+const AuditLogPage = page(() => import('../pages/AuditLogPage'), 'AuditLogPage')
+const BookingsPage = page(() => import('../pages/BookingsPage'), 'BookingsPage')
+const CompaniesPage = page(() => import('../pages/CompaniesPage'), 'CompaniesPage')
+const CustomersPage = page(() => import('../pages/CustomersPage'), 'CustomersPage')
+const FleetCompaniesPage = page(() => import('../pages/FleetCompaniesPage'), 'FleetCompaniesPage')
+const CorporateClientsPage = page(() => import('../pages/CorporateClientsPage'), 'CorporateClientsPage')
+const PlansPage = page(() => import('../pages/PlansPage'), 'PlansPage')
+const DriverContractsPage = page(() => import('../pages/DriverContractsPage'), 'DriverContractsPage')
+const FleetRecordPage = page(() => import('../pages/fleets/FleetRecordPage'), 'FleetRecordPage')
+const DashboardPage = page(() => import('../pages/DashboardPage'), 'DashboardPage')
+const DispatchPage = page(() => import('../pages/DispatchPage'), 'DispatchPage')
+const DriverApplicationsPage = page(
+  () => import('../pages/DriverApplicationsPage'),
+  'DriverApplicationsPage',
+)
+const DriversPage = page(() => import('../pages/DriversPage'), 'DriversPage')
+const InvoicesPage = page(() => import('../pages/InvoicesPage'), 'InvoicesPage')
+const LoginPage = page(() => import('../pages/LoginPage'), 'LoginPage')
+const ForgotPasswordPage = page(
+  () => import('../pages/ForgotPasswordPage'),
+  'ForgotPasswordPage',
+)
+const AcceptInvitePage = page(() => import('../pages/AcceptInvitePage'), 'AcceptInvitePage')
+const AcceptOwnerTransferPage = page(() => import('../pages/AcceptInvitePage'), 'AcceptOwnerTransferPage')
+const NotificationPreferencesPage = page(
+  () => import('../pages/NotificationPreferencesPage'),
+  'NotificationPreferencesPage',
+)
+const MfaEnrolmentPage = page(() => import('../pages/MfaEnrolmentPage'), 'MfaEnrolmentPage')
+const NotificationsPage = page(() => import('../pages/NotificationsPage'), 'NotificationsPage')
+const OrderRequestsPage = page(() => import('../pages/OrderRequestsPage'), 'OrderRequestsPage')
+const RateCardsPage = page(() => import('../pages/RateCardsPage'), 'RateCardsPage')
+const ReportsPage = page(() => import('../pages/ReportsPage'), 'ReportsPage')
+const RolesPage = page(() => import('../pages/RolesPage'), 'RolesPage')
+const ProfilePage = page(() => import('../pages/ProfilePage'), 'ProfilePage')
+const SystemSettingsPage = page(() => import('../pages/SystemSettingsPage'), 'SystemSettingsPage')
+const StaffPage = page(() => import('../pages/StaffPage'), 'StaffPage')
+const SupportRequestsPage = page(() => import('../pages/SupportRequestsPage'), 'SupportRequestsPage')
+const LiveMapPage = page(() => import('../pages/LiveMapPage'), 'LiveMapPage')
+const TripsPage = page(() => import('../pages/TripsPage'), 'TripsPage')
+const TripRecordPage = page(() => import('../pages/trips/TripRecordPage'), 'TripRecordPage')
+const DistanceReviewPage = page(
+  () => import('../pages/DistanceReviewPage'),
+  'DistanceReviewPage',
+)
+const VehiclesPage = page(() => import('../pages/VehiclesPage'), 'VehiclesPage')
+const LandingPage = page(() => import('../pages/public/LandingPage'), 'LandingPage')
+const OrderPage = page(() => import('../pages/public/OrderPage'), 'OrderPage')
+const PrivacyNoticePage = page(
+  () => import('../pages/public/PrivacyNoticePage'),
+  'PrivacyNoticePage',
+)
 
 export const router = createBrowserRouter([
   // Public, unauthenticated (ADR-0012 §5). `/` is the landing page for
@@ -35,15 +79,71 @@ export const router = createBrowserRouter([
   // from the nav, which says "Dashboard" once they are signed in.
   {
     path: '/',
-    element: <LandingPage />,
+    element: (
+      <Standalone>
+        <LandingPage />
+      </Standalone>
+    ),
   },
   {
     path: '/order',
-    element: <OrderPage />,
+    element: (
+      <Standalone>
+        <OrderPage />
+      </Standalone>
+    ),
+  },
+  // Unauthenticated by necessity, not by oversight: this is what somebody
+  // reads to decide whether to hand over their data, so it cannot sit behind
+  // the account that handing it over creates. master-plan.md §5 gates go-live
+  // on it being readable before submission.
+  {
+    path: '/privacy',
+    element: (
+      <Standalone>
+        <PrivacyNoticePage />
+      </Standalone>
+    ),
   },
   {
     path: '/login',
-    element: <LoginPage />,
+    element: (
+      <Standalone>
+        <LoginPage />
+      </Standalone>
+    ),
+  },
+  // Public and standalone for the same reason as /login: the reader's whole
+  // problem is that they cannot authenticate (ADR-0028 §2).
+  {
+    path: '/forgot-password',
+    element: (
+      <Standalone>
+        <ForgotPasswordPage />
+      </Standalone>
+    ),
+  },
+  // Public, and standalone like /login: the reader has an account and no way
+  // into it, so the shell's navigation would be a wall of links that all
+  // answer 403. Mail plan M2.
+  {
+    path: '/invite/:token',
+    element: (
+      <Standalone>
+        <AcceptInvitePage />
+      </Standalone>
+    ),
+  },
+  // The fleet handover's accept page (owner's decision, 24 August). The same
+  // page as the invitation — to the reader both are "choose a password" —
+  // pointed at the transfer's own endpoints, which also name the fleet.
+  {
+    path: '/owner/:token',
+    element: (
+      <Standalone>
+        <AcceptOwnerTransferPage />
+      </Standalone>
+    ),
   },
   // Outside the AppShell branch on purpose (ADR-0008 decision 3). A user
   // who must enrol can reach nothing else — the shell's navigation would be
@@ -56,7 +156,9 @@ export const router = createBrowserRouter([
     path: '/mfa/setup',
     element: (
       <ProtectedRoute allowUnenrolled>
-        <MfaEnrolmentPage />
+        <Standalone>
+          <MfaEnrolmentPage />
+        </Standalone>
       </ProtectedRoute>
     ),
   },
@@ -72,6 +174,52 @@ export const router = createBrowserRouter([
     ),
     children: [
       { path: 'dashboard', element: <DashboardPage /> },
+      // ADR-0055 / ADR-0059. Behind RequireNavAccess like Staff rather than
+      // unguarded like Roles: `fleets` is not a permission a custom role is
+      // expected to carry — OperatorPolicy gates on the account's LEVEL, and
+      // a level is not something a role can be given. The safer side to err
+      // on, and the server refuses regardless.
+      // ADR-0062. Head office's client directory, behind the level gate for
+      // the same reason `fleets` is: `OperatorClientPolicy` and the company
+      // scope both key on `access_level`, and a level is not something a role
+      // can be given.
+      // ADR-0055 §5. Deliberately NOT behind RequireNavAccess: both a fleet
+      // and head office reach it, and the **server** decides which queue
+      // arrives. A level gate here would have to know that, which is the
+      // rule living in two places.
+      { path: 'driver-contracts', element: <DriverContractsPage /> },
+      {
+        path: 'plans',
+        element: (
+          <RequireNavAccess id="plans">
+            <PlansPage />
+          </RequireNavAccess>
+        ),
+      },
+      {
+        path: 'clients',
+        element: (
+          <RequireNavAccess id="clients">
+            <CorporateClientsPage />
+          </RequireNavAccess>
+        ),
+      },
+      {
+        path: 'fleets',
+        element: (
+          <RequireNavAccess id="fleets">
+            <FleetCompaniesPage />
+          </RequireNavAccess>
+        ),
+      },
+      {
+        path: 'fleets/:id',
+        element: (
+          <RequireNavAccess id="fleets">
+            <FleetRecordPage />
+          </RequireNavAccess>
+        ),
+      },
       { path: 'bookings', element: <BookingsPage /> },
       // Deliberately not behind RequireNavAccess, like Roles: a custom role
       // holding `order_requests.manage` is invisible to a slug list. The
@@ -86,11 +234,25 @@ export const router = createBrowserRouter([
         ),
       },
       { path: 'trips', element: <TripsPage /> },
+      // One trip in full — the six facts, the photos, the trace, the
+      // timeline, the invoice. Unguarded like /trips: `TripPolicy::view`
+      // decides, and a client's user reads their own trips here.
+      { path: 'trips/:id', element: <TripRecordPage /> },
+      // ADR-0045 §2: the distance review queue. Not behind `RequireNavAccess`
+      // for the reason Roles is not — the queue is `viewAny` on Trip, which a
+      // custom role can hold, and the page shows whatever the API serves.
+      { path: 'distance-review', element: <DistanceReviewPage /> },
       // Not behind RequireNavAccess, deliberately: /live-positions is scoped
       // server-side through the trips the caller may see, so every role gets
       // a correct answer here — a corporate employee sees their own ride,
       // and a role holding trips.view.all sees the fleet.
       { path: 'live-map', element: <LiveMapPage /> },
+      // ADR-0045. Two entries for one feature: the register of circuits and
+      // the builder that makes one. `/routes/new` is a literal segment ahead
+      // of `:id`, so React Router matches it before treating "new" as an id.
+      { path: 'routes', element: <RoutesPage /> },
+      { path: 'routes/new', element: <RouteBuilderPage /> },
+      { path: 'routes/:id', element: <RouteBuilderPage /> },
       {
         path: 'invoices',
         element: (
@@ -132,6 +294,11 @@ export const router = createBrowserRouter([
       // Roles: a custom role holding `settings.manage` is invisible to a
       // slug list, so the page gates on whether the API answers.
       { path: 'system-settings', element: <SystemSettingsPage /> },
+      // The destination of the "Choose which emails you get" link in every
+      // email footer. Inside the shell rather than standalone: the reader has
+      // an account and is signed in, and the surrounding navigation is what
+      // lets them go somewhere useful afterwards.
+      { path: 'settings/notifications', element: <NotificationPreferencesPage /> },
       // ADR-0018. Behind RequireNavAccess like Staff, not unguarded like
       // Roles: `customers.view` is seeded on real roles rather than being a
       // permission a custom role is expected to carry, and the register is
@@ -144,28 +311,49 @@ export const router = createBrowserRouter([
           </RequireNavAccess>
         ),
       },
-      {
-        path: 'staff',
-        element: (
-          <RequireNavAccess id="staff">
-            <StaffPage />
-          </RequireNavAccess>
-        ),
-      },
-      // Deliberately unguarded, unlike Staff. RequireNavAccess decides by
-      // role slug, and this page exists to create roles no slug list can
-      // know about — a custom role holding `roles.manage` would be turned
-      // away from the one screen built for it. The page gates on whether
-      // the API answers instead, which is the rule itself rather than a
-      // copy of it.
+      // Unguarded, and it used to be the counter-example the comment below
+      // pointed at. What changed is the premise, not the rule.
+      //
+      // A slug list was the whole truth while `staff.manage` was held by
+      // exactly two seeded roles. It is not any more: head office composes
+      // fleet-audience and client-audience roles carrying it — a "Fleet HR"
+      // that hires but does not dispatch is the request this feature exists
+      // to answer — and RequireNavAccess, which decides by role slug, would
+      // turn every one of them away from the one screen built for it. That is
+      // precisely the argument already written under `/roles`.
+      //
+      // The page gates on whether the API answers, which is the rule itself
+      // rather than a copy of it, and `UserPolicy` is unchanged either way:
+      // menu visibility was never authorization.
+      { path: 'staff', element: <StaffPage /> },
+      // Deliberately unguarded. RequireNavAccess decides by role slug, and
+      // this page exists to create roles no slug list can know about — a
+      // custom role holding `roles.manage` would be turned away from the one
+      // screen built for it. The page gates on whether the API answers
+      // instead, which is the rule itself rather than a copy of it.
       { path: 'roles', element: <RolesPage /> },
       // Unguarded for the same reason as Roles: `audit.view` is a
       // permission, and a custom role holding it is invisible to
       // RequireNavAccess's slug list. The page gates on whether the API
       // answers.
       { path: 'audit-log', element: <AuditLogPage /> },
+      // Two paths, because they are two different things. `/companies` is the
+      // platform's register of many; `/company` is one client's own
+      // organisation, and a bank reading its own profile at a plural URL that
+      // means "everybody's clients" was always the wrong address.
+      //
+      // `CompaniesPage` still branches on role, so both paths stay correct for
+      // whoever opens them and an old bookmark keeps working.
       {
         path: 'companies',
+        element: (
+          <RequireNavAccess id="companies">
+            <CompaniesPage />
+          </RequireNavAccess>
+        ),
+      },
+      {
+        path: 'company',
         element: (
           <RequireNavAccess id="companies">
             <CompaniesPage />
@@ -187,6 +375,22 @@ export const router = createBrowserRouter([
             <DriversPage />
           </RequireNavAccess>
         ),
+      },
+      {
+        // Deliberately NOT behind RequireNavAccess, for the same reason
+        // Roles and Settings are not: `drivers.view` can live on a custom
+        // role that a slug list cannot see, and the page gates on whether
+        // the API answers — a 403 renders as an answer, not an apology.
+        path: 'driver-applications',
+        element: <DriverApplicationsPage />,
+      },
+      {
+        // ADR-0044. Not behind `RequireNavAccess`, for the same reason the
+        // applications queue above is not: `drivers.manage` can live on a
+        // custom role a slug list cannot see, and the page gates on whether
+        // the API answers.
+        path: 'support-requests',
+        element: <SupportRequestsPage />,
       },
     ],
   },

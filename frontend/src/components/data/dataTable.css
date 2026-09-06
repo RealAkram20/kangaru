@@ -1,0 +1,53 @@
+/*
+ * The scroll affordance for a `DataTable fill`.
+ *
+ * When the rows scroll inside the card instead of moving the page, the only
+ * thing telling a reader that row six exists is the scrollbar — and on Windows
+ * and macOS the platform default is an overlay bar that fades out when idle.
+ * A list of twenty-five trips showing five rows, with a "Load more" button
+ * directly beneath, reads as a list of five. So the bar stays visible here.
+ *
+ * Quiet, not decorative: the thumb is the same rule colour as the table's own
+ * borders, and it darkens only on hover.
+ */
+.kr-scroll {
+  /* Reserve the gutter whether or not the bar is showing, so a list that
+     grows past its box does not shift every column left by 8px the moment it
+     does. Same reason the row heights are fixed rather than content-derived. */
+  scrollbar-gutter: stable;
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* WebKit and Blink. `scrollbar-width` covers Firefox; these two do not read it. */
+.kr-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.kr-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.kr-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--border-strong);
+  border-radius: var(--radius-pill);
+  /* A transparent border with background-clip is the only way to inset a
+     WebKit thumb — padding and margin do nothing to it. */
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .kr-scroll::-webkit-scrollbar-thumb:hover {
+    background-color: var(--text-placeholder);
+  }
+}
+
+/* Where the vertical and horizontal bars meet. Left unpainted it renders as a
+   pale square against the card, which is the one part of a scrollbar people
+   do notice. */
+.kr-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}

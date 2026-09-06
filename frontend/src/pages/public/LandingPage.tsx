@@ -37,7 +37,11 @@ export function LandingPage() {
   )
 }
 
-function PublicNav() {
+/**
+ * Exported so `PrivacyNoticePage` wears the same chrome rather than forking it
+ * (`docs/screen-rules.md` §3). Nothing about the rendering changed.
+ */
+export function PublicNav() {
   // Signed-in staff still get the landing page; the nav is how they leave
   // it, so it points at the dashboard rather than a login they've done.
   const { user } = useAuth()
@@ -46,7 +50,7 @@ function PublicNav() {
     <header className="sticky top-0 z-40 border-b border-border bg-surface-page/90 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
         <Link to="/" className="flex items-center gap-2">
-          <img src="/assets/logo-mark.png" alt="" className="h-8 w-8" />
+          <img src="/assets/logo-mark-web.png" alt="" className="h-8 w-8" />
           <span className="font-display text-lg font-bold text-text-heading">
             Kangaru<span className="text-brand-green">Ride</span>
           </span>
@@ -398,7 +402,7 @@ function AppPreview() {
             collapsed to an empty pill until the image arrived (CLS). */}
         <div className="mx-auto w-full max-w-[320px] rounded-3xl border border-border bg-white p-4 shadow-sm">
           <img
-            src="/assets/app-home-preview.png"
+            src="/assets/app-home-preview-web.webp"
             alt="The KangaruRide app home screen, showing Ride, Deliver and Self Drive"
             className="aspect-[853/1844] w-full object-contain"
           />
@@ -424,12 +428,13 @@ function AppPreview() {
   )
 }
 
-function PublicFooter() {
+/** Exported alongside `PublicNav`, and for the same reason. */
+export function PublicFooter() {
   return (
     <footer className="border-t border-border bg-surface-sunken">
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-10 sm:px-6 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-2">
-          <img src="/assets/logo-mark.png" alt="" className="h-6 w-6" />
+          <img src="/assets/logo-mark-web.png" alt="" className="h-6 w-6" />
           <span className="text-sm text-text-secondary">
             Shanitah General Enterprises Ltd · Kampala
           </span>

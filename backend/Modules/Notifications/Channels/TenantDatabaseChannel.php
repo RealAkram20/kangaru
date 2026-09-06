@@ -60,16 +60,39 @@ class TenantDatabaseChannel
         // it is not supplied, so it is supplied explicitly below. Bind it
         // too, or the model's own global scope — applied on insert-adjacent
         // reads — has nothing to work with inside a worker.
+        //
+        // **Put it back afterwards.** `TenantContext` is a singleton, so this
+        // binding outlives the send, and a notification to somebody with no
+        // tenant — a driver, a dispatcher, anyone platform-level — used to
+        // leave the ambient tenant null for everything that ran after it. In
+        // a request that is invisible (the response is already decided) and
+        // in a worker it is harmless (one job, one context). In a **console**
+        // run it is not: `DriverAppSeeder` binds a tenant, dispatches a trip,
+        // and the assignment notification to the driver silently unbound it —
+        // so the next `Booking::whereKey()` matched nothing, `TenantScope`
+        // having failed closed, and the seeder died on its second trip with
+        // `ModelNotFoundException`. Eight tests, and the cause three frames
+        // away from the symptom.
+        //
+        // `finally`, not a trailing `set()`: a channel that threw mid-write
+        // would otherwise leave the caller's tenant swapped for the
+        // recipient's, which is the same bug wearing the other tenant's id.
+        $restore = $this->tenant->get();
+
         $this->tenant->set($tenantId);
 
-        Notification::create([
-            'tenant_id' => $tenantId,
-            'user_id' => $notifiable->id,
-            'type' => $notification->type(),
-            'subject' => $notification->subject(),
-            'body' => $notification->body(),
-            'url' => $notification->url(),
-            'context' => $notification->context(),
-        ]);
+        try {
+            Notification::create([
+                'tenant_id' => $tenantId,
+                'user_id' => $notifiable->id,
+                'type' => $notification->type(),
+                'subject' => $notification->subject(),
+                'body' => $notification->body(),
+                'url' => $notification->url(),
+                'context' => $notification->context(),
+            ]);
+        } finally {
+            $this->tenant->set($restore);
+        }
     }
 }

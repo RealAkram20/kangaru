@@ -38,6 +38,7 @@ use Modules\Vehicles\Models\Vehicle;
  * @property string|null $speed_kph
  * @property int|null $heading_degrees
  * @property string|null $accuracy_metres
+ * @property bool $is_mock
  * @property CarbonInterface $recorded_at
  */
 class TripLocation extends Model
@@ -61,6 +62,7 @@ class TripLocation extends Model
         'speed_kph',
         'heading_degrees',
         'accuracy_metres',
+        'is_mock',
         'recorded_at',
     ];
 
@@ -86,6 +88,7 @@ class TripLocation extends Model
             'speed_kph' => 'decimal:2',
             'accuracy_metres' => 'decimal:2',
             'heading_degrees' => 'integer',
+            'is_mock' => 'boolean',
             'recorded_at' => 'datetime',
         ];
     }

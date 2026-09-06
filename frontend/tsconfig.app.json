@@ -8,6 +8,15 @@
     "allowArbitraryExtensions": true,
     "skipLibCheck": true,
 
+    /* Path alias. Animate UI's sources are distributed importing through
+       `@/`, which is the shadcn registry convention; without it every copied
+       icon needs hand-editing on the way in and again on every update.
+
+       No `baseUrl`: TypeScript deprecated it in 6.0, and since 5.4 `paths`
+       resolves relative to this file on its own. The shadcn docs still print
+       the pair, so this will look under-specified next to them — it is not. */
+    "paths": { "@/*": ["./src/*"] },
+
     /* Bundler mode */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,

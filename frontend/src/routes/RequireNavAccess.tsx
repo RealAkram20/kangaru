@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { useAuth } from '../auth/useAuth'
 import { Card } from '../components/core/Card'
 import { EmptyState } from '../components/feedback/EmptyState'
-import { canUseNavItem } from '../lib/navigation'
+import { canUseNavItem, canUseNavLevel } from '../lib/navigation'
 
 /**
  * Refuses a route the signed-in role has no business on.
@@ -27,7 +27,14 @@ import { canUseNavItem } from '../lib/navigation'
 export function RequireNavAccess({ id, children }: { id: string; children: ReactNode }) {
   const { user } = useAuth()
 
-  if (canUseNavItem(user?.role, id)) {
+  // Level first, then role (ADR-0059 §1). A fleet's Super Admin holds every
+  // permission there is and still has no business in the register of other
+  // fleet companies — that is a level question, and no role list can answer
+  // it.
+  if (
+    canUseNavLevel(user?.access_level, id) &&
+    canUseNavItem(user?.role, id, user?.capabilities ?? [])
+  ) {
     return <>{children}</>
   }
 

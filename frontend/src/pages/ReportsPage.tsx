@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../auth/useAuth'
 import { canViewInvoices } from '../lib/billing'
 import { apiClient } from '../lib/apiClient'
+import { canUseNavItem } from '../lib/navigation'
+import { currentMonth } from '../lib/period'
 import { apiError } from '../lib/apiError'
 import { formatTimestamp } from '../lib/format'
 import { formatDistance, formatDuration, formatOdometer } from '../lib/tripStatus'
@@ -16,6 +18,7 @@ import type {
   TripReportSummary,
 } from '../types/report'
 import type { Vehicle } from '../types/vehicle'
+import { DistanceReport } from './reports/DistanceReport'
 import { ExportPanel } from './reports/ExportPanel'
 import { FinancialReport } from './reports/FinancialReport'
 import { FleetReport } from './reports/FleetReport'
@@ -131,19 +134,6 @@ const COLUMNS: DataColumn<ReportTableRow>[] = [
   },
 ]
 
-/** Defaults to the current calendar month — the billing period. */
-function currentMonth(): { from: string; to: string } {
-  const now = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const first = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`
-  const last = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-
-  return {
-    from: first,
-    to: `${last.getFullYear()}-${pad(last.getMonth() + 1)}-${pad(last.getDate())}`,
-  }
-}
-
 function toQuery(filters: TripReportFilters, client: string): string {
   const params = new URLSearchParams()
   if (filters.from) params.set('from', filters.from)
@@ -175,19 +165,35 @@ async function fetchReport(filters: TripReportFilters, client: string) {
   }
 }
 
-/** PROJECT.md's four Phase 1 reports, in the order it lists them. */
-const REPORTS: { value: ReportType; subtitle: string }[] = [
+/**
+ * What this page can show: the four exportable reports (`ReportType`, which
+ * mirrors the server enum the export endpoint accepts) plus the
+ * measured-distance shadow report (ADR-0045), which is on-screen only — it
+ * is the operator's instrument for judging the trace before the fare is
+ * priced from it, and the export panel is not offered on it because the
+ * server would refuse the request.
+ */
+type PageReport = ReportType | 'distance'
+
+/** PROJECT.md's four Phase 1 reports, in the order it lists them, then ADR-0045's. */
+const REPORTS: { value: PageReport; subtitle: string }[] = [
   { value: 'trips', subtitle: 'Every trip that commenced in the selected period' },
   { value: 'drivers', subtitle: 'Every driver who commenced a trip in the selected period' },
   { value: 'vehicles', subtitle: 'Every vehicle that commenced a trip in the selected period' },
   { value: 'financial', subtitle: 'Invoiced, credited and outstanding per period' },
+  {
+    value: 'distance',
+    subtitle:
+      'How each completed trip’s distance was measured, graded and would be billed — nothing is billed from it yet',
+  },
 ]
 
-const REPORT_LABELS: Record<ReportType, string> = {
+const REPORT_LABELS: Record<PageReport, string> = {
   trips: 'Trip report',
   drivers: 'Driver report',
   vehicles: 'Vehicle report',
   financial: 'Financial report',
+  distance: 'Measured distance',
 }
 
 const GROUP_BY: { value: FinancialPeriod; label: string }[] = [
@@ -204,11 +210,20 @@ export function ReportsPage() {
   // so it is not offered to a Dispatcher or Fleet Owner — the server
   // refuses it, and a picker entry that answers 403 is a dead end rather
   // than a feature.
+  // Likewise the driver report needs `drivers.view` (ReportType::permissions):
+  // it is a row per driver with a licence number, Shanitah's roster, and a
+  // corporate client's admin holds `reports.view` without it. Mirrored
+  // through the same slug list the Drivers menu entry uses.
   const available = useMemo(
-    () => REPORTS.filter((r) => r.value !== 'financial' || canViewInvoices(user)),
+    () =>
+      REPORTS.filter(
+        (r) =>
+          (r.value !== 'financial' || canViewInvoices(user)) &&
+          (r.value !== 'drivers' || canUseNavItem(user?.role, 'drivers')),
+      ),
     [user],
   )
-  const [report, setReport] = useState<ReportType>('trips')
+  const [report, setReport] = useState<PageReport>('trips')
   // Bumped by Run report, so the aggregate reports re-fetch on demand
   // rather than on every keystroke in a date field.
   const [fleetToken, setFleetToken] = useState(0)
@@ -224,8 +239,13 @@ export function ReportsPage() {
   const [rows, setRows] = useState<TripReportRow[] | null>(null)
   const [summary, setSummary] = useState<TripReportSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [vehicles, setVehicles] = useState<Vehicle[]>([])
-  const [drivers, setDrivers] = useState<Driver[]>([])
+  // Null once the register was refused: a corporate client's user holds
+  // neither `vehicles.view` nor `drivers.view` (RoleSeeder;
+  // docs/security-gate.md F2), so for them there is no roster to pick
+  // from and the two filters are not offered. Their report still names the
+  // vehicle and driver on every row — that is theirs to see.
+  const [vehicles, setVehicles] = useState<Vehicle[] | null>([])
+  const [drivers, setDrivers] = useState<Driver[] | null>([])
   // ADR-0007. Whether a client may be chosen at all is the API's answer,
   // not this page's — the same rule the bookings and trips queues follow,
   // so the reports do not become a fourth place the predicate lives.
@@ -271,16 +291,20 @@ export function ReportsPage() {
   useEffect(() => {
     let cancelled = false
 
-    Promise.all([
-      fetchReport(filters, client),
-      apiClient.get<ApiSuccess<Vehicle[]>>('/vehicles'),
-      apiClient.get<ApiSuccess<Driver[]>>('/drivers'),
-    ])
+    // The two registers are best-effort: a refusal (a client's user) or a
+    // failure leaves the filter out, and never stops the report itself.
+    const optional = <T,>(path: string) =>
+      apiClient.get<ApiSuccess<T[]>>(path).then(
+        (r) => r.data.data,
+        () => null,
+      )
+
+    Promise.all([fetchReport(filters, client), optional<Vehicle>('/vehicles'), optional<Driver>('/drivers')])
       .then(([report, vehicleList, driverList]) => {
         if (cancelled) return
         apply(report)
-        setVehicles(vehicleList.data.data)
-        setDrivers(driverList.data.data)
+        setVehicles(vehicleList)
+        setDrivers(driverList)
       })
       .catch((failure: unknown) => {
         if (!cancelled) setError(apiError(failure, 'Could not run this report.').message)
@@ -318,7 +342,7 @@ export function ReportsPage() {
             <Select
               id="r-report"
               value={report}
-              onChange={(e) => setReport(e.target.value as ReportType)}
+              onChange={(e) => setReport(e.target.value as PageReport)}
               options={available.map((r) => ({ value: r.value, label: REPORT_LABELS[r.value] }))}
             />
           </FormField>
@@ -334,7 +358,7 @@ export function ReportsPage() {
             `tenant_id` on them, and a control that answers 422 is a dead
             end rather than a feature.
           */}
-          {report !== 'drivers' && report !== 'vehicles' && (
+          {report !== 'drivers' && report !== 'vehicles' && scope === 'platform' && (
             <FormField label="Client" htmlFor="r-client">
               <ClientFilterSelect
                 scope={scope}
@@ -366,7 +390,7 @@ export function ReportsPage() {
               onChange={(e) => setFilters({ ...filters, to: e.target.value })}
             />
           </FormField>
-          {report === 'trips' && (
+          {report === 'trips' && vehicles !== null && (
             <FormField label="Vehicle" htmlFor="r-vehicle">
               <Select
                 id="r-vehicle"
@@ -380,7 +404,7 @@ export function ReportsPage() {
               />
             </FormField>
           )}
-          {report === 'trips' && (
+          {report === 'trips' && drivers !== null && (
             <FormField label="Driver" htmlFor="r-driver">
               <Select
                 id="r-driver"
@@ -452,6 +476,17 @@ export function ReportsPage() {
         </PanelBoundary>
       )}
 
+      {report === 'distance' && (
+        <PanelBoundary label="the measured-distance report">
+          <DistanceReport
+            from={filters.from}
+            to={filters.to}
+            client={client}
+            reloadToken={fleetToken}
+          />
+        </PanelBoundary>
+      )}
+
       {report === 'trips' && summary && (
         <PanelBoundary label="the trip summary">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
@@ -511,9 +546,13 @@ export function ReportsPage() {
         </PanelBoundary>
       )}
 
-      <PanelBoundary label="the export panel">
-        <ExportPanel filters={filters} report={report} />
-      </PanelBoundary>
+      {/* Not on the distance report: it is on-screen only, and the export
+          endpoint would refuse it (see `PageReport`). */}
+      {report !== 'distance' && (
+        <PanelBoundary label="the export panel">
+          <ExportPanel filters={filters} report={report} />
+        </PanelBoundary>
+      )}
 
       {report === 'trips' && (
         // The table carrying the Bank's six acceptance criteria. If any
@@ -525,7 +564,7 @@ export function ReportsPage() {
               <EmptyState
                 icon="file-search"
                 title="No trips in this period"
-                description="No trip commenced between the selected dates. Widen the range or clear the vehicle and driver filters."
+                description="Widen the range or clear the filters."
               />
             ) : (
               <DataTable<ReportTableRow>

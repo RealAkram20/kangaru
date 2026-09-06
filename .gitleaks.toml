@@ -23,8 +23,18 @@ description = "Test fixtures and generated artefacts, scoped as tightly as possi
 # uses rather than allowlisting the test directory. A real credential
 # committed to a test file is still a leaked credential, and this leaves that
 # case detected.
+# `generic-api-key` also fires on the anonymized vehicle key the live-map
+# fixtures share — `key: 'abc123def456'` in three frontend tests. It is the
+# opaque handle the public nearby-vehicles endpoint hands a browser instead of
+# a plate or a driver name (ADR-0001's anonymized read), so a fixture for it is
+# a fixture for the absence of identity. It authenticates nothing.
+#
+# Anchored to the literal fixture rather than to the frontend test directory,
+# for the same reason as above: a real credential in a test file is still
+# leaked, and this leaves that case detected.
 regexes = [
   '''idem-[a-z0-9-]{4,}''',
+  '''^abc123def456$''',
 ]
 
 # Regexes are matched against the secret, not the surrounding line, so this
@@ -40,4 +50,17 @@ paths = [
 
   # Composer and npm lock files: hashes, not secrets.
   '''(.*?)(composer\.lock|package-lock\.json)$''',
+
+  # The driver app's Firebase configuration. Its `api_key` is a client
+  # identifier, not a credential: `google-services.json` is compiled into
+  # every APK, and an APK is a zip anyone can open. Google documents checking
+  # it into source control, and an EAS build cannot produce a push-capable app
+  # without it.
+  #
+  # What protects that key is the Android restriction on it in the Google
+  # Cloud console — package `ug.co.kangaruride.driver` plus the signing SHA-1.
+  # That restriction is the control; this entry only stops the scanner
+  # reporting a public identifier as a leak. Scoped to the one file, so the
+  # same key pasted anywhere else stays detected.
+  '''mobile/google-services\.json$''',
 ]

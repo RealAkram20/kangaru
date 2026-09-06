@@ -1,11 +1,14 @@
 <?php
 
 use App\Enums\ErrorCode;
+use App\Http\Middleware\ActAsSubject;
 use App\Http\Middleware\AssignRequestId;
+use App\Http\Middleware\AuthenticateWalkInOrSupport;
 use App\Http\Middleware\BindSubjectTenant;
 use App\Http\Middleware\EnforceTokenScope;
 use App\Http\Middleware\EnsureMfaEnrolled;
 use App\Http\Middleware\IdentifyTenant;
+use App\Http\Middleware\RefuseWhileActingAs;
 use App\Support\Api\ApiResponse;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
@@ -17,9 +20,19 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Validation\ValidationException;
+use Modules\Administration\Console\CreateKangaruStaff;
+use Modules\Administration\Console\SendInvitationReminders;
 use Modules\Dispatch\Console\AdvanceDispatchOffers;
+use Modules\Drivers\Console\AwardWeeklyBonuses;
+use Modules\Drivers\Console\PruneAbandonedApplicationDocuments;
+use Modules\Drivers\Console\SendExpiringDocumentReminders;
+use Modules\Fleet\Console\AlertOnFleetsWithoutAccounts;
+use Modules\Fleet\Console\CloseStaleDutySessions;
+use Modules\Notifications\Console\PreviewMail;
 use Modules\Reports\Console\PruneReportExports;
 use Modules\Trips\Console\MaintainTripLocationPartitions;
+use Modules\Trips\Console\ReplayTripDistance;
+use Sentry\Laravel\Integration;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
@@ -37,9 +50,94 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withCommands([
         PruneReportExports::class,
         MaintainTripLocationPartitions::class,
+        ReplayTripDistance::class,
         AdvanceDispatchOffers::class,
+        AwardWeeklyBonuses::class,
+        CloseStaleDutySessions::class,
+        PruneAbandonedApplicationDocuments::class,
+        CreateKangaruStaff::class,
+        PreviewMail::class,
+        SendInvitationReminders::class,
+        SendExpiringDocumentReminders::class,
+        AlertOnFleetsWithoutAccounts::class,
     ])
     ->withMiddleware(function (Middleware $middleware): void {
+        // ---------------------------------------------------------------------
+        // Who is allowed to tell us where a request came from.
+        //
+        // Without this, `request()->ip()` is the immediate peer — which behind
+        // a reverse proxy is the proxy. Measured on the live server before it
+        // was set, every single request looked like this:
+        //
+        //   10.0.3.9 - - "GET /up" 200 "-" "102.86.7.251"
+        //
+        // The real client was there all along, in `X-Forwarded-For`; Laravel
+        // simply was not permitted to believe it. Two things read that value
+        // and both were wrong:
+        //
+        //   - `AuditLog` writes `ip_address` on every mutation. A trail that
+        //     records the proxy's container address for every action by every
+        //     user cannot answer "where did this come from", which is most of
+        //     what PRODUCT.md sells to a bank.
+        //   - `AppServiceProvider` rate-limits `->by($request->ip())`. One
+        //     bucket for the entire internet: an attacker on the OTP path
+        //     exhausts the limit for every legitimate user at once, and
+        //     AGENTS.md names SMS pumping fraud as a real cost here.
+        //
+        // **Why a list and not `'*'`.** Trusting every hop means believing an
+        // `X-Forwarded-For` a stranger wrote. Anyone who finds the origin
+        // address could then forge the audit trail and walk past the rate
+        // limiter wearing a different IP each time. Symfony walks the chain
+        // right-to-left and stops at the first hop it does not trust, so
+        // naming the hops is what makes a forged prefix inert.
+        //
+        // Two groups, and both are needed:
+        //
+        //   - The private ranges: Traefik, which is the only thing that can
+        //     reach these containers — no service publishes a host port.
+        //   - Cloudflare's edge, since the domains are proxied. Without it the
+        //     chain stops at Cloudflare and every user is recorded as
+        //     Cloudflare.
+        //
+        // **The Cloudflare list changes a few times a year.** It is pinned
+        // here rather than fetched at boot, because a request-path dependency
+        // on an external URL is a worse failure than a stale range. Re-check
+        // https://www.cloudflare.com/ips/ — docs/runbook.md carries this as a
+        // standing item. Last refreshed from that endpoint 2026-08-21.
+        // ---------------------------------------------------------------------
+        $middleware->trustProxies(at: [
+            // Docker's own networks: Traefik, and nothing else, can reach us.
+            '10.0.0.0/8',
+            '172.16.0.0/12',
+            '192.168.0.0/16',
+
+            // Cloudflare IPv4 — https://www.cloudflare.com/ips-v4
+            '173.245.48.0/20',
+            '103.21.244.0/22',
+            '103.22.200.0/22',
+            '103.31.4.0/22',
+            '141.101.64.0/18',
+            '108.162.192.0/18',
+            '190.93.240.0/20',
+            '188.114.96.0/20',
+            '197.234.240.0/22',
+            '198.41.128.0/17',
+            '162.158.0.0/15',
+            '104.16.0.0/13',
+            '104.24.0.0/14',
+            '172.64.0.0/13',
+            '131.0.72.0/22',
+
+            // Cloudflare IPv6 — https://www.cloudflare.com/ips-v6
+            '2400:cb00::/32',
+            '2606:4700::/32',
+            '2803:f800::/32',
+            '2405:b500::/32',
+            '2405:8100::/32',
+            '2a06:98c0::/29',
+            '2c0f:f248::/32',
+        ]);
+
         $middleware->api(prepend: [
             AssignRequestId::class,
         ]);
@@ -57,6 +155,10 @@ return Application::configure(basePath: dirname(__DIR__))
         // `$request->user()` is null and this would wave everything
         // through. That ordering is the whole of its correctness.
         $middleware->api(append: [
+            // ADR-0056. Swaps the authenticated user for whoever they are
+            // acting as, so every scope and policy downstream sees the
+            // subject without knowing anything about support sessions.
+            ActAsSubject::class,
             // ADR-0022. Must run *after* `auth:sanctum` has resolved the
             // token, which the priority list below arranges — before it,
             // `currentAccessToken()` is null on every request and the
@@ -68,6 +170,14 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'tenant' => IdentifyTenant::class,
             'subject-tenant' => BindSubjectTenant::class,
+            // ADR-0056 §3. Attached to the routes it guards rather than
+            // matching their names, so the guard travels with the route.
+            'not-acting-as' => RefuseWhileActingAs::class,
+            // ADR-0066 §3. The `customer` guard plus one named exception, in
+            // one class because the two answers have to be tried in order —
+            // `auth:customer` followed by anything would reject the staff
+            // token before the second middleware ran.
+            'walk-in-or-support' => AuthenticateWalkInOrSupport::class,
         ]);
 
         // Laravel's default middleware priority runs SubstituteBindings
@@ -79,8 +189,35 @@ return Application::configure(basePath: dirname(__DIR__))
         // so TenantScope's fail-closed default made every such lookup 404 —
         // including for the resource's own tenant. Force `tenant` to run
         // immediately after authentication and before model binding.
+        // **Before `IdentifyTenant`, and that ordering is the whole of its
+        // correctness** (ADR-0056). `IdentifyTenant` builds `AccessContext`
+        // from `$request->user()`; if the swap happened after it, a support
+        // session would carry the *actor's* fleet — a Kangaru account's, which
+        // is none — and every scoped read would come back empty while looking
+        // like it had worked. Inserted immediately after authentication, so it
+        // lands ahead of the entry appended below it.
         $middleware->appendToPriorityList(
             after: AuthenticatesRequests::class,
+            append: ActAsSubject::class,
+        );
+
+        // Between the swap and everything that reads data (ADR-0056 §3).
+        //
+        // It must run **after** `ActAsSubject`, which is what sets the context
+        // it reads, and **before** `SubstituteBindings`, which would otherwise
+        // resolve the route's model first and answer 404 for a record that does
+        // not exist — hiding the refusal behind an unrelated status and telling
+        // a support agent the endpoint is broken rather than forbidden.
+        //
+        // A guard whose answer depends on whether the target exists is also a
+        // guard that leaks whether it exists.
+        $middleware->appendToPriorityList(
+            after: ActAsSubject::class,
+            append: RefuseWhileActingAs::class,
+        );
+
+        $middleware->appendToPriorityList(
+            after: RefuseWhileActingAs::class,
             append: IdentifyTenant::class,
         );
 
@@ -180,4 +317,22 @@ return Application::configure(basePath: dirname(__DIR__))
         });
 
         $exceptions->context(fn () => Context::all());
+
+        /*
+         * ADR-0054. Report to Sentry, and **only here** — not by replacing
+         * the render callbacks above.
+         *
+         * `Integration::handles()` hooks Laravel's *reporting* channel, which
+         * runs before rendering and independently of it. Every `render()`
+         * block above still turns the exception into this platform's own
+         * error envelope, so no client sees a different response because
+         * observability was switched on. That separation is the point: a
+         * monitoring tool that changes what an API returns is a monitoring
+         * tool that has to be trusted in the request path, and this one does
+         * not.
+         *
+         * With no DSN configured this is inert — the SDK short-circuits — so
+         * a developer without one, and CI, behave exactly as before.
+         */
+        Integration::handles($exceptions);
     })->create();

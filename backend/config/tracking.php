@@ -40,15 +40,18 @@ return [
     | Odometer / GPS variance
     |--------------------------------------------------------------------------
     |
-    | PROJECT.md: "Odometer distance is automatically reconciled against
-    | GPS-calculated distance; variances beyond a configurable threshold are
-    | flagged for review." This is that threshold, as a percentage of the
-    | odometer distance.
+    | SUPERSEDED by the `tracking` settings group (ADR-0035). The threshold
+    | and the odometer ceiling are now operator policy, set in the console,
+    | validated, cached and audited like every other setting — an env var
+    | needed a deploy to change and appeared nowhere an office could see it.
     |
-    | 10% is deliberately loose for a first pass: GPS traces are noisy, and a
-    | flag nobody trusts is a flag nobody reviews. PROJECT.md's success metric
-    | is that flagged trips are reviewed within 2 business days, which only
-    | works if the flag is rare.
+    | This entry is left as documentation of where the number used to live.
+    | Nothing reads it: `TripStateMachine::reconcileAgainstGps()` asks
+    | `SettingsService`, whose catalogue default is the same 10, so an
+    | existing deployment behaves identically until somebody changes it.
+    |
+    | If TRACKING_VARIANCE_THRESHOLD_PERCENT is set in an environment, it is
+    | now inert. Set the value in the console instead.
     |
     */
 

@@ -4,6 +4,7 @@ namespace Modules\Billing\Models;
 
 use App\Concerns\Auditable;
 use App\Concerns\BelongsToTenant;
+use App\Concerns\RecordsActingFleet;
 use App\Exceptions\FinancialRecordImmutableException;
 use App\Models\Tenant;
 use App\Models\User;
@@ -41,11 +42,14 @@ use Illuminate\Support\Str;
  */
 class CreditNote extends Model
 {
-    use Auditable, BelongsToTenant;
+    use Auditable, BelongsToTenant, RecordsActingFleet;
 
     protected $fillable = [
         'uuid',
         'tenant_id',
+        // The fleet whose series this correction belongs to — the invoice's,
+        // never the actor's (ADR-0055 §6).
+        'operator_id',
         'invoice_id',
         'credit_note_number',
         'currency',

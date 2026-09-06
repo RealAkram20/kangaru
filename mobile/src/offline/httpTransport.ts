@@ -5,6 +5,7 @@ import {
   fetchTrip,
   withdrawAvailabilityRequest,
 } from '../api/endpoints';
+import { formFile } from '../api/formFile';
 import type { AvailabilityBlock, Trip } from '../api/types';
 import type { OutboxTransport } from './outbox';
 import type { AvailabilityRequestPayload, OutboxItem, TransitionPayload } from './outboxTypes';
@@ -96,35 +97,26 @@ export function buildTransitionForm(payload: TransitionPayload, photoUri: string
     form.append('odometer_end', String(payload.odometer_end));
   }
 
-  // React Native's FormData takes a file descriptor object here rather than a
-  // Blob. The cast is the documented way to express that to TypeScript, whose
-  // FormData types describe the browser's.
-  form.append('odometer_photo', {
-    uri: photoUri,
-    name: fileNameFor(photoUri),
-    type: mimeTypeFor(photoUri),
-  } as unknown as Blob);
+  // Dead today — a pause never carries a photo, so a stop_id never rides the
+  // multipart path — but a payload field the builder silently drops is the
+  // kind of gap that outlives the assumption. Guarded like its siblings.
+  if (payload.stop_id !== undefined) {
+    form.append('stop_id', String(payload.stop_id));
+  }
+
+  // Live on this path, unlike stop_id: a completion routinely carries both
+  // the photo and the phone's own measurement (ADR-0045 §5), and main's
+  // form builder dropping this line is why a photographed completion lost
+  // its provisional fare there.
+  if (payload.provisional_distance_km !== undefined) {
+    form.append('provisional_distance_km', String(payload.provisional_distance_km));
+  }
+
+  // `formFile`, not a `{ uri, name, type }` descriptor — Expo's fetch throws on
+  // that shape, and this is the path where the throw costs most: it happens
+  // inside the outbox, long after the driver has left the vehicle. The whole
+  // argument is in `api/formFile.ts`.
+  form.append('odometer_photo', formFile(photoUri));
 
   return form;
-}
-
-function fileNameFor(uri: string): string {
-  const last = uri.split('/').pop();
-
-  return last === undefined || last === '' ? 'odometer.jpg' : last;
-}
-
-/**
- * The server accepts jpeg, jpg, png, webp and heic. An iPhone hands back
- * `.heic` and Android `.jpg`; anything else is labelled jpeg, which is what
- * `expo-image-picker` produces when it transcodes.
- */
-function mimeTypeFor(uri: string): string {
-  const extension = uri.split('.').pop()?.toLowerCase();
-
-  if (extension === 'png') return 'image/png';
-  if (extension === 'webp') return 'image/webp';
-  if (extension === 'heic') return 'image/heic';
-
-  return 'image/jpeg';
 }

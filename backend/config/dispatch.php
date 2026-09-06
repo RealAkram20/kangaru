@@ -123,19 +123,78 @@ return [
     'walk_in_auto_dispatch' => (bool) env('DISPATCH_WALK_IN_AUTO', true),
 
     /*
+    |--------------------------------------------------------------------------
+    | Offering an approved booking to drivers
+    |--------------------------------------------------------------------------
+    |
+    | The third of these, and it needs distinguishing from both.
+    |
+    | `automatic_enabled` above gates `autoAssign`, which *commits* one
+    | choice — the top suggestion — unattended. This one opens an **offer
+    | wave**: the ranked drivers are asked in turn, a decline rolls to the
+    | next by itself, and nothing is committed until somebody answers. Both
+    | ring the driver (ADR-0068 gave the desk's assignment the same
+    | full-screen offer a walk-in gets), so the distinction is not who hears
+    | about it but what has already been decided when they do. The weaker act
+    | is not folded into that flag: turning on "the matcher may ask" should
+    | not also turn on "the matcher may decide".
+    |
+    | On by default, and that is a departure from `automatic_enabled`'s
+    | caution worth stating. The owner reported on 6 September that creating a
+    | booking still left the desk assigning both halves by hand and asked for
+    | it to be automatic. Shipping it off would ship exactly the feature
+    | nobody can use that the walk-in note above warns against. The failure
+    | mode is bounded: an offer is a question, a driver may decline it, the
+    | desk can still assign by hand, and `DISPATCH_BOOKING_AUTO_OFFER=false`
+    | turns it off without a deploy.
+    |
+    | Only immediate bookings. A booking scheduled for later is left alone,
+    | the same rule and the same reason as the walk-in path: holding an offer
+    | open for six hours, or waking a matcher at 05:00 for an 06:00 pickup,
+    | is a scheduler making its own decisions and is deferred by name in
+    | ADR-0024.
+    |
+    */
+
+    'booking_auto_offer' => (bool) env('DISPATCH_BOOKING_AUTO_OFFER', true),
+
+    /*
     | How long a driver has to answer an offer.
     |
     | The passenger is standing on a kerb watching a spinner, so this is
     | short; a driver may be mid-junction when it arrives, so it is not
-    | *that* short. Fifteen seconds is the industry's rough consensus and is
-    | a starting point to tune against real accept latencies, not a finding.
+    | *that* short.
+    |
+    | **Forty-five seconds, raised from fifteen when the offer started
+    | arriving on a locked phone (ADR-0046).** Fifteen was chosen against a
+    | driver who was already looking at the app, and it was the right number
+    | for that: the industry's rough consensus, with the offer polled every
+    | five seconds into a screen somebody was holding. It is the wrong number
+    | for a phone face-down in a cradle or in a pocket. The sequence a ring
+    | now has to survive is *notification wakes the handset, the driver
+    | notices, reaches, looks, reads a pickup and decides* — and fifteen
+    | seconds is not enough for it. A driver who misses offers they were
+    | never realistically able to answer is a driver who concludes the app
+    | does not work, which costs the fleet far more than a slower hand-off.
+    |
+    | Forty-five is roughly how long a WhatsApp call rings, which is not a
+    | coincidence: it is the same problem, and that number has been tuned
+    | against human reaction times by people with more data than we have.
+    |
+    | **The cost is real and is paid by the passenger.** Worst case before an
+    | order reaches the human queue is `offer_ttl_seconds * offer_max_rounds`
+    | — see the note on that key, which was cut from five rounds to three in
+    | the same change so the total went to 2m15s rather than 3m45s.
+    |
+    | Tune it against real accept latencies once there are enough of them to
+    | measure. It is a starting point, not a finding.
     |
     | Every read compares against the stored `expires_at` rather than
     | recomputing from this, so changing it never retroactively expires
     | offers that are already out.
     */
 
-    'offer_ttl_seconds' => (int) env('DISPATCH_OFFER_TTL_SECONDS', 15),
+    'offer_ttl_seconds' => (int) env('DISPATCH_OFFER_TTL_SECONDS', 45),
 
     /*
     | How many drivers are offered a ride at once.
@@ -159,9 +218,21 @@ return [
     | human queue ADR-0012 built, which a dispatcher is already watching, and
     | the customer's screen says so. A matcher that gives up loudly is one an
     | operator can trust; one that gives up quietly is one they stop using.
+    |
+    | **Three, cut from five when `offer_ttl_seconds` went to 45 (ADR-0046).**
+    | These two multiply, and only their product is felt by anybody: it is
+    | how long a passenger watches a spinner before a human takes over. Five
+    | rounds of forty-five seconds is 3m45s of silence, which is longer than
+    | most people will wait before phoning the office — at which point the
+    | matcher has produced a worse outcome than not running.
+    |
+    | Three keeps that at 2m15s, close to the 1m15s the old pair produced,
+    | and the rounds given up are the least valuable ones: by the fourth wave
+    | the matcher is offering to drivers it ranked well below the first, and
+    | a dispatcher who knows the ground beats a fourth-choice automatic offer.
     */
 
-    'offer_max_rounds' => (int) max(1, (int) env('DISPATCH_OFFER_MAX_ROUNDS', 5)),
+    'offer_max_rounds' => (int) max(1, (int) env('DISPATCH_OFFER_MAX_ROUNDS', 3)),
 
     /*
     | How long an unfulfilled order keeps being re-offered.
@@ -180,5 +251,40 @@ return [
     */
 
     'offer_retry_window_minutes' => (int) max(1, (int) env('DISPATCH_OFFER_RETRY_WINDOW_MINUTES', 30)),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Waiting at the pickup
+    |--------------------------------------------------------------------------
+    |
+    | How long a driver is expected to stand at a pickup before the wait is
+    | worth someone's attention. The driver app draws its waiting ring
+    | against this.
+    |
+    | **This is a display target and nothing else, and the distinction is the
+    | whole reason for this comment.** Nothing in this platform charges,
+    | bounds or ends a wait at the kerb:
+    |
+    | - `free_waiting_minutes` and `per_waiting_minute_minor` on the rate
+    |   card bill the *in-trip* Waiting status. `WaitingTimeCalculator` opens
+    |   a period on a transition **into** `TripStatus::WAITING`, which the
+    |   state graph only permits after Trip Started — so none of it can
+    |   describe a driver waiting for a passenger to come out.
+    | - No status follows from this elapsing. The driver cannot post
+    |   `no_show` (`TripPolicy::DRIVER_JOURNEY_STATES` withholds it) and
+    |   nothing sweeps a trip that sits at Driver Arrived.
+    |
+    | So passing it must not read as a deadline anywhere: the app's ring
+    | fills to full and then *stays* full while the figure keeps counting.
+    | Whoever gives this number a consequence — a no-show, a waiting charge,
+    | a fee — is making a commercial decision that needs its own ADR, and
+    | they should find this paragraph first.
+    |
+    | Five minutes is a starting point chosen against nothing but common
+    | practice, and it is a setting rather than a literal so that arguing
+    | with it costs an env var instead of a release.
+    */
+
+    'pickup_wait_target_seconds' => (int) max(1, (int) env('DISPATCH_PICKUP_WAIT_TARGET_SECONDS', 300)),
 
 ];

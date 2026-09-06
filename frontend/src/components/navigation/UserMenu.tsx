@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../core/Icon'
+import { useIsCompact } from '../../lib/useMediaQuery'
 
 export interface UserMenuProps {
   name: string
@@ -36,6 +37,7 @@ export interface UserMenuProps {
  * strands a keyboard user at the top of the document.
  */
 export function UserMenu({ name, role, email, initials, onProfile, onSignOut }: UserMenuProps) {
+  const compact = useIsCompact()
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -116,23 +118,34 @@ export function UserMenu({ name, role, email, initials, onProfile, onSignOut }: 
         >
           {shown}
         </span>
-        {/* Hidden on narrow chrome, where the avatar alone has to carry it. */}
-        <span className="kr-user-menu-identity" style={{ lineHeight: 1.2, textAlign: 'left' }}>
-          <span
-            style={{ display: 'block', font: 'var(--type-label)', color: 'var(--text-on-chrome)' }}
-          >
-            {name}
+        {/*
+          The avatar alone carries identity on narrow chrome.
+
+          This block already carried the comment "Hidden on narrow chrome" and
+          a `kr-user-menu-identity` class — but no CSS rule for that class was
+          ever written anywhere in the app, so it never hid. At 360px "Dispatch
+          Desk / Dispatcher" wrapped over three lines and took the strip the
+          page title needed. Driven from the shared breakpoint rather than a
+          media query so it cannot drift from the drawer and the card list.
+        */}
+        {!compact && (
+          <span className="kr-user-menu-identity" style={{ lineHeight: 1.2, textAlign: 'left' }}>
+            <span
+              style={{ display: 'block', font: 'var(--type-label)', color: 'var(--text-on-chrome)' }}
+            >
+              {name}
+            </span>
+            <span
+              style={{
+                display: 'block',
+                font: 'var(--type-caption)',
+                color: 'var(--text-on-chrome-secondary)',
+              }}
+            >
+              {role}
+            </span>
           </span>
-          <span
-            style={{
-              display: 'block',
-              font: 'var(--type-caption)',
-              color: 'var(--text-on-chrome-secondary)',
-            }}
-          >
-            {role}
-          </span>
-        </span>
+        )}
         <Icon
           name="chevron-down"
           size={14}
@@ -153,10 +166,10 @@ export function UserMenu({ name, role, email, initials, onProfile, onSignOut }: 
             top: 'calc(100% + var(--space-2))',
             right: 0,
             minWidth: 240,
-            background: 'var(--surface-raised)',
+            background: 'var(--surface-card)',
             border: '1px solid var(--border-default)',
             borderRadius: 'var(--radius-lg)',
-            boxShadow: 'var(--elevation-overlay)',
+            boxShadow: 'var(--shadow-lg)',
             padding: 'var(--space-2)',
             zIndex: 50,
           }}

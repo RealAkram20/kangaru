@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiOk, apiFailure, renderAs } from '../test/harness'
@@ -23,6 +23,11 @@ function driver(overrides: Partial<Driver> = {}): Driver {
     license_number: 'DL-99881',
     license_expiry: '2028-01-01',
     status: 'active',
+    // ADR-0048 §7. Both are required on the wire: `DriverResource` sends them
+    // unconditionally, so a fixture that omits them is a fixture testing a
+    // response shape the server does not produce.
+    vehicle_id: null,
+    owns_vehicle: false,
     account: null,
     created_at: '2026-01-01T00:00:00.000000Z',
     updated_at: '2026-01-01T00:00:00.000000Z',
@@ -151,5 +156,158 @@ describe('DriversPage — sign-in', () => {
     // problem when the driver reports the app will not let them in.
     expect(await screen.findByText('Suspended')).toBeVisible()
     expect(screen.queryByText('Can sign in')).toBeNull()
+  })
+})
+
+const CATEGORIES = [
+  {
+    id: 1,
+    key: 'boda',
+    name: 'Boda boda',
+    description: null,
+    active: true,
+    position: 0,
+    created_at: '2026-01-01T00:00:00.000000Z',
+    updated_at: '2026-01-01T00:00:00.000000Z',
+  },
+  {
+    id: 2,
+    key: 'sedan',
+    name: 'Sedan',
+    description: null,
+    active: true,
+    position: 1,
+    created_at: '2026-01-01T00:00:00.000000Z',
+    updated_at: '2026-01-01T00:00:00.000000Z',
+  },
+]
+
+/**
+ * Answers `/vehicle-categories` from the list above and everything else with
+ * `other`. A blanket `mockResolvedValue` cannot: it hands the category
+ * chooser a list of drivers, every option is dropped as inactive, and a test
+ * about filtering by category ends up filtering by nothing.
+ */
+function getAnswers(other: () => Promise<unknown>) {
+  get.mockImplementation((url: string) =>
+    (url.includes('/vehicle-categories') ? Promise.resolve(apiOk(CATEGORIES)) : other()) as never,
+  )
+}
+
+/**
+ * "Which drivers are out on a boda this morning."
+ *
+ * The depot's question is about the *machine*, and a driver has no category
+ * of their own — only whatever they are holding — so every assertion here is
+ * really about `driver.vehicle.category`, which is why the field had to reach
+ * the wire (`DriverResource`) before this screen could ask.
+ */
+describe('DriversPage — filtering by vehicle category', () => {
+  const onBoda = driver({
+    id: 1,
+    name: 'Boda Rider',
+    license_number: 'DL-1',
+    vehicle_id: 11,
+    owns_vehicle: true,
+    vehicle: { id: 11, registration_number: 'UDD 005D', make: 'Bajaj', model: 'Boxer', category: 'boda' },
+  })
+
+  const inSedan = driver({
+    id: 2,
+    name: 'Sedan Driver',
+    license_number: 'DL-2',
+    vehicle_id: 12,
+    vehicle: { id: 12, registration_number: 'UBA 111A', make: 'Toyota', model: 'Corolla', category: 'sedan' },
+  })
+
+  const unallocated = driver({ id: 3, name: 'Awaiting Allocation', license_number: 'DL-3' })
+
+  it('shows only the drivers holding that category', async () => {
+    getAnswers(() => Promise.resolve(apiOk([onBoda, inSedan, unallocated])))
+
+    renderAs(<DriversPage />)
+
+    expect(await screen.findByText('Sedan Driver')).toBeVisible()
+
+    await userEvent.selectOptions(
+      screen.getByRole('combobox', { name: /filter by vehicle category/i }),
+      'boda',
+    )
+
+    expect(screen.getByText('Boda Rider')).toBeVisible()
+    expect(screen.queryByText('Sedan Driver')).toBeNull()
+  })
+
+  it('drops a driver with no vehicle rather than counting them in every category', async () => {
+    getAnswers(() => Promise.resolve(apiOk([onBoda, unallocated])))
+
+    renderAs(<DriversPage />)
+
+    expect(await screen.findByText('Awaiting Allocation')).toBeVisible()
+
+    await userEvent.selectOptions(
+      screen.getByRole('combobox', { name: /filter by vehicle category/i }),
+      'boda',
+    )
+
+    // The depot allocates theirs per shift, so "is this rider on a boda" has
+    // no answer yet. Showing them under every category is the guess that
+    // would send a dispatcher looking for a machine nobody is on.
+    expect(screen.queryByText('Awaiting Allocation')).toBeNull()
+  })
+
+  it('narrows the text filter within the category rather than beside it', async () => {
+    const otherBoda = driver({
+      id: 4,
+      name: 'Second Rider',
+      license_number: 'DL-4',
+      vehicle_id: 13,
+      vehicle: { id: 13, registration_number: 'UEE 222E', make: 'TVS', model: 'HLX', category: 'boda' },
+    })
+
+    // The sedan driver shares the word being typed. That is the whole point
+    // of the fixture: a term matching somebody on both sides of the category
+    // line is the only way to tell "narrowed within" from "or-ed beside".
+    const secondSedan = driver({
+      id: 5,
+      name: 'Second Sedan',
+      license_number: 'DL-5',
+      vehicle_id: 14,
+      vehicle: { id: 14, registration_number: 'UFF 333F', make: 'Bajaj', model: 'Qute', category: 'sedan' },
+    })
+
+    getAnswers(() => Promise.resolve(apiOk([onBoda, secondSedan, otherBoda])))
+
+    renderAs(<DriversPage />)
+
+    expect(await screen.findByText('Second Rider')).toBeVisible()
+
+    await userEvent.selectOptions(
+      screen.getByRole('combobox', { name: /filter by vehicle category/i }),
+      'boda',
+    )
+    await userEvent.type(screen.getByPlaceholderText(/filter by name/i), 'Second')
+
+    // Two filters, one result set. Or-ing them would put the sedan back on
+    // screen the moment somebody typed.
+    expect(screen.getByText('Second Rider')).toBeVisible()
+    expect(screen.queryByText('Boda Rider')).toBeNull()
+    expect(screen.queryByText('Second Sedan')).toBeNull()
+  })
+
+  it("names the category on the row, in the office's own word for it", async () => {
+    getAnswers(() => Promise.resolve(apiOk([onBoda])))
+
+    renderAs(<DriversPage />)
+
+    // The stored key is `boda`; the office calls it "Boda boda". A screen
+    // showing the key is showing a database value to a dispatcher.
+    //
+    // Scoped to the row on purpose: the chooser carries the same words, so
+    // an unscoped match would pass on the filter alone and never notice the
+    // row had gone back to saying `boda` — or saying nothing.
+    const row = (await screen.findByText('UDD 005D')).closest('tr')
+    expect(row).not.toBeNull()
+    expect(within(row as HTMLElement).getByText('Boda boda')).toBeVisible()
   })
 })

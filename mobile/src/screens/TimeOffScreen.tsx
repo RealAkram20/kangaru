@@ -64,14 +64,24 @@ export function TimeOffScreen() {
 
     setBusy(true);
 
-    await queueAvailabilityRequest({
-      kind,
-      starts_at: new Date(startsAt).toISOString(),
-      ends_at: endsAt === '' ? null : new Date(endsAt).toISOString(),
-      reason: reason.trim(),
-    });
+    // `finally` for the busy flag, because the caller discards the promise: a
+    // `queueAvailabilityRequest` that throws (the outbox refusing to open)
+    // used to leave the submit button spinning for good. The form is cleared
+    // only on success — a driver whose request did not queue keeps what they
+    // typed instead of retyping the dates and the reason.
+    try {
+      await queueAvailabilityRequest({
+        kind,
+        starts_at: new Date(startsAt).toISOString(),
+        ends_at: endsAt === '' ? null : new Date(endsAt).toISOString(),
+        reason: reason.trim(),
+      });
+    } catch {
+      return;
+    } finally {
+      setBusy(false);
+    }
 
-    setBusy(false);
     setSubmitted(true);
     setStartsAt('');
     setEndsAt('');
@@ -100,7 +110,7 @@ export function TimeOffScreen() {
           {submitted && (
             <Notice
               tone="info"
-              message="Sent to the office. You are still on the roster until they approve it."
+              message="Sent. You stay on the roster until the office approves it."
             />
           )}
 
@@ -129,7 +139,7 @@ export function TimeOffScreen() {
 
           <Field
             label="Until"
-            hint="Leave blank if you do not know yet — the office will set the end date."
+            hint="Leave blank if you do not know yet."
             value={endsAt}
             onChangeText={setEndsAt}
             placeholder="2026-08-18"
@@ -153,7 +163,7 @@ export function TimeOffScreen() {
         <Text style={styles.sectionTitle}>Your requests</Text>
 
         {isError && dataUpdatedAt === 0 && (
-          <Notice message="Could not reach the office. Anything you send is saved and will go out later." />
+          <Notice message="Saved on this phone, sent when you have signal." />
         )}
 
         {(requests ?? []).length === 0 ? (

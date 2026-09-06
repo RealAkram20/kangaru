@@ -3,6 +3,7 @@
 namespace Modules\Notifications\Enums;
 
 use Modules\Notifications\Channels\ExpoPushChannel;
+use Modules\Notifications\Channels\SettingsMailChannel;
 use Modules\Notifications\Channels\TenantDatabaseChannel;
 
 /**
@@ -34,15 +35,25 @@ enum NotificationChannel: string
     /**
      * The Laravel channel this maps to.
      *
-     * DATABASE resolves to our own channel rather than Laravel's, because
-     * Laravel's writes to a framework table with no tenant column (see the
-     * notifications migration).
+     * **None of the three is Laravel's own**, and each is ours for a
+     * different reason.
+     *
+     * DATABASE resolves to our own channel because Laravel's writes to a
+     * framework table with no tenant column (see the notifications migration).
+     *
+     * MAIL used to resolve to the string `mail`, which is the framework's
+     * default mailer, which is `MAIL_MAILER` from `.env`, which is `log`.
+     * Every email on this channel was written to a log file for the whole
+     * life of the feature while `PasswordResetService` sent real mail from
+     * the settings the owner saved. `SettingsMailChannel` is that second path,
+     * and now it is the only one: a green test send in the settings screen
+     * vouches for booking emails because it is the same code.
      */
     public function driver(): string
     {
         return match ($this) {
             self::DATABASE => TenantDatabaseChannel::class,
-            self::MAIL => 'mail',
+            self::MAIL => SettingsMailChannel::class,
             self::PUSH => ExpoPushChannel::class,
         };
     }

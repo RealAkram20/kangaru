@@ -2,13 +2,15 @@
 
 namespace Modules\Notifications\Notifications;
 
+use App\Models\User;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification as LaravelNotification;
+use Modules\Administration\Services\SettingsService;
 use Modules\Notifications\Channels\TenantDatabaseChannel;
 use Modules\Notifications\Enums\NotificationChannel;
 use Modules\Notifications\Enums\NotificationType;
+use Modules\Notifications\Mail\MailContent;
 
 /**
  * What every KangaruRide notification has to answer.
@@ -75,6 +77,160 @@ abstract class KangaruNotification extends LaravelNotification implements Should
     abstract public function context(): array;
 
     /**
+     * How this message should be *delivered* by push, as opposed to what it
+     * says (ADR-0046 §2).
+     *
+     * Empty for almost everything, and that is the intended answer: a
+     * notification with nothing to add here gets Expo's defaults, which is a
+     * quiet entry in the shade. Overriding it is a claim that this particular
+     * message earns an interruption, which AGENTS.md asks for an argument for
+     * rather than a use case.
+     *
+     * ## Why this lives on the notification and not in the channel
+     *
+     * `ExpoPushChannel` deliberately knows nothing about dispatch, bookings or
+     * trips — it is a transport, and its docblock argues that keeping it that
+     * way is what makes going direct to FCM and APNs a second implementation
+     * rather than a rewrite. A `match` on notification type inside it would
+     * put dispatch's ringtone, dispatch's expiry and dispatch's Android
+     * channel id into the one class that must stay ignorant of them.
+     *
+     * ## The keys that are honoured
+     *
+     * Whatever Expo's push API accepts, merged over the ticket. In practice:
+     * `channelId` (Android — which notification channel, and therefore which
+     * sound and importance), `sound`, `priority`, `ttl`, `categoryId`,
+     * `interruptionLevel` (iOS), `collapseId`, `_contentAvailable`.
+     *
+     * **`ttl` is the one worth naming.** Expo's default keeps a message
+     * deliverable long after the thing it describes has gone, so a push held
+     * by FCM while a handset was in a dead zone arrives later and rings for a
+     * job that expired. Anything with a clock on it should set it.
+     *
+     * @return array<string, mixed>
+     */
+    public function pushOptions(): array
+    {
+        return [];
+    }
+
+    /**
+     * Whether this push should reach the app without showing anything
+     * (ADR-0046 §4).
+     *
+     * False for everything except a withdrawal, and it should stay that way:
+     * a silent push is a message that spends a driver's battery and their
+     * data to say something they are never told, so it has to be earning its
+     * place by *acting* rather than by informing.
+     *
+     * When true, `ExpoPushChannel` sends `data` with no title and no body,
+     * which is what makes the delivery silent — Expo decides on the presence
+     * of those fields, not on a flag.
+     *
+     * **It is not reliable when the app has been killed**, and must never be
+     * the only path to anything. Android does not hand a data-only message to
+     * a terminated process (expo/expo#38223), so this is a message to a
+     * *running* app. That is exactly the case a withdrawal needs — the app is
+     * running, because it is ringing — and it is why nothing may depend on it.
+     */
+    public function pushIsSilent(): bool
+    {
+        return false;
+    }
+
+    /**
+     * A second, invisible push sent beside this one, whose only job is to wake
+     * the app's JavaScript.
+     *
+     * ## Why a visible push cannot do this itself
+     *
+     * Because Android never hands it to the app. Proved on a handset, twice,
+     * with the app backgrounded, on duty and its process alive: a push carrying
+     * a title and a body is rendered by Expo's Firebase service natively and
+     * **no line of the app's JavaScript runs**. The same handset, seconds
+     * later, given a push with no title and no body:
+     *
+     *     ReactNativeJS: 'offer.push_task', 'open_offer', 64, 'background'
+     *
+     * `expo-notifications` says as much in one line of its own documentation —
+     * *"When the app is terminated, only a Headless Background Notification
+     * triggers the task execution"* — and the measurement extends it: not only
+     * when terminated, but whenever the driver is not looking at the app.
+     *
+     * That is the whole reason the incoming-call screen has never appeared
+     * outside the app. It is built in JavaScript, and nothing was ever waking
+     * the JavaScript.
+     *
+     * ## Why it is a companion rather than a replacement
+     *
+     * **The visible push is the floor and it stays.** Make the offer push
+     * silent and a handset that cannot run the task — the app force-stopped,
+     * an OEM battery manager, `expo/expo#38223` on a terminated process — gets
+     * *nothing at all*, where today it at least rings. ADR-0025 §3 is the rule
+     * this follows: push is best-effort, and no layer may be the only path.
+     *
+     * So two messages go out. The visible one rings, exactly as it does now.
+     * The invisible one wakes the app, which upgrades the ring into an
+     * answerable call screen and withdraws the visible one it replaced. If the
+     * second never arrives, the driver is left with precisely what they have
+     * today, which is why this is safe to ship.
+     *
+     * ## The two things a caller must get right
+     *
+     * **Its own `collapseId`.** Sharing one with the visible push means FCM
+     * collapses the pair and delivers one of them — silently, and most likely
+     * the wrong one.
+     *
+     * **Its own `ttl`.** A wake-up delivered after the offer died starts a
+     * lookup that correctly finds nothing, which is wasted battery on a
+     * driver's phone.
+     *
+     * Returns null for everything that does not need waking, which is almost
+     * everything: a settlement or a document review has no countdown and can
+     * wait for the driver to open the app. A notification that is already
+     * silent must not return options here — it *is* the wake-up.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function pushWakeOptions(): ?array
+    {
+        return null;
+    }
+
+    /**
+     * Whether a push that reached nobody is worth telling the office about.
+     *
+     * False for everything except a job offer, and the default has to be false
+     * because **a recipient with no registered device is the ordinary state of
+     * this platform**: every staff account, every driver who declined the OS
+     * permission, everyone who has never installed the app.
+     * `ExpoPushChannel` says so at its own guard, and logging there
+     * unconditionally would produce a warning per notification per office
+     * worker, which is a stream nobody reads and therefore a stream that hides
+     * the one line that matters.
+     *
+     * **The one line that matters is this, and it went unlogged for the whole
+     * life of the feature.** A driver who is on duty, whose handset has no push
+     * token, is a driver the matcher is about to offer a job to and who will
+     * never hear it. That is not a quiet normality — it is a passenger on a
+     * kerb. `device_tokens` was empty for the entire fleet and nothing anywhere
+     * said so, because the only code that could have noticed was documented as
+     * having nothing worth saying.
+     *
+     * ## Why the notification answers this and not the channel
+     *
+     * Same argument `pushOptions()` makes, and it is the one that keeps
+     * `ExpoPushChannel` a transport: the channel must not learn what dispatch
+     * is, what duty is, or which types have a passenger waiting at the end of
+     * them. It asks the message *"does it matter that this went nowhere?"* and
+     * the message — which knows what it is — answers.
+     */
+    public function pushIsCritical(): bool
+    {
+        return false;
+    }
+
+    /**
      * Channels for this type, from configuration.
      *
      * Config decides, the enum only supplies the fallback (AGENTS.md
@@ -103,20 +259,77 @@ abstract class KangaruNotification extends LaravelNotification implements Should
         return array_map(fn (NotificationChannel $channel) => $channel->driver(), $channels);
     }
 
-    public function toMail(object $notifiable): MailMessage
+    /**
+     * What this notification's email says.
+     *
+     * The default is derived from the four things every notification already
+     * answers, so a subclass that has nothing special to say gets a properly
+     * branded email for free and adding a notification stays one small class.
+     * That is the same argument the rest of this base makes: keep the cost of
+     * a new type low so the decision stays about AGENTS.md's list rather than
+     * about the effort.
+     *
+     * Override it when the email genuinely differs from the in-app row. The
+     * two are not the same surface and pretending otherwise produces bad
+     * versions of both. An in-app row is read *inside* the product, next to
+     * the thing it describes, so it can be a fragment. An email arrives with
+     * no context at all, days later, in a list of forty other messages, and
+     * often on a phone. It usually needs a fact block; it never needs more
+     * prose.
+     *
+     * The action label is deliberately generic here. A subclass that knows
+     * what the reader is going to do should say so instead: "Upload it now"
+     * beats "Open in KangaruRide" every time, and a button whose label
+     * describes the destination rather than the task is a button people do not
+     * press.
+     */
+    public function mailContent(): MailContent
     {
-        $mail = (new MailMessage)
-            ->subject($this->subject())
-            ->line($this->body());
-
         $url = $this->url();
 
-        if ($url !== null) {
+        return new MailContent(
+            subject: $this->subject(),
+            heading: $this->subject(),
+            paragraphs: [$this->body()],
+            // The brand name comes from settings, not from a constant. A
+            // deployment that renamed itself in the settings screen renamed
+            // itself everywhere, and a button that still says KangaruRide
+            // would be the one place it did not take.
+            // Cast: `__()` is declared to return `array|string|null`, because
+            // a translation key can resolve to a nested array. This one cannot,
+            // and saying so keeps the value object's contract honest.
+            actionLabel: $url === null ? null : (string) __('mail.layout.open', ['app' => $this->appName()]),
             // Absolute for mail: a relative path in an email client goes
             // nowhere. The SPA's own base URL, not the API's.
-            $mail->action('Open in KangaruRide', rtrim((string) config('app.frontend_url'), '/').$url);
-        }
+            actionUrl: $url === null ? null : rtrim((string) config('app.frontend_url'), '/').$url,
+        );
+    }
 
-        return $mail;
+    /**
+     * The address this notification goes to.
+     *
+     * The recipient's own, for everything except the one type that must reach
+     * an address the account no longer has. Overridden by
+     * `SecurityEventNotification` for `ACCOUNT_EMAIL_CHANGED`, which is sent
+     * twice: once to the new address and once to the old one, so an attacker
+     * who changed the address cannot have silenced the warning by pointing it
+     * at themselves.
+     */
+    public function mailTo(User $user): string
+    {
+        return (string) $user->email;
+    }
+
+    /**
+     * The platform's name, from settings rather than from a constant.
+     *
+     * A deployment that renamed itself in the settings screen renamed itself
+     * everywhere, and an email still saying KangaruRide would be the one place
+     * it did not take. Resolved at send time, which is safe because these are
+     * queued and the container is available.
+     */
+    protected function appName(): string
+    {
+        return (string) app(SettingsService::class)->get('branding', 'app_name');
     }
 }

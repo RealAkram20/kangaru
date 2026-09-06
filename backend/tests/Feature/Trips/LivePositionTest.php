@@ -251,3 +251,64 @@ it('says nothing is moving rather than failing when the fleet is idle', function
         ->assertJsonPath('message', 'Nothing is moving.')
         ->assertJsonCount(0, 'data');
 });
+
+// ── Names on the markers (the live map made real, 2026-08-20) ───────────
+
+it('names the vehicle, the driver, the trip and the client beside each position', function () {
+    $tenant = Tenant::factory()->create(['name' => 'Centenary Bank']);
+    $driver = Driver::factory()->create(['name' => 'Grace Nakato']);
+    $trip = Trip::factory()
+        ->forTenant($tenant)
+        ->forVehicle(Vehicle::factory()->create(['registration_number' => 'UBK 421H', 'make' => 'Toyota', 'model' => 'Noah', 'category' => 'van']))
+        ->forDriver($driver)
+        ->create(['status' => 'driver_en_route', 'origin' => 'Kampala Road', 'destination' => 'Entebbe Airport']);
+
+    app(TripRouteRecorder::class)->record($tenant->id, $trip->id, [ping('2026-09-01 08:00:00', 0.31, 32.58)]);
+
+    $row = $this->actingAs(platformDispatcher(), 'sanctum')
+        ->getJson('/api/v1/live-positions')->assertOk()->json('data.0');
+
+    expect($row['vehicle'])->toBe(['id' => $trip->vehicle_id, 'registration_number' => 'UBK 421H', 'make' => 'Toyota', 'model' => 'Noah', 'category' => 'van']);
+    expect($row['driver'])->toBe(['id' => $driver->id, 'name' => 'Grace Nakato']);
+    expect($row['trip'])->toBe([
+        'id' => $trip->id,
+        'status' => 'driver_en_route',
+        'origin' => 'Kampala Road',
+        'destination' => 'Entebbe Airport',
+        'client' => ['id' => $tenant->id, 'name' => 'Centenary Bank'],
+    ]);
+
+    // The flat ids every existing reader uses are still there, unchanged.
+    expect($row['vehicle_id'])->toBe($trip->vehicle_id);
+    expect($row['trip_id'])->toBe($trip->id);
+});
+
+it('allow-lists what it says about a vehicle and a driver', function () {
+    $tenant = Tenant::factory()->create();
+    $trip = movingTrip($tenant);
+    app(TripRouteRecorder::class)->record($tenant->id, $trip->id, [ping('2026-09-01 08:00:00', 0.31, 32.58)]);
+
+    $row = $this->actingAs(platformDispatcher(), 'sanctum')
+        ->getJson('/api/v1/live-positions')->assertOk()->json('data.0');
+
+    // A map needs a plate and a name. A VIN, a licence number and a phone
+    // number are what the fleet register is for, behind its own policy.
+    expect(array_keys($row['vehicle']))->toBe(['id', 'registration_number', 'make', 'model', 'category']);
+    expect(array_keys($row['driver']))->toBe(['id', 'name']);
+    expect($row['trip'])->not->toHaveKeys(['passenger_name', 'passenger_phone', 'details']);
+});
+
+it('tells the page whether the list spans clients, and which it may narrow to', function () {
+    $tenant = Tenant::factory()->create(['name' => 'Centenary Bank']);
+
+    $platform = $this->actingAs(platformDispatcher(), 'sanctum')
+        ->getJson('/api/v1/live-positions')->assertOk()->json('meta');
+    expect($platform['scope'])->toBe('platform');
+    expect(collect($platform['filters']['clients'])->pluck('label'))->toContain('Centenary Bank');
+
+    $admin = User::factory()->create(['tenant_id' => $tenant->id, 'role' => UserRole::CORPORATE_ADMIN]);
+    $client = $this->actingAs($admin, 'sanctum')
+        ->getJson('/api/v1/live-positions')->assertOk()->json('meta');
+    expect($client['scope'])->toBe('tenant');
+    expect($client['filters']['clients'])->toBe([]);
+});

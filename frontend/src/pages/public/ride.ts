@@ -113,17 +113,30 @@ export interface Captain {
  * (AGENTS.md).
  */
 export interface Fare {
-  base: number
-  distance: number
-  time: number
   total: number
-  distanceKm: number
-  minutes: number
+  /** The distance the figure was priced from — measured for a bill, straight-line for a quote. */
+  distanceKm: number | null
+  /**
+   * The lines behind the total, when the source has them.
+   *
+   * The simulation always does; the platform serves a total and a distance
+   * (`CustomerRideResource`), because the settled fare is stored as one
+   * figure and the lines live on the invoice. Optional so a screen never
+   * prints "Base fare UGX 0" for a fare that was simply not broken down —
+   * a zero on a bill reads as a fact.
+   */
+  breakdown?: { base: number; distance: number; time: number; minutes: number }
 }
 
 export interface RideState {
   phase: RidePhase
   captain: Captain | null
+  /**
+   * The trip behind the ride, once one exists — what the rating is filed
+   * against. Null until a captain accepts, and always null in the
+   * simulation, which has no trip row anywhere.
+   */
+  tripId: number | null
   /** 0–1, drives the matching rail. Monotonic: it never walks backwards. */
   progress: number
   /** Seconds left on the current leg, while one is running. */
@@ -140,6 +153,12 @@ export interface RideState {
   /** Set when the ride was called off, so the screen can explain itself. */
   cancelledReason: string | null
   /**
+   * Something the office said that the passenger has to read now — today, the
+   * refusal when a cancellation lands after the journey has started. Shown
+   * once and cleared by the next state the source emits without it.
+   */
+  notice?: string | null
+  /**
    * Whether the *source* can actually call this ride off.
    *
    * Separate from `isCancellable(phase)`, which answers a different question:
@@ -155,11 +174,33 @@ export interface RideState {
   cancellable: boolean
 }
 
+/**
+ * What became of a submitted rating. A result rather than a thrown error,
+ * because both outcomes are ordinary: the screen shows the sentence either
+ * way — as a confirmation when it was recorded, inline above the stars
+ * when it was not.
+ */
+export interface RatingOutcome {
+  recorded: boolean
+  message: string
+}
+
 export interface RideSource {
   /** Pushes the current state immediately, then on every change. Returns an unsubscribe. */
   subscribe(listener: (state: RideState) => void): () => void
   /** The one thing the customer can do to a ride in flight. */
   cancel(reason: string): void
+  /**
+   * Records the passenger's stars against the trip (ADR-0030).
+   *
+   * On the source, like `cancel`, so the screen never learns an endpoint —
+   * and because the first version of the rating card did not have this at
+   * all: "Submit rating" flipped a local flag, the screen said "You rated
+   * Grace 5 stars", and nothing had been recorded anywhere. A button wired
+   * to nothing is worse than no button, because it appears to work — the
+   * same sentence the cancel button earned before it.
+   */
+  rate(stars: number): Promise<RatingOutcome>
   /**
    * Where the trip is heading, told to the source rather than asked of the
    * caller. A drop-off typed by hand has no coordinates until something
@@ -173,6 +214,7 @@ export interface RideSource {
 export const INITIAL_RIDE_STATE: RideState = {
   phase: 'searching',
   captain: null,
+  tripId: null,
   progress: 0,
   etaSeconds: null,
   estimate: null,
@@ -315,14 +357,11 @@ function fareFor(distanceKm: number, minutes: number): Fare {
   const distance = Math.round(distanceKm * FARE_PER_KM_UGX)
   const time = Math.round(minutes * FARE_PER_MINUTE_UGX)
   return {
-    base: FARE_BASE_UGX,
-    distance,
-    time,
     // Rounded to the nearest 100 shillings, the way a driver with no coins
     // actually settles up. The real rule belongs to the rate card.
     total: Math.round((FARE_BASE_UGX + distance + time) / 100) * 100,
     distanceKm: Math.round(distanceKm * 10) / 10,
-    minutes,
+    breakdown: { base: FARE_BASE_UGX, distance, time, minutes },
   }
 }
 
@@ -518,6 +557,16 @@ export function simulatedRideSource(
         phase: 'cancelled',
         progress: 0,
         cancelledReason: reason,
+      })
+    },
+
+    rate() {
+      // The simulation has no trip row to file this against; it answers in
+      // the live source's shape so the screen's whole flow can be driven on
+      // a clock. Dev-only (VITE_SIMULATE_RIDE) and the tests.
+      return Promise.resolve({
+        recorded: true,
+        message: 'Thank you — your rating has been recorded.',
       })
     },
   }

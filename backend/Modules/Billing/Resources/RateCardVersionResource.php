@@ -31,6 +31,7 @@ class RateCardVersionResource extends JsonResource
             'night_starts_at' => $this->night_starts_at,
             'night_ends_at' => $this->night_ends_at,
             'night_multiplier_bp' => $this->night_multiplier_bp,
+            'distance_policy' => $this->distance_policy->value,
             // The one fact a client most needs about a version: whether it
             // is sealed. A locked version has priced a real invoice and can
             // never change; an unlocked one can still be superseded before

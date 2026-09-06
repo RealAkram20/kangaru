@@ -49,12 +49,6 @@ parameters:
 			path: app/Models/Tenant.php
 
 		-
-			message: '#^Method App\\Models\\User\:\:tenant\(\) return type with generic class Illuminate\\Database\\Eloquent\\Relations\\BelongsTo does not specify its types\: TRelatedModel, TDeclaringModel$#'
-			identifier: missingType.generics
-			count: 1
-			path: app/Models/User.php
-
-		-
 			message: '#^Class Modules\\Vehicles\\Models\\Vehicle uses generic trait Illuminate\\Database\\Eloquent\\Factories\\HasFactory but does not specify its types\: TFactory$#'
 			identifier: missingType.generics
 			count: 1

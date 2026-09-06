@@ -34,6 +34,16 @@ class ZoneController extends Controller
                 ! $user->isPlatformLevel(),
                 fn ($q) => $q->visibleTo($user->tenant_id),
             )
+            // …and now never another *fleet's* either (ADR-0055 §5). "A
+            // platform reader sees every zone" was true when there was one
+            // fleet; it is the same hole F0 found in the staff list, on a
+            // table where a zone is a competitor's operating patch.
+            //
+            // `visibleToActor` rather than the fleet id, because a client's
+            // user and a Kangaru user both have a null `operator_id` and must
+            // not be treated alike — see the scope's own docblock for the test
+            // that proved it.
+            ->visibleToActor($user)
             ->orderBy('priority')
             ->orderBy('name')
             ->get();

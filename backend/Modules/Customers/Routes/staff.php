@@ -31,6 +31,12 @@ use Modules\Customers\Controllers\CustomerRegisterController;
 | impersonation, no editing somebody else's profile. Suspension is the one
 | write, and it carries a reason.
 |
+| Acting as a walk-in **does** exist since ADR-0066, and deliberately not
+| here: it is a support session opened through `/support/act-as`, expiring on
+| its own, emailed to the customer, and named beside every row it writes. The
+| distinction this file draws is the one that survived — a staff route that
+| quietly did something on a customer's behalf, versus a session that says so.
+|
 */
 
 Route::get('customers', [CustomerRegisterController::class, 'index'])->name('customers.index');

@@ -6,6 +6,7 @@ use Illuminate\Support\Collection;
 use Modules\Bookings\Models\OrderRequest;
 use Modules\Dispatch\Support\GreatCircle;
 use Modules\Drivers\Models\Driver;
+use Modules\Drivers\Models\DriverWalkInContract;
 use Modules\Fleet\Services\AvailabilityService;
 use Modules\Fleet\Support\DriverPresence;
 use Modules\Fleet\Support\DriverPresenceStore;
@@ -66,6 +67,37 @@ class WalkInRecommender
         // who left the app on must not be offered anything just because
         // their handset is still reporting.
         $available = $this->availability->availableDrivers($from, $to);
+
+        /*
+         * Only drivers who hold a live contract with Kangaru (ADR-0055 §5).
+         *
+         * *"The candidate pool is on-duty drivers holding an active
+         * contract"* — and until this line, it was every available driver.
+         * `K8` built the whole ask-consent-approve chain and nothing read the
+         * result, so a driver who had never asked was offered walk-in work
+         * exactly as if they had, and a fleet that had refused consent was
+         * overruled by silence.
+         *
+         * **Applied after availability, not before.** Availability is the
+         * authority on whether somebody may work at all, and the order is the
+         * same one this method already keeps for presence: a driver on
+         * approved leave is not a candidate whatever their contract says.
+         *
+         * The corporate half of ADR-0063 §1 — *"the fleet wins"* — needs
+         * nothing here, and that is worth recording rather than
+         * re-implementing. A fleet assignment **becomes a trip**, and
+         * `AvailabilityService::availableDrivers()` already excludes any
+         * driver on an occupying trip. The fleet wins because its work
+         * occupies the driver, which is also why there is no pre-emption: an
+         * accepted walk-in occupies them just as firmly.
+         */
+        $contracted = DriverWalkInContract::query()
+            ->whereIn('driver_id', $available->pluck('id'))
+            ->where('status', DriverWalkInContract::ACTIVE)
+            ->pluck('driver_id')
+            ->flip();
+
+        $available = $available->filter(fn (Driver $driver) => $contracted->has($driver->id));
 
         if ($available->isEmpty()) {
             return collect();

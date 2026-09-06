@@ -3,6 +3,7 @@
 namespace Modules\Fleet\Models;
 
 use App\Concerns\Auditable;
+use App\Concerns\InheritsKangaruDefaults;
 use App\Models\Tenant;
 use Database\Factories\ZoneFactory;
 use Illuminate\Database\Eloquent\Builder;
@@ -32,7 +33,7 @@ use Modules\Fleet\Support\BoundaryRing;
 class Zone extends Model
 {
     /** @use HasFactory<ZoneFactory> */
-    use Auditable, HasFactory, SoftDeletes;
+    use Auditable, HasFactory, InheritsKangaruDefaults, SoftDeletes;
 
     /**
      * @return Factory<self>
@@ -42,7 +43,7 @@ class Zone extends Model
         return ZoneFactory::new();
     }
 
-    protected $fillable = ['tenant_id', 'name', 'kind', 'boundary', 'priority', 'active', 'notes'];
+    protected $fillable = ['tenant_id', 'operator_id', 'name', 'kind', 'boundary', 'priority', 'active', 'notes'];
 
     protected function casts(): array
     {

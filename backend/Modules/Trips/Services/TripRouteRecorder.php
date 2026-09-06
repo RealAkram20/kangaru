@@ -27,7 +27,8 @@ class TripRouteRecorder
 
     /**
      * Each ping carries `latitude`, `longitude` and `recorded_at`, and
-     * optionally `speed_kph`, `heading_degrees` and `accuracy_metres`.
+     * optionally `speed_kph`, `heading_degrees`, `accuracy_metres` and
+     * `is_mock`.
      *
      * Typed loosely rather than as an array shape because the payload
      * arrives from StoreTripLocationsRequest by way of a serialised queue
@@ -53,6 +54,9 @@ class TripRouteRecorder
             'speed_kph' => $ping['speed_kph'] ?? null,
             'heading_degrees' => $ping['heading_degrees'] ?? null,
             'accuracy_metres' => $ping['accuracy_metres'] ?? null,
+            // Absent is false, not null: the column is NOT NULL DEFAULT 0
+            // and "the device did not say so" is the same fact either way.
+            'is_mock' => (bool) ($ping['is_mock'] ?? false),
             // The device's clock, not the server's: a ping captured in a
             // dead zone and synced an hour later belongs to the month it
             // was recorded in, which is the month its trip is billed in and

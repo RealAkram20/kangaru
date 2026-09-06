@@ -7,7 +7,10 @@ use App\Support\Auth\ClientScope;
 use Database\Seeders\DriverAppSeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Support\Facades\Hash;
+use Modules\Drivers\Enums\LedgerEntryKind;
 use Modules\Drivers\Models\Driver;
+use Modules\Drivers\Models\DriverLedgerEntry;
+use Modules\Drivers\Services\DriverStatsService;
 use Modules\Trips\Enums\TripStatus;
 use Modules\Trips\Models\Trip;
 
@@ -47,7 +50,7 @@ it('produces a driver account that can actually sign in on the driver app', func
     // requires, because that is what the mobile app sends.
     $response = $this->postJson('/api/v1/auth/login', [
         'email' => 'driver@kangaruride.test',
-        'password' => 'driver-demo-password',
+        'password' => 'password',
         'client' => ClientScope::DRIVER,
     ]);
 
@@ -80,17 +83,22 @@ it('leaves the driver a trip they can act on', function () {
 
     $driver = Driver::query()->whereHas('user', fn ($q) => $q->where('email', 'driver@kangaruride.test'))->sole();
 
+    // `accepted`, not `assigned`, since ADR-0068. The desk's assignment now
+    // rings, so no trip exists until the driver answers — and the seeder had
+    // to answer for them, because an offer expires in well under a minute and
+    // a seeded ringing phone would be silent by the time anybody looked.
     $live = Trip::allTenants()
         ->where('driver_id', $driver->id)
-        ->where('status', TripStatus::ASSIGNED->value)
+        ->where('status', TripStatus::ACCEPTED->value)
         ->get();
 
     expect($live)->toHaveCount(1);
 
-    // Assigned offers accept and decline to a driver, which is the lifecycle's
-    // front door. A seeder that parked the trip in a terminal status would
-    // hand the tester a screen with no buttons on it.
-    expect(TripStatus::ASSIGNED->allowedTransitions())->toContain(TripStatus::ACCEPTED);
+    // The point the original assertion was making, at the status the trip
+    // now holds: the tester opens the app onto a job with something to press.
+    // A seeder that parked the trip in a terminal status would hand them a
+    // screen with no buttons on it.
+    expect(TripStatus::ACCEPTED->allowedTransitions())->toContain(TripStatus::DRIVER_EN_ROUTE);
 });
 
 it('seeds finished trips carrying both odometer readings', function () {
@@ -100,8 +108,16 @@ it('seeds finished trips carrying both odometer readings', function () {
 
     $driver = Driver::query()->whereHas('user', fn ($q) => $q->where('email', 'driver@kangaruride.test'))->sole();
 
+    // Scoped to the *corporate* trips, which is what this test has always
+    // been about: PROJECT.md's odometer criteria are a client's, and a client
+    // trip is the only kind that carries a tenant. The walk-in rides seeded
+    // alongside them are settled by fare and never see an odometer — they are
+    // covered separately below, and folding them in here would have meant
+    // either weakening these assertions or asserting a count that says
+    // nothing.
     $completed = Trip::allTenants()
         ->where('driver_id', $driver->id)
+        ->whereNotNull('tenant_id')
         ->where('status', TripStatus::TRIP_COMPLETED->value)
         ->get();
 
@@ -117,6 +133,72 @@ it('seeds finished trips carrying both odometer readings', function () {
             ->and($trip->started_at)->not->toBeNull()
             ->and($trip->completed_at)->not->toBeNull();
     });
+});
+
+it('seeds the earnings, wallet and rating the home screen renders', function () {
+    seedDriverAppPlatform();
+
+    (new DriverAppSeeder)->run();
+
+    $driver = Driver::query()->whereHas('user', fn ($q) => $q->where('email', 'driver@kangaruride.test'))->sole();
+
+    $stats = app(DriverStatsService::class)->forDriver($driver);
+
+    // Three figures that were permanent em dashes until ADR-0029 and ADR-0030
+    // landed, and that stayed em dashes afterwards because nothing seeded the
+    // two tables behind them. This asserts the demo shows a populated screen.
+    expect($stats['earnings_today_minor'])->toBeGreaterThan(0);
+    expect($stats['rating'])->not->toBeNull();
+    expect($stats['rating_count'])->toBeGreaterThanOrEqual(5);
+
+    /*
+     * **This assertion was narrowed by ADR-0034, not weakened**, and the
+     * original is worth restating because its reasoning still holds.
+     *
+     * It read: the balance must be negative. Each cash ride leaves the driver
+     * holding the whole fare and owing the commission (ADR-0029 §5), so a
+     * part-remittance lands below zero — and an earlier draft of the seeder
+     * remitted enough to push it positive, which *cash rides alone cannot
+     * produce* and which rendered perfectly while being impossible.
+     *
+     * The seeder no longer seeds cash rides alone. A **bonus** is precisely
+     * the thing that can put a driver in credit: the office comes to owe it,
+     * with no cash in anybody's hand. So the demo balance is now positive, and
+     * that is a real state rather than an impossible one — it also renders the
+     * `walletNote()` branch that says *"The office owes you"*, which nothing
+     * had ever exercised.
+     *
+     * What is asserted instead is the original insight, exactly: **strip the
+     * bonus and the cash work is still in debt.**
+     */
+    $bonuses = (int) DriverLedgerEntry::query()
+        ->where('driver_id', $driver->getKey())
+        ->where('kind', LedgerEntryKind::BONUS)
+        ->sum('amount_minor');
+
+    expect($bonuses)->toBeGreaterThan(0)
+        ->and($stats['wallet_balance_minor'] - $bonuses)->toBeLessThan(0);
+});
+
+it('is re-runnable without stacking demo rides or colliding on the vehicle', function () {
+    seedDriverAppPlatform();
+
+    (new DriverAppSeeder)->run();
+    (new DriverAppSeeder)->run();
+
+    $driver = Driver::query()->whereHas('user', fn ($q) => $q->where('email', 'driver@kangaruride.test'))->sole();
+
+    // Six walk-in rides, not twelve. The first guard here was on the ledger
+    // entries rather than the trips, which opened on a cleared ledger and
+    // piled up a second set — then died on `vehicles.registration_number`
+    // being unique. Both failures needed a *second* run to appear.
+    $walkIns = Trip::allTenants()
+        ->where('driver_id', $driver->id)
+        ->whereNull('tenant_id')
+        ->whereNotNull('fare_minor')
+        ->count();
+
+    expect($walkIns)->toBe(6);
 });
 
 /**
@@ -190,7 +272,7 @@ it('puts the documented password back after someone has changed it', function ()
 
     $this->postJson('/api/v1/auth/login', [
         'email' => 'driver@kangaruride.test',
-        'password' => 'driver-demo-password',
+        'password' => 'password',
         'client' => ClientScope::DRIVER,
     ])->assertOk();
 });

@@ -61,6 +61,42 @@ it('forbids a driver from transitioning another driver\'s trip', function () {
         ->assertForbidden();
 });
 
+it('forbids a driver from ending a trip they are waiting at the pickup on', function () {
+    ['driverUser' => $driverUser, 'dispatcher' => $dispatcher, 'trip' => $trip] = seedTripPolicyFixture();
+
+    // Walk it to the state the waiting screen renders.
+    foreach ([TripStatus::ACCEPTED, TripStatus::DRIVER_EN_ROUTE, TripStatus::DRIVER_ARRIVED] as $to) {
+        $this->actingAs($dispatcher, 'sanctum')
+            ->postJson("/api/v1/trips/{$trip->id}/transitions", ['to' => $to->value])
+            ->assertOk();
+    }
+
+    // The graph allows all three of these from Driver Arrived. The *policy*
+    // allows the driver exactly one of them, and this is the reason the
+    // "Waiting for Passenger" screen carries no Cancel Trip button: the
+    // mockup drew one, and every press of it would have been a 403.
+    // Both carry `notes`, which `TransitionTripRequest` requires on either.
+    // Without it the refusal is a 422 from the validator and this test would
+    // pass while proving nothing about the policy — which is exactly what it
+    // did on the first run.
+    $this->actingAs($driverUser, 'sanctum')
+        ->postJson("/api/v1/trips/{$trip->id}/transitions", [
+            'to' => TripStatus::NO_SHOW->value, 'notes' => 'Nobody came out.',
+        ])
+        ->assertForbidden();
+
+    $this->actingAs($driverUser, 'sanctum')
+        ->postJson("/api/v1/trips/{$trip->id}/transitions", ['to' => TripStatus::CANCELLED->value, 'notes' => 'x'])
+        ->assertForbidden();
+
+    // The one move that is theirs. Asserted alongside so this test fails if
+    // the screen's *only* button ever stops working, not just if a forbidden
+    // one starts.
+    $this->actingAs($driverUser, 'sanctum')
+        ->postJson("/api/v1/trips/{$trip->id}/transitions", ['to' => TripStatus::PASSENGER_ONBOARD->value])
+        ->assertOk();
+});
+
 it('lets a dispatch role transition any trip in the tenant', function () {
     ['dispatcher' => $dispatcher, 'otherTrip' => $otherTrip] = seedTripPolicyFixture();
 

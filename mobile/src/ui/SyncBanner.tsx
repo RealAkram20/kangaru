@@ -4,66 +4,56 @@ import { useSync } from '../offline/SyncProvider';
 import { colors, spacing, typography } from './theme';
 
 /**
- * The permanent, honest statement of what the app is still holding.
+ * The one thing this strip still says: the phone cannot save anything.
  *
- * AGENTS.md requires trip capture to "show sync state clearly", and this is
- * where a driver finds out whether the completion they typed twenty minutes
- * ago has actually reached the office. Silence is the wrong default: a queue
- * that hides itself is indistinguishable from one that has lost the work, and
- * a driver who cannot tell will re-enter the reading on paper.
+ * ## What was removed, and on whose decision
  *
- * Nothing renders when there is nothing to say and the connection is fine —
- * a permanent green tick trains people to ignore the strip that later turns
- * red.
+ * Until 2026-08-28 this reported the whole queue — updates waiting, GPS
+ * points buffered, no connection, and a red band for anything parked. The
+ * owner asked for it silenced, was shown what that costs, and chose it. The
+ * decision is theirs; the cost is written down here so nobody rediscovers it
+ * as a mystery:
+ *
+ * - **AGENTS.md's "show sync state clearly" is no longer met by any screen.**
+ * - A driver whose completion never reached the office now has **no
+ *   on-screen sign of it**. The removed docblock's warning is worth keeping
+ *   in view: a queue that hides itself is indistinguishable from one that has
+ *   lost the work, and a driver who cannot tell will re-enter the reading on
+ *   paper.
+ *
+ * **Nothing was deleted, only quietened.** `SyncProvider` still queues,
+ * drains, parks and reports a parked item to Sentry exactly as before, and
+ * Profile → Updates & sync still lists every held and parked item with a
+ * Discard on each. The information moved out of the driver's face; it did not
+ * go away. The old wording — each sentence of it arrived at on a handset — is
+ * in git if this is ever reinstated.
+ *
+ * ## Why the storage failure is still shown
+ *
+ * Because it is not a sync status — it is an instruction. When the phone's
+ * own storage will not open, *every* trip button is about to refuse, and this
+ * sentence is the difference between that reading as "broken app" and being
+ * something a driver can act on. Silencing it too would leave them tapping
+ * controls that fail with no explanation anywhere in the app.
+ *
+ * That is a judgement, not an instruction I was given. Say so if it should go
+ * as well — it is a one-line change.
  */
 export function SyncBanner() {
-  const { online, pending, parked, bufferedPings } = useSync();
+  const { storageFailed } = useSync();
 
-  if (online && pending === 0 && parked.length === 0 && bufferedPings === 0) {
+  if (!storageFailed) {
     return null;
   }
 
-  const tone = parked.length > 0 ? colors.danger : online ? colors.surfaceRaised : colors.offline;
-
   return (
-    <View accessibilityRole="alert" style={[styles.banner, { backgroundColor: tone }]}>
-      <Text style={styles.text}>{summarise({ online, pending, parked: parked.length, bufferedPings })}</Text>
+    <View accessibilityRole="alert" style={[styles.banner, { backgroundColor: colors.danger }]}>
+      <Text style={[styles.text, { color: colors.onPrimary }]}>
+        This phone&apos;s offline storage could not be opened. Trip updates cannot be saved —
+        restart the app, and report it if this keeps happening.
+      </Text>
     </View>
   );
-}
-
-function summarise({
-  online,
-  pending,
-  parked,
-  bufferedPings,
-}: {
-  online: boolean;
-  pending: number;
-  parked: number;
-  bufferedPings: number;
-}): string {
-  if (parked > 0) {
-    return `${parked} ${parked === 1 ? 'item needs' : 'items need'} your attention — open Account to see ${parked === 1 ? 'it' : 'them'}.`;
-  }
-
-  const held: string[] = [];
-
-  if (pending > 0) {
-    held.push(`${pending} ${pending === 1 ? 'update' : 'updates'}`);
-  }
-
-  if (bufferedPings > 0) {
-    held.push(`${bufferedPings} GPS ${bufferedPings === 1 ? 'point' : 'points'}`);
-  }
-
-  if (!online) {
-    return held.length === 0
-      ? 'No connection. Your work is saved on this phone.'
-      : `No connection. ${held.join(' and ')} saved on this phone, waiting to send.`;
-  }
-
-  return held.length === 0 ? 'Connected.' : `Sending ${held.join(' and ')}…`;
 }
 
 const styles = StyleSheet.create({
@@ -74,6 +64,5 @@ const styles = StyleSheet.create({
   text: {
     ...typography.caption,
     fontWeight: '600',
-    color: colors.primaryText,
   },
 });

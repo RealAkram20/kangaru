@@ -1,5 +1,6 @@
 import type { HTMLAttributes, ReactNode } from 'react'
 import { Icon } from '../core/Icon'
+import { useIsCompact } from '../../lib/useMediaQuery'
 import { NotificationBell } from '../notifications/NotificationBell'
 import { UserMenu } from './UserMenu'
 
@@ -51,6 +52,8 @@ export function Topbar({
   style,
   ...rest
 }: TopbarProps) {
+  const compact = useIsCompact()
+
   return (
     <header
       style={{
@@ -58,8 +61,8 @@ export function Topbar({
         flex: '0 0 auto',
         display: 'flex',
         alignItems: 'center',
-        gap: 'var(--space-4)',
-        padding: '0 var(--space-6)',
+        gap: compact ? 'var(--space-2)' : 'var(--space-4)',
+        padding: compact ? '0 var(--space-4)' : '0 var(--space-6)',
         background: 'var(--surface-chrome)',
         borderBottom: '1px solid var(--border-chrome)',
         ...style,
@@ -123,7 +126,14 @@ export function Topbar({
           gap: 'var(--space-2)',
         }}
       >
-        {tenant && (
+        {/*
+          The tenant chip goes on a phone. It is the one thing here that never
+          changes during a session — you know which organisation you signed
+          into — and at 360px it was competing with the page title for a strip
+          that has room for one of them. The title wins: it is the answer to
+          "where am I", which does change with every tap.
+        */}
+        {tenant && !compact && (
           <span
             style={{
               display: 'inline-flex',

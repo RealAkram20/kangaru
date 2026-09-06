@@ -28,9 +28,9 @@ class ZoneResolver
      *
      * @return Collection<int, Zone>
      */
-    public function at(float $lat, float $lng, ?int $tenantId = null): Collection
+    public function at(float $lat, float $lng, ?int $tenantId = null, ?int $operatorId = null): Collection
     {
-        return $this->candidates($tenantId)
+        return $this->candidates($tenantId, $operatorId)
             ->filter(fn (Zone $zone) => $zone->contains($lat, $lng))
             // Lower priority wins: a client zone (10) sits inside a town
             // (50) inside the service area (90), and the caller wants the
@@ -48,9 +48,9 @@ class ZoneResolver
      * zone is unambiguously "no zone applied" rather than "we forgot"
      * (`Modules/Billing/README.md`).
      */
-    public function pricingZoneAt(float $lat, float $lng, ?int $tenantId = null): ?Zone
+    public function pricingZoneAt(float $lat, float $lng, ?int $tenantId = null, ?int $operatorId = null): ?Zone
     {
-        return $this->at($lat, $lng, $tenantId)
+        return $this->at($lat, $lng, $tenantId, $operatorId)
             ->first(fn (Zone $zone) => in_array($zone->kind, [ZoneKind::PRICING, ZoneKind::CLIENT], true));
     }
 
@@ -79,11 +79,29 @@ class ZoneResolver
     /**
      * @return Collection<int, Zone>
      */
-    private function candidates(?int $tenantId): Collection
+    /**
+     * Which zones are eligible at all.
+     *
+     * Two axes now (ADR-0055 §5). `visibleTo` is the client one — the
+     * platform's zones plus this client's, never another client's (ADR-0021
+     * §4). `visibleToFleet` is the fleet one: this fleet's operating patch
+     * plus Kangaru's defaults, never a competitor's.
+     *
+     * **A null fleet deliberately does not filter here.** It is passed by
+     * `withinServiceArea()`, which asks *"does the platform serve this
+     * address at all"* on behalf of a walk-in who has not been dispatched to
+     * anybody yet — and narrowing that to one fleet would start refusing
+     * public orders in areas another fleet covers. Different question,
+     * different answer.
+     *
+     * @return Collection<int, Zone>
+     */
+    private function candidates(?int $tenantId, ?int $operatorId = null): Collection
     {
         return Zone::query()
             ->where('active', true)
             ->visibleTo($tenantId)
+            ->when($operatorId !== null, fn ($q) => $q->visibleToFleet($operatorId))
             ->get();
     }
 }

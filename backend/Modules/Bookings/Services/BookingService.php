@@ -6,9 +6,11 @@ use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Modules\Administration\Services\SettingsService;
 use Modules\Bookings\Enums\BookingStatus;
+use Modules\Bookings\Enums\OrderRequestServiceType;
 use Modules\Bookings\Events\BookingApproved;
 use Modules\Bookings\Events\BookingRejected;
 use Modules\Bookings\Models\Booking;
+use Modules\Bookings\Support\BookingDetails;
 
 /**
  * Owns the booking's own lifecycle — creation and the approve/reject/cancel
@@ -25,8 +27,19 @@ class BookingService
      */
     public function create(array $attributes, User $requester): Booking
     {
+        // Validation accepts every service's detail keys on every request —
+        // it cannot know a delivery payload was re-submitted as a ride after
+        // somebody toggled the form. The narrowing to this service's own
+        // keys happens here, in the one writer, so a stale recipient number
+        // can never sit unrendered in a ride's row (ADR-0064).
+        $service = OrderRequestServiceType::from(
+            $attributes['service_type'] ?? OrderRequestServiceType::RIDE->value,
+        );
+
         $booking = Booking::create([
             ...$attributes,
+            'service_type' => $service,
+            'details' => BookingDetails::toStore($service, $attributes['details'] ?? null),
             'requested_by_user_id' => $requester->id,
             'status' => BookingStatus::PENDING,
         ]);
@@ -40,7 +53,14 @@ class BookingService
         // setting off is the owner explicitly waiving that control, and
         // the audit trail records both the waiver (the settings change)
         // and every booking it waved through.
-        if ($this->settings->get('booking', 'approval_required') !== true) {
+        //
+        // The client's own version of the same waiver, per person: a
+        // Corporate Admin may mark someone as booking without approval
+        // (`users.books_without_approval`; see App\Enums\ClientCapability).
+        // Same transition, same audit rows; the flag itself sits on the
+        // audited user record, so who was waved through and who waived it
+        // are both on file.
+        if ($this->settings->get('booking', 'approval_required') !== true || $requester->booksWithoutApproval()) {
             return $this->approve($booking, $requester);
         }
 
@@ -73,8 +93,33 @@ class BookingService
     private function decide(Booking $booking, BookingStatus $to, User $actor, ?string $reason): Booking
     {
         $decided = DB::transaction(function () use ($booking, $to, $actor, $reason) {
+            /*
+             * **`forActor`, because the bare query fails closed and 404s.**
+             *
+             * `Booking` carries `TenantScope`, which hides every row when no
+             * tenant is bound — and nothing binds one on `POST /bookings`,
+             * because there is no `{booking}` in the URL for `IdentifyTenant`
+             * to read. A human approving through
+             * `/bookings/{booking}/approval` never saw this: the route model
+             * binds the tenant before this runs.
+             *
+             * So the auto-approval path — `approval_required` switched off,
+             * or a requester with `books_without_approval` — created the
+             * booking and then could not see it a line later. The caller got
+             * `404 NOT_FOUND` for a booking that had just been written, and
+             * the row was left `pending` by the rollback. Found by the owner
+             * reporting *"nothing happens next after clicking create
+             * booking"*.
+             *
+             * `forActor` and not `allTenants`: `BelongsToTenant` is explicit
+             * that a raw `allTenants()` in a service is a review failure, and
+             * that a request path reading past its own tenant asks
+             * `forActor()` — which is also the honest statement here, since
+             * the decision belongs to this actor and must be scoped to what
+             * they may act on.
+             */
             /** @var Booking $locked */
-            $locked = Booking::whereKey($booking->id)->lockForUpdate()->firstOrFail();
+            $locked = Booking::forActor($actor)->whereKey($booking->id)->lockForUpdate()->firstOrFail();
 
             if (! $locked->status->canTransitionTo($to)) {
                 throw new InvalidBookingTransitionException($locked->status, $to);

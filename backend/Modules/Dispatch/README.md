@@ -12,13 +12,38 @@ succeed in assigning the same vehicle to overlapping trips** (AGENTS.md,
 
 ## Responsibilities
 
-- `DispatchService::assign()` — the whole hand-over in one transaction:
-  lock and re-read the booking, create the Trip through
-  `Modules\Trips\Services\TripService`, then mark the booking `Assigned`.
-  All three must succeed together. A booking marked `Assigned` with no trip
-  would vanish from the dispatch queue with nobody driving it; a trip whose
-  booking is still pending would invite a second dispatcher to assign it
-  again.
+- `DispatchService::assign()` — **the desk asks; it does not tell**
+  (ADR-0068). Every check runs in one transaction as before: lock and
+  re-read the booking, the allocation rules, leave and workshop
+  availability, the service type. Then the chosen driver is *rung* — the
+  same `dispatch_offers` row, ringtone and full-screen Accept/Decline a
+  walk-in produces — and **no trip exists until they answer**. It returns
+  `Trip|DispatchOffer`, and which one it is tells the caller which happened.
+
+  A driver with no sign-in account (ADR-0016) is still assigned outright,
+  because there is no handset to ring: an offer would expire unanswered and
+  roll to somebody else, turning "assign Musa" into "assign anybody but
+  Musa". Fourteen of the twenty drivers on the demo fleet are in that
+  position, so it is the ordinary path and not an edge.
+
+  The accept itself is `DispatchOfferService::accept()`, which creates the
+  Trip through `Modules\Trips\Services\TripService` and marks the booking
+  `Assigned` in one transaction. Both must succeed together: a booking marked
+  `Assigned` with no trip would vanish from the queue with nobody driving it;
+  a trip whose booking is still pending would invite a second dispatcher to
+  assign it again.
+
+  **Two things there are easy to get wrong, and both were.** The trip is
+  written inside the *driver's* request, so `tenant_id` must be taken from
+  the booking — the ambient `TenantContext` is empty and a corporate trip
+  would be owned by nobody (ADR-0001's worst-available bug). And the booking
+  has to be read with `allTenants()`, because `TenantScope` fails closed and
+  otherwise every corporate accept answers `409 OFFER_NO_LONGER_OPEN`.
+- `DispatchOfferService::dispatchBooking()` — the rotation. A decline or a
+  ring-out moves the booking to the next candidate, ranked by
+  `DispatchRecommender::offerableForFleet()` and filtered to contracted or
+  main-fleet vehicles exactly as `autoAssign` is. When nothing remains the
+  booking is simply unassigned again, which is where the desk left it.
 - `DispatchController` — translates the three ways this can conflict into
   distinct `409` codes (`VEHICLE_UNAVAILABLE`, `DRIVER_UNAVAILABLE`,
   `INVALID_BOOKING_TRANSITION`) so clients can branch on `code` rather than
@@ -71,9 +96,80 @@ Nothing depends on this module — it is the top of the dependency chain.
 | POST | `/api/v1/bookings/{id}/assignment` | `dispatch` on `BookingPolicy` — Super Admin, Operations Manager, Dispatcher, Fleet Owner, Branch Manager, Depot Manager |
 | GET | `/api/v1/bookings/{id}/candidate-vehicles` | the same `dispatch` ability — a candidate list is a preview of the act |
 
-Returns `201` with the created Trip. A Corporate Admin may raise and approve
-bookings but never dispatch the fleet, so `dispatch` mirrors
-`TripPolicy::create` rather than the Bookings desk roles.
+Returns **`202` with the `DispatchOffer`** — the ordinary outcome: a phone is
+ringing and no trip exists yet — or **`201` with the Trip** when the driver
+has no app account and the desk must telephone them (ADR-0068). Clients
+branch on the status code rather than the body's shape: both payloads carry
+an `id` and a `status`, and only the code says plainly which happened.
+
+`Booking.is_ringing` carries the standing state onto the dispatch board,
+derived from live offers rather than stored. Without it an unanswered booking
+looks exactly like an untouched one and the next dispatcher assigns over a
+phone that is already ringing.
+
+A Corporate Admin may raise and approve bookings but never dispatch the
+fleet, so `dispatch` mirrors `TripPolicy::create` rather than the Bookings
+desk roles.
+
+### What a driver is shown before accepting (ADR-0024 §3)
+
+| Method | Path | Policy |
+|---|---|---|
+| GET | `/api/v1/me/offers` | none — `/me/`, so the driver *is* the token |
+| POST | `/api/v1/me/offers/{id}/acceptance` | scoped lookup; another driver's id 404s |
+| POST | `/api/v1/me/offers/{id}/decline` | the same |
+
+`DispatchOfferResource` renders a decision, not a record, and everything on
+it earns its place against a forty-five-second clock: where the job starts, how
+far away that is, how far the job itself runs, what is being sent, how it
+settles, and what it is estimated to fetch.
+
+**Two rules govern what may go on it, and both are easy to break by
+accident.**
+
+*Nothing that identifies anybody.* ADR-0024 §7 releases the passenger's name
+and number only after the accept, and this payload is also what a push
+notification is built from — so it reaches a lock screen. The trap is
+`order_requests.details`: on a delivery it holds `sender_phone` and
+`recipient_phone`, and a resource emitting that column under a field called
+`details` would leak two numbers without looking wrong in review.
+`DispatchOfferResource::PACKAGE_FIELDS` and `PAYMENT_FIELDS` are allow-lists
+for exactly that reason — a key added to the public order form defaults to
+*not* shipping, and `allowed()` is the single place that column is read, so
+the complete set of keys that can escape is four names in one screen.
+`DriverOfferPayloadTest` asserts over the whole encoded body rather than
+over one path, so a leak through some future field fails too.
+
+`payment` carries `payment_method` and `payer` and is present on every
+service, because every job is paid for — unlike `package`, which is null on
+a ride because a ride genuinely has no parcel. Both members are null
+whenever the person ordering did not say, which is the common case, and
+**`cash` is not a permitted default.** A driver who reads "Cash", arrives
+with no float and is offered a mobile-money transfer they cannot take has
+been told something the platform never knew.
+
+*No number the platform cannot stand behind.* `pickup_distance_km` and
+`trip_distance_km` are both great-circle (ADR-0020 §3) and neither may be
+turned into an ETA by a client — real roads are longer than the crow's
+flight, and the invented figure is the one that would need defending.
+`estimated_fare` comes from `WalkInFareService::quote()` against the public
+tariff (ADR-0026 §2) and is named a **fare, not earnings**: there is no
+commission model and settlement is deferred (ADR-0026 §3), so a field named
+for the driver's take would become false in every shipped build the day a
+platform cut is introduced.
+
+`estimated_fare` is null whenever it cannot be computed honestly — no
+vehicle, no coordinates, no published tariff, or a category nobody has
+priced. The last two arrive as `RateCardNotConfiguredException` and are
+**caught here rather than propagated**, because this is a list a driver polls
+every few seconds: an unpriced boda should cost that driver a figure on one
+card, not their whole offer list to a 500. The loud failure ADR-0026 asks for
+still happens at completion, where money actually changes hands.
+
+It costs two queries per offer, and ADR-0024 §4's sequential waves mean a
+driver holds one at a time. If the wave size is ever raised far enough for
+that to show in the poll's latency, resolve the tariff version once per
+request — do not drop the figure.
 
 ### What an allocation does to a dispatch (ADR-0009)
 

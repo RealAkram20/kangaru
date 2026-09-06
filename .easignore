@@ -1,0 +1,27 @@
+# What the EAS build server must never receive (worklog, 2026-08-23).
+#
+# EAS packs the project from the repo root. Without this file the archive
+# swallowed a locally generated `mobile/android/` whose autolinking config
+# carried absolute Windows paths — which broke the Linux builder with
+# "projectDirectory .../mobile/android/D:/xampp/... does not exist" — and
+# weighed the upload down to 438 MB. The builder regenerates every one of
+# these directories itself.
+
+.git/
+**/node_modules/
+
+# Locally generated native projects — prebuild output, never source.
+mobile/android/
+mobile/ios/
+mobile/.expo/
+
+# The other apps' dependency and build trees — not part of a mobile build.
+backend/vendor/
+backend/storage/framework/
+backend/node_modules/
+frontend/dist/
+frontend/node_modules/
+
+# Local artifacts.
+*.apk
+*.log

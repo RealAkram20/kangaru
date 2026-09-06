@@ -4,6 +4,8 @@ namespace Modules\Customers\Resources;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Modules\Billing\Pricing\RateCardNotConfiguredException;
+use Modules\Billing\Services\WalkInFareService;
 use Modules\Bookings\Models\OrderRequest;
 use Modules\Dispatch\Services\DispatchOfferService;
 use Modules\Trips\Support\ContactChannel;
@@ -71,7 +73,80 @@ class CustomerRideResource extends JsonResource
 
             'trip_id' => $trip?->id,
             'captain' => $trip === null ? null : $this->captain(),
+
+            // The money, in the two shapes `TripResource` gives the driver:
+            // what the ride is *expected* to cost while it runs, and what it
+            // *did* cost once it is over. Both were absent here, so the
+            // passenger's screen hard-coded null for each and its own
+            // completion card — fare, pay, rate — could never appear: the
+            // owner watched a ride end on the driver's phone while the web
+            // stayed on "on trip". A quote and a bill are different claims
+            // (ADR-0026 §2), so they are different fields, and each carries
+            // `is_estimate` so no screen has to remember which is which.
+            'estimated_fare' => $this->estimatedFare(),
+            'fare' => $this->settledFare(),
             'created_at' => $order->created_at,
+        ];
+    }
+
+    /**
+     * What the ride is expected to cost, priced from the trip's own vehicle.
+     *
+     * The same call `TripResource::estimatedFare()` makes for the driver, so
+     * the two people in the car are quoted one number. Null before there is
+     * a vehicle to price against, once a settled fare exists, when either end
+     * has no pin, or when no public tariff prices this category — every one
+     * of them a screen that shows no figure, never a zero.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function estimatedFare(): ?array
+    {
+        /** @var OrderRequest $order */
+        $order = $this->resource;
+        $trip = $order->trip;
+        $category = $trip?->vehicle?->category;
+
+        if ($trip === null || $trip->fare_minor !== null || ! is_string($category)) {
+            return null;
+        }
+
+        try {
+            return app(WalkInFareService::class)->quote(
+                $category,
+                $order->pickup_latitude === null ? null : (float) $order->pickup_latitude,
+                $order->pickup_longitude === null ? null : (float) $order->pickup_longitude,
+                $order->dropoff_latitude === null ? null : (float) $order->dropoff_latitude,
+                $order->dropoff_longitude === null ? null : (float) $order->dropoff_longitude,
+            )?->toArray();
+        } catch (RateCardNotConfiguredException) {
+            return null;
+        }
+    }
+
+    /**
+     * What the ride cost, once `WalkInFareService::settle()` has run.
+     *
+     * The distance is the trip's measured one — the figure the fare was
+     * priced from — not the crow's flight the estimate used.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function settledFare(): ?array
+    {
+        /** @var OrderRequest $order */
+        $order = $this->resource;
+        $trip = $order->trip;
+
+        if ($trip === null || $trip->fare_minor === null) {
+            return null;
+        }
+
+        return [
+            'total_minor' => (int) $trip->fare_minor,
+            'currency' => $trip->fare_currency,
+            'distance_km' => $trip->distance_km === null ? null : (float) $trip->distance_km,
+            'is_estimate' => false,
         ];
     }
 

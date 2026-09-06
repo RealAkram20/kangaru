@@ -1,4 +1,5 @@
 import { isApiError, isOutcomeUnknown } from '../api/errors';
+import { annotate, traced } from '../tracing';
 import type { AvailabilityBlock, Trip } from '../api/types';
 import type {
   AvailabilityRequestPayload,
@@ -46,7 +47,15 @@ export type OutboxProcessorOptions = {
   /** Injected so backoff is deterministic under test. */
   random?: () => number;
   onUnauthenticated?: () => void;
-  onParked?: (item: OutboxItem) => void;
+  /**
+   * `code` is the reason the item was *just* parked, which is not on the item
+   * handed alongside it: that is the row as it was read at the start of the
+   * pass, so its `lastErrorCode` belongs to a previous attempt and is null on
+   * the first. A caller that reports the parking — `SyncProvider` does —
+   * needs the code that caused it, not the one before it. Existing one-argument
+   * callbacks are unaffected.
+   */
+  onParked?: (item: OutboxItem, code: string) => void;
 };
 
 /** Five seconds, doubling. Short enough to catch a connection flickering back. */
@@ -61,7 +70,7 @@ export class OutboxProcessor {
   private readonly now: () => number;
   private readonly random: () => number;
   private readonly onUnauthenticated?: (() => void) | undefined;
-  private readonly onParked?: ((item: OutboxItem) => void) | undefined;
+  private readonly onParked?: ((item: OutboxItem, code: string) => void) | undefined;
 
   /** Set by a 401. Nothing drains until the session layer clears it. */
   private paused = false;
@@ -95,11 +104,47 @@ export class OutboxProcessor {
    * other.
    */
   async drain(): Promise<DrainOutcome> {
-    const outcome: DrainOutcome = { completed: 0, parked: 0, deferred: 0, paused: this.paused };
-
+    // Refused before the span, and the order matters. A refused pass does no
+    // work, and a reconnect and a foreground event routinely land within a
+    // second of each other — traced, this would be the loudest and least
+    // informative thing the app sends.
     if (this.paused || this.draining) {
-      return outcome;
+      return { completed: 0, parked: 0, deferred: 0, paused: this.paused };
     }
+
+    /*
+     * Traced (ADR-0054 §4), and this is the one piece of work in the driver
+     * app that nothing else could ever measure.
+     *
+     * A drain fires on a NetInfo change or an app-state change — from no
+     * screen, often with the app in a pocket, sometimes with the process
+     * cold-started into it. There is no navigation transaction to hang it
+     * under, so `traced` makes it a transaction of its own. Everything
+     * underneath it is already instrumented by the SDK: each `process()` call
+     * is a `fetch`, and the waterfall shows which item took the time.
+     *
+     * What this is for, in one sentence: it is how a completed trip reaches
+     * the office, and ADR-0023 §1 says losing one loses a contractual data
+     * point. "The sync is slow upcountry" has been an anecdote for as long as
+     * the app has existed.
+     */
+    return traced('outbox.drain', 'send what the driver did offline', async () => {
+      const outcome = await this.drainOnce();
+
+      annotate(outcome);
+
+      return outcome;
+    });
+  }
+
+  /**
+   * The pass itself, with the re-entrancy flag it sets and clears.
+   *
+   * Split from {@see drain} only so the span above wraps work that is
+   * actually going to happen — see the refusal there.
+   */
+  private async drainOnce(): Promise<DrainOutcome> {
+    const outcome: DrainOutcome = { completed: 0, parked: 0, deferred: 0, paused: this.paused };
 
     this.draining = true;
 
@@ -381,7 +426,7 @@ export class OutboxProcessor {
     message: string,
   ): Promise<'parked'> {
     await this.store.park(item.id, code, message);
-    this.onParked?.(item);
+    this.onParked?.(item, code);
 
     return 'parked';
   }

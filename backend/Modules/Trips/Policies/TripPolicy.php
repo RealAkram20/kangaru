@@ -110,6 +110,18 @@ class TripPolicy
         return $trip->driver?->user_id === $user->id;
     }
 
+    /**
+     * Lifting a held distance (ADR-0045 §2): finance's act, on a trip they
+     * may see. The same permission that closes and disputes a trip — the
+     * finance end of the lifecycle — because clearing a hold is what lets a
+     * fare or an invoice exist, and the roles holding it are the ones MFA
+     * already gates for moving money.
+     */
+    public function clearDistance(User $user, Trip $trip): bool
+    {
+        return $user->hasPermission(Permission::TRIPS_TRANSITION_FINANCE) && $this->view($user, $trip);
+    }
+
     public function transition(User $user, Trip $trip, TripStatus $to): bool
     {
         if ($user->hasPermission(Permission::TRIPS_TRANSITION_ANY)) {
@@ -132,5 +144,41 @@ class TripPolicy
         }
 
         return false;
+    }
+
+    /**
+     * Extending a live run with a stop (ADR-0045 §4).
+     *
+     * The driver on the trip — §4's "without waiting for anyone to tap
+     * approve" — or anyone who may move any trip, which is dispatch (whose
+     * additions are stamped `added_by_dispatch`, not the driver's flag).
+     * The driver gate reuses `trips.transition.own`: shaping the journey is
+     * the same authority as moving it, and a permission invented for one
+     * button would be a grant nobody administers.
+     */
+    public function addStop(User $user, Trip $trip): bool
+    {
+        if ($user->hasPermission(Permission::TRIPS_TRANSITION_ANY)) {
+            return true;
+        }
+
+        return $user->hasPermission(Permission::TRIPS_TRANSITION_OWN)
+            && $trip->driver?->user_id === $user->id;
+    }
+
+    /**
+     * Searching the client's place register from a live trip (ADR-0045 §10).
+     *
+     * Bounded to the driver currently on the trip and nobody else: a bank's
+     * ATM estate in service order is a cash-logistics document
+     * (`docs/security-gate.md` F2), and §10's ruling releases it to one
+     * driver, for one client, during one live run — the same information the
+     * crew in the car already has. Office staff read the register through
+     * `/places`, where `ClientPlacePolicy` owns the question.
+     */
+    public function viewStopCandidates(User $user, Trip $trip): bool
+    {
+        return $user->hasPermission(Permission::TRIPS_TRANSITION_OWN)
+            && $trip->driver?->user_id === $user->id;
     }
 }

@@ -116,6 +116,13 @@ describe('RideScreen', () => {
     // — and the card renders only the captain's first name beside the rating.
     await waitFor(() => expect(screen.getByText('UEB 001B')).toBeInTheDocument())
 
+    // `vehicle_colour` is null above, as it is on a real walk-in vehicle
+    // nobody recorded a colour for — and the card used to interpolate it
+    // regardless, printing "Bajaj Boxer, " with a comma trailing off the end
+    // of the line. Asserted exactly, because a substring match on the model
+    // passes either way and is how this shipped.
+    expect(screen.getByText('Bajaj Boxer')).toBeInTheDocument()
+
     expect(screen.getByRole('link', { name: 'Contact Captain' })).toHaveAttribute(
       'href',
       'tel:+256700000072',
@@ -204,6 +211,57 @@ describe('RideScreen', () => {
 
     await user.click(screen.getByRole('button', { name: '4 stars' }))
     expect(screen.getByRole('button', { name: /submit rating/i })).toBeEnabled()
+  })
+
+  it('confirms the rating only after the source recorded it', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    renderMatching()
+    advance(45_000)
+
+    await user.click(screen.getByRole('button', { name: /i have paid/i }))
+    await user.click(screen.getByRole('button', { name: '4 stars' }))
+    await user.click(screen.getByRole('button', { name: /submit rating/i }))
+
+    // The confirmation is the platform's answer, not a local flag: the
+    // simulation's rate() resolves recorded, and only then does this render.
+    expect(await screen.findByText(/you rated \w+ 4 stars/i)).toBeInTheDocument()
+  })
+
+  it('keeps the stars on screen and says why when the rating is refused', async () => {
+    // The bug this guards against: "Submit rating" used to flip a local
+    // flag, the card thanked the passenger, and nothing had been recorded
+    // anywhere — the owner rated a real ride and the driver never got it.
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    const source = simulatedRideSource('KR-7XKPQ2', [32.5825, 0.3476], null)
+    vi.spyOn(source, 'rate').mockResolvedValue({
+      recorded: false,
+      message: 'You can rate a ride once it has been completed.',
+    })
+
+    render(
+      <MemoryRouter>
+        <RideScreen
+          reference="KR-7XKPQ2"
+          pickup="Plot 9, Bukoto Street"
+          dropoff="Acacia Mall"
+          near={[32.5825, 0.3476]}
+          from={null}
+          to={null}
+          source={source}
+        />
+      </MemoryRouter>,
+    )
+    advance(45_000)
+
+    await user.click(screen.getByRole('button', { name: /i have paid/i }))
+    await user.click(screen.getByRole('button', { name: '5 stars' }))
+    await user.click(screen.getByRole('button', { name: /submit rating/i }))
+
+    // The refusal, verbatim; the stars still there to try again; and no
+    // thank-you card for a rating that went nowhere.
+    expect(await screen.findByText('You can rate a ride once it has been completed.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /submit rating/i })).toBeInTheDocument()
+    expect(screen.queryByText(/you rated/i)).not.toBeInTheDocument()
   })
 
   it('lets the ride be cancelled, and asks why', async () => {

@@ -130,6 +130,19 @@ class RedisDriverPresenceStore implements DriverPresenceStore
             ->values();
     }
 
+    public function onDuty(): Collection
+    {
+        // `setDuty(false)` forgets the driver, index included, so the index
+        // *is* the on-duty set; the filter below only guards against a
+        // hash whose key outlived its index entry.
+        return collect(array_map('intval', Redis::smembers(self::INDEX)))
+            ->map(fn (int $id) => $this->get($id))
+            ->filter()
+            ->filter(fn (DriverPresence $presence) => $presence->onDuty)
+            ->sortBy(fn (DriverPresence $presence) => $presence->driverId)
+            ->values();
+    }
+
     public function forget(int $driverId): void
     {
         Redis::del($this->key($driverId));

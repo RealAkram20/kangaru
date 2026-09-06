@@ -2,7 +2,10 @@
 
 namespace Modules\Administration\Policies;
 
+use App\Enums\AccessLevel;
 use App\Enums\Permission;
+use App\Enums\RoleAudience;
+use App\Models\OperatorClient;
 use App\Models\User;
 use Modules\Administration\Models\Role;
 
@@ -38,14 +41,14 @@ class UserPolicy
     }
 
     /**
-     * A tenant administrator sees their own tenant's staff; a platform one
-     * sees anyone.
+     * Everybody sees the staff of their own organisation, and a fleet also
+     * sees the staff of the clients it serves. Nobody sees across.
      *
-     * The tenant check lives here as well as in the controller's query.
-     * `User` deliberately has no BelongsToTenant — login must find an
-     * account before any tenant is known — so nothing scopes these reads
-     * automatically, and a single forgotten `where` would leak names,
-     * emails and roles across tenants.
+     * The organisation check lives here as well as in the controller's query.
+     * `User` deliberately has no BelongsToTenant — login must find an account
+     * before any organisation is known — so nothing scopes these reads
+     * automatically, and this policy is the whole of what stands between a
+     * resolved id and somebody else's names, emails and phone numbers.
      */
     public function view(User $user, User $subject): bool
     {
@@ -53,7 +56,7 @@ class UserPolicy
             return false;
         }
 
-        return $this->sharesTenant($user, $subject);
+        return $this->sharesOrganisation($user, $subject);
     }
 
     public function create(User $user): bool
@@ -63,7 +66,7 @@ class UserPolicy
 
     public function update(User $user, User $subject): bool
     {
-        return $this->create($user) && $this->sharesTenant($user, $subject);
+        return $this->create($user) && $this->sharesOrganisation($user, $subject);
     }
 
     /**
@@ -77,7 +80,7 @@ class UserPolicy
     }
 
     /**
-     * Whether `$user` may put someone into `$role` — the subset rule above.
+     * Whether `$user` may put someone into `$role`.
      *
      * Called for both creation and role changes, so it cannot be satisfied
      * by creating a user in a safe role and promoting them a second later.
@@ -85,10 +88,32 @@ class UserPolicy
      * A slug with no matching row grants nothing and is refused rather than
      * treated as empty: assigning a role that does not exist would leave an
      * account holding no permissions for reasons nobody could see.
+     *
+     * ## Two gates, not one
+     *
+     * **The subset rule** (ADR-0004) — nobody grants a permission they do not
+     * hold themselves.
+     *
+     * **The audience rule** — a role may only be given to the level of
+     * account it was composed for. Until the `audience` column existed the
+     * subset rule was quietly doing both jobs and only by luck: a fleet owner
+     * never saw `corporate_admin` because that particular permission set
+     * happened not to be a subset of theirs, not because anything said a
+     * client's role did not belong in a fleet's picker.
+     *
+     * `$for` is the level the **subject** will hold, which is not always the
+     * actor's own: a fleet administrator adding somebody at a client it serves
+     * is creating a `client` account and must pick a client role for them. It
+     * defaults to the actor's level, which is the console's case — the staff
+     * screen names no client and creates colleagues alongside itself.
      */
-    public function assignRole(User $user, ?Role $role): bool
+    public function assignRole(User $user, ?Role $role, ?AccessLevel $for = null): bool
     {
         if (! $this->create($user) || $role === null) {
+            return false;
+        }
+
+        if ($role->audience !== RoleAudience::forLevel($for ?? $user->access_level)) {
             return false;
         }
 
@@ -96,17 +121,73 @@ class UserPolicy
     }
 
     /**
-     * A user with no tenant is platform-level and administers everyone.
-     * Everyone else is confined to their own tenant, and a null on either
-     * side never matches — so a tenant administrator can never reach a
-     * platform account.
+     * Whether `$user` may administer `$subject` at all — the organisation
+     * boundary, asked once and answered the same way the listing answers it.
+     *
+     * ## What this used to be, and why it was wrong
+     *
+     * It read:
+     *
+     *     if ($user->isPlatformLevel()) { return true; }
+     *     return $user->tenant_id === $subject->tenant_id;
+     *
+     * ADR-0006 wrote that when *platform-level* meant Shanitah and Shanitah
+     * was the platform, so "administers everyone" was a true description of
+     * head office. ADR-0055 split the axes and `isPlatformLevel()` became
+     * `access_level === FLEET` — at which point the same line meant **every
+     * fleet administers everyone**, which nobody decided and nothing said.
+     *
+     * `User::scopeForActor()` was narrowed for exactly this on 23 August, when
+     * the second fleet was onboarded. This was not, and it is the only guard
+     * standing after route-model binding: `User` carries no global scope
+     * (login has to find an account by email before any organisation is
+     * known), so `GET|PATCH /users/{user}` resolves any id in the table and
+     * arrives here. A rival fleet's owner, a rival fleet's drivers, and every
+     * client's staff were all reachable one id at a time.
+     *
+     * The listing and the record now answer the same question, deliberately:
+     * a policy that is more generous than the scope beside it is a hole that
+     * no listing test can see.
+     *
+     * ## The rule
+     *
+     * A fleet reaches its own people, plus the people of the clients it
+     * **actively** serves — `servedBy` is active contracts only, so a fleet
+     * that has merely asked to serve a client reaches nobody there (ADR-0060
+     * §4: asking grants no read, and it grants no write either).
+     *
+     * Head office reaches head office. Reaching into a fleet is ADR-0056's
+     * act-as, which arrives as a person at that fleet and is scoped as them —
+     * announced, time-boxed and in the audit trail, which a cross-fleet
+     * `SELECT` is not.
+     *
+     * An applicant administers nobody, including themselves: their reach is
+     * keyed off their own application id and nothing here (ADR-0055,
+     * amendment).
      */
-    private function sharesTenant(User $user, User $subject): bool
+    private function sharesOrganisation(User $user, User $subject): bool
     {
-        if ($user->isPlatformLevel()) {
-            return true;
-        }
+        return match ($user->access_level) {
+            AccessLevel::FLEET => $subject->operator_id === $user->operator_id
+                || ($subject->tenant_id !== null && $this->serves($user, $subject)),
+            AccessLevel::KANGARU => $subject->access_level === AccessLevel::KANGARU,
+            // A null on either side never matches, so a client administrator
+            // can never reach a fleet or a head-office account. The database
+            // makes the dangerous half of that unstorable anyway — a `client`
+            // row without a client is refused by
+            // `users_access_level_matches_columns`.
+            AccessLevel::CLIENT => $user->tenant_id !== null
+                && $user->tenant_id === $subject->tenant_id,
+            AccessLevel::APPLICANT => false,
+        };
+    }
 
-        return $user->tenant_id === $subject->tenant_id;
+    /** Whether the actor's fleet holds a live contract with the subject's client. */
+    private function serves(User $user, User $subject): bool
+    {
+        return OperatorClient::query()
+            ->servedBy((int) $user->operator_id)
+            ->where('tenant_id', $subject->tenant_id)
+            ->exists();
     }
 }

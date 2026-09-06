@@ -37,4 +37,21 @@ class DriverAccountConflictException extends \RuntimeException
             $account->email,
         ));
     }
+
+    /**
+     * The address on an application already belongs to an account
+     * (ADR-0027 §5's deliberate duplicate, arriving at approval).
+     *
+     * The message tells the reviewer their two ways forward, because at
+     * this point they are looking at a person they have decided to hire.
+     */
+    public static function emailAlreadyHasAccount(string $email): self
+    {
+        return new self(sprintf(
+            '%s already belongs to an account on this platform. If it is this applicant, link that '.
+            'account from the driver screen instead; if it is somebody else, the applicant needs to '.
+            'apply again with an address of their own.',
+            $email,
+        ));
+    }
 }

@@ -24,6 +24,10 @@ it('creates an immediate booking in Pending, attributed to the requester', funct
     ['employee' => $employee] = seedBookingFixture();
 
     $response = $this->actingAs($employee, 'sanctum')->postJson('/api/v1/bookings', [
+        // A client's booking is for one of the client's own people now:
+        // the employee books a car for themselves, and the name on the
+        // record comes off the account rather than out of this payload.
+        'passenger_user_id' => $employee->id,
         'passenger_name' => 'Grace Nakato',
         'passenger_phone' => '+256700111222',
         'origin' => 'Kampala',
@@ -40,6 +44,10 @@ it('creates a scheduled booking when a future pickup time is given', function ()
     ['employee' => $employee] = seedBookingFixture();
 
     $this->actingAs($employee, 'sanctum')->postJson('/api/v1/bookings', [
+        // A client's booking is for one of the client's own people now:
+        // the employee books a car for themselves, and the name on the
+        // record comes off the account rather than out of this payload.
+        'passenger_user_id' => $employee->id,
         'passenger_name' => 'Grace Nakato',
         'passenger_phone' => '+256700111222',
         'origin' => 'Kampala',
@@ -52,6 +60,10 @@ it('rejects a pickup time in the past', function () {
     ['employee' => $employee] = seedBookingFixture();
 
     $this->actingAs($employee, 'sanctum')->postJson('/api/v1/bookings', [
+        // A client's booking is for one of the client's own people now:
+        // the employee books a car for themselves, and the name on the
+        // record comes off the account rather than out of this payload.
+        'passenger_user_id' => $employee->id,
         'passenger_name' => 'Grace Nakato',
         'passenger_phone' => '+256700111222',
         'origin' => 'Kampala',

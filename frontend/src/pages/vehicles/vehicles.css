@@ -1,0 +1,80 @@
+/*
+ * The vehicle register's two surfaces: the form dialog, and the category
+ * panel behind the segmented control on the same page.
+ *
+ * Tokens only — DESIGN.md §8 fails raw hex in review.
+ */
+
+.kr-vehicle-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.kr-vehicle-form__grid {
+  display: grid;
+  /* Two columns where there is room, one where there is not.
+     `minmax(min(220px, 100%), 1fr)` rather than `1fr`: a grid item's
+     min-width is `auto`, and a <select> resolves that to the width of its
+     widest option, which pushes the second column off the dialog. The
+     Select component documents the same trap on itself. */
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: var(--space-4);
+}
+
+/* The plate reads as one thing across the whole dialog. */
+.kr-vehicle-form__wide {
+  grid-column: 1 / -1;
+}
+
+.kr-vehicle-form__footer {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  width: 100%;
+}
+
+.kr-vehicle-form__footer-spacer {
+  flex: 1;
+}
+
+/* --- categories -------------------------------------------------- */
+
+.kr-categories {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+}
+
+/* The name, with the stored key beneath it. */
+.kr-categories__name {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 2px);
+}
+
+/* What an invoice line and a rate card rate actually hold, so an operator
+   reconciling a report can read it. Monospace is this platform's convention
+   for an identifier (DESIGN.md §6). */
+.kr-categories__key {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.kr-categories__actions {
+  display: inline-flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
+/* --- the segmented control --------------------------------------- */
+
+.kr-fleet-switch {
+  display: inline-flex;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-control);
+}

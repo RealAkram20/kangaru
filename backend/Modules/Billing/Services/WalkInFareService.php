@@ -3,10 +3,12 @@
 namespace Modules\Billing\Services;
 
 use App\Support\Money\Shillings;
+use Modules\Billing\Pricing\DistanceGate;
 use Modules\Billing\Pricing\RateCardNotConfiguredException;
 use Modules\Billing\Pricing\RateCardResolver;
 use Modules\Billing\Pricing\TripPricingEngine;
 use Modules\Dispatch\Support\GreatCircle;
+use Modules\Trips\Distance\DistancePolicy;
 use Modules\Trips\Models\Trip;
 use Modules\Vehicles\Models\Vehicle;
 
@@ -33,6 +35,7 @@ class WalkInFareService
     public function __construct(
         private readonly RateCardResolver $rateCards,
         private readonly TripPricingEngine $pricing,
+        private readonly DistanceGate $distances,
     ) {}
 
     /**
@@ -60,6 +63,12 @@ class WalkInFareService
         $trip->loadMissing('vehicle');
 
         $version = $this->rateCards->resolveFor($trip);
+
+        // ADR-0045 §2: a trace-priced tariff does not settle an unresolved
+        // trip, and no tariff settles a held one. Thrown, not swallowed — the
+        // listener decides what "not yet" means for a cash ride.
+        $this->distances->assertBillable($trip, $version);
+
         $price = $this->pricing->price($trip, $version);
 
         $trip->forceFill([
@@ -75,6 +84,62 @@ class WalkInFareService
             // defend when somebody disputes it.
             'fare_rate_card_version_id' => $version->id,
             'fare_computed_at' => now(),
+        ])->save();
+
+        return $trip;
+    }
+
+    /**
+     * The fare the driver shows at the kerb, before the resolver has spoken
+     * (ADR-0045 §5; Phase 2 of `docs/measured-distance-plan.md`).
+     *
+     * A walk-in fare is settled after the trip's distance is resolved — a
+     * grace period and a queue hop after Trip Completed — but a cash
+     * passenger pays now. So this prices, at completion and through the same
+     * engine, the distance the tariff *will* bill on as best it can be known
+     * at the kerb: under the `odometer` policy the odometer delta (which is
+     * exactly what will settle); under a trace policy the handset's own
+     * measurement of its buffered pings, sent with the completion, and the
+     * odometer delta if it sent none.
+     *
+     * Recorded on the trip as `fare_provisional_minor` and never overwritten:
+     * it is what the passenger was shown and what the driver took, and the
+     * ledger records it as the cash collected for that reason. The settled
+     * fare lands beside it, and a difference is a visible fact rather than a
+     * silent restatement.
+     *
+     * Idempotent, and quiet on a tariff problem for the same reason
+     * `SettleWalkInFare` is: the trip still completes.
+     */
+    public function priceProvisional(Trip $trip): Trip
+    {
+        if ($trip->fare_provisional_minor !== null || $trip->fare_minor !== null) {
+            return $trip;
+        }
+
+        $trip->loadMissing('vehicle');
+
+        $version = $this->rateCards->resolveFor($trip);
+
+        $distanceKm = $version->distance_policy === DistancePolicy::ODOMETER
+            ? $trip->distance_km
+            : ($trip->provisional_distance_km ?? $trip->distance_km);
+
+        if ($distanceKm === null) {
+            return $trip;
+        }
+
+        // Priced on a stand-in rather than the trip itself, so the engine
+        // reads the provisional distance without the trip's own columns being
+        // touched: `billed_distance_km` stays whatever the resolver said or
+        // will say, and `distance_km` stays the odometer.
+        $probe = $trip->replicate(['id', 'billed_distance_km']);
+        $probe->distance_km = $distanceKm;
+        $probe->billed_distance_km = null;
+        $probe->setRelation('vehicle', $trip->vehicle);
+
+        $trip->forceFill([
+            'fare_provisional_minor' => Shillings::toMinor($this->pricing->price($probe, $version)->total()),
         ])->save();
 
         return $trip;
@@ -135,6 +200,13 @@ class WalkInFareService
             'distance_km' => round($distanceKm, 2),
             'origin' => 'Estimate',
             'destination' => 'Estimate',
+            // Said rather than inherited. This service quotes **walk-in**
+            // rides, and `RateCardResolver` picks Kangaru's public tariff off
+            // exactly this (ADR-0063 §5). Leaving it to the model's default
+            // priced a walk-in estimate against a corporate card and failed
+            // with "no default rate card", which reads as a configuration
+            // problem and is not one.
+            'channel' => Trip::CHANNEL_WALK_IN,
         ]);
 
         // `RateCardResolver` picks the version in force on the trip's date,

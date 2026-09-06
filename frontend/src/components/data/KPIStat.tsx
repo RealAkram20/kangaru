@@ -1,5 +1,6 @@
 import type { HTMLAttributes } from 'react'
 import { Icon } from '../core/Icon'
+import { useIsCompact } from '../../lib/useMediaQuery'
 
 export interface KPIStatProps extends HTMLAttributes<HTMLDivElement> {
   /** Inter Medium 14px, sentence case. */
@@ -17,6 +18,17 @@ export interface KPIStatProps extends HTMLAttributes<HTMLDivElement> {
   tone?: 'default' | 'accent'
   /** Comparison period or scope, e.g. "vs last week". */
   hint?: string
+  /**
+   * Take the whole row inside a `StatGrid` on a phone, instead of pairing.
+   *
+   * For a value that will not fit half a 360px screen. The figure is 30px
+   * Sora Bold, so "UGX 12,761,700" wants roughly 240px against the ~148px a
+   * half column gives it, and pairing would wrap the headline number onto two
+   * lines. Short metrics pair; money spans.
+   *
+   * No effect on a desktop, where the tile takes one column either way.
+   */
+  wide?: boolean
 }
 
 export function KPIStat({
@@ -28,10 +40,12 @@ export function KPIStat({
   icon,
   tone = 'default',
   hint,
+  wide = false,
   style,
   ...rest
 }: KPIStatProps) {
   const good = deltaDirection === 'up'
+  const compact = useIsCompact()
   return (
     <div
       style={{
@@ -39,6 +53,9 @@ export function KPIStat({
         flexDirection: 'column',
         gap: 'var(--space-2)',
         padding: 'var(--pad-card-compact)',
+        // Only on a phone: `StatGrid` is two columns there, and one everywhere
+        // else the span would mean nothing.
+        ...(wide && compact ? { gridColumn: 'span 2' } : null),
         background: tone === 'accent' ? 'var(--surface-accent)' : 'var(--surface-card)',
         border: '1px solid ' + (tone === 'accent' ? 'var(--kr-green-tint)' : 'var(--border-default)'),
         borderRadius: 'var(--radius-card)',

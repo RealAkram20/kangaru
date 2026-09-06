@@ -32,7 +32,7 @@ class GpsFixtures
      * floor deliberately — see the jitter test.
      */
     public static function straightLine(
-        int $tenantId,
+        ?int $tenantId,
         int $tripId,
         int $points,
         float $metresApart,

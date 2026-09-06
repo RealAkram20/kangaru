@@ -26,31 +26,37 @@ use Modules\Billing\Repositories\DocumentNumberSequenceRepository;
  * The year in every case comes from the issue date rather than `now()`, so
  * a caller that back-dates an issue cannot land a 2026-prefixed number in
  * the 2027 counter. Pass the same instant to all three.
+ *
+ * Since ADR-0055 §6 a counter is a **fleet's** series for a client, not a
+ * client's alone: two fleets billing Centenary Bank draw from two counters, so
+ * neither company's numbering has holes the other is holding. Pass the fleet
+ * that did the work — the driver's, recorded on the trip — not the fleet of
+ * whoever happens to be pressing the button.
  */
 class DocumentNumberGenerator
 {
     public function __construct(private readonly DocumentNumberSequenceRepository $sequences) {}
 
     /** Step 1. Outside the transaction. */
-    public function ensureSeries(int $tenantId, DocumentType $type, CarbonInterface $issuedAt): void
+    public function ensureSeries(int $operatorId, int $tenantId, DocumentType $type, CarbonInterface $issuedAt): void
     {
-        $this->sequences->ensureSeries($tenantId, $type, self::yearOf($issuedAt));
+        $this->sequences->ensureSeries($operatorId, $tenantId, $type, self::yearOf($issuedAt));
     }
 
     /**
      * Step 2. The first statement inside the transaction: serialises every
      * generator working on this tenant's series.
      */
-    public function lockSeries(int $tenantId, DocumentType $type, CarbonInterface $issuedAt): void
+    public function lockSeries(int $operatorId, int $tenantId, DocumentType $type, CarbonInterface $issuedAt): void
     {
-        $this->sequences->lockSeries($tenantId, $type, self::yearOf($issuedAt));
+        $this->sequences->lockSeries($operatorId, $tenantId, $type, self::yearOf($issuedAt));
     }
 
     /** Step 3. Consumes a number and renders it. Inside the transaction. */
-    public function next(int $tenantId, DocumentType $type, CarbonInterface $issuedAt): string
+    public function next(int $operatorId, int $tenantId, DocumentType $type, CarbonInterface $issuedAt): string
     {
         $year = self::yearOf($issuedAt);
-        $number = $this->sequences->allocate($tenantId, $type, $year);
+        $number = $this->sequences->allocate($operatorId, $tenantId, $type, $year);
 
         /** @var array{prefix: string, padding: int} $format */
         $format = config($type->configKey());

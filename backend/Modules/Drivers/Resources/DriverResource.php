@@ -29,6 +29,48 @@ class DriverResource extends JsonResource
             // and eager-loading a vehicle per row for a registration number
             // is the N+1 AGENTS.md forbids.
             'vehicle_id' => $this->vehicle_id,
+            /**
+             * Whose vehicle that is (ADR-0048 §7).
+             *
+             * Sent even when `vehicle_id` is null, and the combination is
+             * meaningful rather than contradictory: a boda rider recorded as
+             * owning a machine the fleet has not registered yet is
+             * `owns_vehicle: true, vehicle_id: null`, which is a driver the
+             * office still owes a vehicle record. A screen that inferred
+             * ownership from the id could not draw that state at all.
+             */
+            'owns_vehicle' => (bool) $this->owns_vehicle,
+            /**
+             * Enough of the vehicle to name it on a row, and no more.
+             *
+             * **Flat and shallow, on purpose**, for the reason the comment
+             * above gives about `vehicle_id`: a driver list is read to answer
+             * "who is out in what", and the answer is a number plate. The
+             * full record is one request away on the fleet screen, and
+             * nesting it here would put make, model, year, VIN, seats and
+             * status on every row of a list nobody reads them from.
+             *
+             * `whenLoaded` rather than `$this->vehicle`: without the relation
+             * eager-loaded this is one query per row (AGENTS.md), and the
+             * guard makes that a visibly missing key in development rather
+             * than a quietly slow list in production.
+             */
+            'vehicle' => $this->whenLoaded('vehicle', fn (): ?array => $this->vehicle === null ? null : [
+                'id' => $this->vehicle->id,
+                'registration_number' => $this->vehicle->registration_number,
+                'make' => $this->vehicle->make,
+                'model' => $this->vehicle->model,
+                /*
+                 * The category, so the office can ask "who is free on a
+                 * boda" without loading the fleet beside the roster.
+                 *
+                 * Allow-listed like everything above it rather than spread
+                 * from the model (`docs/screen-rules.md` §2): a vehicle row
+                 * carries a VIN and an owner among other things, and none of
+                 * that belongs on a driver list.
+                 */
+                'category' => $this->vehicle->category,
+            ]),
             // Whether this driver can sign in, and as whom (ADR-0016).
             //
             // Always present, never conditional on the relation being

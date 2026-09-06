@@ -5,25 +5,42 @@
 .kr-fleet-marker {
   cursor: pointer;
   line-height: 0;
+  position: relative;
   /* MapLibre owns the root's transform for positioning. Anything that
      rotates or scales goes on the inner glyph, never here. */
 }
 
-.kr-fleet-dot {
+/* The rotating wrapper. Drawn pointing north, so the rotation is the
+   compass heading with no offset to remember; no rotation when the device
+   reported none — an unrotated sprite is an icon, not a course. */
+.kr-fleet-unit {
   display: block;
-  width: 14px;
-  height: 14px;
-  border-radius: var(--radius-pill);
-  border: 2px solid #fff;
-  box-shadow: 0 1px 4px rgb(0 16 40 / 35%);
+  transform-origin: 50% 50%;
 }
 
-.kr-fleet-arrow {
+.kr-fleet-vehicle {
   display: block;
-  /* The arrow is drawn pointing north, so the rotation is the compass
-     heading with no offset to remember. */
-  transform-origin: 50% 50%;
   filter: drop-shadow(0 1px 3px rgb(0 16 40 / 35%));
+}
+
+/* The status dot in the marker's corner. Colour is paired with the
+   marker's tooltip and the labelled badge on the unit's row — never the
+   only carrier (DESIGN.md §3). */
+.kr-fleet-status {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-pill);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgb(0 16 40 / 30%);
+}
+
+/* A vehicle nobody has heard from: washed out, not gone. The one marker
+   that must stay visible — it is the call to make. */
+.kr-fleet-marker--stale .kr-fleet-vehicle {
+  filter: grayscale(1) opacity(0.65) drop-shadow(0 1px 3px rgb(0 16 40 / 25%));
 }
 
 /* A marker jumps ten seconds' worth of road on each poll. Easing that jump
@@ -34,4 +51,66 @@
   .maplibregl-marker:has(.kr-fleet-marker) {
     transition: transform 600ms linear;
   }
+}
+
+/* The selected unit. A ring rather than a colour change, so selection never
+   collides with the tones that carry meaning. On the root, not the rotating
+   wrapper: a rotated outline box reads as a diamond. */
+.kr-fleet-marker--selected {
+  outline: 2px solid var(--kr-green);
+  outline-offset: 3px;
+  border-radius: var(--radius-pill);
+}
+
+/*
+ * ADR-0045: a planned site on the live map.
+ *
+ * Deliberately quieter than a vehicle marker and drawn in the route colour
+ * rather than a status one. The vehicles are what a dispatcher is watching;
+ * the sites are the context behind them, and a layer that competed for
+ * attention would make the map worse at its first job.
+ *
+ * Not interactive: these are reference points, not controls. The route
+ * itself is opened from the Routes page.
+ */
+.kr-route-site {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px 1px 1px;
+  border-radius: var(--radius-pill);
+  background: var(--kr-white);
+  border: 1.5px solid var(--map-route);
+  box-shadow: var(--shadow-xs);
+  user-select: none;
+  cursor: default;
+  /* Under the vehicles: the fleet is what a dispatcher is watching, and a
+     site label must never sit on top of a moving car. */
+  z-index: 1;
+}
+
+.kr-route-site__seq {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--map-route);
+  color: var(--kr-white);
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+}
+
+/* Tighter than the builder's: this map can carry twenty of these at once. */
+.kr-route-site__name {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: var(--weight-medium);
+  color: var(--text-body);
+  line-height: 1.2;
 }

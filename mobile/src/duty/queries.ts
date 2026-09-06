@@ -1,9 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { focusManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { acceptOffer, declineOffer, fetchDuty, fetchOffers, setDuty } from '../api/endpoints';
 import type { DispatchOffer, DriverPresence, Trip } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
-import { OFFER_POLL_INTERVAL_MS } from '../config';
+import { OFFER_POLL_BACKGROUND_INTERVAL_MS, OFFER_POLL_INTERVAL_MS } from '../config';
 
 /**
  * Duty state and job offers (ADR-0024 §2–§3).
@@ -58,6 +58,14 @@ export function useSetDuty() {
       queryClient.setQueryData(['duty'], presence);
       void queryClient.invalidateQueries({ queryKey: ['offers'] });
     },
+    // A write that failed *here* may still have landed *there*: the 10-second
+    // abort fires client-side while the server goes on to commit. Left alone,
+    // the cache then lies for the rest of the shift — a driver the server has
+    // on duty sees "Off duty", never polls offers, and declines every job by
+    // silence. Re-reading is the only honest answer to an unknown outcome.
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: ['duty'] });
+    },
   });
 }
 
@@ -81,8 +89,38 @@ export function useOffers(enabled: boolean) {
     queryKey: ['offers'],
     queryFn: () => fetchOffers(api),
     enabled,
-    refetchInterval: enabled ? OFFER_POLL_INTERVAL_MS : false,
-    refetchIntervalInBackground: false,
+
+    /*
+     * **A function, because the right cadence depends on whether anybody is
+     * looking**, and React Query re-evaluates this after every fetch.
+     *
+     * `focusManager` is wired to `AppState` in `App.tsx`, so `isFocused()` is
+     * literally "the app is on screen". Five seconds there, fifteen in a
+     * pocket — the two numbers are argued in `config.ts`, and the short version
+     * is that the foreground interval is chosen against a driver's attention
+     * and the background one against their battery.
+     */
+    refetchInterval: () =>
+      enabled &&
+      (focusManager.isFocused() ? OFFER_POLL_INTERVAL_MS : OFFER_POLL_BACKGROUND_INTERVAL_MS),
+
+    /*
+     * **True since the offer popup was found to be foreground-only.**
+     *
+     * This was false, which is what stopped the poll dead the moment the app
+     * left the screen. With push never having reached a handset, that left the
+     * order request page as the only surface a job ever arrived on — and only
+     * while the driver was holding the phone.
+     *
+     * It is safe to leave running because `enabled` is the driver's own duty
+     * toggle: a driver who signs off stops paying for this entirely, which is
+     * the whole point of duty being an explicit act. And it is *useful* only
+     * because `OfferPresenter` now raises the call notification when the app is
+     * not on screen — a background poll whose result is painted onto an
+     * invisible overlay would be spending battery to tell nobody.
+     */
+    refetchIntervalInBackground: true,
+
     networkMode: 'online',
     // Nothing is kept: an offer list is only ever true at the instant it was
     // fetched.
@@ -111,8 +149,15 @@ export function useAcceptOffer() {
     },
     // A failed accept still refreshes the list, because the most likely
     // failure *is* the list being out of date — somebody else took it.
+    //
+    // Trips too, and this is the sharper half: an accept that timed out
+    // client-side may have *succeeded* server-side — the trip exists and a
+    // passenger is waiting. Without this, the new job appears only when the
+    // 60-second trip poll next runs, a minute the driver spends believing
+    // they lost work they actually hold.
     onError: () => {
       void queryClient.invalidateQueries({ queryKey: ['offers'] });
+      void queryClient.invalidateQueries({ queryKey: ['trips'] });
     },
   });
 }

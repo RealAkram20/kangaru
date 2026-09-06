@@ -55,11 +55,12 @@ describe('simulatedRideSource', () => {
     }
 
     const fare = states.at(-1)!.fare!
+    const lines = fare.breakdown!
     expect(fare.total).toBe(Math.round(fare.total))
-    expect(fare.total).toBeGreaterThan(fare.base)
+    expect(fare.total).toBeGreaterThan(lines.base)
     // UGX is zero-decimal: a fare with a fraction of a shilling in it is a
     // float that has been let near money.
-    for (const amount of [fare.base, fare.distance, fare.time, fare.total]) {
+    for (const amount of [lines.base, lines.distance, lines.time, fare.total]) {
       expect(Number.isInteger(amount)).toBe(true)
     }
   })

@@ -10,6 +10,12 @@ Thumbs.db
 # Claude Code — personal, machine-local settings (not shared)
 .claude/settings.local.json
 
+# Skill run artifacts — a hook cache keyed to one machine's paths, and
+# critiques of a single working copy at a single moment. The skills themselves
+# are tracked (.claude/skills, .agents/skills, skills-lock.json); what they
+# leave behind while running is not shared state.
+.impeccable/
+
 # Node / Vite (frontend, once scaffolded)
 node_modules/
 dist/
@@ -18,12 +24,45 @@ npm-debug.log*
 
 # PHP / Laravel (backend, once scaffolded)
 vendor/
+# Laravel's **published** vendor views are source, not a dependency.
+# `vendor/` above means Composer's directory, but a bare pattern matches any
+# directory of that name at any depth — so it also swallowed
+# backend/resources/views/vendor/, where `php artisan vendor:publish` puts the
+# mail templates. The branded mail theme was written, referenced by
+# config/mail.php as MAIL_THEME=kangaru, and never committed.
+#
+# It worked on every machine that had published it and nowhere else: CI failed
+# with "View [themes.kangaru] not found" across every suite that sends mail,
+# and production would have 500'd on the first notification email rather than
+# at deploy time, which is the worse of the two.
+!backend/resources/views/vendor/
+
+# The driver app's vendored map library is source too, and for the same
+# reason: `vendor/` above is Composer's, but the bare pattern also swallowed
+# mobile/src/trips/vendor/, where tools/vendor-maplibre.mjs writes MapLibre GL
+# as a string module (ADR-0070). The app inlines it into every map document, so
+# without it `tsc` cannot resolve the import and the bundle has no map library
+# at all — and the failure lands on a fresh clone and in CI, never on the
+# machine that generated it. Exactly the shape of the mail-theme bug above.
+!mobile/src/trips/vendor/
 .env
 .env.*
 !.env.example
+# The production TEMPLATE, which holds no secret — every value is either a
+# decided default or the literal `<<OWNER>>`. `.env.*` above would otherwise
+# swallow it silently, which is how a template gets written and never shipped.
+# `.env.production` itself stays ignored: only the `.example` suffix is exempt.
+!.env.production.example
 storage/*.key
 bootstrap/cache/*
 storage/logs/*
 storage/framework/cache/*
 storage/framework/sessions/*
 storage/framework/views/*
+
+# graphify code graph - regenerable in seconds, do not commit (added 2026-08-29)
+graphify-out/
+
+# Local Expo modules (mobile/modules/*): Gradle output, never source. One
+# generated dex path exceeds the Windows limit and aborts a whole git add.
+mobile/modules/**/android/build/

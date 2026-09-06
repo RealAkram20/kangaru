@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Concerns\BelongsToTenant;
 use App\Exceptions\AuditLogImmutableException;
+use App\Support\Access\ImpersonationContext;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
@@ -35,6 +36,9 @@ class AuditLog extends Model
     protected $fillable = [
         'tenant_id',
         'user_id',
+        // Never one without the other when rendered (ADR-0056 §2):
+        // "Kangaru Support (acting as J. Okello)".
+        'impersonator_id',
         'auditable_type',
         'auditable_id',
         'action',
@@ -98,6 +102,17 @@ class AuditLog extends Model
         static::create([
             'tenant_id' => self::tenantIdFor($model),
             'user_id' => self::actingUserId(),
+            // The real hand, when it is not the account's own (ADR-0056 §2).
+            //
+            // `user_id` above stays the **subject** on purpose: a client's own
+            // audit view is a chronology of *their account's* activity, and an
+            // action that suddenly named an employee of their supplier would
+            // read as an unrelated event dropped into the middle of it. The row
+            // keeps saying what the account did; this says who was holding it.
+            //
+            // Null on every row before ADR-0056 and on almost every row after
+            // it, because null means "the person themselves".
+            'impersonator_id' => app(ImpersonationContext::class)->actorId(),
             'auditable_type' => $model->getMorphClass(),
             'auditable_id' => $model->getKey(),
             'action' => $action,

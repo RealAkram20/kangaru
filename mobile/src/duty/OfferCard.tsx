@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 
 import type { DispatchOffer } from '../api/types';
-import { isRunningOut, secondsRemaining } from './countdown';
+import { isRunningOut } from './countdown';
+import { useCountdown } from './useCountdown';
 import { Button } from '../ui/components';
 import { colors, radius, spacing, typography } from '../ui/theme';
 
@@ -98,45 +99,6 @@ export function OfferCard({
 }
 
 /**
- * Seconds left, counted from the server's number.
- *
- * **Seeded from `expires_in_seconds`, not from `expires_at` minus the local
- * clock.** Cheap Android handsets routinely run minutes out, and a countdown
- * against a wrong clock either shows forty seconds on a fifteen-second offer
- * or shows a job that already expired. The server counted the gap on one
- * clock; that number is trustworthy in a way a difference between two clocks
- * is not.
- *
- * The interval only ever counts down locally, so drift within a single
- * fifteen-second offer is irrelevant.
- */
-function useCountdown(offer: DispatchOffer): number {
-  // Seeded once, from the server's count, and then counted down locally.
-  //
-  // Deliberately *not* re-seeded on every poll. The offer's expiry is fixed,
-  // so a local decrement is accurate over a fifteen-second window, and
-  // re-seeding would mean writing state from inside an effect on every poll —
-  // a cascading render each time, for a number that was already right.
-  //
-  // A genuinely different offer is a different `key` in the list, so React
-  // remounts this and the initialiser runs again.
-  // Seconds *since this offer arrived*, not a clock reading. The arithmetic
-  // that turns it into a countdown lives in `./countdown`, where it is
-  // covered by tests that cannot be broken by a concurrent renderer.
-  const [elapsed, setElapsed] = useState(0);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setElapsed((seconds) => seconds + 1);
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [offer.id]);
-
-  return secondsRemaining(offer, elapsed);
-}
-
-/**
  * The draining bar.
  *
  * `linear`, because it represents constant motion — time. Any easing here
@@ -208,7 +170,7 @@ function useEntrance(): Animated.Value {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: colors.surfaceRaised,
+    backgroundColor: colors.surface,
     borderRadius: radius.lg,
     borderWidth: 2,
     borderColor: colors.primary,

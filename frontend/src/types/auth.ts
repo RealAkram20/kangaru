@@ -1,6 +1,37 @@
 export interface User {
   id: number
   tenant_id: number | null
+  /**
+   * The tenant's display name — "Centenary Bank" — or null for platform
+   * staff, who have none (ADR-0006). The chrome names whose console this is
+   * from here rather than by fetching `/companies`. Optional so a response
+   * from an API older than the field still types.
+   */
+  tenant_name?: string | null
+  /**
+   * The fleet's display name (ADR-0055). Null for a client's people and for
+   * Kangaru's own staff, who belong to no fleet.
+   *
+   * The chrome needs it because `tenant_id` is null for a fleet account and
+   * null for a Kangaru account alike — without this the topbar said
+   * "Platform" to both, and the only thing distinguishing Shanitah's Super
+   * Admin from head office's was a menu they had to already understand.
+   */
+  operator_name?: string | null
+  /**
+   * Which of the levels this account belongs to (App\Enums\AccessLevel,
+   * ADR-0055 §4) — `kangaru`, `fleet`, `client` or `applicant`.
+   *
+   * The menu is chosen by this before role narrows it (ADR-0059 §1). Stated
+   * on the row and never worked out from `tenant_id` and `operator_id` being
+   * null: inference would have promoted six accounts to head office silently.
+   *
+   * Optional because a response from an API older than the field still types.
+   * `menuFor` treats an absent level as `fleet` rather than as nothing — see
+   * the note there for why that exception to failing closed is the safe
+   * direction in this one place.
+   */
+  access_level?: 'kangaru' | 'fleet' | 'client' | 'applicant'
   name: string
   email: string
   role: string
@@ -13,6 +44,24 @@ export interface User {
    * closed), and callers fall back to `role`.
    */
   role_label?: string
+  /**
+   * The switches a client's administrator set on this account
+   * (App\Enums\ClientCapability), unioned onto the role's permissions
+   * server-side. The menu reads them so a Corporate Employee who may see
+   * invoices is offered the door. Optional: an older API sends none.
+   */
+  capabilities?: string[]
+  books_without_approval?: boolean
+  /**
+   * Whether this account may sign in (`UserStatus`). Declared in the contract
+   * and served on every user payload; the type simply never listed it, so
+   * every surface that wanted to show whether an account was live had to
+   * reach for `types/staff.ts` instead.
+   *
+   * Optional because a response from an API older than the field still types.
+   */
+  status?: 'active' | 'suspended'
+  is_active?: boolean
   created_at: string
   /**
    * Whether this account has a second factor set up (ADR-0008).

@@ -4,10 +4,11 @@ import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text } f
 
 import { changePassword } from '../api/endpoints';
 import { isApiError } from '../api/errors';
+import { PasswordMeter } from '../auth/PasswordMeter';
 import { useAuth } from '../auth/AuthProvider';
-import { MINIMUM_PASSWORD_LENGTH, passwordProblem, passwordProblemMessage } from '../auth/passwordRules';
+import { passwordProblem, passwordProblemMessage } from '../auth/passwordRules';
 import { useSync } from '../offline/SyncProvider';
-import { Button, Card, Field, Notice, Screen } from '../ui/components';
+import { Button, Card, Field, Notice, Screen, ScreenHeader } from '../ui/components';
 import { colors, spacing, typography } from '../ui/theme';
 import type { AccountStackParams } from '../navigation/types';
 
@@ -66,7 +67,7 @@ export function PasswordScreen({ navigation }: Props) {
       setBusy(false);
 
       if (!isApiError(error)) {
-        setProblem('No connection. Changing your password needs one — try again in coverage.');
+        setProblem('No connection. Your password was not changed.');
 
         return;
       }
@@ -76,25 +77,24 @@ export function PasswordScreen({ navigation }: Props) {
       // naming: a generic "check the form" would send the driver hunting
       // through three fields for a mistake that is only ever in the first.
       setProblem(
-        error.code === 'INVALID_CREDENTIALS'
-          ? 'That is not your current password.'
-          : error.message,
+        error.code === 'INVALID_CREDENTIALS' ? 'That is not your current password.' : error.message,
       );
     }
   };
 
   return (
     <Screen>
+      <ScreenHeader
+        title="Change password"
+        subtitle={null}
+        onBack={() => navigation.goBack()}
+      />
+
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.flex}
       >
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <Text style={styles.subtitle}>
-            At least {MINIMUM_PASSWORD_LENGTH} characters. This signs you out on every device,
-            including this one.
-          </Text>
-
           {pending > 0 && (
             <Notice
               tone="info"
@@ -110,6 +110,7 @@ export function PasswordScreen({ navigation }: Props) {
               value={current}
               onChangeText={setCurrent}
               secureTextEntry
+              revealable
               autoCapitalize="none"
               textContentType="password"
             />
@@ -119,20 +120,51 @@ export function PasswordScreen({ navigation }: Props) {
               value={next}
               onChangeText={setNext}
               secureTextEntry
+              revealable
               autoCapitalize="none"
               textContentType="newPassword"
             />
+
+            {/*
+              Under the field it describes, and above the one that repeats it —
+              a meter below the confirmation would be describing the wrong box.
+              It renders nothing until there is something to say.
+            */}
+            <PasswordMeter password={next} />
 
             <Field
               label="New password again"
               value={confirmation}
               onChangeText={setConfirmation}
               secureTextEntry
+              revealable
               autoCapitalize="none"
               textContentType="newPassword"
               onSubmitEditing={() => void submit()}
             />
+
+            {/*
+              Answered while typing rather than on submit. The alternative is a
+              driver filling three fields, pressing a button and being told the
+              last two disagree — with both hidden behind dots, and no way to
+              see which one is wrong.
+            */}
+            {confirmation !== '' && (
+              <Text style={next === confirmation ? styles.match : styles.mismatch}>
+                {next === confirmation ? 'Both match.' : 'These two do not match yet.'}
+              </Text>
+            )}
           </Card>
+
+          {/*
+            The consequence, attached to the control that causes it rather than
+            set as a paragraph at the top of the screen. It was a subtitle once,
+            stacked with the length rule the meter already teaches — two
+            unrelated sentences in muted grey above a form nobody had started,
+            which is the shape of text drivers learn to skip. Here it is read in
+            the second before the tap, which is the only second it matters.
+          */}
+          <Text style={styles.consequence}>Signs you out on every device, including this one.</Text>
 
           <Button
             label="Change password"
@@ -154,9 +186,26 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     gap: spacing.md,
   },
-  subtitle: {
-    ...typography.body,
+  consequence: {
+    ...typography.caption,
     color: colors.textMuted,
-    lineHeight: 22,
+    textAlign: 'center',
+    // Negative, so it sits against the button it describes rather than
+    // floating between the card and the control at the same gap as everything
+    // else. A consequence a hand's width from its cause is a separate remark.
+    marginBottom: -spacing.xs,
+  },
+  // `success`, not `primary`. The brand green is the colour of a *control* on
+  // this screen — the Change password button is one — and reusing it for a
+  // statement would make a sentence look pressable.
+  match: {
+    ...typography.caption,
+    color: colors.success,
+    marginTop: spacing.xs,
+  },
+  mismatch: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
   },
 });

@@ -1,18 +1,8 @@
 import { useState } from 'react'
-import {
-  ArrowLeft,
-  Banknote,
-  Check,
-  ChevronDown,
-  Clock,
-  CreditCard,
-  MessageSquarePlus,
-  Route,
-  Smartphone,
-  Truck,
-  Wallet,
-} from 'lucide-react'
+import { ArrowLeft, Check, Clock, MessageSquarePlus, Route, Truck, Wallet } from 'lucide-react'
+import { PaymentMethodField, type PaymentMethod } from './PaymentMethodField'
 import type { PlaceHit } from './places'
+import { PrivacyLine } from './PrivacyNoticePage'
 import { formatKm, formatMinutes, type TripEstimate } from './tripEstimate'
 
 /**
@@ -23,20 +13,8 @@ import { formatKm, formatMinutes, type TripEstimate } from './tripEstimate'
  */
 export type Payer = 'sender' | 'receiver'
 
-/** The rails a delivery can be paid on, matching the backend's enum. */
-export type PaymentMethod = 'cash' | 'mobile_money' | 'card'
-
-const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
-  { value: 'cash', label: 'Cash on delivery' },
-  { value: 'mobile_money', label: 'Mobile Money' },
-  { value: 'card', label: 'Card' },
-]
-
-const METHOD_ICONS: Record<PaymentMethod, React.ReactNode> = {
-  cash: <Banknote className="h-5 w-5" aria-hidden />,
-  mobile_money: <Smartphone className="h-5 w-5" aria-hidden />,
-  card: <CreditCard className="h-5 w-5" aria-hidden />,
-}
+/** Re-exported for the callers that learnt the type here; it lives with the field now. */
+export type { PaymentMethod }
 
 /**
  * The last screen of a delivery: what it costs, who pays it, and the route
@@ -144,36 +122,11 @@ export function DeliverySummary({
           })}
         </div>
 
-        <label
-          htmlFor="payment-method"
-          className="mt-5 block text-sm font-semibold text-text-heading"
-        >
-          Payment method
-        </label>
-        <div className="relative mt-2.5">
-          <span
-            className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-brand-green"
-            aria-hidden
-          >
-            {METHOD_ICONS[paymentMethod]}
-          </span>
-          <select
-            id="payment-method"
-            value={paymentMethod}
-            onChange={(e) => onPaymentMethodChange(e.target.value as PaymentMethod)}
-            className="w-full cursor-pointer appearance-none rounded-xl border border-border bg-surface-card py-3.5 pl-12 pr-11 font-medium text-text-heading outline-none transition-[border-color] duration-150 ease-[var(--kr-ease-out)] focus:border-brand-green"
-          >
-            {PAYMENT_METHODS.map((method) => (
-              <option key={method.value} value={method.value}>
-                {method.label}
-              </option>
-            ))}
-          </select>
-          <ChevronDown
-            className="pointer-events-none absolute right-4 top-1/2 h-5 w-5 -translate-y-1/2 text-brand-green"
-            aria-hidden
-          />
-        </div>
+        <PaymentMethodField
+          className="mt-5"
+          value={paymentMethod}
+          onChange={onPaymentMethodChange}
+        />
 
         <hr className="my-6 border-border" />
 
@@ -231,6 +184,12 @@ export function DeliverySummary({
       <p className="mt-3 text-center text-xs text-text-secondary">
         A starting fare. The dispatcher confirms the exact price on the call.
       </p>
+      {/*
+        W1-e. A delivery is the one order that carries a *third party's* name
+        and phone — the sender's and the recipient's — so this is the surface
+        where somebody is about to hand over details that are not their own.
+      */}
+      <PrivacyLine />
     </div>
   )
 }

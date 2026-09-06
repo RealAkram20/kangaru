@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Enums\AccessLevel;
 use App\Enums\UserRole;
 use App\Models\User;
 use RuntimeException;
@@ -34,8 +35,13 @@ final class PlatformStaff
 
     private static function holding(UserRole $role): User
     {
+        // `whereNull('tenant_id')` until ADR-0055, and that predicate now
+        // matches head office too: a `kangaru` account has no client either.
+        // Asking for the level directly keeps this finding Shanitah's people
+        // once Kangaru has its own, which is the whole reason the column is
+        // declared rather than inferred.
         $user = User::query()
-            ->whereNull('tenant_id')
+            ->where('access_level', AccessLevel::FLEET)
             ->where('role', $role->value)
             ->first();
 

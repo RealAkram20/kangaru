@@ -71,9 +71,31 @@ export function Dialog({
         style={{
           width: '100%',
           maxWidth: width,
+          /*
+           * **Never taller than the overlay lets it be.**
+           *
+           * Without this a tall dialog grew past the viewport, and because the
+           * overlay is `position: fixed` with `overflow: hidden` below, the
+           * overflowing part was simply unreachable — no page scroll, no
+           * dialog scroll, and the footer's Save button off-screen. The rate
+           * card version form (six vehicle categories, five amounts each) hit
+           * it first, but every dialog in the app was one long form away from
+           * the same trap.
+           *
+           * `100%`, not a viewport calculation: the overlay is a flex
+           * container at `inset: 0` with its own padding, so a percentage
+           * resolves against exactly the space the dialog is allowed — and it
+           * stays correct if that padding ever changes.
+           */
+          maxHeight: '100%',
+          // The panel becomes the column; the body below is the only part
+          // that scrolls, so the header and the footer's buttons stay put.
+          display: 'flex',
+          flexDirection: 'column',
           background: 'var(--surface-card)',
           borderRadius: 'var(--radius-modal)',
           boxShadow: 'var(--shadow-modal)',
+          // Kept, so the corners still clip their children.
           overflow: 'hidden',
           ...style,
         }}
@@ -85,6 +107,8 @@ export function Dialog({
             alignItems: 'flex-start',
             gap: 'var(--space-3)',
             padding: 'var(--space-6) var(--space-6) var(--space-4)',
+            // The title and the close button never scroll away.
+            flex: '0 0 auto',
           }}
         >
           {tone !== 'default' && (
@@ -138,7 +162,27 @@ export function Dialog({
             </button>
           )}
         </div>
-        {children && <div style={{ padding: '0 var(--space-6) var(--space-6)' }}>{children}</div>}
+        {children && (
+          <div
+            style={{
+              padding: '0 var(--space-6) var(--space-6)',
+              // The one scrolling region. `minHeight: 0` is what actually
+              // makes it work: a flex item's default `min-height: auto`
+              // refuses to shrink below its content, so the panel would grow
+              // past `maxHeight` and clip exactly as before.
+              flex: '1 1 auto',
+              minHeight: 0,
+              overflowY: 'auto',
+              // The page behind is scroll-locked while a dialog is open;
+              // without this, reaching the end of the dialog would chain the
+              // gesture to a body that cannot move, which reads as the scroll
+              // being stuck.
+              overscrollBehavior: 'contain',
+            }}
+          >
+            {children}
+          </div>
+        )}
         {footer && (
           <div
             style={{
@@ -148,6 +192,9 @@ export function Dialog({
               padding: 'var(--space-4) var(--space-6)',
               background: 'var(--surface-sunken)',
               borderTop: '1px solid var(--border-default)',
+              // Pinned. The primary action must be reachable without scrolling
+              // a long form to the bottom to find it.
+              flex: '0 0 auto',
             }}
           >
             {footer}
